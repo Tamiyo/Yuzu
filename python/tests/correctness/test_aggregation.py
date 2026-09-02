@@ -74,3 +74,27 @@ def test_count_distinct():
         |> aggregate count_distinct(level) as kinds, count(level) as values
     """
     assert rows(query) == [(3, 4)]
+
+
+def test_group_level_expressions_over_keys():
+    query = """
+        from employees
+        |> aggregate sum(salary) as total, level * 2 as double_level
+        group by active, level
+    """
+    assert rows(query) == sorted_rows(
+        (True, 1, 120000, 2),
+        (False, 2, 150000, 4),
+        (True, 3, 240000, 6),
+    )
+
+
+def test_chained_aggregates_reaggregate_the_previous_output():
+    query = """
+        from employees
+        |> aggregate sum(salary) as dept_total
+        group by dept_id, active
+        |> aggregate max(dept_total) as biggest
+        group by active
+    """
+    assert rows(query) == sorted_rows((True, 360000), (False, 90000))

@@ -14,11 +14,15 @@ use crate::{
     },
 };
 
-/// Where inference stands relative to aggregation. `keys` are the grouping
-/// columns — what an item may still name at group level once the row has
-/// collapsed; `locals` are values computed at group level, which must not
-/// re-enter an aggregate's arguments; `depth` is how far inside those
-/// arguments the walk currently is.
+/// Where inference stands relative to aggregation.
+///
+/// `keys` are the grouping columns as positions in the aggregate's *input*
+/// row — the same space every column reference resolves to while the items
+/// are inferred, so "may this column appear at group level" is containment,
+/// with no index translation. (Key positions in the *output* row are the
+/// converter's business, not inference's.) `locals` are values computed at
+/// group level, which must not re-enter an aggregate's arguments; `depth` is
+/// how far inside those arguments the walk currently is.
 #[derive(Default)]
 struct AggregateScope {
     in_item: bool,
@@ -2780,6 +2784,40 @@ mod tests {
         check_src(
             &format!("{TABLE}let q = from t |> aggregate sum(min(a)) as v"),
             expect!["aggregate function `min` cannot be nested in another aggregate"],
+        );
+    }
+
+    #[test]
+    fn src_group_level_expressions_may_combine_keys() {
+        check_src(
+            &format!("{TABLE}let q = from t |> aggregate sum(a) as s, a + a as x group by a"),
+            expect![""],
+        );
+    }
+
+    #[test]
+    fn src_chained_aggregates_each_resolve_their_own_input() {
+        check_src(
+            &format!(
+                "{TABLE}let q = from t |> aggregate sum(a) as s group by active |> aggregate max(s) as m group by active"
+            ),
+            expect![""],
+        );
+    }
+
+    #[test]
+    fn src_aggregate_arguments_do_not_need_grouped_columns() {
+        check_src(
+            &format!("{TABLE}let q = from t |> aggregate sum(a + a) as s group by active"),
+            expect![""],
+        );
+    }
+
+    #[test]
+    fn src_every_group_level_column_must_be_a_key() {
+        check_src(
+            &format!("{TABLE}let q = from t |> aggregate a + 1 as x group by active"),
+            expect!["column `a` must be a group key or inside an aggregate function"],
         );
     }
 

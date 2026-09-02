@@ -1135,6 +1135,18 @@ mod tests {
     }
 
     #[test]
+    fn group_level_expressions_read_key_output_positions() {
+        check(
+            &format!("{TABLES}from t |> aggregate sum(a + b) as s, a + b as x group by a, b"),
+            expect![[r#"
+                select [#0, #1, #2 as s, add(#0, #1) as x]
+                  aggregate [sum(add(#0, #1))] group [#0, #1]
+                    from t
+            "#]],
+        );
+    }
+
+    #[test]
     fn repeated_measures_intern_to_one() {
         let (graph, _, errors) = convert(&format!(
             "{TABLES}from t |> aggregate max(a) - min(a) + max(a) as v group by b"
