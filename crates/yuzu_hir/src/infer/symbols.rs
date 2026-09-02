@@ -24,6 +24,7 @@ pub(crate) enum Binding {
         stmt: StmtId,
         ty: TypeId,
         is_agg: bool,
+        is_external: bool,
     },
     Ident {
         expr: ExprId,

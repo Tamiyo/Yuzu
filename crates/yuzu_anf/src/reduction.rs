@@ -111,14 +111,14 @@ impl AnfReducer<'_> {
     /// Carries an input node's source position over to the node that replaces
     /// it in the reduced program.
     fn bind_expr_origin(&mut self, id: ExprId, origin: ExprId) {
-        if let Some(&ptr) = self.source_map.expr(origin) {
-            self.source_map.bind_expr(id, ptr);
+        if let Some(span) = self.source_map.expr(origin) {
+            self.source_map.bind_expr(id, span);
         }
     }
 
     fn bind_stmt_origin(&mut self, id: StmtId, origin: StmtId) {
-        if let Some(&ptr) = self.source_map.stmt(origin) {
-            self.source_map.bind_stmt(id, ptr);
+        if let Some(span) = self.source_map.stmt(origin) {
+            self.source_map.bind_stmt(id, span);
         }
     }
 
@@ -147,7 +147,8 @@ impl AnfReducer<'_> {
             | Expr::MethodCall { ty, .. }
             | Expr::StructInit { ty, .. }
             | Expr::ListInit { ty, .. }
-            | Expr::AggCall { ty, .. } => ty,
+            | Expr::AggCall { ty, .. }
+            | Expr::ExternCall { ty, .. } => ty,
             Expr::Atom { .. } => unreachable!("bind_to_temp only binds computations"),
             Expr::Rel(_) => unreachable!("a query is a let value, never bound to a temp"),
         };
@@ -234,7 +235,6 @@ pub(crate) mod test_support {
             &mut types,
             &mut diagnostics,
             &hir_source_map,
-            source_id,
         );
 
         let messages: Vec<&str> = diagnostics
@@ -257,7 +257,6 @@ pub(crate) mod test_support {
             &mut interner,
             &mut diagnostics,
             &hir_source_map,
-            source_id,
         );
 
         let reduced = reduce(&anf_root, &mut anf, &mut interner, &mut anf_source_map);

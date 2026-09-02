@@ -1,6 +1,8 @@
 use yuzu_core::adt::{StringInterner, SymbolId};
 
 use crate::AnfCtx;
+use yuzu_types::AggFunc;
+
 use crate::{
     AggregateItem, Atom, AtomId, Const, Expr, ExprId, JoinCondition, Op, Rel, RelId, Root,
     SelectItem, Stmt, StmtId, Thunk,
@@ -119,7 +121,14 @@ impl AnfPrinter<'_> {
                 self.fmt_args(args, out);
             }
             Expr::AggCall { func, args, .. } => {
-                out.push_str(func.name());
+                match func {
+                    AggFunc::External(symbol) => out.push_str(self.text(*symbol)),
+                    _ => out.push_str(func.name()),
+                }
+                self.fmt_args(args, out);
+            }
+            Expr::ExternCall { name, args, .. } => {
+                out.push_str(self.text(name.name));
                 self.fmt_args(args, out);
             }
             Expr::FuncCall { callee, args, .. } => {

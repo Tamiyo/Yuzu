@@ -89,7 +89,8 @@ impl LivenessAnalysis for AnfReducer<'_> {
         match self.anf.expr(id) {
             Expr::Call { args, .. }
             | Expr::ListInit { elements: args, .. }
-            | Expr::AggCall { args, .. } => {
+            | Expr::AggCall { args, .. }
+            | Expr::ExternCall { args, .. } => {
                 for &arg in args.iter() {
                     self.atom_func_refs(arg, refs);
                 }

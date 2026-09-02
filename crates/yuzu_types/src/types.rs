@@ -157,6 +157,9 @@ pub enum AggFunc {
     Min,
     Max,
     Avg,
+    /// A user-declared `external agg fn`: the target provides it, so it has no
+    /// static name here — the symbol names it through the interner.
+    External(SymbolId),
 }
 
 impl AggFunc {
@@ -168,6 +171,7 @@ impl AggFunc {
             AggFunc::Min => "min",
             AggFunc::Max => "max",
             AggFunc::Avg => "avg",
+            AggFunc::External(_) => unreachable!("an external's name lives in the interner"),
         }
     }
 }
@@ -198,6 +202,9 @@ pub enum Func {
     Or,
     Not,
     In,
+    /// A user-declared `external fn`: the target provides it, so it has no
+    /// static name here — the symbol names it through the interner.
+    External(SymbolId),
 }
 
 impl Func {
@@ -222,6 +229,7 @@ impl Func {
             Func::Or => "or",
             Func::Not => "not",
             Func::In => "in",
+            Func::External(_) => unreachable!("an external's name lives in the interner"),
         }
     }
 }

@@ -46,6 +46,7 @@ pub enum Stmt {
         ret_type_annotation: TypeAnnotationId,
         body: Option<StmtId>,
         is_agg: bool,
+        is_external: bool,
     },
     Block {
         stmts: Box<[StmtId]>,

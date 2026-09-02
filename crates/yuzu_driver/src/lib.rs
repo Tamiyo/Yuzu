@@ -74,7 +74,6 @@ pub fn compile(name: &str, source: &str, options: &CompileOptions) {
         &mut types,
         &mut diagnostics,
         &source_map,
-        source_id,
     );
     phases.record("infer", start);
 
@@ -95,7 +94,6 @@ pub fn compile(name: &str, source: &str, options: &CompileOptions) {
             &mut interner,
             &mut diagnostics,
             &source_map,
-            source_id,
         );
         phases.record("anf", start);
         if options.debug_anf {
@@ -122,7 +120,6 @@ pub fn compile(name: &str, source: &str, options: &CompileOptions) {
                 &interner,
                 &anf_source_map,
                 &mut diagnostics,
-                source_id,
             );
             phases.record("plan", start);
             if let Some(graph) = graph {
@@ -134,7 +131,6 @@ pub fn compile(name: &str, source: &str, options: &CompileOptions) {
                         &anf,
                         &anf_source_map,
                         &mut diagnostics,
-                        source_id,
                     );
                 }
                 if options.debug_plan {
@@ -150,7 +146,6 @@ pub fn compile(name: &str, source: &str, options: &CompileOptions) {
                     &interner,
                     &anf_source_map,
                     &mut diagnostics,
-                    source_id,
                 );
                 phases.record("substrait", start);
                 if options.debug_substrait
@@ -239,7 +234,6 @@ pub fn compile_to_substrait(
         &mut types,
         &mut diagnostics,
         &source_map,
-        source_id,
     );
     if has_errors(&diagnostics) {
         return Err(render_diagnostics(&diagnostics, &sources));
@@ -255,7 +249,6 @@ pub fn compile_to_substrait(
         &mut interner,
         &mut diagnostics,
         &source_map,
-        source_id,
     );
     if options.debug_anf {
         println!("=== anf ===");
@@ -275,7 +268,6 @@ pub fn compile_to_substrait(
         &interner,
         &anf_source_map,
         &mut diagnostics,
-        source_id,
     );
     if options.debug_plan
         && let Some(graph) = &graph
@@ -293,7 +285,6 @@ pub fn compile_to_substrait(
             &anf,
             &anf_source_map,
             &mut diagnostics,
-            source_id,
         );
     }
     if has_errors(&diagnostics) {
@@ -308,7 +299,6 @@ pub fn compile_to_substrait(
             &interner,
             &anf_source_map,
             &mut diagnostics,
-            source_id,
         )
     });
     if has_errors(&diagnostics) {
@@ -335,7 +325,6 @@ fn build_plan(
     interner: &StringInterner,
     anf_source_map: &yuzu_anf::AnfSourceMap,
     diagnostics: &mut DiagnosticsEngine,
-    source_id: yuzu_diagnostics::source_map::SourceId,
 ) -> Option<yuzu_plan::RelGraph> {
     let (query, query_stmt) = yuzu_anf::find_query(reduced, anf)?;
     let mut converter = yuzu_plan::AnfToRelGraphConverter::new(
@@ -344,7 +333,6 @@ fn build_plan(
         interner,
         anf_source_map,
         diagnostics,
-        source_id,
         query_stmt,
     );
     converter.convert(query)
@@ -359,16 +347,11 @@ fn emit_plan(
     interner: &StringInterner,
     anf_source_map: &yuzu_anf::AnfSourceMap,
     diagnostics: &mut DiagnosticsEngine,
-    source_id: yuzu_diagnostics::source_map::SourceId,
 ) -> Option<yuzu_substrait::Plan> {
     let (_, query_stmt) = yuzu_anf::find_query(reduced, anf)?;
-    let query_span = yuzu_diagnostics::diagnostics::Span {
-        source_id,
-        range: anf_source_map
-            .stmt(query_stmt)
-            .expect("the query is in the source map")
-            .text_range(),
-    };
+    let query_span = anf_source_map
+        .stmt(query_stmt)
+        .expect("the query is in the source map");
     yuzu_substrait::emit(graph, types, interner, diagnostics, query_span)
 }
 
@@ -405,18 +388,13 @@ fn validate_plan(
     anf: &AnfCtx,
     anf_source_map: &yuzu_anf::AnfSourceMap,
     diagnostics: &mut DiagnosticsEngine,
-    source_id: yuzu_diagnostics::source_map::SourceId,
 ) {
     let Some((_, query_stmt)) = yuzu_anf::find_query(reduced, anf) else {
         return;
     };
-    let query_span = yuzu_diagnostics::diagnostics::Span {
-        source_id,
-        range: anf_source_map
-            .stmt(query_stmt)
-            .expect("the query is in the source map")
-            .text_range(),
-    };
+    let query_span = anf_source_map
+        .stmt(query_stmt)
+        .expect("the query is in the source map");
     yuzu_plan::validate(graph, target, diagnostics, query_span);
 }
 

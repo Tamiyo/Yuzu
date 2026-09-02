@@ -14,6 +14,13 @@ pub(crate) fn parse_stmt(p: &mut Parser) -> CompletedMarker {
     if p.at_contextual("agg") && p.peek_nth_kind(1) == Some(TokenKind::FnKw) {
         return parse_func_stmt(p);
     }
+    if p.at_contextual("external")
+        && (p.peek_nth_kind(1) == Some(TokenKind::FnKw)
+            || (p.peek_nth_kind(1) == Some(TokenKind::Identifier)
+                && p.peek_nth_kind(2) == Some(TokenKind::FnKw)))
+    {
+        return parse_func_stmt(p);
+    }
     if p.at(TokenKind::ImplKw) {
         return parse_impl_stmt(p);
     }
@@ -52,6 +59,9 @@ fn parse_block_stmt(p: &mut Parser) -> CompletedMarker {
 fn parse_func_stmt(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
 
+    if p.at_contextual("external") {
+        p.bump();
+    }
     if p.at_contextual("agg") {
         p.bump();
     }
@@ -94,7 +104,9 @@ fn parse_func_stmt(p: &mut Parser) -> CompletedMarker {
         }
     }
 
-    parse_block_stmt(p);
+    if p.at(TokenKind::LeftCurly) {
+        parse_block_stmt(p);
+    }
 
     p.complete(m, SyntaxKind::FuncStmt)
 }
@@ -298,6 +310,74 @@ mod tests {
 
     fn check(input: &str, expected: Expect) {
         test_support::check(input, parse_stmt, expected);
+    }
+
+    #[test]
+    fn parse_external_fn_stmt() {
+        test_support::check(
+            "external fn upper(s: str) -> str",
+            parse_stmt,
+            expect![[r#"
+                FuncStmt@0..32
+                  Identifier@0..8 "external"
+                  Space@8..9 " "
+                  FnKw@9..11 "fn"
+                  Space@11..12 " "
+                  Ident@12..17
+                    Identifier@12..17 "upper"
+                  LeftParen@17..18 "("
+                  FuncParam@18..24
+                    Ident@18..19
+                      Identifier@18..19 "s"
+                    Colon@19..20 ":"
+                    Space@20..21 " "
+                    NamedTypeAnnotation@21..24
+                      Ident@21..24
+                        Identifier@21..24 "str"
+                  RightParen@24..25 ")"
+                  Space@25..26 " "
+                  Arrow@26..28 "->"
+                  Space@28..29 " "
+                  NamedTypeAnnotation@29..32
+                    Ident@29..32
+                      Identifier@29..32 "str"
+            "#]],
+        );
+    }
+
+    #[test]
+    fn parse_external_agg_fn_stmt() {
+        test_support::check(
+            "external agg fn median(x: int64) -> float64",
+            parse_stmt,
+            expect![[r#"
+                FuncStmt@0..43
+                  Identifier@0..8 "external"
+                  Space@8..9 " "
+                  Identifier@9..12 "agg"
+                  Space@12..13 " "
+                  FnKw@13..15 "fn"
+                  Space@15..16 " "
+                  Ident@16..22
+                    Identifier@16..22 "median"
+                  LeftParen@22..23 "("
+                  FuncParam@23..31
+                    Ident@23..24
+                      Identifier@23..24 "x"
+                    Colon@24..25 ":"
+                    Space@25..26 " "
+                    NamedTypeAnnotation@26..31
+                      Ident@26..31
+                        Identifier@26..31 "int64"
+                  RightParen@31..32 ")"
+                  Space@32..33 " "
+                  Arrow@33..35 "->"
+                  Space@35..36 " "
+                  NamedTypeAnnotation@36..43
+                    Ident@36..43
+                      Identifier@36..43 "float64"
+            "#]],
+        );
     }
 
     #[test]

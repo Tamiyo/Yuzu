@@ -200,6 +200,21 @@ mod tests {
     }
 
     #[test]
+    fn extern_call_survives_with_folded_arguments() {
+        check(
+            &format!(
+                "{TABLE}external fn clamp(x: int32, low: int32) -> int32\nfrom t |> select clamp(a, 2 + 3) as v"
+            ),
+            expect![[r#"
+                struct Row { a, b }
+                table t
+                from t
+                  |> select clamp(a, 5i32) as v
+            "#]],
+        );
+    }
+
+    #[test]
     fn aggregate_folds_inside_measure_arguments() {
         check(
             &format!("{TABLE}from t |> aggregate sum(a * (1 + 1)) as v group by b"),

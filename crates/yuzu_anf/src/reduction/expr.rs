@@ -36,6 +36,11 @@ impl<'r> AnfReducer<'r> {
                 args: self.reduce_atoms(args, env, out),
                 ty: *ty,
             }),
+            Expr::ExternCall { name, args, ty } => Term::Expr(Expr::ExternCall {
+                name: *name,
+                args: self.reduce_atoms(args, env, out),
+                ty: *ty,
+            }),
         }
     }
 

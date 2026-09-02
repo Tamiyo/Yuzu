@@ -140,7 +140,10 @@ impl PlanPrinter<'_> {
     }
 
     fn fmt_measure(&self, measure: &Measure, out: &mut String) {
-        out.push_str(measure.func.name());
+        match measure.func {
+            yuzu_types::AggFunc::External(symbol) => out.push_str(self.text(symbol)),
+            _ => out.push_str(measure.func.name()),
+        }
         out.push('(');
         for (index, &arg) in measure.args.iter().enumerate() {
             if index > 0 {
@@ -176,7 +179,10 @@ impl PlanPrinter<'_> {
                 Const::String { value } => out.push_str(&format!("{:?}", self.text(*value))),
             },
             Expr::Call { func, args, .. } => {
-                out.push_str(func_name(*func));
+                match func {
+                    Func::External(symbol) => out.push_str(self.text(*symbol)),
+                    _ => out.push_str(func_name(*func)),
+                }
                 out.push('(');
                 for (index, &arg) in args.iter().enumerate() {
                     if index > 0 {
@@ -224,5 +230,6 @@ fn func_name(func: Func) -> &'static str {
         Func::Or => "or",
         Func::Not => "not",
         Func::In => "in",
+        Func::External(_) => unreachable!("an external's name lives in the interner"),
     }
 }

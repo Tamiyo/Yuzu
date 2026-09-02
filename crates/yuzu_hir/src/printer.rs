@@ -90,8 +90,16 @@ impl HirPrinter<'_> {
                 body,
                 ret_type_annotation,
                 is_agg,
+                is_external,
             } => {
-                let kind = if *is_agg { "Agg Func" } else { "Func" };
+                let mut kind = String::new();
+                if *is_external {
+                    kind.push_str("External ");
+                }
+                if *is_agg {
+                    kind.push_str("Agg ");
+                }
+                kind.push_str("Func");
                 line(out, depth, format!("{kind} {:?}", self.text(name)));
                 for type_param in type_params.iter() {
                     line(

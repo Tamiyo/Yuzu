@@ -55,7 +55,7 @@ impl<'l> HirLowerer<'l> {
         };
 
         let id = self.ctx.alloc_stmt(lowered);
-        self.source_map.bind_stmt(id, ptr);
+        self.source_map.bind_stmt(id, self.source_id, ptr);
         id
     }
 
@@ -69,7 +69,7 @@ impl<'l> HirLowerer<'l> {
         let id = self.ctx.alloc_stmt(Stmt::Block {
             stmts: stmts.into_boxed_slice(),
         });
-        self.source_map.bind_stmt(id, ptr);
+        self.source_map.bind_stmt(id, self.source_id, ptr);
         id
     }
 
@@ -166,7 +166,14 @@ impl<'l> HirLowerer<'l> {
         }
 
         let ret_type_annotation = self.lower_type_annotation_opt(stmt.result());
+        let is_external = stmt.is_external();
         let body = stmt.body().map(|block| self.lower_block_stmt(block));
+        if is_external && body.is_some() {
+            self.error(&stmt, "an external function cannot have a body");
+        }
+        if !is_external && body.is_none() {
+            self.error(&stmt, "function is missing its body");
+        }
 
         Stmt::Func {
             name,
@@ -176,6 +183,7 @@ impl<'l> HirLowerer<'l> {
             ret_type_annotation,
             body,
             is_agg: stmt.is_agg(),
+            is_external,
         }
     }
 
@@ -338,7 +346,7 @@ impl<'l> HirLowerer<'l> {
         };
 
         let id = self.ctx.alloc_annotation(lowered);
-        self.source_map.bind_annotation(id, ptr);
+        self.source_map.bind_annotation(id, self.source_id, ptr);
         id
     }
 
@@ -404,7 +412,7 @@ impl<'l> HirLowerer<'l> {
         };
 
         let id = self.ctx.alloc_expr(lowered);
-        self.source_map.bind_expr(id, ptr);
+        self.source_map.bind_expr(id, self.source_id, ptr);
         id
     }
 
@@ -598,7 +606,7 @@ impl<'l> HirLowerer<'l> {
         };
 
         let id = self.ctx.alloc_rel(lowered);
-        self.source_map.bind_rel(id, ptr);
+        self.source_map.bind_rel(id, self.source_id, ptr);
         id
     }
 
@@ -640,7 +648,7 @@ impl<'l> HirLowerer<'l> {
         let relation = self.lower_ident(relation);
         let alias = alias.map(|alias| self.lower_ident(alias));
         let id = self.ctx.alloc_rel(Rel::From { relation, alias });
-        self.source_map.bind_rel(id, ptr);
+        self.source_map.bind_rel(id, self.source_id, ptr);
         id
     }
 
@@ -1761,6 +1769,27 @@ mod tests {
                   offset:
                     Literal Int 5u64
         "#]],
+        );
+    }
+
+    #[test]
+    fn external_func_stmts() {
+        check(
+            "external fn upper(s: str) -> str\nexternal agg fn median(x: int64) -> float64",
+            expect![[r#"
+                External Func "upper"
+                  param "s":
+                    Named "str"
+                  ret:
+                    Named "str"
+                  body:
+                External Agg Func "median"
+                  param "x":
+                    Named "int64"
+                  ret:
+                    Named "float64"
+                  body:
+            "#]],
         );
     }
 

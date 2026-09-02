@@ -84,7 +84,7 @@ pub(crate) mod test_support {
     use expect_test::Expect;
     use yuzu_ast::ast::{AstNode, Root as AstRoot};
     use yuzu_core::adt::StringInterner;
-    use yuzu_diagnostics::diagnostics::{Span, engine::DiagnosticsEngine};
+    use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
     use yuzu_diagnostics::source_map::SourceMap;
     use yuzu_hir::HirCtx;
     use yuzu_lexer::lexer::{Lexer, Token};
@@ -123,7 +123,6 @@ pub(crate) mod test_support {
             &mut types,
             &mut diagnostics,
             &hir_source_map,
-            source_id,
         );
 
         let messages: Vec<&str> = diagnostics
@@ -146,7 +145,6 @@ pub(crate) mod test_support {
             &mut interner,
             &mut diagnostics,
             &hir_source_map,
-            source_id,
         );
         let reduced = yuzu_anf::reduce(&anf_root, &mut anf, &mut interner, &mut anf_source_map);
 
@@ -158,18 +156,13 @@ pub(crate) mod test_support {
                     &interner,
                     &anf_source_map,
                     &mut diagnostics,
-                    source_id,
                     query_stmt,
                 );
                 converter.convert(query)
             }?;
-            let query_span = Span {
-                source_id,
-                range: anf_source_map
-                    .stmt(query_stmt)
-                    .expect("the query is in the source map")
-                    .text_range(),
-            };
+            let query_span = anf_source_map
+                .stmt(query_stmt)
+                .expect("the query is in the source map");
             super::emit(&graph, &types, &interner, &mut diagnostics, query_span)
         });
 

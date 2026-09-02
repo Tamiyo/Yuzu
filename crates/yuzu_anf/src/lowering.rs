@@ -1,8 +1,5 @@
 use yuzu_core::adt::{Int, Signedness, StringInterner, SymbolId};
-use yuzu_diagnostics::{
-    diagnostics::{Span, builder::DiagnosticBuilder, engine::DiagnosticsEngine},
-    source_map::SourceId,
-};
+use yuzu_diagnostics::diagnostics::{builder::DiagnosticBuilder, engine::DiagnosticsEngine};
 use yuzu_hir::{self as hir, HirSourceMap, InferenceResult};
 use yuzu_types::{BuiltinFunc, Type, TypeCtx, TypeId};
 
@@ -26,7 +23,6 @@ pub fn lower(
     interner: &mut StringInterner,
     diagnostics: &mut DiagnosticsEngine,
     hir_source_map: &HirSourceMap,
-    source_id: SourceId,
 ) -> (Root, AnfSourceMap) {
     AnfLowerer {
         anf,
@@ -38,7 +34,6 @@ pub fn lower(
         symbols: SymbolTable::new(),
         interner,
         diagnostics,
-        source_id,
         pending: Vec::new(),
         temp: 0,
     }
@@ -55,7 +50,6 @@ struct AnfLowerer<'l> {
     diagnostics: &'l mut DiagnosticsEngine,
     hir_source_map: &'l HirSourceMap,
     source_map: AnfSourceMap,
-    source_id: SourceId,
     // Internal State
     pending: Vec<StmtId>,
     temp: usize,
@@ -115,8 +109,8 @@ impl AnfLowerer<'_> {
             hir::Stmt::Missing => None,
             hir::Stmt::Impl { .. } | hir::Stmt::Trait { .. } => todo!(),
         };
-        if let (Some(stmt), Some(&ptr)) = (lowered, self.hir_source_map.stmt(id)) {
-            self.source_map.bind_stmt(stmt, ptr);
+        if let (Some(stmt), Some(span)) = (lowered, self.hir_source_map.stmt(id)) {
+            self.source_map.bind_stmt(stmt, span);
         }
         lowered
     }
@@ -347,6 +341,13 @@ impl AnfLowerer<'_> {
                 ty: self.expr_ty(id),
             };
         }
+        if let Some(name) = self.types.extern_call(id) {
+            return Expr::ExternCall {
+                name: Ident { name },
+                args: args.iter().map(|&arg| self.force_atom(arg)).collect(),
+                ty: self.expr_ty(id),
+            };
+        }
 
         let callee = self.force_atom(callee);
         Expr::FuncCall {
@@ -363,6 +364,14 @@ impl AnfLowerer<'_> {
         method: SymbolId,
         args: &[hir::ExprId],
     ) -> Expr {
+        if let Some(name) = self.types.extern_call(id) {
+            return Expr::ExternCall {
+                name: Ident { name },
+                args: args.iter().map(|&arg| self.force_atom(arg)).collect(),
+                ty: self.expr_ty(id),
+            };
+        }
+
         let receiver = self.force_atom(receiver);
         Expr::MethodCall {
             receiver,
@@ -643,8 +652,8 @@ impl AnfLowerer<'_> {
                 let name = self.fresh_temp();
                 let binding = self.anf.alloc_binding(Binding { name, ty });
                 let let_stmt = self.anf.alloc_stmt(Stmt::Let { binding, expr });
-                if let Some(&ptr) = self.hir_source_map.expr(id) {
-                    self.source_map.bind_stmt(let_stmt, ptr);
+                if let Some(span) = self.hir_source_map.expr(id) {
+                    self.source_map.bind_stmt(let_stmt, span);
                 }
                 self.pending.push(let_stmt);
                 self.anf.intern_atom(Atom::Var { binding })
@@ -688,23 +697,17 @@ impl AnfLowerer<'_> {
     /// Allocate an ANF expression and record where it came from in the source.
     fn emit_expr(&mut self, origin: hir::ExprId, expr: Expr) -> ExprId {
         let id = self.anf.alloc_expr(expr);
-        if let Some(&ptr) = self.hir_source_map.expr(origin) {
-            self.source_map.bind_expr(id, ptr);
+        if let Some(span) = self.hir_source_map.expr(origin) {
+            self.source_map.bind_expr(id, span);
         }
         id
     }
 
     fn report_expr(&mut self, id: hir::ExprId, message: impl Into<String>) {
-        let range = self
+        let span = self
             .hir_source_map
             .expr(id)
-            .expect("a reported node is always in the source map")
-            .text_range();
-
-        let span = Span {
-            source_id: self.source_id,
-            range,
-        };
+            .expect("a reported node is always in the source map");
 
         self.diagnostics
             .emit(DiagnosticBuilder::error(span, message));
@@ -787,7 +790,6 @@ mod tests {
             &mut types,
             &mut diagnostics,
             &hir_source_map,
-            source_id,
         );
 
         let messages: Vec<&str> = diagnostics
@@ -810,7 +812,6 @@ mod tests {
             &mut interner,
             &mut diagnostics,
             &hir_source_map,
-            source_id,
         );
 
         expected.assert_eq(&dump(&anf, &interner, &anf_root));

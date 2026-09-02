@@ -155,6 +155,13 @@ pub enum Expr {
         args: Box<[AtomId]>,
         ty: TypeId,
     },
+    /// A call to an `external fn`: the target provides the body, so the call
+    /// reduces its arguments and survives to the plan by name.
+    ExternCall {
+        name: Ident,
+        args: Box<[AtomId]>,
+        ty: TypeId,
+    },
     Atom {
         value: AtomId,
     },

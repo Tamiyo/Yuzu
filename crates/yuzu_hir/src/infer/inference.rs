@@ -1,10 +1,7 @@
 use std::collections::HashSet;
 
 use yuzu_core::adt::StringInterner;
-use yuzu_diagnostics::{
-    diagnostics::{Span, builder::DiagnosticBuilder, engine::DiagnosticsEngine},
-    source_map::SourceId,
-};
+use yuzu_diagnostics::diagnostics::{builder::DiagnosticBuilder, engine::DiagnosticsEngine};
 use yuzu_types::{AggFunc, BuiltinFunc, Column, InferKind, SymbolId, Type, TypeCtx, TypeId};
 
 use crate::{
@@ -17,6 +14,21 @@ use crate::{
     },
 };
 
+/// Where inference stands relative to aggregation. `keys` are the grouping
+/// columns — what an item may still name at group level once the row has
+/// collapsed; `locals` are values computed at group level, which must not
+/// re-enter an aggregate's arguments; `depth` is how far inside those
+/// arguments the walk currently is.
+#[derive(Default)]
+struct AggregateScope {
+    in_item: bool,
+    depth: u32,
+    keys: Vec<u32>,
+    body: Option<StmtId>,
+    calls: u32,
+    locals: HashSet<SymbolId>,
+}
+
 pub(crate) struct TypeInferrer<'i> {
     hir: &'i HirCtx,
     registry: &'i dyn yuzu_types::Registry,
@@ -25,21 +37,7 @@ pub(crate) struct TypeInferrer<'i> {
     interner: &'i mut StringInterner,
     diagnostics: &'i mut DiagnosticsEngine,
     source_map: &'i HirSourceMap,
-    source_id: SourceId,
     agg: AggregateScope,
-}
-
-/// Where inference stands relative to `aggregate` items. Inside an item, a
-/// bare column at depth 0 sits at group level and must be a group key; inside
-/// an aggregate call's arguments (depth > 0) the input row is back in reach,
-/// and a further aggregate call is nesting.
-#[derive(Default)]
-struct AggregateScope {
-    in_item: bool,
-    depth: u32,
-    keys: Vec<u32>,
-    body: Option<StmtId>,
-    calls: u32,
 }
 
 impl<'i> TypeInferrer<'i> {
@@ -51,7 +49,6 @@ impl<'i> TypeInferrer<'i> {
         interner: &'i mut StringInterner,
         diagnostics: &'i mut DiagnosticsEngine,
         source_map: &'i HirSourceMap,
-        source_id: SourceId,
     ) -> Self {
         Self {
             hir,
@@ -61,7 +58,6 @@ impl<'i> TypeInferrer<'i> {
             interner,
             diagnostics,
             source_map,
-            source_id,
             agg: AggregateScope::default(),
         }
     }
@@ -107,10 +103,18 @@ impl<'i> TypeInferrer<'i> {
                 params,
                 ret_type_annotation,
                 is_agg,
+                is_external,
                 ..
             } = self.hir.stmt(stmt_id)
             {
-                self.register_func(stmt_id, name.symbol, params, *ret_type_annotation, *is_agg);
+                self.register_func(
+                    stmt_id,
+                    name.symbol,
+                    params,
+                    *ret_type_annotation,
+                    *is_agg,
+                    *is_external,
+                );
             }
         }
 
@@ -161,6 +165,7 @@ impl<'i> TypeInferrer<'i> {
             .collect()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn register_func(
         &mut self,
         stmt_id: StmtId,
@@ -168,6 +173,7 @@ impl<'i> TypeInferrer<'i> {
         params: &[FuncParam],
         ret_annotation: TypeAnnotationId,
         is_agg: bool,
+        is_external: bool,
     ) {
         let arg_tys: Vec<TypeId> = params
             .iter()
@@ -184,6 +190,7 @@ impl<'i> TypeInferrer<'i> {
                 stmt: stmt_id,
                 ty: func_ty,
                 is_agg,
+                is_external,
             },
         );
     }
@@ -198,8 +205,15 @@ impl<'i> TypeInferrer<'i> {
                 ret_type_annotation,
                 body,
                 is_agg,
+                is_external,
                 ..
-            } => self.infer_func_stmt(stmt_id, params, *ret_type_annotation, *body, *is_agg),
+            } => self.infer_func_stmt(
+                stmt_id,
+                params,
+                *ret_type_annotation,
+                *body,
+                *is_agg && !*is_external,
+            ),
             Stmt::Block { stmts } => self.infer_block_stmt(stmts),
             Stmt::Table { .. } | Stmt::InlineTable { .. } => {}
             Stmt::Let {
@@ -242,9 +256,11 @@ impl<'i> TypeInferrer<'i> {
             );
         }
 
-        // An `agg fn` body is checked as an aggregate item: aggregate calls
-        // are legal, and its parameters stand for per-row values, reachable
-        // only inside those calls' arguments.
+        // A function body is a group barrier: whatever aggregate context the
+        // declaration sits inside, the body starts clean. An `agg fn` body is
+        // then checked at group level — aggregate calls are legal, and its
+        // parameters stand for per-row values, reachable only inside those
+        // calls' arguments.
         let outer = std::mem::take(&mut self.agg);
         if is_agg {
             self.agg = AggregateScope {
@@ -274,6 +290,9 @@ impl<'i> TypeInferrer<'i> {
         type_annotation: Option<TypeAnnotationId>,
         expr: ExprId,
     ) {
+        if self.agg.in_item && self.agg.depth == 0 {
+            self.agg.locals.insert(name);
+        }
         let expr_ty_id = self.infer_expr(expr);
 
         let ty_id = if let Some(annotation) = type_annotation {
@@ -649,6 +668,7 @@ impl<'i> TypeInferrer<'i> {
         }
         self.agg.in_item = false;
         self.agg.keys.clear();
+        self.agg.locals.clear();
 
         if poisoned {
             return self.infer.types.error_ty();
@@ -915,15 +935,10 @@ impl<'i> TypeInferrer<'i> {
     }
 
     fn report_rel(&mut self, id: RelId, message: impl Into<String>) {
-        let range = self
+        let span = self
             .source_map
             .rel(id)
-            .expect("a reported node is always in the source map")
-            .text_range();
-        let span = Span {
-            source_id: self.source_id,
-            range,
-        };
+            .expect("a reported node is always in the source map");
         self.diagnostics
             .emit(DiagnosticBuilder::error(span, message));
     }
@@ -933,7 +948,11 @@ impl<'i> TypeInferrer<'i> {
             Expr::Ident { value } => self.infer_ident_expr(expr_id, value),
             Expr::Call { op, args } => self.infer_call_expr(expr_id, *op, args),
             Expr::FuncCall { callee, args } => self.infer_func_call_expr(expr_id, *callee, args),
-            Expr::MethodCall { .. } => todo!(),
+            Expr::MethodCall {
+                receiver,
+                method,
+                args,
+            } => self.infer_method_call_expr(expr_id, *receiver, *method, args),
             Expr::FieldAccess { base, field } => {
                 self.infer_field_access_expr(expr_id, *base, field.symbol)
             }
@@ -955,6 +974,13 @@ impl<'i> TypeInferrer<'i> {
     fn infer_ident_expr(&mut self, expr_id: ExprId, value: &Ident) -> TypeId {
         let name = value.symbol;
         if let Some(&binding) = self.symbols.lookup_symbol(name) {
+            if self.agg.depth > 0 && self.agg.locals.contains(&name) {
+                let message = format!(
+                    "`{}` is a group-level value and cannot be used inside an aggregate's arguments",
+                    self.interner.text(name)
+                );
+                return self.error_expr(expr_id, message);
+            }
             match binding {
                 Binding::Builtin { func } => {
                     let message = format!("`{}` is a function, not a value", func.name());
@@ -1100,8 +1126,13 @@ impl<'i> TypeInferrer<'i> {
         if let Some(func) = self.builtin_callee(callee) {
             return self.infer_builtin_call_expr(expr_id, func, args);
         }
-        if let Some((stmt, ty)) = self.agg_fn_callee(callee) {
-            return self.infer_agg_fn_call_expr(expr_id, callee, stmt, ty, args);
+        if let Some((name, stmt, ty, external)) = self.agg_fn_callee(callee) {
+            return self.infer_agg_fn_call_expr(expr_id, name, stmt, ty, args, external);
+        }
+        if let Some((name, ty)) = self.extern_callee(callee) {
+            let ty = self.check_call_signature(expr_id, ty, args);
+            self.infer.bind_extern_call(expr_id, name);
+            return ty;
         }
 
         let callee_ty = self.infer_expr(callee);
@@ -1163,7 +1194,70 @@ impl<'i> TypeInferrer<'i> {
         }
     }
 
-    fn agg_fn_callee(&mut self, callee: ExprId) -> Option<(StmtId, TypeId)> {
+    fn infer_method_call_expr(
+        &mut self,
+        expr_id: ExprId,
+        receiver: ExprId,
+        method: Ident,
+        args: &[ExprId],
+    ) -> TypeId {
+        let _ = (receiver, method);
+        for &arg in args {
+            self.infer_expr(arg);
+        }
+        self.error_expr(expr_id, "method calls are not supported yet")
+    }
+
+    /// Argument and arity checks against a resolved function type.
+    fn check_call_signature(
+        &mut self,
+        expr_id: ExprId,
+        callee_ty: TypeId,
+        args: &[ExprId],
+    ) -> TypeId {
+        let error_ty = self.infer.types.error_ty();
+        let resolved = self.infer.resolve(callee_ty);
+        let Type::Func(func) = self.infer.types.ty(resolved).clone() else {
+            for &arg in args {
+                self.infer_expr(arg);
+            }
+            if resolved == error_ty {
+                return self.infer.bind_expr_ty(expr_id, error_ty);
+            }
+            let message = format!("type `{:?}` is not callable", self.infer.types.ty(resolved));
+            return self.error_expr(expr_id, message);
+        };
+
+        for (index, &arg) in args.iter().enumerate() {
+            let arg_ty = self.infer_expr(arg);
+            let Some(&param_ty) = func.args.get(index) else {
+                continue;
+            };
+            if !self.is_assignable(arg, arg_ty, param_ty) {
+                let resolved_arg = self.infer.resolve(arg_ty);
+                let resolved_param = self.infer.resolve(param_ty);
+                let message = format!(
+                    "argument of type `{:?}` is not assignable to parameter of type `{:?}`",
+                    self.infer.types.ty(resolved_arg),
+                    self.infer.types.ty(resolved_param),
+                );
+                self.report_expr(arg, message);
+            }
+        }
+
+        if args.len() != func.args.len() {
+            let message = format!(
+                "expected {} argument(s), found {}",
+                func.args.len(),
+                args.len()
+            );
+            self.report_expr(expr_id, message);
+        }
+
+        self.infer.bind_expr_ty(expr_id, func.ret_type)
+    }
+
+    fn agg_fn_callee(&mut self, callee: ExprId) -> Option<(SymbolId, StmtId, TypeId, bool)> {
         let Expr::Ident { value } = self.hir.expr(callee) else {
             return None;
         };
@@ -1172,7 +1266,23 @@ impl<'i> TypeInferrer<'i> {
                 stmt,
                 ty,
                 is_agg: true,
-            }) => Some((stmt, ty)),
+                is_external,
+            }) => Some((value.symbol, stmt, ty, is_external)),
+            _ => None,
+        }
+    }
+
+    fn extern_callee(&mut self, callee: ExprId) -> Option<(SymbolId, TypeId)> {
+        let Expr::Ident { value } = self.hir.expr(callee) else {
+            return None;
+        };
+        match self.symbols.lookup_symbol(value.symbol) {
+            Some(&Binding::FuncStmt {
+                ty,
+                is_agg: false,
+                is_external: true,
+                ..
+            }) => Some((value.symbol, ty)),
             _ => None,
         }
     }
@@ -1184,15 +1294,14 @@ impl<'i> TypeInferrer<'i> {
     fn infer_agg_fn_call_expr(
         &mut self,
         expr_id: ExprId,
-        callee: ExprId,
+        name: SymbolId,
         stmt: StmtId,
         callee_ty: TypeId,
         args: &[ExprId],
+        external: bool,
     ) -> TypeId {
-        let name = match self.hir.expr(callee) {
-            Expr::Ident { value } => self.interner.text(value.symbol).to_string(),
-            _ => unreachable!("an aggregate function callee is an identifier"),
-        };
+        let symbol = name;
+        let name = self.interner.text(name).to_string();
         if !self.agg.in_item {
             let message =
                 format!("aggregate function `{name}` can only be used in an `aggregate` item");
@@ -1241,6 +1350,10 @@ impl<'i> TypeInferrer<'i> {
             self.report_expr(expr_id, message);
         }
 
+        if external {
+            self.infer
+                .bind_builtin_call(expr_id, BuiltinFunc::Aggregate(AggFunc::External(symbol)));
+        }
         self.infer.bind_expr_ty(expr_id, func.ret_type)
     }
 
@@ -1314,6 +1427,9 @@ impl<'i> TypeInferrer<'i> {
                 } else {
                     self.numeric_argument_error(expr_id, func, arg)
                 }
+            }
+            AggFunc::External(_) => {
+                unreachable!("an external aggregate checks against its declared signature")
             }
             AggFunc::Min | AggFunc::Max | AggFunc::Avg => {
                 let arg = self.infer.resolve(args[0]);
@@ -1611,32 +1727,20 @@ impl<'i> TypeInferrer<'i> {
     }
 
     fn report_stmt(&mut self, id: StmtId, message: impl Into<String>) {
-        let range = self
+        let span = self
             .source_map
             .stmt(id)
-            .expect("a reported node is always in the source map")
-            .text_range();
-
-        let span = Span {
-            source_id: self.source_id,
-            range,
-        };
+            .expect("a reported node is always in the source map");
 
         self.diagnostics
             .emit(DiagnosticBuilder::error(span, message));
     }
 
     fn report_expr(&mut self, id: ExprId, message: impl Into<String>) {
-        let range = self
+        let span = self
             .source_map
             .expr(id)
-            .expect("a reported node is always in the source map")
-            .text_range();
-
-        let span = Span {
-            source_id: self.source_id,
-            range,
-        };
+            .expect("a reported node is always in the source map");
         self.diagnostics
             .emit(DiagnosticBuilder::error(span, message));
     }
@@ -1647,16 +1751,10 @@ impl<'i> TypeInferrer<'i> {
     }
 
     fn report_annotation(&mut self, id: TypeAnnotationId, message: impl Into<String>) {
-        let range = self
+        let span = self
             .source_map
             .annotation(id)
-            .expect("a reported node is always in the source map")
-            .text_range();
-
-        let span = Span {
-            source_id: self.source_id,
-            range,
-        };
+            .expect("a reported node is always in the source map");
         self.diagnostics
             .emit(DiagnosticBuilder::error(span, message));
     }
@@ -1819,6 +1917,7 @@ mod tests {
             ret_type_annotation: ret_ann,
             body: Some(body),
             is_agg: false,
+            is_external: false,
         });
 
         Root {
@@ -2587,6 +2686,43 @@ mod tests {
         );
     }
 
+    const EXTERNALS: &str =
+        "external fn upper(s: str) -> str\nexternal agg fn median(x: int64) -> float64\n";
+
+    #[test]
+    fn src_external_scalar_calls_anywhere() {
+        check_src(
+            &format!("{TABLE}{EXTERNALS}let q = from t |> where upper(\"a\") == \"A\" |> select a"),
+            expect![""],
+        );
+    }
+
+    #[test]
+    fn src_external_agg_in_an_aggregate() {
+        check_src(
+            &format!(
+                "{TABLE}{EXTERNALS}let q = from t |> aggregate median(a) as m group by active"
+            ),
+            expect![""],
+        );
+    }
+
+    #[test]
+    fn src_external_agg_outside_an_aggregate() {
+        check_src(
+            &format!("{TABLE}{EXTERNALS}let q = from t |> select median(a) as m"),
+            expect!["aggregate function `median` can only be used in an `aggregate` item"],
+        );
+    }
+
+    #[test]
+    fn src_external_signature_still_checks() {
+        check_src(
+            &format!("{TABLE}{EXTERNALS}let q = from t |> select upper(a) as u"),
+            expect!["argument of type `Int64` is not assignable to parameter of type `String`"],
+        );
+    }
+
     #[test]
     fn src_aggregate_bare_call() {
         check_src(
@@ -2740,6 +2876,16 @@ mod tests {
                 "{TABLE}agg fn spread(x: int64) -> int64 {{ return max(x) - min(x) }}\nlet q = from t |> aggregate sum(spread(a)) as v"
             ),
             expect!["aggregate function `spread` cannot be nested in another aggregate"],
+        );
+    }
+
+    #[test]
+    fn src_group_value_cannot_reenter_an_aggregate() {
+        check_src(
+            &format!("{TABLE}agg fn sneaky(x: int64) -> int64 {{ let m = max(x) return sum(m) }}"),
+            expect![
+                "`m` is a group-level value and cannot be used inside an aggregate's arguments"
+            ],
         );
     }
 

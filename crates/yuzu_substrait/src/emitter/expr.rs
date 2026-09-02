@@ -73,9 +73,17 @@ impl GraphEmitter<'_> {
         args: &[ExprId],
         ty: yuzu_types::TypeId,
     ) -> Result<Expression, Unsupported> {
-        let Some((urn, base)) = function_target(func) else {
-            let message = format!("`{}` has no Substrait mapping yet", func.symbol());
-            return Err(self.unsupported_query(message));
+        let (urn, base) = if let Func::External(symbol) = func {
+            (
+                crate::emitter::extensions::EXTERNAL_URN,
+                self.interner.text(symbol).to_string(),
+            )
+        } else {
+            let Some((urn, base)) = function_target(func) else {
+                let message = format!("`{}` has no Substrait mapping yet", func.symbol());
+                return Err(self.unsupported_query(message));
+            };
+            (urn, base.to_string())
         };
 
         let signature: Vec<&str> = args

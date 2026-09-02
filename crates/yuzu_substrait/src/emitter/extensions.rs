@@ -9,6 +9,7 @@ const ARITHMETIC_URN: &str = "extension:io.substrait:functions_arithmetic";
 pub(crate) const COMPARISON_URN: &str = "extension:io.substrait:functions_comparison";
 pub(crate) const BOOLEAN_URN: &str = "extension:io.substrait:functions_boolean";
 const AGGREGATE_GENERIC_URN: &str = "extension:io.substrait:functions_aggregate_generic";
+pub(crate) const EXTERNAL_URN: &str = "extension:io.yuzu:external";
 
 /// Map a plan function to its Substrait extension function. Membership is
 /// handled separately (`SingularOrList`); a function with no Substrait
@@ -31,7 +32,7 @@ pub(crate) fn function_target(func: Func) -> Option<(&'static str, &'static str)
         Func::And => (BOOLEAN_URN, "and"),
         Func::Or => (BOOLEAN_URN, "or"),
         Func::Not => (BOOLEAN_URN, "not"),
-        Func::Power | Func::In => return None,
+        Func::Power | Func::In | Func::External(_) => return None,
     };
     Some(target)
 }
@@ -45,6 +46,7 @@ pub(crate) fn aggregate_target(func: AggFunc) -> (&'static str, &'static str) {
         AggFunc::Min => (ARITHMETIC_URN, "min"),
         AggFunc::Max => (ARITHMETIC_URN, "max"),
         AggFunc::Avg => (ARITHMETIC_URN, "avg"),
+        AggFunc::External(_) => unreachable!("an external maps through the interner"),
     }
 }
 

@@ -1,10 +1,7 @@
 use std::collections::HashMap;
 
 use yuzu_core::adt::{Signedness, StringInterner, SymbolId};
-use yuzu_diagnostics::{
-    diagnostics::{Span, builder::DiagnosticBuilder, engine::DiagnosticsEngine},
-    source_map::SourceId,
-};
+use yuzu_diagnostics::diagnostics::{Span, builder::DiagnosticBuilder, engine::DiagnosticsEngine};
 use yuzu_types::{Column, Type, TypeCtx, TypeId};
 
 use crate::graph::{RelGraph, RelGraphConverter};
@@ -28,7 +25,6 @@ pub struct AnfToRelGraphConverter<'g> {
     interner: &'g StringInterner,
     source_map: &'g yuzu_anf::AnfSourceMap,
     diagnostics: &'g mut DiagnosticsEngine,
-    source_id: SourceId,
     query_stmt: yuzu_anf::StmtId,
     graph: RelGraph,
     agg: Option<AggState>,
@@ -54,7 +50,6 @@ impl<'g> AnfToRelGraphConverter<'g> {
         interner: &'g StringInterner,
         source_map: &'g yuzu_anf::AnfSourceMap,
         diagnostics: &'g mut DiagnosticsEngine,
-        source_id: SourceId,
         query_stmt: yuzu_anf::StmtId,
     ) -> Self {
         Self {
@@ -63,7 +58,6 @@ impl<'g> AnfToRelGraphConverter<'g> {
             interner,
             source_map,
             diagnostics,
-            source_id,
             query_stmt,
             graph: RelGraph::new(),
             agg: None,
@@ -383,6 +377,17 @@ impl<'g> AnfToRelGraphConverter<'g> {
                 let column = (state.keys.len() + index) as u32;
                 Ok(self.graph.intern_expr(Expr::Column { column, ty }))
             }
+            yuzu_anf::Expr::ExternCall { name, args, ty } => {
+                let args = args
+                    .iter()
+                    .map(|&arg| self.convert_atom(arg, defs))
+                    .collect::<Result<_, _>>()?;
+                Ok(self.graph.intern_expr(Expr::Call {
+                    func: Func::External(name.name),
+                    args,
+                    ty,
+                }))
+            }
             yuzu_anf::Expr::FuncCall { callee, .. } => {
                 let message = match *self.anf.atom(callee) {
                     yuzu_anf::Atom::FuncRef { binding, .. } => format!(
@@ -583,33 +588,19 @@ impl<'g> AnfToRelGraphConverter<'g> {
     }
 
     fn unsupported(&mut self, expr: yuzu_anf::ExprId, message: impl Into<String>) -> Unsupported {
-        let range = self
+        let span = self
             .source_map
             .expr(expr)
-            .expect("a reported node is always in the source map")
-            .text_range();
-        self.report(
-            Span {
-                source_id: self.source_id,
-                range,
-            },
-            message,
-        )
+            .expect("a reported node is always in the source map");
+        self.report(span, message)
     }
 
     fn unsupported_query(&mut self, message: impl Into<String>) -> Unsupported {
-        let range = self
+        let span = self
             .source_map
             .stmt(self.query_stmt)
-            .expect("a reported node is always in the source map")
-            .text_range();
-        self.report(
-            Span {
-                source_id: self.source_id,
-                range,
-            },
-            message,
-        )
+            .expect("a reported node is always in the source map");
+        self.report(span, message)
     }
 
     fn report(&mut self, span: Span, message: impl Into<String>) -> Unsupported {
@@ -717,7 +708,6 @@ mod tests {
             &mut types,
             &mut diagnostics,
             &hir_source_map,
-            source_id,
         );
 
         let messages: Vec<&str> = diagnostics
@@ -740,7 +730,6 @@ mod tests {
             &mut interner,
             &mut diagnostics,
             &hir_source_map,
-            source_id,
         );
         let reduced = yuzu_anf::reduce(&anf_root, &mut anf, &mut interner, &mut anf_source_map);
 
@@ -763,7 +752,6 @@ mod tests {
             &interner,
             &anf_source_map,
             &mut diagnostics,
-            source_id,
             query_stmt,
         );
         let graph = converter.convert(query);
@@ -1218,6 +1206,20 @@ mod tests {
             "datafusion",
         );
         assert!(errors.is_empty(), "{errors:?}");
+    }
+
+    #[test]
+    fn extern_calls_become_external_plan_calls() {
+        check(
+            &format!(
+                "{TABLES}external fn clamp(x: int32, low: int32) -> int32\nexternal agg fn median(x: int32) -> float64\nfrom t |> aggregate median(a) as m group by b |> select m, clamp(b, 1) as c"
+            ),
+            expect![[r#"
+                select [#1, clamp(#0, 1i32) as c]
+                  aggregate [median(#0)] group [#1]
+                    from t
+            "#]],
+        );
     }
 
     #[test]

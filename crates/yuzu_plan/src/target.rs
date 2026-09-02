@@ -98,6 +98,8 @@ impl TargetRegistry for DataFusionTarget {
             // DataFusion registers no `shift_left`/`shift_right`, and `**` has
             // no Substrait mapping yet.
             Func::ShiftLeft | Func::ShiftRight | Func::Power => Support::No,
+            // An external declaration is the user's promise the target has it.
+            Func::External(_) => Support::Yes,
             _ => Support::Yes,
         }
     }

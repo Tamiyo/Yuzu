@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use yuzu_core::adt::StringInterner;
-use yuzu_diagnostics::{diagnostics::engine::DiagnosticsEngine, source_map::SourceId};
+use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
 use yuzu_types::{BuiltinFunc, InferKind, TypeCtx, TypeId, TypeUnifier};
 
 use crate::{ExprId, HirCtx, HirSourceMap, RelId, Root, StmtId};
@@ -23,18 +23,9 @@ pub fn infer<'i>(
     types: &'i mut TypeCtx,
     diagnostics: &'i mut DiagnosticsEngine,
     source_map: &'i HirSourceMap,
-    source_id: SourceId,
 ) -> InferenceResult {
-    let mut ctx = TypeInferrer::new(
-        hir,
-        registry,
-        types,
-        interner,
-        diagnostics,
-        source_map,
-        source_id,
-    )
-    .run(root);
+    let mut ctx =
+        TypeInferrer::new(hir, registry, types, interner, diagnostics, source_map).run(root);
     ctx.concretize();
     ctx.finish()
 }
@@ -46,6 +37,7 @@ pub struct InferenceResult {
     columns: HashMap<ExprId, u32>,
     builtin_calls: HashMap<ExprId, BuiltinFunc>,
     group_keys: HashMap<RelId, Box<[u32]>>,
+    extern_calls: HashMap<ExprId, yuzu_core::adt::SymbolId>,
     stmt_types: HashMap<StmtId, TypeId>,
     adjustments: HashMap<ExprId, TypeId>,
 }
@@ -69,6 +61,11 @@ impl InferenceResult {
     /// one. `None` for everything else.
     pub fn builtin_call(&self, id: ExprId) -> Option<BuiltinFunc> {
         self.builtin_calls.get(&id).copied()
+    }
+
+    /// The external function a call resolved to, carried by name to the plan.
+    pub fn extern_call(&self, id: ExprId) -> Option<yuzu_core::adt::SymbolId> {
+        self.extern_calls.get(&id).copied()
     }
 
     /// The input-row position of each of an `aggregate` stage's group keys,
@@ -146,6 +143,10 @@ impl<'i> InferCtx<'i> {
         self.result.builtin_calls.insert(id, func);
     }
 
+    fn bind_extern_call(&mut self, id: ExprId, name: yuzu_core::adt::SymbolId) {
+        self.result.extern_calls.insert(id, name);
+    }
+
     fn bind_group_keys(&mut self, id: RelId, keys: &[u32]) {
         self.result.group_keys.insert(id, keys.into());
     }
@@ -182,7 +183,7 @@ pub(crate) mod test_support {
         let mut diagnostics = DiagnosticsEngine::new();
         let source_map = HirSourceMap::default();
         let mut sources = SourceMap::new();
-        let source_id = sources.add("test".into(), String::new());
+        sources.add("test".into(), String::new());
 
         super::infer(
             &root,
@@ -192,7 +193,6 @@ pub(crate) mod test_support {
             &mut types,
             &mut diagnostics,
             &source_map,
-            source_id,
         );
 
         let rendered = diagnostics
@@ -243,7 +243,6 @@ pub(crate) mod test_support {
             &mut types,
             &mut diagnostics,
             &source_map,
-            source_id,
         );
 
         let rendered = diagnostics

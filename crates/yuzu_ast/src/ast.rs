@@ -302,14 +302,23 @@ impl ImplStmt {
 
 ast_node!(FuncStmt);
 impl FuncStmt {
-    /// The `agg` marker is a bare token before `fn`; the function's name sits
-    /// inside an `Ident` node, so a direct identifier token can only be it.
+    /// The `agg`/`external` markers are bare tokens before `fn`; the
+    /// function's name sits inside an `Ident` node, so a direct identifier
+    /// token can only be a marker.
     pub fn is_agg(&self) -> bool {
         self.syntax()
             .children_with_tokens()
             .filter_map(SyntaxElement::into_token)
             .take_while(|token| token.kind() != SyntaxKind::FnKw)
             .any(|token| token.kind() == SyntaxKind::Identifier && token.text() == "agg")
+    }
+
+    pub fn is_external(&self) -> bool {
+        self.syntax()
+            .children_with_tokens()
+            .filter_map(SyntaxElement::into_token)
+            .take_while(|token| token.kind() != SyntaxKind::FnKw)
+            .any(|token| token.kind() == SyntaxKind::Identifier && token.text() == "external")
     }
 
     pub fn name(&self) -> Option<Ident> {
