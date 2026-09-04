@@ -17,6 +17,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   locales \
   pkg-config \
   protobuf-compiler \
+  libzstd-dev \
+  zlib1g-dev \
   python3-dev \
   python3-pip \
   python3-venv \
@@ -25,6 +27,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   wget \
   zsh \
   && locale-gen en_US.UTF-8 \
+  && rm -rf /var/lib/apt/lists/*
+
+# LLVM/MLIR 22 from apt.llvm.org — the dialect library (yuzu_ir_sys) and the
+# melior bindings build against this exact major version; the pin lives in
+# .cargo/config.toml as MLIR_SYS_220_PREFIX / TABLEGEN_220_PREFIX.
+RUN wget -qO /etc/apt/trusted.gpg.d/apt-llvm-org.asc https://apt.llvm.org/llvm-snapshot.gpg.key \
+  && echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-22 main" > /etc/apt/sources.list.d/llvm-22.list \
+  && apt-get update && apt-get install -y --no-install-recommends \
+  clang-22 \
+  libmlir-22-dev \
+  libpolly-22-dev \
+  llvm-22-dev \
+  llvm-22-tools \
+  mlir-22-tools \
   && rm -rf /var/lib/apt/lists/*
 
 # Starship prompt (matches the host setup).

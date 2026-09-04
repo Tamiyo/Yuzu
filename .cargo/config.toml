@@ -1,3 +1,8 @@
 [alias]
 # The Python end-to-end suite: rebuilds the wheel, then runs pytest.
 e2e = "test -p yuzu_python --test e2e -- --ignored --nocapture"
+
+# Where mlir-sys and the tblgen crate find the pinned LLVM/MLIR toolchain.
+[env]
+MLIR_SYS_220_PREFIX = "/usr/lib/llvm-22"
+TABLEGEN_220_PREFIX = "/usr/lib/llvm-22"

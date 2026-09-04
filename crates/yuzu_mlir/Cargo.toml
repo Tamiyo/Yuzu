@@ -1,0 +1,11 @@
+[package]
+name = "yuzu_mlir"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+melior = "0.27.6"
+yuzu_ir_sys = { path = "../yuzu_ir_sys" }
+
+[dev-dependencies]
+expect-test = "1.5.0"

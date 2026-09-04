@@ -1,0 +1,11 @@
+[package]
+name = "yuzu_ir_sys"
+version = "0.0.0"
+edition = "2024"
+links = "yuzu_ir"
+
+[dependencies]
+mlir-sys = "220"
+
+[build-dependencies]
+cc = "1"
