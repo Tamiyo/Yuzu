@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use yuzu_core::adt::SymbolId;
 use yuzu_types::TypeId;
@@ -19,7 +19,7 @@ pub(crate) struct SymbolTable {
 
 #[derive(Default)]
 struct Scope {
-    symbols: HashMap<SymbolId, Symbol>,
+    symbols: FxHashMap<SymbolId, Symbol>,
 }
 
 impl SymbolTable {

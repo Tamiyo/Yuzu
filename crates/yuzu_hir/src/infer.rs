@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use yuzu_core::adt::StringInterner;
 use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
 use yuzu_types::{BuiltinFunc, InferKind, TypeCtx, TypeId, TypeUnifier};
@@ -32,55 +30,84 @@ pub fn infer<'i>(
 
 #[derive(Default)]
 pub struct InferenceResult {
-    expr_types: HashMap<ExprId, TypeId>,
-    rel_types: HashMap<RelId, TypeId>,
-    columns: HashMap<ExprId, u32>,
-    builtin_calls: HashMap<ExprId, BuiltinFunc>,
-    group_keys: HashMap<RelId, Box<[u32]>>,
-    extern_calls: HashMap<ExprId, yuzu_core::adt::SymbolId>,
-    stmt_types: HashMap<StmtId, TypeId>,
-    adjustments: HashMap<ExprId, TypeId>,
+    expr_types: Table<TypeId>,
+    rel_types: Table<TypeId>,
+    columns: Table<u32>,
+    builtin_calls: Table<BuiltinFunc>,
+    group_keys: Table<Box<[u32]>>,
+    extern_calls: Table<yuzu_core::adt::SymbolId>,
+    stmt_types: Table<TypeId>,
+    adjustments: Table<TypeId>,
+}
+
+/// A side table indexed by arena position — ids are dense, so a vector beats
+/// hashing every node.
+struct Table<T>(Vec<Option<T>>);
+
+impl<T> Default for Table<T> {
+    fn default() -> Self {
+        Self(Vec::new())
+    }
+}
+
+impl<T> Table<T> {
+    fn set(&mut self, index: usize, value: T) {
+        if self.0.len() <= index {
+            self.0.resize_with(index + 1, || None);
+        }
+        self.0[index] = Some(value);
+    }
+
+    fn get(&self, index: usize) -> Option<&T> {
+        self.0.get(index).and_then(Option::as_ref)
+    }
+}
+
+impl<T: Copy> Table<T> {
+    fn copied(&self, index: usize) -> Option<T> {
+        self.get(index).copied()
+    }
 }
 
 impl InferenceResult {
     pub fn expr_ty(&self, id: ExprId) -> Option<TypeId> {
-        self.expr_types.get(&id).copied()
+        self.expr_types.copied(id.index())
     }
 
     pub fn rel_ty(&self, id: RelId) -> Option<TypeId> {
-        self.rel_types.get(&id).copied()
+        self.rel_types.copied(id.index())
     }
 
     /// Which column of its stage's row an expression reads, for the expressions
     /// that are column references. `None` for everything else.
     pub fn column(&self, id: ExprId) -> Option<u32> {
-        self.columns.get(&id).copied()
+        self.columns.copied(id.index())
     }
 
     /// Which builtin a call expression invokes, for the calls that resolved to
     /// one. `None` for everything else.
     pub fn builtin_call(&self, id: ExprId) -> Option<BuiltinFunc> {
-        self.builtin_calls.get(&id).copied()
+        self.builtin_calls.copied(id.index())
     }
 
     /// The external function a call resolved to, carried by name to the plan.
     pub fn extern_call(&self, id: ExprId) -> Option<yuzu_core::adt::SymbolId> {
-        self.extern_calls.get(&id).copied()
+        self.extern_calls.copied(id.index())
     }
 
     /// The input-row position of each of an `aggregate` stage's group keys,
     /// in declaration order.
     pub fn group_keys(&self, id: RelId) -> Option<&[u32]> {
-        self.group_keys.get(&id).map(|keys| &**keys)
+        self.group_keys.get(id.index()).map(|keys| &**keys)
     }
 
     /// The declared type of a declaration statement (struct, table, or func).
     pub fn stmt_ty(&self, id: StmtId) -> Option<TypeId> {
-        self.stmt_types.get(&id).copied()
+        self.stmt_types.copied(id.index())
     }
 
     pub fn adjustment(&self, id: ExprId) -> Option<TypeId> {
-        self.adjustments.get(&id).copied()
+        self.adjustments.copied(id.index())
     }
 }
 
@@ -131,33 +158,33 @@ impl<'i> InferCtx<'i> {
     }
 
     fn bind_expr_ty(&mut self, id: ExprId, ty: TypeId) -> TypeId {
-        self.result.expr_types.insert(id, ty);
+        self.result.expr_types.set(id.index(), ty);
         ty
     }
 
     fn bind_column(&mut self, id: ExprId, column: u32) {
-        self.result.columns.insert(id, column);
+        self.result.columns.set(id.index(), column);
     }
 
     fn bind_builtin_call(&mut self, id: ExprId, func: BuiltinFunc) {
-        self.result.builtin_calls.insert(id, func);
+        self.result.builtin_calls.set(id.index(), func);
     }
 
     fn bind_extern_call(&mut self, id: ExprId, name: yuzu_core::adt::SymbolId) {
-        self.result.extern_calls.insert(id, name);
+        self.result.extern_calls.set(id.index(), name);
     }
 
     fn bind_group_keys(&mut self, id: RelId, keys: &[u32]) {
-        self.result.group_keys.insert(id, keys.into());
+        self.result.group_keys.set(id.index(), keys.into());
     }
 
     fn bind_rel_ty(&mut self, id: RelId, ty: TypeId) -> TypeId {
-        self.result.rel_types.insert(id, ty);
+        self.result.rel_types.set(id.index(), ty);
         ty
     }
 
     fn bind_stmt_ty(&mut self, id: StmtId, ty: TypeId) -> TypeId {
-        self.result.stmt_types.insert(id, ty);
+        self.result.stmt_types.set(id.index(), ty);
         ty
     }
 }

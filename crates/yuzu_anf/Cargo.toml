@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 id-arena = "2.3.0"
+rustc-hash = "2"
 string-interner = "0.20.0"
 
 yuzu_anf_derive = { path = "../yuzu_anf_derive" }

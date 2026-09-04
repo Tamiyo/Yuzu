@@ -1,6 +1,5 @@
-use std::collections::HashMap;
-
 use id_arena::Arena;
+use rustc_hash::FxHashMap;
 
 mod anf;
 mod lowering;
@@ -33,7 +32,7 @@ pub struct AnfCtx {
     rels: Arena<Rel>,
     atoms: Arena<Atom>,
     bindings: Arena<Binding>,
-    interned: HashMap<Atom, AtomId>,
+    interned: FxHashMap<Atom, AtomId>,
 }
 
 impl AnfCtx {

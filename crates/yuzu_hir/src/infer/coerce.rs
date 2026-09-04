@@ -35,7 +35,7 @@ impl InferCtx<'_> {
     }
 
     fn record_adjustment(&mut self, expr: ExprId, target: TypeId) {
-        self.result.adjustments.insert(expr, target);
+        self.result.adjustments.set(expr.index(), target);
     }
 }
 
