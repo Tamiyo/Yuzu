@@ -44,6 +44,7 @@ pub fn compile(name: &str, source: &str, options: &CompileOptions) {
     let start = Instant::now();
     let syntax = yuzu_parser::parse(&tokens, &mut diagnostics, source_id);
     phases.record("parse", start);
+    drop(tokens);
     if options.debug_ast {
         println!("=== syntax ===\n{syntax:#?}");
     }
@@ -96,6 +97,10 @@ pub fn compile(name: &str, source: &str, options: &CompileOptions) {
             &source_map,
         );
         phases.record("anf", start);
+        drop(root);
+        drop(hir);
+        drop(source_map);
+        drop(inference);
         if options.debug_anf {
             println!("=== anf ===");
             print!("{}", yuzu_anf::dump(&anf, &interner, &anf_root));
@@ -113,40 +118,31 @@ pub fn compile(name: &str, source: &str, options: &CompileOptions) {
                 print!("{}", yuzu_anf::dump(&anf, &interner, &reduced));
             }
             let start = Instant::now();
-            let graph = build_plan(
-                &reduced,
-                &anf,
-                &mut types,
-                &interner,
-                &anf_source_map,
-                &mut diagnostics,
-            );
+            let query = find_query_span(&reduced, &anf, &anf_source_map);
+            let graph = query.as_ref().and_then(|query| {
+                build_plan(
+                    query,
+                    &anf,
+                    &mut types,
+                    &interner,
+                    &anf_source_map,
+                    &mut diagnostics,
+                )
+            });
             phases.record("plan", start);
-            if let Some(graph) = graph {
+            drop(anf_source_map);
+            drop(anf);
+            if let (Some(graph), Some(query)) = (graph, query) {
                 if let Some(target) = parse_target(options, &mut diagnostics, source_id) {
-                    validate_plan(
-                        &graph,
-                        &target,
-                        &reduced,
-                        &anf,
-                        &anf_source_map,
-                        &mut diagnostics,
-                    );
+                    yuzu_plan::validate(&graph, &target, &mut diagnostics, query.span);
                 }
                 if options.debug_plan {
                     println!("=== plan ===");
                     print!("{}", yuzu_plan::dump(&graph, &interner));
                 }
                 let start = Instant::now();
-                let plan = emit_plan(
-                    &graph,
-                    &reduced,
-                    &anf,
-                    &types,
-                    &interner,
-                    &anf_source_map,
-                    &mut diagnostics,
-                );
+                let plan =
+                    yuzu_substrait::emit(&graph, &types, &interner, &mut diagnostics, query.span);
                 phases.record("substrait", start);
                 if options.debug_substrait
                     && let Some(plan) = plan
@@ -250,6 +246,10 @@ pub fn compile_to_substrait(
         &mut diagnostics,
         &source_map,
     );
+    drop(root);
+    drop(hir);
+    drop(source_map);
+    drop(inference);
     if options.debug_anf {
         println!("=== anf ===");
         print!("{}", yuzu_anf::dump(&anf, &interner, &anf_root));
@@ -261,46 +261,40 @@ pub fn compile_to_substrait(
         print!("{}", yuzu_anf::dump(&anf, &interner, &reduced));
     }
 
-    let graph = build_plan(
-        &reduced,
-        &anf,
-        &mut types,
-        &interner,
-        &anf_source_map,
-        &mut diagnostics,
-    );
+    let query = find_query_span(&reduced, &anf, &anf_source_map);
+    let graph = query.as_ref().and_then(|query| {
+        build_plan(
+            query,
+            &anf,
+            &mut types,
+            &interner,
+            &anf_source_map,
+            &mut diagnostics,
+        )
+    });
+    drop(anf_source_map);
+    drop(anf);
     if options.debug_plan
         && let Some(graph) = &graph
     {
         println!("=== plan ===");
         print!("{}", yuzu_plan::dump(graph, &interner));
     }
-    if let (Some(graph), Some(target)) =
-        (&graph, parse_target(options, &mut diagnostics, source_id))
-    {
-        validate_plan(
-            graph,
-            &target,
-            &reduced,
-            &anf,
-            &anf_source_map,
-            &mut diagnostics,
-        );
+    if let (Some(graph), Some(query), Some(target)) = (
+        &graph,
+        &query,
+        parse_target(options, &mut diagnostics, source_id),
+    ) {
+        yuzu_plan::validate(graph, &target, &mut diagnostics, query.span);
     }
     if has_errors(&diagnostics) {
         return Err(render_diagnostics(&diagnostics, &sources));
     }
-    let plan = graph.as_ref().and_then(|graph| {
-        emit_plan(
-            graph,
-            &reduced,
-            &anf,
-            &types,
-            &interner,
-            &anf_source_map,
-            &mut diagnostics,
-        )
-    });
+    let plan = if let (Some(graph), Some(query)) = (&graph, &query) {
+        yuzu_substrait::emit(graph, &types, &interner, &mut diagnostics, query.span)
+    } else {
+        None
+    };
     if has_errors(&diagnostics) {
         return Err(render_diagnostics(&diagnostics, &sources));
     }
@@ -315,44 +309,45 @@ pub fn compile_to_substrait(
     Ok(yuzu_substrait::to_protobuf(&plan))
 }
 
-/// Converts the reduced program's query into the plan graph — `None` if there
-/// is no query, or if it contains something a plan cannot express.
-#[allow(clippy::too_many_arguments)]
-fn build_plan(
+/// The program's query with its location, resolved once so later phases can
+/// outlive the ANF it was found in.
+struct Query {
+    rel: yuzu_anf::RelId,
+    stmt: yuzu_anf::StmtId,
+    span: yuzu_diagnostics::diagnostics::Span,
+}
+
+fn find_query_span(
     reduced: &yuzu_anf::Root,
+    anf: &AnfCtx,
+    anf_source_map: &yuzu_anf::AnfSourceMap,
+) -> Option<Query> {
+    let (rel, stmt) = yuzu_anf::find_query(reduced, anf)?;
+    let span = anf_source_map
+        .stmt(stmt)
+        .expect("the query is in the source map");
+    Some(Query { rel, stmt, span })
+}
+
+/// Converts the query into the plan graph — `None` if it contains something a
+/// plan cannot express.
+fn build_plan(
+    query: &Query,
     anf: &AnfCtx,
     types: &mut TypeCtx,
     interner: &StringInterner,
     anf_source_map: &yuzu_anf::AnfSourceMap,
     diagnostics: &mut DiagnosticsEngine,
 ) -> Option<yuzu_plan::RelGraph> {
-    let (query, query_stmt) = yuzu_anf::find_query(reduced, anf)?;
     let mut converter = yuzu_plan::AnfToRelGraphConverter::new(
         anf,
         types,
         interner,
         anf_source_map,
         diagnostics,
-        query_stmt,
+        query.stmt,
     );
-    converter.convert(query)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn emit_plan(
-    graph: &yuzu_plan::RelGraph,
-    reduced: &yuzu_anf::Root,
-    anf: &AnfCtx,
-    types: &TypeCtx,
-    interner: &StringInterner,
-    anf_source_map: &yuzu_anf::AnfSourceMap,
-    diagnostics: &mut DiagnosticsEngine,
-) -> Option<yuzu_substrait::Plan> {
-    let (_, query_stmt) = yuzu_anf::find_query(reduced, anf)?;
-    let query_span = anf_source_map
-        .stmt(query_stmt)
-        .expect("the query is in the source map");
-    yuzu_substrait::emit(graph, types, interner, diagnostics, query_span)
+    converter.convert(query.rel)
 }
 
 fn parse_target(
@@ -379,23 +374,6 @@ fn parse_target(
             None
         }
     }
-}
-
-fn validate_plan(
-    graph: &yuzu_plan::RelGraph,
-    target: &yuzu_plan::Target,
-    reduced: &yuzu_anf::Root,
-    anf: &AnfCtx,
-    anf_source_map: &yuzu_anf::AnfSourceMap,
-    diagnostics: &mut DiagnosticsEngine,
-) {
-    let Some((_, query_stmt)) = yuzu_anf::find_query(reduced, anf) else {
-        return;
-    };
-    let query_span = anf_source_map
-        .stmt(query_stmt)
-        .expect("the query is in the source map");
-    yuzu_plan::validate(graph, target, diagnostics, query_span);
 }
 
 fn render_diagnostics(diagnostics: &DiagnosticsEngine, sources: &SourceMap) -> String {
