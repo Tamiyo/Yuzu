@@ -14,23 +14,39 @@ use crate::{
     },
 };
 
-/// Where inference stands relative to aggregation.
-///
-/// `keys` are the grouping columns as positions in the aggregate's *input*
-/// row — the same space every column reference resolves to while the items
-/// are inferred, so "may this column appear at group level" is containment,
-/// with no index translation. (Key positions in the *output* row are the
-/// converter's business, not inference's.) `locals` are values computed at
-/// group level, which must not re-enter an aggregate's arguments; `depth` is
-/// how far inside those arguments the walk currently is.
+/// Where inference stands relative to aggregation. `None` grouping means the
+/// walk is in ordinary row code and every aggregate rule is idle.
 #[derive(Default)]
 struct AggregateScope {
-    in_item: bool,
-    depth: u32,
-    keys: Vec<u32>,
-    body: Option<StmtId>,
-    calls: u32,
-    locals: HashSet<SymbolId>,
+    grouping: Option<Grouping>,
+    /// Inside an aggregate call's arguments, where the walk is back in row
+    /// context: columns need no key, and group-level values may not appear.
+    in_arguments: bool,
+    /// Whether any aggregate call appeared — an `agg fn` body without one is
+    /// a mismarked function.
+    saw_aggregate: bool,
+    /// Names `let`-bound at group level. Their values are per-group, so a
+    /// reference inside an aggregate's arguments would smuggle a group value
+    /// back into row context.
+    group_locals: HashSet<SymbolId>,
+}
+
+/// What is being aggregated over.
+enum Grouping {
+    /// The items of one `aggregate` stage: `input` is the row it collapses,
+    /// and `keys` are the columns of that row surviving to group level.
+    Stage { keys: Vec<ScopeKey> },
+    /// An `agg fn` body: grouped by nothing until a call site provides keys.
+    /// `stmt` is the declaration, so a call back to it is recognizable.
+    FnBody { stmt: StmtId },
+}
+
+/// A grouping column: its position in the stage's input row — the space every
+/// column reference resolves to while the items are inferred — and its name
+/// for diagnostics.
+struct ScopeKey {
+    name: SymbolId,
+    column: u32,
 }
 
 pub(crate) struct TypeInferrer<'i> {
@@ -267,16 +283,12 @@ impl<'i> TypeInferrer<'i> {
         // calls' arguments.
         let outer = std::mem::take(&mut self.agg);
         if is_agg {
-            self.agg = AggregateScope {
-                in_item: true,
-                body: Some(stmt_id),
-                ..AggregateScope::default()
-            };
+            self.agg.grouping = Some(Grouping::FnBody { stmt: stmt_id });
         }
         if let Some(body) = body {
             self.infer_stmt(body);
         }
-        if is_agg && self.agg.calls == 0 {
+        if is_agg && !self.agg.saw_aggregate {
             self.report_stmt(
                 stmt_id,
                 "an `agg fn` must use an aggregate function".to_string(),
@@ -294,8 +306,8 @@ impl<'i> TypeInferrer<'i> {
         type_annotation: Option<TypeAnnotationId>,
         expr: ExprId,
     ) {
-        if self.agg.in_item && self.agg.depth == 0 {
-            self.agg.locals.insert(name);
+        if self.agg.grouping.is_some() && !self.agg.in_arguments {
+            self.agg.group_locals.insert(name);
         }
         let expr_ty_id = self.infer_expr(expr);
 
@@ -661,8 +673,16 @@ impl<'i> TypeInferrer<'i> {
         }
 
         self.infer.bind_group_keys(id, &key_positions);
-        self.agg.in_item = true;
-        self.agg.keys = key_positions;
+        self.agg.grouping = Some(Grouping::Stage {
+            keys: key_columns
+                .iter()
+                .zip(&key_positions)
+                .map(|(column, &position)| ScopeKey {
+                    name: column.name,
+                    column: position,
+                })
+                .collect(),
+        });
         let mut columns = key_columns;
         let mut anonymous = 0;
         for item in items {
@@ -670,9 +690,8 @@ impl<'i> TypeInferrer<'i> {
             let name = self.resolve_column_name(item.expr, item.alias, &mut anonymous);
             columns.push(Column::new(None, name, ty));
         }
-        self.agg.in_item = false;
-        self.agg.keys.clear();
-        self.agg.locals.clear();
+        self.agg.grouping = None;
+        self.agg.group_locals.clear();
 
         if poisoned {
             return self.infer.types.error_ty();
@@ -978,7 +997,7 @@ impl<'i> TypeInferrer<'i> {
     fn infer_ident_expr(&mut self, expr_id: ExprId, value: &Ident) -> TypeId {
         let name = value.symbol;
         if let Some(&binding) = self.symbols.lookup_symbol(name) {
-            if self.agg.depth > 0 && self.agg.locals.contains(&name) {
+            if self.agg.in_arguments && self.agg.group_locals.contains(&name) {
                 let message = format!(
                     "`{}` is a group-level value and cannot be used inside an aggregate's arguments",
                     self.interner.text(name)
@@ -998,7 +1017,8 @@ impl<'i> TypeInferrer<'i> {
                     return self.error_expr(expr_id, message);
                 }
                 Binding::Param { .. }
-                    if self.agg.in_item && self.agg.depth == 0 && self.agg.body.is_some() =>
+                    if matches!(self.agg.grouping, Some(Grouping::FnBody { .. }))
+                        && !self.agg.in_arguments =>
                 {
                     let message = format!(
                         "parameter `{}` can only be used inside an aggregate function's arguments",
@@ -1064,13 +1084,28 @@ impl<'i> TypeInferrer<'i> {
     /// Inside an `aggregate` item at group level, the input row is gone: a
     /// column is only reachable as a group key or through an aggregate call.
     fn check_group_position(&mut self, expr_id: ExprId, name: SymbolId, column: u32) {
-        if !self.agg.in_item || self.agg.depth > 0 || self.agg.keys.contains(&column) {
+        let Some(Grouping::Stage { keys }) = &self.agg.grouping else {
+            return;
+        };
+        if self.agg.in_arguments || keys.iter().any(|key| key.column == column) {
             return;
         }
-        let message = format!(
-            "column `{}` must be a group key or inside an aggregate function",
-            self.interner.text(name)
-        );
+        let keys = keys
+            .iter()
+            .map(|key| format!("`{}`", self.interner.text(key.name)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let message = if keys.is_empty() {
+            format!(
+                "column `{}` must be inside an aggregate function; nothing is grouped",
+                self.interner.text(name)
+            )
+        } else {
+            format!(
+                "column `{}` must be one of the group keys ({keys}) or inside an aggregate function",
+                self.interner.text(name)
+            )
+        };
         self.report_expr(expr_id, message);
     }
 
@@ -1306,17 +1341,17 @@ impl<'i> TypeInferrer<'i> {
     ) -> TypeId {
         let symbol = name;
         let name = self.interner.text(name).to_string();
-        if !self.agg.in_item {
+        if self.agg.grouping.is_none() {
             let message =
                 format!("aggregate function `{name}` can only be used in an `aggregate` item");
             return self.error_expr(expr_id, message);
         }
-        if self.agg.depth > 0 {
+        if self.agg.in_arguments {
             let message =
                 format!("aggregate function `{name}` cannot be nested in another aggregate");
             return self.error_expr(expr_id, message);
         }
-        if self.agg.body == Some(stmt) {
+        if matches!(self.agg.grouping, Some(Grouping::FnBody { stmt: body }) if body == stmt) {
             let message = format!("`{name}` is an `agg fn` and cannot call itself");
             return self.error_expr(expr_id, message);
         }
@@ -1325,8 +1360,8 @@ impl<'i> TypeInferrer<'i> {
             unreachable!("a registered function has a function type")
         };
 
-        self.agg.calls += 1;
-        self.agg.depth += 1;
+        self.agg.saw_aggregate = true;
+        self.agg.in_arguments = true;
         for (index, &arg) in args.iter().enumerate() {
             let arg_ty = self.infer_expr(arg);
             let Some(&param_ty) = func.args.get(index) else {
@@ -1343,7 +1378,7 @@ impl<'i> TypeInferrer<'i> {
                 self.report_expr(arg, message);
             }
         }
-        self.agg.depth -= 1;
+        self.agg.in_arguments = false;
 
         if args.len() != func.args.len() {
             let message = format!(
@@ -1374,14 +1409,14 @@ impl<'i> TypeInferrer<'i> {
 
         match func {
             BuiltinFunc::Aggregate(agg) => {
-                if !self.agg.in_item {
+                if self.agg.grouping.is_none() {
                     let message = format!(
                         "aggregate function `{}` can only be used in an `aggregate` item",
                         func.name()
                     );
                     return self.error_expr(expr_id, message);
                 }
-                if self.agg.depth > 0 {
+                if self.agg.in_arguments {
                     let message = format!(
                         "aggregate function `{}` cannot be nested in another aggregate",
                         func.name()
@@ -1389,10 +1424,10 @@ impl<'i> TypeInferrer<'i> {
                     return self.error_expr(expr_id, message);
                 }
 
-                self.agg.calls += 1;
-                self.agg.depth += 1;
+                self.agg.saw_aggregate = true;
+                self.agg.in_arguments = true;
                 let arg_tys: Vec<TypeId> = args.iter().map(|&arg| self.infer_expr(arg)).collect();
-                self.agg.depth -= 1;
+                self.agg.in_arguments = false;
 
                 if args.len() < entry.min_args || args.len() > entry.max_args {
                     let expected = if entry.min_args == entry.max_args {
@@ -2817,7 +2852,9 @@ mod tests {
     fn src_every_group_level_column_must_be_a_key() {
         check_src(
             &format!("{TABLE}let q = from t |> aggregate a + 1 as x group by active"),
-            expect!["column `a` must be a group key or inside an aggregate function"],
+            expect![
+                "column `a` must be one of the group keys (`active`) or inside an aggregate function"
+            ],
         );
     }
 
@@ -2825,7 +2862,9 @@ mod tests {
     fn src_aggregate_non_key_column_at_group_level() {
         check_src(
             &format!("{TABLE}let q = from t |> aggregate a + count() as v group by active"),
-            expect!["column `a` must be a group key or inside an aggregate function"],
+            expect![
+                "column `a` must be one of the group keys (`active`) or inside an aggregate function"
+            ],
         );
     }
 
