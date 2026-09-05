@@ -7,34 +7,40 @@ fn main() {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let tblgen = llvm.join("bin/mlir-tblgen");
     let include = llvm.join("include");
-    let td = "cpp/YzirDialect.td";
 
     let generators = [
-        ("--gen-dialect-decls", "YzirDialect.h.inc"),
-        ("--gen-dialect-defs", "YzirDialect.cpp.inc"),
-        ("--gen-typedef-decls", "YzirTypes.h.inc"),
-        ("--gen-typedef-defs", "YzirTypes.cpp.inc"),
-        ("--gen-op-decls", "YzirOps.h.inc"),
-        ("--gen-op-defs", "YzirOps.cpp.inc"),
+        ("--gen-dialect-decls", "Dialect.h.inc"),
+        ("--gen-dialect-defs", "Dialect.cpp.inc"),
+        ("--gen-typedef-decls", "Types.h.inc"),
+        ("--gen-typedef-defs", "Types.cpp.inc"),
+        ("--gen-op-decls", "Ops.h.inc"),
+        ("--gen-op-defs", "Ops.cpp.inc"),
     ];
-    for (flag, file) in generators {
-        let status = Command::new(&tblgen)
-            .arg(flag)
-            .arg(td)
-            .arg("-I")
-            .arg(&include)
-            .arg("-o")
-            .arg(out.join(file))
-            .status()
-            .expect("mlir-tblgen runs");
-        assert!(status.success(), "mlir-tblgen {flag} failed");
+    for dialect in ["Yzir", "Yzl", "Yzr"] {
+        for (flag, suffix) in generators {
+            let status = Command::new(&tblgen)
+                .arg(flag)
+                .arg(format!("cpp/{dialect}Dialect.td"))
+                .arg("-I")
+                .arg(&include)
+                .arg("-o")
+                .arg(out.join(format!("{dialect}{suffix}")))
+                .status()
+                .expect("mlir-tblgen runs");
+            assert!(status.success(), "mlir-tblgen {flag} failed for {dialect}");
+        }
     }
 
     cc::Build::new()
         .cpp(true)
         .std("c++20")
         .compiler(llvm.join("bin/clang++"))
-        .files(["cpp/YzirDialect.cpp", "cpp/Register.cpp"])
+        .files([
+            "cpp/YzirDialect.cpp",
+            "cpp/YzlDialect.cpp",
+            "cpp/YzrDialect.cpp",
+            "cpp/Register.cpp",
+        ])
         .include(&out)
         .include("cpp")
         .include(&include)

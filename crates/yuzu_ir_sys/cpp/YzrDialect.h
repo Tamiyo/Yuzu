@@ -1,0 +1,15 @@
+#pragma once
+
+#include "mlir/Bytecode/BytecodeOpInterface.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Dialect.h"
+#include "mlir/IR/OpDefinition.h"
+#include "mlir/IR/OpImplementation.h"
+
+#include "YzrDialect.h.inc"
+
+#define GET_TYPEDEF_CLASSES
+#include "YzrTypes.h.inc"
+
+#define GET_OP_CLASSES
+#include "YzrOps.h.inc"

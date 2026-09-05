@@ -10,6 +10,7 @@ def Yzir_Dialect : Dialect {
   let summary = "Yuzu's core calculus: scalars, functions, folds";
   let cppNamespace = "::yuzu::yzir";
   let useDefaultTypePrinterParser = 1;
+  let hasConstantMaterializer = 1;
 }
 
 class Yzir_Type<string name, string typeMnemonic> : TypeDef<Yzir_Dialect, name> {
@@ -35,11 +36,12 @@ def Yzir_StrType : Yzir_Type<"Str", "str"> {
 class Yzir_Op<string mnemonic, list<Trait> traits = []>
     : Op<Yzir_Dialect, mnemonic, traits>;
 
-def Yzir_ConstOp : Yzir_Op<"const", [Pure]> {
+def Yzir_ConstOp : Yzir_Op<"const", [ConstantLike, Pure]> {
   let summary = "integer literal";
   let arguments = (ins I64Attr:$value);
   let results = (outs Yzir_Int64Type:$result);
   let assemblyFormat = "$value attr-dict";
+  let hasFolder = 1;
 }
 
 def Yzir_AddOp : Yzir_Op<"add", [Pure]> {
@@ -47,6 +49,7 @@ def Yzir_AddOp : Yzir_Op<"add", [Pure]> {
   let arguments = (ins Yzir_Int64Type:$lhs, Yzir_Int64Type:$rhs);
   let results = (outs Yzir_Int64Type:$sum);
   let assemblyFormat = "$lhs `,` $rhs attr-dict";
+  let hasFolder = 1;
 }
 
 def Yzir_MulOp : Yzir_Op<"mul", [Pure]> {
@@ -54,6 +57,7 @@ def Yzir_MulOp : Yzir_Op<"mul", [Pure]> {
   let arguments = (ins Yzir_Int64Type:$lhs, Yzir_Int64Type:$rhs);
   let results = (outs Yzir_Int64Type:$product);
   let assemblyFormat = "$lhs `,` $rhs attr-dict";
+  let hasFolder = 1;
 }
 
 #endif // YZIR_DIALECT_TD
