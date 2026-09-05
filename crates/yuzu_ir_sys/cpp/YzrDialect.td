@@ -40,7 +40,6 @@ def Yzr_FilterOp : Yzr_Op<"filter", [SameOperandsAndResultType]> {
   let results = (outs Yzr_RelType:$result);
   let regions = (region SizedRegion<1>:$body);
   let assemblyFormat = "$input `:` type($input) $body attr-dict";
-  let hasVerifier = 1;
 }
 
 def Yzr_ProjectOp : Yzr_Op<"project"> {
@@ -49,7 +48,6 @@ def Yzr_ProjectOp : Yzr_Op<"project"> {
   let results = (outs Yzr_RelType:$result);
   let regions = (region SizedRegion<1>:$body);
   let assemblyFormat = "$input $body `:` type($input) `->` type($result) attr-dict";
-  let hasVerifier = 1;
 }
 
 def Yzr_ExtendOp : Yzr_Op<"extend"> {
@@ -58,7 +56,6 @@ def Yzr_ExtendOp : Yzr_Op<"extend"> {
   let results = (outs Yzr_RelType:$result);
   let regions = (region SizedRegion<1>:$body);
   let assemblyFormat = "$input $body `:` type($input) `->` type($result) attr-dict";
-  let hasVerifier = 1;
 }
 
 def Yzr_LimitOp : Yzr_Op<"limit", [SameOperandsAndResultType]> {
@@ -79,7 +76,6 @@ def Yzr_AggregateOp : Yzr_Op<"aggregate"> {
   let results = (outs Yzr_RelType:$result);
   let regions = (region SizedRegion<1>:$body);
   let assemblyFormat = "$input `keys` $keys $body `:` type($input) `->` type($result) attr-dict";
-  let hasVerifier = 1;
 }
 
 def Yzr_AggOp : Yzr_Op<"agg"> {

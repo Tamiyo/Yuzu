@@ -115,7 +115,6 @@ def Yz_CmpOp : Yz_Op<"cmp", [Pure]> {
   let arguments = (ins StrAttr:$predicate, Yz_Int64Type:$lhs, Yz_Int64Type:$rhs);
   let results = (outs Yz_BoolType:$result);
   let assemblyFormat = "$predicate `,` $lhs `,` $rhs attr-dict";
-  let hasVerifier = 1;
   let hasFolder = 1;
 }
 

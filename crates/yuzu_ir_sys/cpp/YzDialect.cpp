@@ -101,15 +101,6 @@ mlir::OpFoldResult NegOp::fold(FoldAdaptor adaptor) {
   return mlir::IntegerAttr::get(value.getType(), -value.getInt());
 }
 
-static const llvm::StringRef cmpPredicates[] = {"eq", "ne", "lt",
-                                                "le", "gt", "ge"};
-
-mlir::LogicalResult CmpOp::verify() {
-  if (llvm::is_contained(cmpPredicates, getPredicate()))
-    return mlir::success();
-  return emitOpError("expects a predicate in {eq, ne, lt, le, gt, ge}");
-}
-
 mlir::OpFoldResult CmpOp::fold(FoldAdaptor adaptor) {
   auto lhs = llvm::dyn_cast_if_present<mlir::IntegerAttr>(adaptor.getLhs());
   auto rhs = llvm::dyn_cast_if_present<mlir::IntegerAttr>(adaptor.getRhs());
