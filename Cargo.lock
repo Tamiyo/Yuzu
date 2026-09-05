@@ -2166,7 +2166,6 @@ dependencies = [
  "expect-test",
  "melior",
  "melior-macro",
- "mlir-sys",
  "yuzu_ir_sys",
 ]
 

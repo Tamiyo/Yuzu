@@ -1,6 +1,5 @@
 use melior::Context;
 
-pub mod legality;
 pub mod ods;
 
 /// A context with every Yuzu dialect registered and loaded.
@@ -329,33 +328,6 @@ module {
             }
         "#]]
         .assert_eq(&module.as_operation().to_string());
-    }
-
-    #[test]
-    fn the_legality_pass_rejects_an_unsupported_op() {
-        let context = super::context();
-        let source = r#"
-module {
-  %0 = yz.const 2
-  %1 = yz.mul %0, %0
-}
-"#;
-
-        let mut module = parse(&context, source).unwrap();
-        let pass_manager = melior::pass::PassManager::new(&context);
-        pass_manager.add_pass(crate::legality::create(vec!["yz.mul".to_string()]));
-        assert!(
-            pass_manager.run(&mut module).is_err(),
-            "a target without mul must reject the plan"
-        );
-
-        let mut module = parse(&context, source).unwrap();
-        let pass_manager = melior::pass::PassManager::new(&context);
-        pass_manager.add_pass(crate::legality::create(vec!["yz.shift_left".to_string()]));
-        assert!(
-            pass_manager.run(&mut module).is_ok(),
-            "a target that supports everything present must accept the plan"
-        );
     }
 
     #[test]
