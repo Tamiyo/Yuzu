@@ -3,6 +3,7 @@
 
 include "mlir/IR/OpBase.td"
 include "mlir/IR/AttrTypeBase.td"
+include "mlir/Interfaces/InferTypeOpInterface.td"
 
 def Yzr_Dialect : Dialect {
   let name = "yzr";
@@ -16,11 +17,56 @@ class Yzr_Type<string name, string typeMnemonic> : TypeDef<Yzr_Dialect, name> {
 }
 
 def Yzr_RelType : Yzr_Type<"Rel", "rel"> {
-  let summary = "a relation flowing between stages";
+  let summary = "a relation: named, typed columns";
+  let parameters = (ins
+      ArrayRefParameter<"::mlir::StringAttr">:$names,
+      ArrayRefParameter<"::mlir::Type">:$types);
+  let hasCustomAssemblyFormat = 1;
 }
 
 class Yzr_Op<string mnemonic, list<Trait> traits = []>
     : Op<Yzr_Dialect, mnemonic, traits>;
+
+def Yzr_TableOp : Yzr_Op<"table"> {
+  let summary = "scan a declared table";
+  let arguments = (ins FlatSymbolRefAttr:$name);
+  let results = (outs Yzr_RelType:$result);
+  let assemblyFormat = "$name attr-dict `:` type($result)";
+}
+
+def Yzr_FilterOp : Yzr_Op<"filter", [SameOperandsAndResultType]> {
+  let summary = "keep the rows whose predicate holds";
+  let arguments = (ins Yzr_RelType:$input);
+  let results = (outs Yzr_RelType:$result);
+  let regions = (region SizedRegion<1>:$body);
+  let assemblyFormat = "$input `:` type($input) $body attr-dict";
+  let hasVerifier = 1;
+}
+
+def Yzr_ProjectOp : Yzr_Op<"project"> {
+  let summary = "replace the row with the yielded values";
+  let arguments = (ins Yzr_RelType:$input);
+  let results = (outs Yzr_RelType:$result);
+  let regions = (region SizedRegion<1>:$body);
+  let assemblyFormat = "$input $body `:` type($input) `->` type($result) attr-dict";
+  let hasVerifier = 1;
+}
+
+def Yzr_ExtendOp : Yzr_Op<"extend"> {
+  let summary = "append the yielded values as new columns";
+  let arguments = (ins Yzr_RelType:$input);
+  let results = (outs Yzr_RelType:$result);
+  let regions = (region SizedRegion<1>:$body);
+  let assemblyFormat = "$input $body `:` type($input) `->` type($result) attr-dict";
+  let hasVerifier = 1;
+}
+
+def Yzr_LimitOp : Yzr_Op<"limit", [SameOperandsAndResultType]> {
+  let summary = "keep at most the first count rows";
+  let arguments = (ins Yzr_RelType:$input, I64Attr:$count);
+  let results = (outs Yzr_RelType:$result);
+  let assemblyFormat = "$input `,` $count `:` type($input) attr-dict";
+}
 
 def Yzr_AggregateOp : Yzr_Op<"aggregate"> {
   let summary = "group the input relation and compute measures";
@@ -32,7 +78,7 @@ def Yzr_AggregateOp : Yzr_Op<"aggregate"> {
   let arguments = (ins Yzr_RelType:$input, DenseI64ArrayAttr:$keys);
   let results = (outs Yzr_RelType:$result);
   let regions = (region SizedRegion<1>:$body);
-  let assemblyFormat = "$input `keys` $keys $body attr-dict";
+  let assemblyFormat = "$input `keys` $keys $body `:` type($input) `->` type($result) attr-dict";
   let hasVerifier = 1;
 }
 
@@ -43,7 +89,9 @@ def Yzr_AggOp : Yzr_Op<"agg"> {
   let assemblyFormat = "$fn `,` $value `:` type($value) `->` type($result) attr-dict";
 }
 
-def Yzr_YieldOp : Yzr_Op<"yield", [Terminator, HasParent<"AggregateOp">]> {
+def Yzr_YieldOp : Yzr_Op<"yield",
+    [Terminator,
+     ParentOneOf<["AggregateOp", "FilterOp", "ProjectOp", "ExtendOp"]>]> {
   let summary = "the values a stage's region produces";
   let arguments = (ins Variadic<AnyType>:$values);
   let assemblyFormat = "attr-dict ($values^ `:` type($values))?";

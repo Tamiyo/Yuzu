@@ -17,17 +17,32 @@ mod tests {
         operation::{OperationBuilder, OperationLike},
     };
 
+    fn parse<'c>(context: &'c super::Context, source: &str) -> Option<Module<'c>> {
+        Module::parse(context, source)
+    }
+
     #[test]
     fn parses_and_prints_yz_ops() {
         let context = super::context();
-        let module = Module::parse(
+        let module = parse(
             &context,
             r#"
 module {
   %0 = yz.const 3
   %1 = yz.const 4
   %2 = yz.add %0, %1
-  %3 = yz.mul %2, %0
+  %3 = yz.sub %2, %0
+  %4 = yz.mul %3, %1
+  %5 = yz.div %4, %1
+  %6 = yz.mod %5, %0
+  %7 = yz.neg %6
+  %8 = yz.cmp "gt", %7, %0
+  %9 = yz.not %8
+  %10 = yz.and %8, %9
+  %11 = yz.or %8, %9
+  %12 = yz.const_float 1.500000e+00
+  %13 = yz.const_bool true
+  %14 = yz.const_str "hello"
 }
 "#,
         )
@@ -37,7 +52,18 @@ module {
               %0 = yz.const 3
               %1 = yz.const 4
               %2 = yz.add %0, %1
-              %3 = yz.mul %2, %0
+              %3 = yz.sub %2, %0
+              %4 = yz.mul %3, %1
+              %5 = yz.div %4, %1
+              %6 = yz.mod %5, %0
+              %7 = yz.neg %6
+              %8 = yz.cmp "gt", %7, %0
+              %9 = yz.not %8
+              %10 = yz.and %8, %9
+              %11 = yz.or %8, %9
+              %12 = yz.const_float 1.500000e+00
+              %13 = yz.const_bool true
+              %14 = yz.const_str "hello"
             }
         "#]]
         .assert_eq(&module.as_operation().to_string());
@@ -87,26 +113,100 @@ module {
     }
 
     #[test]
-    fn the_canonicalizer_folds_yz_constants() {
+    fn a_full_pipeline_round_trips() {
         let context = super::context();
-        let mut module = Module::parse(
+        let module = parse(
             &context,
             r#"
 module {
-  %t = builtin.unrealized_conversion_cast to !yzr.rel
-  %g = yzr.aggregate %t keys [0] {
+  %t = yzr.table @t : !yzr.rel<a: !yz.int64, b: !yz.int64>
+  %w = yzr.filter %t : !yzr.rel<a: !yz.int64, b: !yz.int64> {
+  ^bb0(%a: !yz.int64, %b: !yz.int64):
+    %c10 = yz.const 10
+    %p = yz.cmp "gt", %a, %c10
+    yzr.yield %p : !yz.bool
+  }
+  %e = yzr.extend %w {
   ^bb0(%a: !yz.int64, %b: !yz.int64):
     %c3 = yz.const 3
+    %0 = yz.mul %a, %c3
+    %1 = yz.add %0, %b
+    yzr.yield %1 : !yz.int64
+  } : !yzr.rel<a: !yz.int64, b: !yz.int64> -> !yzr.rel<a: !yz.int64, b: !yz.int64, e: !yz.int64>
+  %g = yzr.aggregate %e keys [1] {
+  ^bb0(%a: !yz.int64, %b: !yz.int64, %e0: !yz.int64):
+    %m = yzr.agg "sum", %e0 : !yz.int64 -> !yz.int64
+    yzr.yield %m : !yz.int64
+  } : !yzr.rel<a: !yz.int64, b: !yz.int64, e: !yz.int64> -> !yzr.rel<b: !yz.int64, s: !yz.int64>
+  %l = yzr.limit %g, 10 : !yzr.rel<b: !yz.int64, s: !yz.int64>
+}
+"#,
+        )
+        .expect("the whole pipeline parses and verifies");
+        expect![[r#"
+            module {
+              %0 = yzr.table @t : <a: !yz.int64, b: !yz.int64>
+              %1 = yzr.filter %0 : <a: !yz.int64, b: !yz.int64> {
+              ^bb0(%arg0: !yz.int64, %arg1: !yz.int64):
+                %5 = yz.const 10
+                %6 = yz.cmp "gt", %arg0, %5
+                yzr.yield %6 : !yz.bool
+              }
+              %2 = yzr.extend %1 {
+              ^bb0(%arg0: !yz.int64, %arg1: !yz.int64):
+                %5 = yz.const 3
+                %6 = yz.mul %arg0, %5
+                %7 = yz.add %6, %arg1
+                yzr.yield %7 : !yz.int64
+              } : <a: !yz.int64, b: !yz.int64> -> <a: !yz.int64, b: !yz.int64, e: !yz.int64>
+              %3 = yzr.aggregate %2 keys [1] {
+              ^bb0(%arg0: !yz.int64, %arg1: !yz.int64, %arg2: !yz.int64):
+                %5 = yzr.agg "sum", %arg2 : !yz.int64 -> !yz.int64
+                yzr.yield %5 : !yz.int64
+              } : <a: !yz.int64, b: !yz.int64, e: !yz.int64> -> <b: !yz.int64, s: !yz.int64>
+              %4 = yzr.limit %3, 10 : <b: !yz.int64, s: !yz.int64>
+            }
+        "#]]
+        .assert_eq(&module.as_operation().to_string());
+
+        let printed = module.as_operation().to_string();
+        let reparsed = parse(&context, &printed).expect("the printed form parses back");
+        assert_eq!(
+            printed,
+            reparsed.as_operation().to_string(),
+            "print -> parse -> print reaches a fixed point"
+        );
+    }
+
+    #[test]
+    fn the_canonicalizer_folds_across_a_stage_region() {
+        let context = super::context();
+        let mut module = parse(
+            &context,
+            r#"
+module {
+  %t = yzr.table @t : !yzr.rel<a: !yz.int64>
+  %w = yzr.filter %t : !yzr.rel<a: !yz.int64> {
+  ^bb0(%a: !yz.int64):
+    %c3 = yz.const 3
     %c4 = yz.const 4
-    %s = yz.add %c3, %c4
-    %m = yzr.agg "sum", %b : !yz.int64 -> !yz.int64
-    %v = yz.mul %m, %s
-    yzr.yield %v : !yz.int64
+    %p = yz.cmp "gt", %c4, %c3
+    %q = yz.cmp "gt", %a, %c3
+    %r = yz.and %p, %q
+    yzr.yield %r : !yz.bool
+  }
+  %d = yzr.filter %w : !yzr.rel<a: !yz.int64> {
+  ^bb0(%a: !yz.int64):
+    %c0 = yz.const 0
+    %c1 = yz.const 1
+    %z = yz.div %c1, %c0
+    %p = yz.cmp "eq", %z, %c1
+    yzr.yield %p : !yz.bool
   }
 }
 "#,
         )
-        .expect("the aggregate parses and verifies");
+        .expect("the filters parse and verify");
 
         let pass_manager = melior::pass::PassManager::new(&context);
         pass_manager.add_pass(melior::pass::transform::create_canonicalizer());
@@ -116,13 +216,22 @@ module {
 
         expect![[r#"
             module {
-              %0 = yz.const 7
-              %1 = unrealized_conversion_cast to !yzr.rel
-              %2 = yzr.aggregate %1 keys [0] {
-              ^bb0(%arg0: !yz.int64, %arg1: !yz.int64):
-                %3 = yzr.agg "sum", %arg1 : !yz.int64 -> !yz.int64
-                %4 = yz.mul %3, %0
-                yzr.yield %4 : !yz.int64
+              %0 = yz.const_bool true
+              %1 = yz.const 1
+              %2 = yz.const 0
+              %3 = yz.const 3
+              %4 = yzr.table @t : <a: !yz.int64>
+              %5 = yzr.filter %4 : <a: !yz.int64> {
+              ^bb0(%arg0: !yz.int64):
+                %7 = yz.cmp "gt", %arg0, %3
+                %8 = yz.and %0, %7
+                yzr.yield %8 : !yz.bool
+              }
+              %6 = yzr.filter %5 : <a: !yz.int64> {
+              ^bb0(%arg0: !yz.int64):
+                %7 = yz.div %1, %2
+                %8 = yz.cmp "eq", %7, %1
+                yzr.yield %8 : !yz.bool
               }
             }
         "#]]
@@ -130,19 +239,84 @@ module {
     }
 
     #[test]
-    fn the_grouping_verifier_accepts_an_aggregated_key() {
+    fn the_schema_verifier_rejects_mismatched_block_arguments() {
         let context = super::context();
         assert!(
-            Module::parse(
+            parse(
                 &context,
                 r#"
 module {
-  %t = builtin.unrealized_conversion_cast to !yzr.rel
+  %t = yzr.table @t : !yzr.rel<a: !yz.int64, b: !yz.bool>
+  %w = yzr.filter %t : !yzr.rel<a: !yz.int64, b: !yz.bool> {
+  ^bb0(%a: !yz.int64):
+    %p = yz.cmp "gt", %a, %a
+    yzr.yield %p : !yz.bool
+  }
+}
+"#,
+            )
+            .is_none(),
+            "a region must carry one block argument per column"
+        );
+    }
+
+    #[test]
+    fn the_filter_verifier_rejects_a_non_bool_predicate() {
+        let context = super::context();
+        assert!(
+            parse(
+                &context,
+                r#"
+module {
+  %t = yzr.table @t : !yzr.rel<a: !yz.int64>
+  %w = yzr.filter %t : !yzr.rel<a: !yz.int64> {
+  ^bb0(%a: !yz.int64):
+    yzr.yield %a : !yz.int64
+  }
+}
+"#,
+            )
+            .is_none(),
+            "a filter must yield a boolean"
+        );
+    }
+
+    #[test]
+    fn the_extend_verifier_rejects_a_schema_that_drops_columns() {
+        let context = super::context();
+        assert!(
+            parse(
+                &context,
+                r#"
+module {
+  %t = yzr.table @t : !yzr.rel<a: !yz.int64, b: !yz.int64>
+  %e = yzr.extend %t {
+  ^bb0(%a: !yz.int64, %b: !yz.int64):
+    %s = yz.add %a, %b
+    yzr.yield %s : !yz.int64
+  } : !yzr.rel<a: !yz.int64, b: !yz.int64> -> !yzr.rel<a: !yz.int64, e: !yz.int64>
+}
+"#,
+            )
+            .is_none(),
+            "extend keeps every input column"
+        );
+    }
+
+    #[test]
+    fn the_grouping_verifier_accepts_an_aggregated_key() {
+        let context = super::context();
+        assert!(
+            parse(
+                &context,
+                r#"
+module {
+  %t = yzr.table @t : !yzr.rel<a: !yz.int64>
   %g = yzr.aggregate %t keys [0] {
   ^bb0(%a: !yz.int64):
     %m = yzr.agg "sum", %a : !yz.int64 -> !yz.int64
     yzr.yield %m : !yz.int64
-  }
+  } : !yzr.rel<a: !yz.int64> -> !yzr.rel<s: !yz.int64>
 }
 "#,
             )
@@ -155,15 +329,15 @@ module {
     fn the_grouping_verifier_rejects_a_smuggled_column() {
         let context = super::context();
         assert!(
-            Module::parse(
+            parse(
                 &context,
                 r#"
 module {
-  %t = builtin.unrealized_conversion_cast to !yzr.rel
+  %t = yzr.table @t : !yzr.rel<a: !yz.int64, b: !yz.int64>
   %g = yzr.aggregate %t keys [0] {
   ^bb0(%a: !yz.int64, %b: !yz.int64):
     yzr.yield %b : !yz.int64
-  }
+  } : !yzr.rel<a: !yz.int64, b: !yz.int64> -> !yzr.rel<b: !yz.int64>
 }
 "#,
             )
@@ -176,17 +350,17 @@ module {
     fn the_grouping_verifier_rejects_a_laundered_column() {
         let context = super::context();
         assert!(
-            Module::parse(
+            parse(
                 &context,
                 r#"
 module {
-  %t = builtin.unrealized_conversion_cast to !yzr.rel
+  %t = yzr.table @t : !yzr.rel<a: !yz.int64, b: !yz.int64>
   %g = yzr.aggregate %t keys [0] {
   ^bb0(%a: !yz.int64, %b: !yz.int64):
     %c = yz.const 1
     %x = yz.add %b, %c
     yzr.yield %x : !yz.int64
-  }
+  } : !yzr.rel<a: !yz.int64, b: !yz.int64> -> !yzr.rel<x: !yz.int64>
 }
 "#,
             )
@@ -199,17 +373,17 @@ module {
     fn the_grouping_verifier_rejects_a_nested_aggregate() {
         let context = super::context();
         assert!(
-            Module::parse(
+            parse(
                 &context,
                 r#"
 module {
-  %t = builtin.unrealized_conversion_cast to !yzr.rel
+  %t = yzr.table @t : !yzr.rel<a: !yz.int64, b: !yz.int64>
   %g = yzr.aggregate %t keys [0] {
   ^bb0(%a: !yz.int64, %b: !yz.int64):
     %m = yzr.agg "max", %b : !yz.int64 -> !yz.int64
     %n = yzr.agg "sum", %m : !yz.int64 -> !yz.int64
     yzr.yield %n : !yz.int64
-  }
+  } : !yzr.rel<a: !yz.int64, b: !yz.int64> -> !yzr.rel<n: !yz.int64>
 }
 "#,
             )
@@ -221,7 +395,7 @@ module {
     #[test]
     fn yzl_names_and_vars_round_trip() {
         let context = super::context();
-        let module = Module::parse(
+        let module = parse(
             &context,
             r#"
 module {
@@ -250,7 +424,7 @@ module {
 }
 "#;
 
-        let mut module = Module::parse(&context, source).unwrap();
+        let mut module = parse(&context, source).unwrap();
         let pass_manager = melior::pass::PassManager::new(&context);
         pass_manager.add_pass(crate::legality::create(vec!["yz.mul".to_string()]));
         assert!(
@@ -258,7 +432,7 @@ module {
             "a target without mul must reject the plan"
         );
 
-        let mut module = Module::parse(&context, source).unwrap();
+        let mut module = parse(&context, source).unwrap();
         let pass_manager = melior::pass::PassManager::new(&context);
         pass_manager.add_pass(crate::legality::create(vec!["yz.shift_left".to_string()]));
         assert!(
@@ -270,7 +444,7 @@ module {
     #[test]
     fn the_verifier_rejects_a_mistyped_operand() {
         let context = super::context();
-        let module = Module::parse(
+        let module = parse(
             &context,
             r#"
 module {
@@ -280,5 +454,20 @@ module {
 "#,
         );
         assert!(module.is_none(), "yz.add over !yz.bool must not parse");
+    }
+
+    #[test]
+    fn the_cmp_verifier_rejects_an_unknown_predicate() {
+        let context = super::context();
+        let module = parse(
+            &context,
+            r#"
+module {
+  %0 = yz.const 1
+  %1 = yz.cmp "spaceship", %0, %0
+}
+"#,
+        );
+        assert!(module.is_none(), "cmp accepts only the six predicates");
     }
 }
