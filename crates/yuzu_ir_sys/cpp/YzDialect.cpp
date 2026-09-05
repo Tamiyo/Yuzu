@@ -1,31 +1,31 @@
-#include "YzirDialect.h"
+#include "YzDialect.h"
 
 #include "llvm/ADT/TypeSwitch.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
 
-#include "YzirDialect.cpp.inc"
+#include "YzDialect.cpp.inc"
 
 #define GET_TYPEDEF_CLASSES
-#include "YzirTypes.cpp.inc"
+#include "YzTypes.cpp.inc"
 
 #define GET_OP_CLASSES
-#include "YzirOps.cpp.inc"
+#include "YzOps.cpp.inc"
 
-namespace yuzu::yzir {
+namespace yuzu::yz {
 
-void YzirDialect::initialize() {
+void YzDialect::initialize() {
   addTypes<
 #define GET_TYPEDEF_LIST
-#include "YzirTypes.cpp.inc"
+#include "YzTypes.cpp.inc"
       >();
   addOperations<
 #define GET_OP_LIST
-#include "YzirOps.cpp.inc"
+#include "YzOps.cpp.inc"
       >();
 }
 
-mlir::Operation *YzirDialect::materializeConstant(mlir::OpBuilder &builder,
+mlir::Operation *YzDialect::materializeConstant(mlir::OpBuilder &builder,
                                                   mlir::Attribute value,
                                                   mlir::Type type,
                                                   mlir::Location loc) {
@@ -57,4 +57,4 @@ mlir::OpFoldResult MulOp::fold(FoldAdaptor adaptor) {
                     [](int64_t lhs, int64_t rhs) { return lhs * rhs; });
 }
 
-} // namespace yuzu::yzir
+} // namespace yuzu::yz

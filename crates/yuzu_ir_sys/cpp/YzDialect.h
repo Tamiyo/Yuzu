@@ -7,10 +7,10 @@
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
-#include "YzirDialect.h.inc"
+#include "YzDialect.h.inc"
 
 #define GET_TYPEDEF_CLASSES
-#include "YzirTypes.h.inc"
+#include "YzTypes.h.inc"
 
 #define GET_OP_CLASSES
-#include "YzirOps.h.inc"
+#include "YzOps.h.inc"

@@ -1,4 +1,4 @@
-#include "YzirDialect.h"
+#include "YzDialect.h"
 #include "YzlDialect.h"
 #include "YzrDialect.h"
 
@@ -9,11 +9,11 @@
 // every Yuzu dialect in a context created on the Rust side.
 extern "C" void yzuRegisterAllDialects(MlirContext ctx) {
   mlir::DialectRegistry registry;
-  registry.insert<yuzu::yzir::YzirDialect>();
+  registry.insert<yuzu::yz::YzDialect>();
   registry.insert<yuzu::yzl::YzlDialect>();
   registry.insert<yuzu::yzr::YzrDialect>();
   unwrap(ctx)->appendDialectRegistry(registry);
-  unwrap(ctx)->loadDialect<yuzu::yzir::YzirDialect>();
+  unwrap(ctx)->loadDialect<yuzu::yz::YzDialect>();
   unwrap(ctx)->loadDialect<yuzu::yzl::YzlDialect>();
   unwrap(ctx)->loadDialect<yuzu::yzr::YzrDialect>();
 }

@@ -16,7 +16,7 @@ fn main() {
         ("--gen-op-decls", "Ops.h.inc"),
         ("--gen-op-defs", "Ops.cpp.inc"),
     ];
-    for dialect in ["Yzir", "Yzl", "Yzr"] {
+    for dialect in ["Yz", "Yzl", "Yzr"] {
         for (flag, suffix) in generators {
             let status = Command::new(&tblgen)
                 .arg(flag)
@@ -36,7 +36,7 @@ fn main() {
         .std("c++20")
         .compiler(llvm.join("bin/clang++"))
         .files([
-            "cpp/YzirDialect.cpp",
+            "cpp/YzDialect.cpp",
             "cpp/YzlDialect.cpp",
             "cpp/YzrDialect.cpp",
             "cpp/Register.cpp",
