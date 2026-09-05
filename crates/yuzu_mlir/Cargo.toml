@@ -4,7 +4,8 @@ version = "0.0.0"
 edition = "2024"
 
 [dependencies]
-melior = "0.27.6"
+melior = { version = "0.27.6", features = ["ods-dialects"] }
+melior-macro = "0.20.6"
 mlir-sys = "220"
 yuzu_ir_sys = { path = "../yuzu_ir_sys" }
 

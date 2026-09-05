@@ -1,6 +1,7 @@
 use melior::Context;
 
 pub mod legality;
+pub mod ods;
 
 /// A context with every Yuzu dialect registered and loaded.
 pub fn context() -> Context {
@@ -176,6 +177,76 @@ module {
             reparsed.as_operation().to_string(),
             "print -> parse -> print reaches a fixed point"
         );
+    }
+
+    #[test]
+    fn builds_a_stage_with_generated_constructors() {
+        use melior::ir::{
+            Block, Region, RegionLike,
+            attribute::{FlatSymbolRefAttribute, IntegerAttribute, StringAttribute},
+            r#type::IntegerType,
+        };
+
+        use crate::ods::{yz, yzl};
+
+        let context = super::context();
+        let loc = Location::unknown(&context);
+        let query = Type::parse(&context, "!yzl.query").unwrap();
+        let int64 = Type::parse(&context, "!yz.int64").unwrap();
+        let boolean = Type::parse(&context, "!yz.bool").unwrap();
+        let i64 = IntegerType::new(&context, 64).into();
+
+        let module = Module::new(loc);
+        let top = module.body();
+
+        let from = top.append_operation(
+            yzl::from(
+                &context,
+                query,
+                FlatSymbolRefAttribute::new(&context, "t"),
+                loc,
+            )
+            .into(),
+        );
+
+        let region = Region::new();
+        let body = region.append_block(Block::new(&[]));
+        let a = body.append_operation(
+            yzl::_name(&context, int64, StringAttribute::new(&context, "a"), loc).into(),
+        );
+        let ten = body.append_operation(
+            yz::r#const(&context, int64, IntegerAttribute::new(i64, 10), loc).into(),
+        );
+        let cmp = body.append_operation(
+            yz::cmp(
+                &context,
+                boolean,
+                a.result(0).unwrap().into(),
+                ten.result(0).unwrap().into(),
+                StringAttribute::new(&context, "gt"),
+                loc,
+            )
+            .into(),
+        );
+        body.append_operation(yzl::r#yield(&context, &[cmp.result(0).unwrap().into()], loc).into());
+
+        top.append_operation(
+            yzl::r#where(&context, query, from.result(0).unwrap().into(), region, loc).into(),
+        );
+
+        assert!(module.as_operation().verify());
+        expect![[r#"
+            module {
+              %0 = yzl.from @t
+              %1 = yzl.where %0 {
+                %2 = yzl.name "a" : !yz.int64
+                %3 = yz.const 10
+                %4 = yz.cmp "gt", %2, %3
+                yzl.yield %4 : !yz.bool
+              }
+            }
+        "#]]
+        .assert_eq(&module.as_operation().to_string());
     }
 
     #[test]

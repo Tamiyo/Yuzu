@@ -1,9 +1,9 @@
 #include "YzDialect.h"
 
-#include "llvm/ADT/StringSwitch.h"
-#include "llvm/ADT/TypeSwitch.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
+#include "llvm/ADT/StringSwitch.h"
+#include "llvm/ADT/TypeSwitch.h"
 
 #include "YzDialect.cpp.inc"
 
@@ -50,7 +50,8 @@ mlir::OpFoldResult ConstFloatOp::fold(FoldAdaptor) { return getValueAttr(); }
 mlir::OpFoldResult ConstBoolOp::fold(FoldAdaptor) { return getValueAttr(); }
 mlir::OpFoldResult ConstStrOp::fold(FoldAdaptor) { return getValueAttr(); }
 
-static mlir::OpFoldResult foldIntBinary(mlir::Attribute lhs, mlir::Attribute rhs,
+static mlir::OpFoldResult foldIntBinary(mlir::Attribute lhs,
+                                        mlir::Attribute rhs,
                                         int64_t (*apply)(int64_t, int64_t)) {
   auto lhsInt = llvm::dyn_cast_if_present<mlir::IntegerAttr>(lhs);
   auto rhsInt = llvm::dyn_cast_if_present<mlir::IntegerAttr>(rhs);
