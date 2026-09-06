@@ -11,7 +11,7 @@ default-members = [
     "crates/yuzu_core",
     "crates/yuzu_diagnostics",
     "crates/yuzu_hir",
-    "crates/yuzu_ir_sys",
+    "crates/yuzu_mlir_sys",
     "crates/yuzu_lexer",
     "crates/yuzu_mlir",
     "crates/yuzu_parser",

@@ -1,8 +1,8 @@
 [package]
-name = "yuzu_ir_sys"
+name = "yuzu_mlir_sys"
 version = "0.0.0"
 edition = "2024"
-links = "yuzu_ir"
+links = "yuzu_dialects"
 
 [dependencies]
 mlir-sys = "220"

@@ -45,7 +45,7 @@ fn main() {
         .include("cpp")
         .include(&include)
         .flag("-w")
-        .compile("yuzu_ir");
+        .compile("yuzu_dialects");
 
     println!("cargo:rerun-if-changed=cpp");
 }

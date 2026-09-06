@@ -2144,14 +2144,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "yuzu_ir_sys"
-version = "0.0.0"
-dependencies = [
- "cc",
- "mlir-sys",
-]
-
-[[package]]
 name = "yuzu_lexer"
 version = "0.0.0"
 dependencies = [
@@ -2166,7 +2158,15 @@ dependencies = [
  "expect-test",
  "melior",
  "melior-macro",
- "yuzu_ir_sys",
+ "yuzu_mlir_sys",
+]
+
+[[package]]
+name = "yuzu_mlir_sys"
+version = "0.0.0"
+dependencies = [
+ "cc",
+ "mlir-sys",
 ]
 
 [[package]]

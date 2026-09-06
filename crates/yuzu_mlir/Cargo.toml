@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 melior = { version = "0.27.6", features = ["ods-dialects"] }
 melior-macro = "0.20.6"
-yuzu_ir_sys = { path = "../yuzu_ir_sys" }
+yuzu_mlir_sys = { path = "../yuzu_mlir_sys" }
 
 [dev-dependencies]
 expect-test = "1.5.0"
