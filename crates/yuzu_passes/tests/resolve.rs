@@ -61,7 +61,7 @@ from t
             module {
               yzl.struct @Row !yzr.rel<a: !yz.int64, b: !yz.int64>
               yzl.table @t of @Row
-              yzl.fn @f params ["x"] {
+              yzl.fn @f params ["x"] (!yz.int64) -> !yz.int64 {
                 %4 = yzl.name "x" : !yzl.var {param = 0 : i64}
                 %5 = yz.constant_int 3
                 %6 = yz.mul %4, %5 : !yzl.var, !yz.int64 -> !yzl.var

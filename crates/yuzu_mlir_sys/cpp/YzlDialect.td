@@ -45,11 +45,12 @@ def Yzl_TableOp : Yzl_Op<"table", [Symbol]> {
 def Yzl_FnOp : Yzl_Op<"fn", [Symbol, IsolatedFromAbove]> {
   let summary = "a function declaration; parameters are referenced by name";
   let arguments = (ins SymbolNameAttr:$sym_name, StrArrayAttr:$params,
+                       TypeAttrOf<FunctionType>:$signature,
                        UnitAttr:$agg, UnitAttr:$external);
   let regions = (region AnyRegion:$body);
   let assemblyFormat =
-      "$sym_name `params` $params (`agg` $agg^)? (`external` $external^)? "
-      "$body attr-dict";
+      "$sym_name `params` $params $signature (`agg` $agg^)? "
+      "(`external` $external^)? $body attr-dict";
 }
 
 def Yzl_LetOp : Yzl_Op<"let", [Symbol]> {

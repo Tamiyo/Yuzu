@@ -9,7 +9,6 @@ use std::collections::HashMap;
 use melior::ir::attribute::AttributeLike;
 use melior::ir::attribute::{ArrayAttribute, IntegerAttribute, StringAttribute};
 use melior::ir::operation::{OperationLike, OperationRef};
-use melior::ir::r#type::IntegerType;
 use melior::ir::{Attribute, BlockLike, BlockRef, Module, RegionLike, Value, ValueLike};
 use yuzu_diagnostics::diagnostics::builder::DiagnosticBuilder;
 use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
@@ -60,7 +59,7 @@ struct Resolver<'c, 'a, 'e> {
     relations: HashMap<String, Schema>,
     callables: HashMap<String, Callable>,
     schemas: HashMap<usize, Schema>,
-    index_type: melior::ir::Type<'c>,
+    types: yuzu_mlir::Types<'c>,
 }
 
 pub fn resolve_names(
@@ -78,7 +77,7 @@ pub fn resolve_names(
         relations: HashMap::new(),
         callables: HashMap::new(),
         schemas: HashMap::new(),
-        index_type: IntegerType::new(unsafe { context.to_ref() }, 64).into(),
+        types: yuzu_mlir::Types::new(unsafe { context.to_ref() }),
     };
     resolver.declare(module.body());
     resolver.resolve_block(module.body(), &Ambient::None);
@@ -211,11 +210,14 @@ impl<'c, 'a, 'e> Resolver<'c, 'a, 'e> {
             }
             "yzl.set" => {
                 let schema = self.input_schema(op);
+                let mut columns = Vec::new();
                 for name in string_array(op, "names") {
-                    if !schema.iter().any(|column| column.matches(&name)) {
-                        self.error(op, format!("unknown column `{name}`"));
+                    match schema.iter().position(|column| column.matches(&name)) {
+                        Some(index) => columns.push(index),
+                        None => self.error(op, format!("unknown column `{name}`")),
                     }
                 }
+                self.set_index_array(op, "set_cols", &columns);
                 self.resolve_regions(op, &Ambient::Columns(&schema));
                 self.record_schema(op, schema);
             }
@@ -412,14 +414,14 @@ impl<'c, 'a, 'e> Resolver<'c, 'a, 'e> {
     }
 
     fn set_index(&mut self, op: OperationRef<'c, '_>, name: &str, index: usize) {
-        let attribute = IntegerAttribute::new(self.index_type, index as i64);
+        let attribute = IntegerAttribute::new(self.types.i64, index as i64);
         set_attribute(op, name, attribute.into());
     }
 
     fn set_index_array(&mut self, op: OperationRef<'c, '_>, name: &str, indices: &[usize]) {
         let elements: Vec<Attribute> = indices
             .iter()
-            .map(|&index| IntegerAttribute::new(self.index_type, index as i64).into())
+            .map(|&index| IntegerAttribute::new(self.types.i64, index as i64).into())
             .collect();
         let attribute = ArrayAttribute::new(unsafe { op.context().to_ref() }, &elements);
         set_attribute(op, name, attribute.into());

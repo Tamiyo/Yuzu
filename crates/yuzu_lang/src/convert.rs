@@ -9,7 +9,6 @@ use melior::ir::attribute::{
     TypeAttribute,
 };
 use melior::ir::operation::OperationBuilder;
-use melior::ir::r#type::IntegerType;
 use melior::ir::{
     Attribute, Block, BlockLike, BlockRef, Identifier, Location, Module, Region, RegionLike, Type,
     Value,
@@ -58,13 +57,7 @@ struct AstToYzl<'c> {
     unsupported: std::cell::RefCell<Vec<String>>,
     name: String,
     line_starts: Vec<usize>,
-    var: Type<'c>,
-    query: Type<'c>,
-    int64: Type<'c>,
-    float64: Type<'c>,
-    boolean: Type<'c>,
-    str: Type<'c>,
-    i64: Type<'c>,
+    types: yuzu_mlir::Types<'c>,
 }
 
 type Locals<'c, 'a> = HashMap<String, Value<'c, 'a>>;
@@ -73,19 +66,12 @@ impl<'c> AstToYzl<'c> {
     fn new(context: &'c Context, name: &str, source: &str) -> Self {
         let mut line_starts = vec![0];
         line_starts.extend(source.match_indices('\n').map(|(at, _)| at + 1));
-        let parse = |text| Type::parse(context, text).expect("the dialect types parse");
         Self {
             context,
             unsupported: std::cell::RefCell::new(Vec::new()),
             name: name.to_string(),
             line_starts,
-            var: parse("!yzl.var"),
-            query: parse("!yzl.query"),
-            int64: parse("!yz.int64"),
-            float64: parse("!yz.float64"),
-            boolean: parse("!yz.bool"),
-            str: parse("!yz.str"),
-            i64: IntegerType::new(context, 64).into(),
+            types: yuzu_mlir::Types::new(context),
         }
     }
 
@@ -197,6 +183,18 @@ impl<'c> AstToYzl<'c> {
             .filter_map(|param| ident_text(param.name()))
             .map(|name| StringAttribute::new(self.context, &name).into())
             .collect();
+        let signature = {
+            let params: Vec<&str> = decl
+                .params()
+                .map(|param| self.annotation_type(param.ty()))
+                .collect();
+            let result = self.annotation_type(decl.result());
+            Type::parse(
+                self.context,
+                &format!("({}) -> {result}", params.join(", ")),
+            )
+            .expect("a signature type parses")
+        };
 
         let region = Region::new();
         if let Some(body) = decl.body() {
@@ -250,6 +248,10 @@ impl<'c> AstToYzl<'c> {
                 (
                     Identifier::new(self.context, "params"),
                     ArrayAttribute::new(self.context, &params).into(),
+                ),
+                (
+                    Identifier::new(self.context, "signature"),
+                    TypeAttribute::new(signature).into(),
                 ),
             ])
             .add_regions([region]);
@@ -319,8 +321,8 @@ impl<'c> AstToYzl<'c> {
                     None => self.name_ref(block, "", loc),
                 };
                 let result = match unary.op() {
-                    Some(UnaryOp::Neg) => yz::neg(self.context, self.var, value, loc).into(),
-                    Some(UnaryOp::Not) => yz::not(self.context, self.var, value, loc).into(),
+                    Some(UnaryOp::Neg) => yz::neg(self.context, self.types.var, value, loc).into(),
+                    Some(UnaryOp::Not) => yz::not(self.context, self.types.var, value, loc).into(),
                     _ => return value,
                 };
                 first_result(block.append_operation(result))
@@ -346,7 +348,7 @@ impl<'c> AstToYzl<'c> {
                     block.append_operation(
                         yzl::call(
                             self.context,
-                            self.var,
+                            self.types.var,
                             &operands,
                             FlatSymbolRefAttribute::new(self.context, &callee),
                             loc,
@@ -362,7 +364,9 @@ impl<'c> AstToYzl<'c> {
                     .map(|element| self.convert_expr(block, locals, element))
                     .collect();
                 first_result(
-                    block.append_operation(yzl::list(self.context, self.var, &values, loc).into()),
+                    block.append_operation(
+                        yzl::list(self.context, self.types.var, &values, loc).into(),
+                    ),
                 )
             }
             ast::Expr::ParenExpr(paren) => match paren.expr() {
@@ -396,7 +400,7 @@ impl<'c> AstToYzl<'c> {
         let cmp = |predicate| {
             yz::cmp(
                 context,
-                self.var,
+                self.types.var,
                 lhs,
                 rhs,
                 StringAttribute::new(context, predicate),
@@ -409,7 +413,7 @@ impl<'c> AstToYzl<'c> {
         let call = |callee| {
             yzl::call(
                 context,
-                self.var,
+                self.types.var,
                 &[lhs, rhs],
                 FlatSymbolRefAttribute::new(context, callee),
                 loc,
@@ -417,12 +421,12 @@ impl<'c> AstToYzl<'c> {
             .into()
         };
         let operation = match binary.op() {
-            Some(BinOp::Add) => yz::add(context, self.var, lhs, rhs, loc).into(),
-            Some(BinOp::Sub) => yz::sub(context, self.var, lhs, rhs, loc).into(),
-            Some(BinOp::Mul) => yz::mul(context, self.var, lhs, rhs, loc).into(),
-            Some(BinOp::Div) => yz::div(context, self.var, lhs, rhs, loc).into(),
-            Some(BinOp::And) => yz::and(context, self.var, lhs, rhs, loc).into(),
-            Some(BinOp::Or) => yz::or(context, self.var, lhs, rhs, loc).into(),
+            Some(BinOp::Add) => yz::add(context, self.types.var, lhs, rhs, loc).into(),
+            Some(BinOp::Sub) => yz::sub(context, self.types.var, lhs, rhs, loc).into(),
+            Some(BinOp::Mul) => yz::mul(context, self.types.var, lhs, rhs, loc).into(),
+            Some(BinOp::Div) => yz::div(context, self.types.var, lhs, rhs, loc).into(),
+            Some(BinOp::And) => yz::and(context, self.types.var, lhs, rhs, loc).into(),
+            Some(BinOp::Or) => yz::or(context, self.types.var, lhs, rhs, loc).into(),
             Some(BinOp::Eq) => cmp("eq"),
             Some(BinOp::Neq) => cmp("ne"),
             Some(BinOp::Lt) => cmp("lt"),
@@ -435,7 +439,7 @@ impl<'c> AstToYzl<'c> {
             Some(BinOp::In) => call("in"),
             Some(BinOp::NotIn) => {
                 let contains = first_result(block.append_operation(call("in")));
-                yz::not(context, self.var, contains, loc).into()
+                yz::not(context, self.types.var, contains, loc).into()
             }
             None => {
                 self.note(format!("operator missing in {binary:?}"));
@@ -454,14 +458,14 @@ impl<'c> AstToYzl<'c> {
         let operation = match literal {
             ast::Literal::IntLiteral(int) => yz::constant_int(
                 self.context,
-                self.int64,
-                IntegerAttribute::new(self.i64, int.value().unwrap_or_default() as i64),
+                self.types.int64,
+                IntegerAttribute::new(self.types.i64, int.value().unwrap_or_default() as i64),
                 loc,
             )
             .into(),
             ast::Literal::FloatLiteral(float) => yz::constant_float(
                 self.context,
-                self.float64,
+                self.types.float64,
                 FloatAttribute::new(
                     self.context,
                     Type::float64(self.context),
@@ -472,7 +476,7 @@ impl<'c> AstToYzl<'c> {
             .into(),
             ast::Literal::BoolLiteral(boolean) => yz::constant_bool(
                 self.context,
-                self.boolean,
+                self.types.boolean,
                 Attribute::parse(
                     self.context,
                     if boolean.value().unwrap_or_default() {
@@ -487,7 +491,7 @@ impl<'c> AstToYzl<'c> {
             .into(),
             ast::Literal::StringLiteral(string) => yz::constant_str(
                 self.context,
-                self.str,
+                self.types.str,
                 StringAttribute::new(self.context, &string.value().unwrap_or_default()),
                 loc,
             )
@@ -505,7 +509,7 @@ impl<'c> AstToYzl<'c> {
                     block.append_operation(
                         yzl::from(
                             self.context,
-                            self.query,
+                            self.types.query,
                             FlatSymbolRefAttribute::new(self.context, &source),
                             loc,
                         )
@@ -517,7 +521,7 @@ impl<'c> AstToYzl<'c> {
                         block.append_operation(
                             yzl::alias(
                                 self.context,
-                                self.query,
+                                self.types.query,
                                 value,
                                 StringAttribute::new(self.context, &alias),
                                 loc,
@@ -538,7 +542,7 @@ impl<'c> AstToYzl<'c> {
                 };
                 body.append_operation(yzl::r#yield(self.context, &[predicate], loc).into());
                 first_result(block.append_operation(
-                    yzl::r#where(self.context, self.query, input, region, loc).into(),
+                    yzl::r#where(self.context, self.types.query, input, region, loc).into(),
                 ))
             }
             ast::Rel::SelectExpr(stage) => {
@@ -549,7 +553,7 @@ impl<'c> AstToYzl<'c> {
                     .collect();
                 let (names, region) = self.convert_items(items, loc);
                 first_result(block.append_operation(
-                    yzl::select(self.context, self.query, input, region, names, loc).into(),
+                    yzl::select(self.context, self.types.query, input, region, names, loc).into(),
                 ))
             }
             ast::Rel::ExtendExpr(stage) => {
@@ -560,7 +564,7 @@ impl<'c> AstToYzl<'c> {
                     .collect();
                 let (names, region) = self.convert_items(items, loc);
                 first_result(block.append_operation(
-                    yzl::extend(self.context, self.query, input, region, names, loc).into(),
+                    yzl::extend(self.context, self.types.query, input, region, names, loc).into(),
                 ))
             }
             ast::Rel::AggregateExpr(stage) => {
@@ -581,7 +585,7 @@ impl<'c> AstToYzl<'c> {
                     block.append_operation(
                         yzl::aggregate(
                             self.context,
-                            self.query,
+                            self.types.query,
                             input,
                             region,
                             ArrayAttribute::new(self.context, &group_by),
@@ -607,9 +611,9 @@ impl<'c> AstToYzl<'c> {
                     block.append_operation(
                         yzl::limit(
                             self.context,
-                            self.query,
+                            self.types.query,
                             input,
-                            IntegerAttribute::new(self.i64, count),
+                            IntegerAttribute::new(self.types.i64, count),
                             loc,
                         )
                         .into(),
@@ -632,7 +636,7 @@ impl<'c> AstToYzl<'c> {
                     block.append_operation(
                         yzl::rename(
                             self.context,
-                            self.query,
+                            self.types.query,
                             input,
                             ArrayAttribute::new(self.context, &from),
                             ArrayAttribute::new(self.context, &to),
@@ -649,7 +653,7 @@ impl<'c> AstToYzl<'c> {
                     block.append_operation(
                         yzl::alias(
                             self.context,
-                            self.query,
+                            self.types.query,
                             input,
                             StringAttribute::new(self.context, &alias),
                             loc,
@@ -675,7 +679,7 @@ impl<'c> AstToYzl<'c> {
                 }
                 let mut builder = OperationBuilder::new("yzl.join", loc)
                     .add_operands(&[lhs])
-                    .add_results(&[self.query])
+                    .add_results(&[self.types.query])
                     .add_regions([on])
                     .add_attributes(&[
                         (
@@ -714,16 +718,14 @@ impl<'c> AstToYzl<'c> {
                     .collect();
                 let (names, region) = self.convert_items(items, loc);
                 first_result(block.append_operation(
-                    yzl::set(self.context, self.query, input, region, names, loc).into(),
+                    yzl::set(self.context, self.types.query, input, region, names, loc).into(),
                 ))
             }
             ast::Rel::DistinctExpr(stage) => {
                 let input = self.convert_input(block, stage.input());
-                first_result(
-                    block.append_operation(
-                        yzl::distinct(self.context, self.query, input, loc).into(),
-                    ),
-                )
+                first_result(block.append_operation(
+                    yzl::distinct(self.context, self.types.query, input, loc).into(),
+                ))
             }
             ast::Rel::DropExpr(stage) => {
                 let input = self.convert_input(block, stage.input());
@@ -736,7 +738,7 @@ impl<'c> AstToYzl<'c> {
                     block.append_operation(
                         yzl::drop(
                             self.context,
-                            self.query,
+                            self.types.query,
                             input,
                             ArrayAttribute::new(self.context, &columns),
                             loc,
@@ -764,7 +766,7 @@ impl<'c> AstToYzl<'c> {
                     block.append_operation(
                         yzl::from(
                             self.context,
-                            self.query,
+                            self.types.query,
                             FlatSymbolRefAttribute::new(self.context, &name),
                             loc,
                         )
@@ -778,7 +780,7 @@ impl<'c> AstToYzl<'c> {
                     block.append_operation(
                         yzl::from(
                             self.context,
-                            self.query,
+                            self.types.query,
                             FlatSymbolRefAttribute::new(self.context, ""),
                             Location::unknown(self.context),
                         )
@@ -826,7 +828,7 @@ impl<'c> AstToYzl<'c> {
             block.append_operation(
                 yzl::_name(
                     self.context,
-                    self.var,
+                    self.types.var,
                     StringAttribute::new(self.context, name),
                     loc,
                 )
@@ -989,7 +991,7 @@ from t
     fn converts_declarations() {
         expect![[r#"
             module {
-              yzl.fn @f params ["x"] {
+              yzl.fn @f params ["x"] (!yz.int64) -> !yz.int64 {
                 %0 = yzl.name "x" : !yzl.var
                 %1 = yz.constant_int 2
                 %2 = yz.mul %0, %1 : !yzl.var, !yz.int64 -> !yzl.var
@@ -997,7 +999,7 @@ from t
                 %4 = yz.add %2, %3 : !yzl.var, !yz.int64 -> !yzl.var
                 yzl.return %4 : !yzl.var
               }
-              yzl.fn @spread params ["x"] agg {
+              yzl.fn @spread params ["x"] (!yz.int64) -> !yz.int64 agg {
                 %0 = yzl.name "x" : !yzl.var
                 %1 = yzl.call @max(%0) : (!yzl.var) -> !yzl.var
                 %2 = yzl.name "x" : !yzl.var
@@ -1005,7 +1007,7 @@ from t
                 %4 = yz.sub %1, %3 : !yzl.var, !yzl.var -> !yzl.var
                 yzl.return %4 : !yzl.var
               }
-              yzl.fn @upper params ["s"] external {
+              yzl.fn @upper params ["s"] (!yz.str) -> !yz.str external {
               }
             }
         "#]]
