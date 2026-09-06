@@ -84,6 +84,12 @@ def Yz_NumericType : Type<
           "::yuzu::yzl::VarType>($_self)">,
     "numeric or !yzl.var">;
 
+def Yz_ScalarOrVarType : Type<
+    CPred<"::llvm::isa<::yuzu::yz::Int64Type, ::yuzu::yz::Float64Type, "
+          "::yuzu::yz::BoolType, ::yuzu::yz::StrType, ::yuzu::yzl::VarType>"
+          "($_self)">,
+    "a scalar or !yzl.var">;
+
 def Yz_BoolOrVarType : Type<
     CPred<"::llvm::isa<::yuzu::yz::BoolType, ::yuzu::yzl::VarType>($_self)">,
     "!yz.bool or !yzl.var">;
@@ -128,9 +134,9 @@ def Yz_NegOp : Yz_Op<"neg", [Pure]> {
 // Comparison and logic.
 
 def Yz_CmpOp : Yz_Op<"cmp", [Pure]> {
-  let summary = "numeric comparison";
-  let arguments = (ins StrAttr:$predicate, Yz_NumericType:$lhs,
-                       Yz_NumericType:$rhs);
+  let summary = "scalar comparison";
+  let arguments = (ins StrAttr:$predicate, Yz_ScalarOrVarType:$lhs,
+                       Yz_ScalarOrVarType:$rhs);
   let results = (outs Yz_BoolOrVarType:$result);
   let assemblyFormat =
       "$predicate `,` $lhs `,` $rhs `:` type($lhs) `,` type($rhs) `->` type($result) attr-dict";

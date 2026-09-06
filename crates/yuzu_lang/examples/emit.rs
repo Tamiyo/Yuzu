@@ -19,11 +19,14 @@ fn main() {
     };
 
     let context = yuzu_mlir::context();
-    let Some(module) = yuzu_lang::emit_source(&context, "input.yz", &source) else {
+    let Some(emission) = yuzu_lang::emit_source(&context, "input.yz", &source) else {
         std::process::exit(1);
     };
-    if !module.as_operation().verify() {
+    for what in &emission.unsupported {
+        eprintln!("yuzu_lang: {what}");
+    }
+    if !emission.module.as_operation().verify() {
         eprintln!("yuzu_lang: the emitted module does not verify");
     }
-    print!("{}", module.as_operation());
+    print!("{}", emission.module.as_operation());
 }

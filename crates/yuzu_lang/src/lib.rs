@@ -22,9 +22,16 @@ use yuzu_diagnostics::source_map::SourceMap;
 use yuzu_lexer::lexer::{Lexer, Token};
 use yuzu_mlir::ods::{yz, yzl};
 
+/// A parsed and emitted module, along with every construct the emitter does
+/// not carry yet.
+pub struct Emission<'c> {
+    pub module: Module<'c>,
+    pub unsupported: Vec<String>,
+}
+
 /// Parses the source and emits it as a yzl module, printing any parse
 /// diagnostics to stderr. Returns `None` when the source has no root.
-pub fn emit_source<'c>(context: &'c Context, name: &str, source: &str) -> Option<Module<'c>> {
+pub fn emit_source<'c>(context: &'c Context, name: &str, source: &str) -> Option<Emission<'c>> {
     let mut diagnostics = DiagnosticsEngine::new();
     let mut sources = SourceMap::new();
     let source_id = sources.add(name.to_string(), source.to_string());
@@ -35,11 +42,17 @@ pub fn emit_source<'c>(context: &'c Context, name: &str, source: &str) -> Option
         eprintln!("{}", printer.print(diagnostic));
     }
     let root = ast::Root::cast(syntax)?;
-    Some(Emitter::new(context, name, source).emit(&root))
+    let emitter = Emitter::new(context, name, source);
+    let module = emitter.emit(&root);
+    Some(Emission {
+        module,
+        unsupported: emitter.unsupported.into_inner(),
+    })
 }
 
 struct Emitter<'c> {
     context: &'c Context,
+    unsupported: std::cell::RefCell<Vec<String>>,
     name: String,
     line_starts: Vec<usize>,
     var: Type<'c>,
@@ -60,6 +73,7 @@ impl<'c> Emitter<'c> {
         let parse = |text| Type::parse(context, text).expect("the dialect types parse");
         Self {
             context,
+            unsupported: std::cell::RefCell::new(Vec::new()),
             name: name.to_string(),
             line_starts,
             var: parse("!yzl.var"),
@@ -72,6 +86,10 @@ impl<'c> Emitter<'c> {
         }
     }
 
+    fn note(&self, what: impl Into<String>) {
+        self.unsupported.borrow_mut().push(what.into());
+    }
+
     fn location(&self, node: &impl AstNode) -> Location<'c> {
         let offset: usize = node.syntax().text_range().start().into();
         let line = self.line_starts.partition_point(|&start| start <= offset);
@@ -82,8 +100,22 @@ impl<'c> Emitter<'c> {
     fn emit(&self, root: &ast::Root) -> Module<'c> {
         let module = Module::new(Location::new(self.context, &self.name, 1, 1));
         let top = module.body();
+        let mut query = None;
         for stmt in root.stmts() {
-            self.emit_stmt(top, &stmt);
+            match &stmt {
+                ast::Stmt::ExprStmt(expr_stmt) => {
+                    if let Some(expr) = expr_stmt.expr() {
+                        let value = self.emit_expr(top, &Locals::new(), &expr);
+                        if matches!(expr, ast::Expr::Rel(_)) {
+                            query = Some((value, self.location(expr_stmt)));
+                        }
+                    }
+                }
+                _ => self.emit_stmt(top, &stmt),
+            }
+        }
+        if let Some((value, loc)) = query {
+            top.append_operation(yzl::output(self.context, value, loc).into());
         }
         module
     }
@@ -99,7 +131,7 @@ impl<'c> Emitter<'c> {
                     self.emit_expr(block, &Locals::new(), &expr);
                 }
             }
-            unsupported => eprintln!("yuzu_lang: unsupported statement {unsupported:?}"),
+            unsupported => self.note(format!("unsupported statement {unsupported:?}")),
         }
     }
 
@@ -177,6 +209,18 @@ impl<'c> Emitter<'c> {
                         let value = self.emit_expr(entry, &locals, &expr);
                         locals.insert(name, value);
                     }
+                    ast::Stmt::AssignStmt(assign) => {
+                        let target = assign.target().and_then(|target| match target {
+                            ast::Expr::IdentExpr(ident) => ident_text(ident.name()),
+                            _ => None,
+                        });
+                        let (Some(name), Some(value)) = (target, assign.value()) else {
+                            self.note(format!("unsupported assignment {assign:?}"));
+                            continue;
+                        };
+                        let value = self.emit_expr(entry, &locals, &value);
+                        locals.insert(name, value);
+                    }
                     ast::Stmt::ReturnStmt(ret) => {
                         let values: Vec<Value> = ret
                             .expr()
@@ -188,7 +232,7 @@ impl<'c> Emitter<'c> {
                         );
                     }
                     unsupported => {
-                        eprintln!("yuzu_lang: unsupported function statement {unsupported:?}")
+                        self.note(format!("unsupported function statement {unsupported:?}"))
                     }
                 }
             }
@@ -308,13 +352,23 @@ impl<'c> Emitter<'c> {
                     ),
                 )
             }
+            ast::Expr::ListExpr(list) => {
+                let elements: Vec<ast::Expr> = list.elements().collect();
+                let values: Vec<Value> = elements
+                    .iter()
+                    .map(|element| self.emit_expr(block, locals, element))
+                    .collect();
+                first_result(
+                    block.append_operation(yzl::list(self.context, self.var, &values, loc).into()),
+                )
+            }
             ast::Expr::ParenExpr(paren) => match paren.expr() {
                 Some(inner) => self.emit_expr(block, locals, &inner),
                 None => self.name_ref(block, "", loc),
             },
             ast::Expr::Rel(rel) => self.emit_rel(block, rel),
             unsupported => {
-                eprintln!("yuzu_lang: unsupported expression {unsupported:?}");
+                self.note(format!("unsupported expression {unsupported:?}"));
                 self.name_ref(block, "", loc)
             }
         }
@@ -375,8 +429,13 @@ impl<'c> Emitter<'c> {
             Some(BinOp::Pow) => call("pow"),
             Some(BinOp::ShiftLeft) => call("shift_left"),
             Some(BinOp::ShiftRight) => call("shift_right"),
-            Some(BinOp::In) | Some(BinOp::NotIn) | None => {
-                eprintln!("yuzu_lang: unsupported operator in {binary:?}");
+            Some(BinOp::In) => call("in"),
+            Some(BinOp::NotIn) => {
+                let contains = first_result(block.append_operation(call("in")));
+                yz::not(context, self.var, contains, loc).into()
+            }
+            None => {
+                self.note(format!("operator missing in {binary:?}"));
                 return lhs;
             }
         };
@@ -533,7 +592,7 @@ impl<'c> Emitter<'c> {
                         int.value().unwrap_or_default() as i64
                     }
                     other => {
-                        eprintln!("yuzu_lang: unsupported limit count {other:?}");
+                        self.note(format!("unsupported limit count {other:?}"));
                         0
                     }
                 };
@@ -592,14 +651,87 @@ impl<'c> Emitter<'c> {
                     ),
                 )
             }
-            unsupported => {
-                eprintln!("yuzu_lang: unsupported stage {unsupported:?}");
+            ast::Rel::JoinExpr(stage) => {
+                let lhs = self.emit_input(block, stage.input());
+                let kind = match stage.kind() {
+                    Some(ast::JoinKind::Left) => "left",
+                    Some(ast::JoinKind::Right) => "right",
+                    Some(ast::JoinKind::Full) => "full",
+                    _ => "inner",
+                };
+                let rhs = ident_text(stage.relation()).unwrap_or_default();
+                let on = Region::new();
+                if let Some(condition) = stage.on().and_then(|on| on.condition()) {
+                    let body = on.append_block(Block::new(&[]));
+                    let value = self.emit_expr(body, &Locals::new(), &condition);
+                    body.append_operation(yzl::r#yield(self.context, &[value], loc).into());
+                }
+                let mut builder = OperationBuilder::new("yzl.join", loc)
+                    .add_operands(&[lhs])
+                    .add_results(&[self.query])
+                    .add_regions([on])
+                    .add_attributes(&[
+                        (
+                            Identifier::new(self.context, "kind"),
+                            StringAttribute::new(self.context, kind).into(),
+                        ),
+                        (
+                            Identifier::new(self.context, "rhs"),
+                            FlatSymbolRefAttribute::new(self.context, &rhs).into(),
+                        ),
+                    ]);
+                if let Some(alias) = ident_text(stage.alias()) {
+                    builder = builder.add_attributes(&[(
+                        Identifier::new(self.context, "rhs_alias"),
+                        StringAttribute::new(self.context, &alias).into(),
+                    )]);
+                }
+                if let Some(using) = stage.using() {
+                    let columns: Vec<Attribute> = using
+                        .columns()
+                        .filter_map(|column| column.text())
+                        .map(|name| StringAttribute::new(self.context, &name).into())
+                        .collect();
+                    builder = builder.add_attributes(&[(
+                        Identifier::new(self.context, "using_columns"),
+                        ArrayAttribute::new(self.context, &columns).into(),
+                    )]);
+                }
+                first_result(block.append_operation(builder.build().expect("yzl.join builds")))
+            }
+            ast::Rel::SetExpr(stage) => {
+                let input = self.emit_input(block, stage.input());
+                let items = stage
+                    .items()
+                    .map(|item| (item.column(), item.value()))
+                    .collect();
+                let (names, region) = self.emit_items(items, loc);
+                first_result(block.append_operation(
+                    yzl::set(self.context, self.query, input, region, names, loc).into(),
+                ))
+            }
+            ast::Rel::DistinctExpr(stage) => {
+                let input = self.emit_input(block, stage.input());
                 first_result(
                     block.append_operation(
-                        yzl::from(
+                        yzl::distinct(self.context, self.query, input, loc).into(),
+                    ),
+                )
+            }
+            ast::Rel::DropExpr(stage) => {
+                let input = self.emit_input(block, stage.input());
+                let columns: Vec<Attribute> = stage
+                    .columns()
+                    .filter_map(|column| column.text())
+                    .map(|name| StringAttribute::new(self.context, &name).into())
+                    .collect();
+                first_result(
+                    block.append_operation(
+                        yzl::drop(
                             self.context,
                             self.query,
-                            FlatSymbolRefAttribute::new(self.context, ""),
+                            input,
+                            ArrayAttribute::new(self.context, &columns),
                             loc,
                         )
                         .into(),
@@ -630,7 +762,7 @@ impl<'c> Emitter<'c> {
                 )
             }
             other => {
-                eprintln!("yuzu_lang: unsupported stage input {other:?}");
+                self.note(format!("unsupported stage input {other:?}"));
                 first_result(
                     block.append_operation(
                         yzl::from(
@@ -738,12 +870,64 @@ mod tests {
 
     fn emitted(source: &str) -> String {
         let context = yuzu_mlir::context();
-        let module = super::emit_source(&context, "test.yz", source).expect("the source emits");
+        let emission = super::emit_source(&context, "test.yz", source).expect("the source emits");
         assert!(
-            module.as_operation().verify(),
+            emission.unsupported.is_empty(),
+            "unsupported constructs: {:?}",
+            emission.unsupported
+        );
+        assert!(
+            emission.module.as_operation().verify(),
             "the emitted module verifies"
         );
-        module.as_operation().to_string()
+        emission.module.as_operation().to_string()
+    }
+
+    /// Every query the existing end-to-end suites compile must emit cleanly:
+    /// no unsupported constructs, and a module that verifies.
+    #[test]
+    fn the_correctness_corpus_emits() {
+        let corpus = concat!(env!("CARGO_MANIFEST_DIR"), "/../../python/tests");
+        let mut sources = vec![std::fs::read_to_string(format!("{corpus}/support.py")).unwrap()];
+        for entry in std::fs::read_dir(format!("{corpus}/correctness")).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|extension| extension == "py") {
+                sources.push(std::fs::read_to_string(path).unwrap());
+            }
+        }
+
+        let context = yuzu_mlir::context();
+        let mut queries = 0;
+        let mut failures = Vec::new();
+        for source in &sources {
+            for (index, chunk) in source.split(r#"""""#).enumerate() {
+                // Odd chunks are the contents of triple-quoted strings; the
+                // ones holding Yuzu source mention a pipe or a declaration.
+                if index % 2 == 0 || !(chunk.contains("|>") || chunk.contains("struct ")) {
+                    continue;
+                }
+                queries += 1;
+                match super::emit_source(&context, "corpus.yz", chunk) {
+                    Some(emission)
+                        if emission.unsupported.is_empty()
+                            && emission.module.as_operation().verify() => {}
+                    Some(emission) => {
+                        failures.push(format!("{chunk}\n  -> {:?}", emission.unsupported))
+                    }
+                    None => failures.push(format!("{chunk}\n  -> no root")),
+                }
+            }
+        }
+        assert!(
+            queries > 30,
+            "the corpus extraction found only {queries} queries"
+        );
+        assert!(
+            failures.is_empty(),
+            "{} of {queries} corpus queries failed to emit:\n{}",
+            failures.len(),
+            failures.join("\n---\n")
+        );
     }
 
     #[test]
@@ -772,6 +956,7 @@ mod tests {
                 yzl.yield %6 : !yzl.var
               }
               %4 = yzl.limit %3, 10
+              yzl.output %4
             }
         "#]]
         .assert_eq(&emitted(
@@ -829,6 +1014,48 @@ external fn upper(s: str) -> str
     }
 
     #[test]
+    fn emits_joins_sets_and_membership() {
+        expect![[r#"
+            module {
+              %0 = yzl.from @employees
+              %1 = yzl.join "inner", %0, @departments as "d" {
+                %6 = yzl.name "dept_id" : !yzl.var
+                %7 = yzl.name "d.id" : !yzl.var
+                %8 = yz.cmp "eq", %6, %7 : !yzl.var, !yzl.var -> !yzl.var
+                yzl.yield %8 : !yzl.var
+              }
+              %2 = yzl.set %1 as ["level"] {
+                %6 = yzl.name "level" : !yzl.var
+                %7 = yz.constant_int 1
+                %8 = yz.add %6, %7 : !yzl.var, !yz.int64 -> !yzl.var
+                yzl.yield %8 : !yzl.var
+              }
+              %3 = yzl.where %2 {
+                %6 = yzl.name "level" : !yzl.var
+                %7 = yz.constant_int 1
+                %8 = yz.constant_int 3
+                %9 = yzl.list[%7, %8] : (!yz.int64, !yz.int64) -> !yzl.var
+                %10 = yzl.call @in(%6, %9) : (!yzl.var, !yzl.var) -> !yzl.var
+                yzl.yield %10 : !yzl.var
+              }
+              %4 = yzl.drop %3 ["rating"]
+              %5 = yzl.distinct %4
+              yzl.output %5
+            }
+        "#]]
+        .assert_eq(&emitted(
+            r#"
+from employees
+|> inner join departments as d on dept_id == d.id
+|> set level = level + 1
+|> where level in [1, 3]
+|> drop rating
+|> distinct
+"#,
+        ));
+    }
+
+    #[test]
     fn emits_sugar_and_bindings() {
         expect![[r#"
             module {
@@ -847,6 +1074,7 @@ external fn upper(s: str) -> str
                 %4 = yzl.name "q.renamed" : !yzl.var
                 yzl.yield %4 : !yzl.var
               }
+              yzl.output %3
             }
         "#]]
         .assert_eq(&emitted(

@@ -4,6 +4,7 @@
 include "mlir/IR/OpBase.td"
 include "mlir/IR/AttrTypeBase.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
+include "mlir/Interfaces/SideEffectInterfaces.td"
 
 def Yzr_Dialect : Dialect {
   let name = "yzr";
@@ -27,7 +28,7 @@ def Yzr_RelType : Yzr_Type<"Rel", "rel"> {
 class Yzr_Op<string mnemonic, list<Trait> traits = []>
     : Op<Yzr_Dialect, mnemonic, traits>;
 
-def Yzr_TableOp : Yzr_Op<"table"> {
+def Yzr_TableOp : Yzr_Op<"table", [Pure]> {
   let summary = "scan a declared table";
   let arguments = (ins FlatSymbolRefAttr:$name);
   let results = (outs Yzr_RelType:$result);
@@ -42,7 +43,7 @@ def Yzr_FilterOp : Yzr_Op<"filter", [SameOperandsAndResultType]> {
   let assemblyFormat = "$input `:` type($input) $body attr-dict";
 }
 
-def Yzr_ProjectOp : Yzr_Op<"project"> {
+def Yzr_ProjectOp : Yzr_Op<"project", [Pure]> {
   let summary = "replace the row with the yielded values";
   let arguments = (ins Yzr_RelType:$input);
   let results = (outs Yzr_RelType:$result);
@@ -50,7 +51,7 @@ def Yzr_ProjectOp : Yzr_Op<"project"> {
   let assemblyFormat = "$input $body `:` type($input) `->` type($result) attr-dict";
 }
 
-def Yzr_ExtendOp : Yzr_Op<"extend"> {
+def Yzr_ExtendOp : Yzr_Op<"extend", [Pure]> {
   let summary = "append the yielded values as new columns";
   let arguments = (ins Yzr_RelType:$input);
   let results = (outs Yzr_RelType:$result);
@@ -58,14 +59,14 @@ def Yzr_ExtendOp : Yzr_Op<"extend"> {
   let assemblyFormat = "$input $body `:` type($input) `->` type($result) attr-dict";
 }
 
-def Yzr_LimitOp : Yzr_Op<"limit", [SameOperandsAndResultType]> {
+def Yzr_LimitOp : Yzr_Op<"limit", [Pure, SameOperandsAndResultType]> {
   let summary = "keep at most the first count rows";
   let arguments = (ins Yzr_RelType:$input, I64Attr:$count);
   let results = (outs Yzr_RelType:$result);
   let assemblyFormat = "$input `,` $count `:` type($input) attr-dict";
 }
 
-def Yzr_AggregateOp : Yzr_Op<"aggregate"> {
+def Yzr_AggregateOp : Yzr_Op<"aggregate", [Pure]> {
   let summary = "group the input relation and compute measures";
   let description = [{
     The region's block arguments are the input row's columns. A block argument
@@ -78,7 +79,7 @@ def Yzr_AggregateOp : Yzr_Op<"aggregate"> {
   let assemblyFormat = "$input `keys` $keys $body `:` type($input) `->` type($result) attr-dict";
 }
 
-def Yzr_JoinOp : Yzr_Op<"join"> {
+def Yzr_JoinOp : Yzr_Op<"join", [Pure]> {
   let summary = "join two relations; the on-region sees both rows' columns";
   let arguments = (ins StrAttr:$kind, Yzr_RelType:$lhs, Yzr_RelType:$rhs);
   let results = (outs Yzr_RelType:$result);
@@ -88,7 +89,7 @@ def Yzr_JoinOp : Yzr_Op<"join"> {
 }
 
 class Yzr_SetOp<string mnemonic>
-    : Yzr_Op<mnemonic, [SameOperandsAndResultType]> {
+    : Yzr_Op<mnemonic, [Pure, SameOperandsAndResultType]> {
   let arguments = (ins Yzr_RelType:$lhs, Yzr_RelType:$rhs);
   let results = (outs Yzr_RelType:$result);
   let assemblyFormat = "$lhs `,` $rhs `:` type($result) attr-dict";
@@ -106,17 +107,23 @@ def Yzr_ExceptOp : Yzr_SetOp<"except"> {
   let summary = "the left rows absent from the right";
 }
 
-def Yzr_AggOp : Yzr_Op<"agg"> {
+def Yzr_AggOp : Yzr_Op<"agg", [Pure]> {
   let summary = "a measure: an aggregate function over a row-level value";
   let arguments = (ins StrAttr:$fn, AnyType:$value);
   let results = (outs AnyType:$result);
   let assemblyFormat = "$fn `,` $value `:` type($value) `->` type($result) attr-dict";
 }
 
-def Yzr_CountOp : Yzr_Op<"count"> {
+def Yzr_CountOp : Yzr_Op<"count", [Pure]> {
   let summary = "a measure counting the group's rows; takes no value";
   let results = (outs AnyType:$result);
   let assemblyFormat = "attr-dict `:` type($result)";
+}
+
+def Yzr_OutputOp : Yzr_Op<"output"> {
+  let summary = "the program's query: what emission serializes";
+  let arguments = (ins Yzr_RelType:$query);
+  let assemblyFormat = "$query `:` type($query) attr-dict";
 }
 
 def Yzr_YieldOp : Yzr_Op<"yield",
