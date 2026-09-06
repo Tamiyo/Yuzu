@@ -1,0 +1,16 @@
+[package]
+name = "yuzu_passes"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+melior = { version = "0.27.6", features = ["ods-dialects"] }
+mlir-sys = "220"
+text-size = "1.1.1"
+yuzu_diagnostics = { path = "../yuzu_diagnostics" }
+yuzu_types = { path = "../yuzu_types" }
+
+[dev-dependencies]
+expect-test = "1.5.0"
+yuzu_lang = { path = "../yuzu_lang" }
+yuzu_mlir = { path = "../yuzu_mlir" }

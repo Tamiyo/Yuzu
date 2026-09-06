@@ -177,6 +177,20 @@ pub fn compile_mlir(name: &str, source: &str) -> std::process::ExitCode {
         eprintln!("yuzu: the converted module does not verify");
         return std::process::ExitCode::FAILURE;
     }
+
+    let mut sources = SourceMap::new();
+    let source_id = sources.add(name.to_string(), source.to_string());
+    let mut diagnostics = DiagnosticsEngine::new();
+    yuzu_passes::resolve_names(
+        &conversion.module,
+        &yuzu_types::Builtins,
+        &yuzu_passes::Source::new(source_id, source),
+        &mut diagnostics,
+    );
+    print_diagnostics(&diagnostics, &sources);
+    if has_errors(&diagnostics) {
+        return std::process::ExitCode::FAILURE;
+    }
     print!("{}", conversion.module.as_operation());
     std::process::ExitCode::SUCCESS
 }

@@ -2126,6 +2126,7 @@ dependencies = [
  "yuzu_lexer",
  "yuzu_mlir",
  "yuzu_parser",
+ "yuzu_passes",
  "yuzu_plan",
  "yuzu_substrait",
  "yuzu_types",
@@ -2196,6 +2197,20 @@ dependencies = [
  "yuzu_diagnostics",
  "yuzu_lexer",
  "yuzu_syntax",
+]
+
+[[package]]
+name = "yuzu_passes"
+version = "0.0.0"
+dependencies = [
+ "expect-test",
+ "melior",
+ "mlir-sys",
+ "text-size",
+ "yuzu_diagnostics",
+ "yuzu_lang",
+ "yuzu_mlir",
+ "yuzu_types",
 ]
 
 [[package]]
