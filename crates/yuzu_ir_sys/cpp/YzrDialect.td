@@ -78,6 +78,34 @@ def Yzr_AggregateOp : Yzr_Op<"aggregate"> {
   let assemblyFormat = "$input `keys` $keys $body `:` type($input) `->` type($result) attr-dict";
 }
 
+def Yzr_JoinOp : Yzr_Op<"join"> {
+  let summary = "join two relations; the on-region sees both rows' columns";
+  let arguments = (ins StrAttr:$kind, Yzr_RelType:$lhs, Yzr_RelType:$rhs);
+  let results = (outs Yzr_RelType:$result);
+  let regions = (region SizedRegion<1>:$on);
+  let assemblyFormat =
+      "$kind `,` $lhs `,` $rhs $on `:` type($lhs) `,` type($rhs) `->` type($result) attr-dict";
+}
+
+class Yzr_SetOp<string mnemonic>
+    : Yzr_Op<mnemonic, [SameOperandsAndResultType]> {
+  let arguments = (ins Yzr_RelType:$lhs, Yzr_RelType:$rhs);
+  let results = (outs Yzr_RelType:$result);
+  let assemblyFormat = "$lhs `,` $rhs `:` type($result) attr-dict";
+}
+
+def Yzr_UnionOp : Yzr_SetOp<"union"> {
+  let summary = "all rows of both relations";
+}
+
+def Yzr_IntersectOp : Yzr_SetOp<"intersect"> {
+  let summary = "the rows present in both relations";
+}
+
+def Yzr_ExceptOp : Yzr_SetOp<"except"> {
+  let summary = "the left rows absent from the right";
+}
+
 def Yzr_AggOp : Yzr_Op<"agg"> {
   let summary = "a measure: an aggregate function over a row-level value";
   let arguments = (ins StrAttr:$fn, AnyType:$value);
@@ -85,9 +113,16 @@ def Yzr_AggOp : Yzr_Op<"agg"> {
   let assemblyFormat = "$fn `,` $value `:` type($value) `->` type($result) attr-dict";
 }
 
+def Yzr_CountOp : Yzr_Op<"count"> {
+  let summary = "a measure counting the group's rows; takes no value";
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "attr-dict `:` type($result)";
+}
+
 def Yzr_YieldOp : Yzr_Op<"yield",
     [Terminator,
-     ParentOneOf<["AggregateOp", "FilterOp", "ProjectOp", "ExtendOp"]>]> {
+     ParentOneOf<["AggregateOp", "FilterOp", "ProjectOp", "ExtendOp",
+                  "JoinOp"]>]> {
   let summary = "the values a stage's region produces";
   let arguments = (ins Variadic<AnyType>:$values);
   let assemblyFormat = "attr-dict ($values^ `:` type($values))?";

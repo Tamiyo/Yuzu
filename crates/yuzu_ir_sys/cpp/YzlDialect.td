@@ -139,10 +139,10 @@ def Yzl_NameOp : Yzl_Op<"name"> {
 
 def Yzl_CallOp : Yzl_Op<"call"> {
   let summary = "a call by name; registry and shadowing unresolved";
-  let arguments = (ins FlatSymbolRefAttr:$callee, Variadic<AnyType>:$args);
+  let arguments = (ins FlatSymbolRefAttr:$callee, Variadic<AnyType>:$operands);
   let results = (outs AnyType:$result);
   let assemblyFormat =
-      "$callee `(` $args `)` `:` functional-type($args, $result) attr-dict";
+      "$callee `(` $operands `)` `:` functional-type($operands, $result) attr-dict";
 }
 
 def Yzl_YieldOp : Yzl_Op<"yield",

@@ -32,23 +32,23 @@ mlir::Operation *YzDialect::materializeConstant(mlir::OpBuilder &builder,
                                                 mlir::Location loc) {
   if (llvm::isa<BoolType>(type))
     if (auto boolean = llvm::dyn_cast<mlir::BoolAttr>(value))
-      return builder.create<ConstBoolOp>(loc, type, boolean);
+      return builder.create<ConstantBoolOp>(loc, type, boolean);
   if (llvm::isa<Int64Type>(type))
     if (auto integer = llvm::dyn_cast<mlir::IntegerAttr>(value))
-      return builder.create<ConstOp>(loc, type, integer);
+      return builder.create<ConstantIntOp>(loc, type, integer);
   if (llvm::isa<Float64Type>(type))
     if (auto real = llvm::dyn_cast<mlir::FloatAttr>(value))
-      return builder.create<ConstFloatOp>(loc, type, real);
+      return builder.create<ConstantFloatOp>(loc, type, real);
   if (llvm::isa<StrType>(type))
     if (auto text = llvm::dyn_cast<mlir::StringAttr>(value))
-      return builder.create<ConstStrOp>(loc, type, text);
+      return builder.create<ConstantStrOp>(loc, type, text);
   return nullptr;
 }
 
-mlir::OpFoldResult ConstOp::fold(FoldAdaptor) { return getValueAttr(); }
-mlir::OpFoldResult ConstFloatOp::fold(FoldAdaptor) { return getValueAttr(); }
-mlir::OpFoldResult ConstBoolOp::fold(FoldAdaptor) { return getValueAttr(); }
-mlir::OpFoldResult ConstStrOp::fold(FoldAdaptor) { return getValueAttr(); }
+mlir::OpFoldResult ConstantIntOp::fold(FoldAdaptor) { return getValueAttr(); }
+mlir::OpFoldResult ConstantFloatOp::fold(FoldAdaptor) { return getValueAttr(); }
+mlir::OpFoldResult ConstantBoolOp::fold(FoldAdaptor) { return getValueAttr(); }
+mlir::OpFoldResult ConstantStrOp::fold(FoldAdaptor) { return getValueAttr(); }
 
 static mlir::OpFoldResult foldIntBinary(mlir::Attribute lhs,
                                         mlir::Attribute rhs,
@@ -86,7 +86,7 @@ mlir::OpFoldResult DivOp::fold(FoldAdaptor adaptor) {
                        [](int64_t lhs, int64_t rhs) { return lhs / rhs; });
 }
 
-mlir::OpFoldResult ModOp::fold(FoldAdaptor adaptor) {
+mlir::OpFoldResult RemOp::fold(FoldAdaptor adaptor) {
   auto rhs = llvm::dyn_cast_if_present<mlir::IntegerAttr>(adaptor.getRhs());
   if (!rhs || rhs.getInt() == 0)
     return {};

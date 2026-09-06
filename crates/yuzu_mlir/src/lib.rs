@@ -28,42 +28,42 @@ mod tests {
             &context,
             r#"
 module {
-  %0 = yz.const 3
-  %1 = yz.const 4
+  %0 = yz.constant_int 3
+  %1 = yz.constant_int 4
   %2 = yz.add %0, %1
   %3 = yz.sub %2, %0
   %4 = yz.mul %3, %1
   %5 = yz.div %4, %1
-  %6 = yz.mod %5, %0
+  %6 = yz.rem %5, %0
   %7 = yz.neg %6
   %8 = yz.cmp "gt", %7, %0
   %9 = yz.not %8
   %10 = yz.and %8, %9
   %11 = yz.or %8, %9
-  %12 = yz.const_float 1.500000e+00
-  %13 = yz.const_bool true
-  %14 = yz.const_str "hello"
+  %12 = yz.constant_float 1.500000e+00
+  %13 = yz.constant_bool true
+  %14 = yz.constant_str "hello"
 }
 "#,
         )
         .expect("the yz dialect parses its own syntax");
         expect![[r#"
             module {
-              %0 = yz.const 3
-              %1 = yz.const 4
+              %0 = yz.constant_int 3
+              %1 = yz.constant_int 4
               %2 = yz.add %0, %1
               %3 = yz.sub %2, %0
               %4 = yz.mul %3, %1
               %5 = yz.div %4, %1
-              %6 = yz.mod %5, %0
+              %6 = yz.rem %5, %0
               %7 = yz.neg %6
               %8 = yz.cmp "gt", %7, %0
               %9 = yz.not %8
               %10 = yz.and %8, %9
               %11 = yz.or %8, %9
-              %12 = yz.const_float 1.500000e+00
-              %13 = yz.const_bool true
-              %14 = yz.const_str "hello"
+              %12 = yz.constant_float 1.500000e+00
+              %13 = yz.constant_bool true
+              %14 = yz.constant_str "hello"
             }
         "#]]
         .assert_eq(&module.as_operation().to_string());
@@ -78,7 +78,7 @@ module {
         let module = Module::new(location);
         let block = module.body();
         let three = block.append_operation(
-            OperationBuilder::new("yz.const", location)
+            OperationBuilder::new("yz.constant_int", location)
                 .add_attributes(&[(
                     melior::ir::Identifier::new(&context, "value"),
                     melior::ir::attribute::IntegerAttribute::new(
@@ -89,7 +89,7 @@ module {
                 )])
                 .add_results(&[int64])
                 .build()
-                .expect("yz.const builds"),
+                .expect("yz.constant_int builds"),
         );
         block.append_operation(
             OperationBuilder::new("yz.add", location)
@@ -105,7 +105,7 @@ module {
         assert!(module.as_operation().verify());
         expect![[r#"
             module {
-              %0 = yz.const 3
+              %0 = yz.constant_int 3
               %1 = yz.add %0, %0
             }
         "#]]
@@ -122,13 +122,13 @@ module {
   %t = yzr.table @t : !yzr.rel<a: !yz.int64, b: !yz.int64>
   %w = yzr.filter %t : !yzr.rel<a: !yz.int64, b: !yz.int64> {
   ^bb0(%a: !yz.int64, %b: !yz.int64):
-    %c10 = yz.const 10
+    %c10 = yz.constant_int 10
     %p = yz.cmp "gt", %a, %c10
     yzr.yield %p : !yz.bool
   }
   %e = yzr.extend %w {
   ^bb0(%a: !yz.int64, %b: !yz.int64):
-    %c3 = yz.const 3
+    %c3 = yz.constant_int 3
     %0 = yz.mul %a, %c3
     %1 = yz.add %0, %b
     yzr.yield %1 : !yz.int64
@@ -148,13 +148,13 @@ module {
               %0 = yzr.table @t : <a: !yz.int64, b: !yz.int64>
               %1 = yzr.filter %0 : <a: !yz.int64, b: !yz.int64> {
               ^bb0(%arg0: !yz.int64, %arg1: !yz.int64):
-                %5 = yz.const 10
+                %5 = yz.constant_int 10
                 %6 = yz.cmp "gt", %arg0, %5
                 yzr.yield %6 : !yz.bool
               }
               %2 = yzr.extend %1 {
               ^bb0(%arg0: !yz.int64, %arg1: !yz.int64):
-                %5 = yz.const 3
+                %5 = yz.constant_int 3
                 %6 = yz.mul %arg0, %5
                 %7 = yz.add %6, %arg1
                 yzr.yield %7 : !yz.int64
@@ -214,7 +214,7 @@ module {
             yzl::_name(&context, int64, StringAttribute::new(&context, "a"), loc).into(),
         );
         let ten = body.append_operation(
-            yz::r#const(&context, int64, IntegerAttribute::new(i64, 10), loc).into(),
+            yz::constant_int(&context, int64, IntegerAttribute::new(i64, 10), loc).into(),
         );
         let cmp = body.append_operation(
             yz::cmp(
@@ -239,10 +239,94 @@ module {
               %0 = yzl.from @t
               %1 = yzl.where %0 {
                 %2 = yzl.name "a" : !yz.int64
-                %3 = yz.const 10
+                %3 = yz.constant_int 10
                 %4 = yz.cmp "gt", %2, %3
                 yzl.yield %4 : !yz.bool
               }
+            }
+        "#]]
+        .assert_eq(&module.as_operation().to_string());
+    }
+
+    #[test]
+    fn functions_and_calls_round_trip() {
+        let context = super::context();
+        let module = parse(
+            &context,
+            r#"
+module {
+  yz.func @triple (!yz.int64) -> !yz.int64 {
+  ^bb0(%x: !yz.int64):
+    %c3 = yz.constant_int 3
+    %0 = yz.mul %x, %c3
+    yz.return %0 : !yz.int64
+  }
+  %a = yz.constant_int 7
+  %b = yz.call @triple(%a) : (!yz.int64) -> !yz.int64
+  %c = yz.extern_call "upper"(%b) : (!yz.int64) -> !yz.int64
+}
+"#,
+        )
+        .expect("functions and calls parse");
+        expect![[r#"
+            module {
+              yz.func @triple (!yz.int64) -> !yz.int64 {
+              ^bb0(%arg0: !yz.int64):
+                %3 = yz.constant_int 3
+                %4 = yz.mul %arg0, %3
+                yz.return %4 : !yz.int64
+              }
+              %0 = yz.constant_int 7
+              %1 = yz.call @triple(%0) : (!yz.int64) -> !yz.int64
+              %2 = yz.extern_call "upper"(%1) : (!yz.int64) -> !yz.int64
+            }
+        "#]]
+        .assert_eq(&module.as_operation().to_string());
+    }
+
+    #[test]
+    fn joins_set_ops_and_count_round_trip() {
+        let context = super::context();
+        let module = parse(
+            &context,
+            r#"
+module {
+  %l = yzr.table @l : !yzr.rel<a: !yz.int64>
+  %r = yzr.table @r : !yzr.rel<b: !yz.int64>
+  %j = yzr.join "inner", %l, %r {
+  ^bb0(%a: !yz.int64, %b: !yz.int64):
+    %p = yz.cmp "eq", %a, %b
+    yzr.yield %p : !yz.bool
+  } : !yzr.rel<a: !yz.int64>, !yzr.rel<b: !yz.int64> -> !yzr.rel<a: !yz.int64, b: !yz.int64>
+  %u = yzr.union %l, %l : !yzr.rel<a: !yz.int64>
+  %i = yzr.intersect %l, %u : !yzr.rel<a: !yz.int64>
+  %e = yzr.except %u, %i : !yzr.rel<a: !yz.int64>
+  %g = yzr.aggregate %e keys [] {
+  ^bb0(%a: !yz.int64):
+    %n = yzr.count : !yz.int64
+    yzr.yield %n : !yz.int64
+  } : !yzr.rel<a: !yz.int64> -> !yzr.rel<n: !yz.int64>
+}
+"#,
+        )
+        .expect("joins, set ops, and count parse");
+        expect![[r#"
+            module {
+              %0 = yzr.table @l : <a: !yz.int64>
+              %1 = yzr.table @r : <b: !yz.int64>
+              %2 = yzr.join "inner", %0, %1 {
+              ^bb0(%arg0: !yz.int64, %arg1: !yz.int64):
+                %7 = yz.cmp "eq", %arg0, %arg1
+                yzr.yield %7 : !yz.bool
+              } : <a: !yz.int64>, <b: !yz.int64> -> <a: !yz.int64, b: !yz.int64>
+              %3 = yzr.union %0, %0 : <a: !yz.int64>
+              %4 = yzr.intersect %0, %3 : <a: !yz.int64>
+              %5 = yzr.except %3, %4 : <a: !yz.int64>
+              %6 = yzr.aggregate %5 keys [] {
+              ^bb0(%arg0: !yz.int64):
+                %7 = yzr.count : !yz.int64
+                yzr.yield %7 : !yz.int64
+              } : <a: !yz.int64> -> <n: !yz.int64>
             }
         "#]]
         .assert_eq(&module.as_operation().to_string());
@@ -258,8 +342,8 @@ module {
   %t = yzr.table @t : !yzr.rel<a: !yz.int64>
   %w = yzr.filter %t : !yzr.rel<a: !yz.int64> {
   ^bb0(%a: !yz.int64):
-    %c3 = yz.const 3
-    %c4 = yz.const 4
+    %c3 = yz.constant_int 3
+    %c4 = yz.constant_int 4
     %p = yz.cmp "gt", %c4, %c3
     %q = yz.cmp "gt", %a, %c3
     %r = yz.and %p, %q
@@ -267,8 +351,8 @@ module {
   }
   %d = yzr.filter %w : !yzr.rel<a: !yz.int64> {
   ^bb0(%a: !yz.int64):
-    %c0 = yz.const 0
-    %c1 = yz.const 1
+    %c0 = yz.constant_int 0
+    %c1 = yz.constant_int 1
     %z = yz.div %c1, %c0
     %p = yz.cmp "eq", %z, %c1
     yzr.yield %p : !yz.bool
@@ -286,15 +370,15 @@ module {
 
         expect![[r#"
             module {
-              %0 = yz.const_bool true
-              %1 = yz.const 1
-              %2 = yz.const 0
-              %3 = yz.const 3
+              %0 = yz.constant_bool true
+              %1 = yz.constant_int 1
+              %2 = yz.constant_int 0
+              %3 = yz.constant_int 3
               %4 = yzr.table @t : <a: !yz.int64>
               %5 = yzr.filter %4 : <a: !yz.int64> {
               ^bb0(%arg0: !yz.int64):
                 %7 = yz.cmp "gt", %arg0, %3
-                %8 = yz.and %0, %7
+                %8 = yz.and %7, %0
                 yzr.yield %8 : !yz.bool
               }
               %6 = yzr.filter %5 : <a: !yz.int64> {
