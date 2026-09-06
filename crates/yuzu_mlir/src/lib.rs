@@ -30,17 +30,18 @@ mod tests {
 module {
   %0 = yz.constant_int 3
   %1 = yz.constant_int 4
-  %2 = yz.add %0, %1
-  %3 = yz.sub %2, %0
-  %4 = yz.mul %3, %1
-  %5 = yz.div %4, %1
-  %6 = yz.rem %5, %0
-  %7 = yz.neg %6
-  %8 = yz.cmp "gt", %7, %0
+  %2 = yz.add %0, %1 : !yz.int64
+  %3 = yz.sub %2, %0 : !yz.int64
+  %4 = yz.mul %3, %1 : !yz.int64
+  %5 = yz.div %4, %1 : !yz.int64
+  %6 = yz.rem %5, %0 : !yz.int64
+  %7 = yz.neg %6 : !yz.int64
+  %8 = yz.cmp "gt", %7, %0 : !yz.int64
   %9 = yz.not %8
   %10 = yz.and %8, %9
   %11 = yz.or %8, %9
   %12 = yz.constant_float 1.500000e+00
+  %f = yz.add %12, %12 : !yz.float64
   %13 = yz.constant_bool true
   %14 = yz.constant_str "hello"
 }
@@ -51,19 +52,20 @@ module {
             module {
               %0 = yz.constant_int 3
               %1 = yz.constant_int 4
-              %2 = yz.add %0, %1
-              %3 = yz.sub %2, %0
-              %4 = yz.mul %3, %1
-              %5 = yz.div %4, %1
-              %6 = yz.rem %5, %0
-              %7 = yz.neg %6
-              %8 = yz.cmp "gt", %7, %0
+              %2 = yz.add %0, %1 : !yz.int64
+              %3 = yz.sub %2, %0 : !yz.int64
+              %4 = yz.mul %3, %1 : !yz.int64
+              %5 = yz.div %4, %1 : !yz.int64
+              %6 = yz.rem %5, %0 : !yz.int64
+              %7 = yz.neg %6 : !yz.int64
+              %8 = yz.cmp "gt", %7, %0 : !yz.int64
               %9 = yz.not %8
               %10 = yz.and %8, %9
               %11 = yz.or %8, %9
               %12 = yz.constant_float 1.500000e+00
-              %13 = yz.constant_bool true
-              %14 = yz.constant_str "hello"
+              %13 = yz.add %12, %12 : !yz.float64
+              %14 = yz.constant_bool true
+              %15 = yz.constant_str "hello"
             }
         "#]]
         .assert_eq(&module.as_operation().to_string());
@@ -106,7 +108,7 @@ module {
         expect![[r#"
             module {
               %0 = yz.constant_int 3
-              %1 = yz.add %0, %0
+              %1 = yz.add %0, %0 : !yz.int64
             }
         "#]]
         .assert_eq(&module.as_operation().to_string());
@@ -123,14 +125,14 @@ module {
   %w = yzr.filter %t : !yzr.rel<a: !yz.int64, b: !yz.int64> {
   ^bb0(%a: !yz.int64, %b: !yz.int64):
     %c10 = yz.constant_int 10
-    %p = yz.cmp "gt", %a, %c10
+    %p = yz.cmp "gt", %a, %c10 : !yz.int64
     yzr.yield %p : !yz.bool
   }
   %e = yzr.extend %w {
   ^bb0(%a: !yz.int64, %b: !yz.int64):
     %c3 = yz.constant_int 3
-    %0 = yz.mul %a, %c3
-    %1 = yz.add %0, %b
+    %0 = yz.mul %a, %c3 : !yz.int64
+    %1 = yz.add %0, %b : !yz.int64
     yzr.yield %1 : !yz.int64
   } : !yzr.rel<a: !yz.int64, b: !yz.int64> -> !yzr.rel<a: !yz.int64, b: !yz.int64, e: !yz.int64>
   %g = yzr.aggregate %e keys [1] {
@@ -149,14 +151,14 @@ module {
               %1 = yzr.filter %0 : <a: !yz.int64, b: !yz.int64> {
               ^bb0(%arg0: !yz.int64, %arg1: !yz.int64):
                 %5 = yz.constant_int 10
-                %6 = yz.cmp "gt", %arg0, %5
+                %6 = yz.cmp "gt", %arg0, %5 : !yz.int64
                 yzr.yield %6 : !yz.bool
               }
               %2 = yzr.extend %1 {
               ^bb0(%arg0: !yz.int64, %arg1: !yz.int64):
                 %5 = yz.constant_int 3
-                %6 = yz.mul %arg0, %5
-                %7 = yz.add %6, %arg1
+                %6 = yz.mul %arg0, %5 : !yz.int64
+                %7 = yz.add %6, %arg1 : !yz.int64
                 yzr.yield %7 : !yz.int64
               } : <a: !yz.int64, b: !yz.int64> -> <a: !yz.int64, b: !yz.int64, e: !yz.int64>
               %3 = yzr.aggregate %2 keys [1] {
@@ -240,7 +242,7 @@ module {
               %1 = yzl.where %0 {
                 %2 = yzl.name "a" : !yz.int64
                 %3 = yz.constant_int 10
-                %4 = yz.cmp "gt", %2, %3
+                %4 = yz.cmp "gt", %2, %3 : !yz.int64
                 yzl.yield %4 : !yz.bool
               }
             }
@@ -258,7 +260,7 @@ module {
   yz.func @triple (!yz.int64) -> !yz.int64 {
   ^bb0(%x: !yz.int64):
     %c3 = yz.constant_int 3
-    %0 = yz.mul %x, %c3
+    %0 = yz.mul %x, %c3 : !yz.int64
     yz.return %0 : !yz.int64
   }
   %a = yz.constant_int 7
@@ -273,7 +275,7 @@ module {
               yz.func @triple (!yz.int64) -> !yz.int64 {
               ^bb0(%arg0: !yz.int64):
                 %3 = yz.constant_int 3
-                %4 = yz.mul %arg0, %3
+                %4 = yz.mul %arg0, %3 : !yz.int64
                 yz.return %4 : !yz.int64
               }
               %0 = yz.constant_int 7
@@ -295,7 +297,7 @@ module {
   %r = yzr.table @r : !yzr.rel<b: !yz.int64>
   %j = yzr.join "inner", %l, %r {
   ^bb0(%a: !yz.int64, %b: !yz.int64):
-    %p = yz.cmp "eq", %a, %b
+    %p = yz.cmp "eq", %a, %b : !yz.int64
     yzr.yield %p : !yz.bool
   } : !yzr.rel<a: !yz.int64>, !yzr.rel<b: !yz.int64> -> !yzr.rel<a: !yz.int64, b: !yz.int64>
   %u = yzr.union %l, %l : !yzr.rel<a: !yz.int64>
@@ -316,7 +318,7 @@ module {
               %1 = yzr.table @r : <b: !yz.int64>
               %2 = yzr.join "inner", %0, %1 {
               ^bb0(%arg0: !yz.int64, %arg1: !yz.int64):
-                %7 = yz.cmp "eq", %arg0, %arg1
+                %7 = yz.cmp "eq", %arg0, %arg1 : !yz.int64
                 yzr.yield %7 : !yz.bool
               } : <a: !yz.int64>, <b: !yz.int64> -> <a: !yz.int64, b: !yz.int64>
               %3 = yzr.union %0, %0 : <a: !yz.int64>
@@ -344,8 +346,8 @@ module {
   ^bb0(%a: !yz.int64):
     %c3 = yz.constant_int 3
     %c4 = yz.constant_int 4
-    %p = yz.cmp "gt", %c4, %c3
-    %q = yz.cmp "gt", %a, %c3
+    %p = yz.cmp "gt", %c4, %c3 : !yz.int64
+    %q = yz.cmp "gt", %a, %c3 : !yz.int64
     %r = yz.and %p, %q
     yzr.yield %r : !yz.bool
   }
@@ -353,8 +355,8 @@ module {
   ^bb0(%a: !yz.int64):
     %c0 = yz.constant_int 0
     %c1 = yz.constant_int 1
-    %z = yz.div %c1, %c0
-    %p = yz.cmp "eq", %z, %c1
+    %z = yz.div %c1, %c0 : !yz.int64
+    %p = yz.cmp "eq", %z, %c1 : !yz.int64
     yzr.yield %p : !yz.bool
   }
 }
@@ -377,14 +379,14 @@ module {
               %4 = yzr.table @t : <a: !yz.int64>
               %5 = yzr.filter %4 : <a: !yz.int64> {
               ^bb0(%arg0: !yz.int64):
-                %7 = yz.cmp "gt", %arg0, %3
+                %7 = yz.cmp "gt", %arg0, %3 : !yz.int64
                 %8 = yz.and %7, %0
                 yzr.yield %8 : !yz.bool
               }
               %6 = yzr.filter %5 : <a: !yz.int64> {
               ^bb0(%arg0: !yz.int64):
-                %7 = yz.div %1, %2
-                %8 = yz.cmp "eq", %7, %1
+                %7 = yz.div %1, %2 : !yz.int64
+                %8 = yz.cmp "eq", %7, %1 : !yz.int64
                 yzr.yield %8 : !yz.bool
               }
             }
@@ -422,7 +424,7 @@ module {
             r#"
 module {
   %0 = "yz.wrong"() : () -> !yz.bool
-  %1 = yz.add %0, %0
+  %1 = yz.add %0, %0 : !yz.int64
 }
 "#,
         );

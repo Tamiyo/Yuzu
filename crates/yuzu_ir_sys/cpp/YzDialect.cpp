@@ -1,5 +1,7 @@
 #include "YzDialect.h"
 
+#include <cmath>
+
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -50,64 +52,101 @@ mlir::OpFoldResult ConstantFloatOp::fold(FoldAdaptor) { return getValueAttr(); }
 mlir::OpFoldResult ConstantBoolOp::fold(FoldAdaptor) { return getValueAttr(); }
 mlir::OpFoldResult ConstantStrOp::fold(FoldAdaptor) { return getValueAttr(); }
 
-static mlir::OpFoldResult foldIntBinary(mlir::Attribute lhs,
-                                        mlir::Attribute rhs,
-                                        int64_t (*apply)(int64_t, int64_t)) {
-  auto lhsInt = llvm::dyn_cast_if_present<mlir::IntegerAttr>(lhs);
-  auto rhsInt = llvm::dyn_cast_if_present<mlir::IntegerAttr>(rhs);
-  if (!lhsInt || !rhsInt)
-    return {};
-  return mlir::IntegerAttr::get(lhsInt.getType(),
-                                apply(lhsInt.getInt(), rhsInt.getInt()));
+static mlir::OpFoldResult foldNumericBinary(mlir::Attribute lhs,
+                                            mlir::Attribute rhs,
+                                            int64_t (*ints)(int64_t, int64_t),
+                                            double (*floats)(double, double)) {
+  if (auto lhsInt = llvm::dyn_cast_if_present<mlir::IntegerAttr>(lhs))
+    if (auto rhsInt = llvm::dyn_cast_if_present<mlir::IntegerAttr>(rhs))
+      return mlir::IntegerAttr::get(lhsInt.getType(),
+                                    ints(lhsInt.getInt(), rhsInt.getInt()));
+  if (auto lhsFloat = llvm::dyn_cast_if_present<mlir::FloatAttr>(lhs))
+    if (auto rhsFloat = llvm::dyn_cast_if_present<mlir::FloatAttr>(rhs))
+      return mlir::FloatAttr::get(
+          lhsFloat.getType(),
+          floats(lhsFloat.getValueAsDouble(), rhsFloat.getValueAsDouble()));
+  return {};
+}
+
+// A zero divisor never folds, for either kind: the runtime owns that
+// behavior, and folding it away would change what the query does.
+static bool isZero(mlir::Attribute value) {
+  if (auto integer = llvm::dyn_cast_if_present<mlir::IntegerAttr>(value))
+    return integer.getInt() == 0;
+  if (auto real = llvm::dyn_cast_if_present<mlir::FloatAttr>(value))
+    return real.getValueAsDouble() == 0.0;
+  return false;
 }
 
 mlir::OpFoldResult AddOp::fold(FoldAdaptor adaptor) {
-  return foldIntBinary(adaptor.getLhs(), adaptor.getRhs(),
-                       [](int64_t lhs, int64_t rhs) { return lhs + rhs; });
+  return foldNumericBinary(
+      adaptor.getLhs(), adaptor.getRhs(),
+      [](int64_t lhs, int64_t rhs) { return lhs + rhs; },
+      [](double lhs, double rhs) { return lhs + rhs; });
 }
 
 mlir::OpFoldResult SubOp::fold(FoldAdaptor adaptor) {
-  return foldIntBinary(adaptor.getLhs(), adaptor.getRhs(),
-                       [](int64_t lhs, int64_t rhs) { return lhs - rhs; });
+  return foldNumericBinary(
+      adaptor.getLhs(), adaptor.getRhs(),
+      [](int64_t lhs, int64_t rhs) { return lhs - rhs; },
+      [](double lhs, double rhs) { return lhs - rhs; });
 }
 
 mlir::OpFoldResult MulOp::fold(FoldAdaptor adaptor) {
-  return foldIntBinary(adaptor.getLhs(), adaptor.getRhs(),
-                       [](int64_t lhs, int64_t rhs) { return lhs * rhs; });
+  return foldNumericBinary(
+      adaptor.getLhs(), adaptor.getRhs(),
+      [](int64_t lhs, int64_t rhs) { return lhs * rhs; },
+      [](double lhs, double rhs) { return lhs * rhs; });
 }
 
-// Division and remainder refuse a zero divisor: the runtime owns that
-// behavior, and folding it away would change what the query does.
 mlir::OpFoldResult DivOp::fold(FoldAdaptor adaptor) {
-  auto rhs = llvm::dyn_cast_if_present<mlir::IntegerAttr>(adaptor.getRhs());
-  if (!rhs || rhs.getInt() == 0)
+  if (isZero(adaptor.getRhs()))
     return {};
-  return foldIntBinary(adaptor.getLhs(), adaptor.getRhs(),
-                       [](int64_t lhs, int64_t rhs) { return lhs / rhs; });
+  return foldNumericBinary(
+      adaptor.getLhs(), adaptor.getRhs(),
+      [](int64_t lhs, int64_t rhs) { return lhs / rhs; },
+      [](double lhs, double rhs) { return lhs / rhs; });
 }
 
 mlir::OpFoldResult RemOp::fold(FoldAdaptor adaptor) {
-  auto rhs = llvm::dyn_cast_if_present<mlir::IntegerAttr>(adaptor.getRhs());
-  if (!rhs || rhs.getInt() == 0)
+  if (isZero(adaptor.getRhs()))
     return {};
-  return foldIntBinary(adaptor.getLhs(), adaptor.getRhs(),
-                       [](int64_t lhs, int64_t rhs) { return lhs % rhs; });
+  return foldNumericBinary(
+      adaptor.getLhs(), adaptor.getRhs(),
+      [](int64_t lhs, int64_t rhs) { return lhs % rhs; },
+      [](double lhs, double rhs) { return std::fmod(lhs, rhs); });
 }
 
 mlir::OpFoldResult NegOp::fold(FoldAdaptor adaptor) {
-  auto value = llvm::dyn_cast_if_present<mlir::IntegerAttr>(adaptor.getValue());
-  if (!value)
-    return {};
-  return mlir::IntegerAttr::get(value.getType(), -value.getInt());
+  if (auto integer =
+          llvm::dyn_cast_if_present<mlir::IntegerAttr>(adaptor.getValue()))
+    return mlir::IntegerAttr::get(integer.getType(), -integer.getInt());
+  if (auto real =
+          llvm::dyn_cast_if_present<mlir::FloatAttr>(adaptor.getValue()))
+    return mlir::FloatAttr::get(real.getType(), -real.getValueAsDouble());
+  return {};
 }
 
 mlir::OpFoldResult CmpOp::fold(FoldAdaptor adaptor) {
-  auto lhs = llvm::dyn_cast_if_present<mlir::IntegerAttr>(adaptor.getLhs());
-  auto rhs = llvm::dyn_cast_if_present<mlir::IntegerAttr>(adaptor.getRhs());
-  if (!lhs || !rhs)
+  double left;
+  double right;
+  if (auto lhs =
+          llvm::dyn_cast_if_present<mlir::IntegerAttr>(adaptor.getLhs())) {
+    auto rhs = llvm::dyn_cast_if_present<mlir::IntegerAttr>(adaptor.getRhs());
+    if (!rhs)
+      return {};
+    left = static_cast<double>(lhs.getInt());
+    right = static_cast<double>(rhs.getInt());
+  } else if (auto lhs =
+                 llvm::dyn_cast_if_present<mlir::FloatAttr>(adaptor.getLhs())) {
+    auto rhs = llvm::dyn_cast_if_present<mlir::FloatAttr>(adaptor.getRhs());
+    if (!rhs)
+      return {};
+    left = lhs.getValueAsDouble();
+    right = rhs.getValueAsDouble();
+  } else {
     return {};
-  int64_t left = lhs.getInt();
-  int64_t right = rhs.getInt();
+  }
   auto value = llvm::StringSwitch<std::optional<bool>>(getPredicate())
                    .Case("eq", left == right)
                    .Case("ne", left != right)

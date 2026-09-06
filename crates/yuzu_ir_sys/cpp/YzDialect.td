@@ -4,6 +4,7 @@
 include "mlir/IR/OpBase.td"
 include "mlir/IR/AttrTypeBase.td"
 include "mlir/IR/SymbolInterfaces.td"
+include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 
 def Yz_Dialect : Dialect {
@@ -72,67 +73,73 @@ def Yz_ConstantStrOp : Yz_Op<"constant_str", [ConstantLike, Pure]> {
   let hasFolder = 1;
 }
 
-// Integer arithmetic.
+// Arithmetic. One op per surface operator, polymorphic over the numeric
+// types the way the language's operators are; folds dispatch on the
+// literal's kind.
 
-class Yz_IntBinaryOp<string mnemonic, list<Trait> traits = []>
-    : Yz_Op<mnemonic, traits # [Pure]> {
-  let arguments = (ins Yz_Int64Type:$lhs, Yz_Int64Type:$rhs);
-  let results = (outs Yz_Int64Type:$result);
-  let assemblyFormat = "$lhs `,` $rhs attr-dict";
+def Yz_NumericType : AnyTypeOf<[Yz_Int64Type, Yz_Float64Type]>;
+
+class Yz_ArithBinaryOp<string mnemonic, list<Trait> traits = []>
+    : Yz_Op<mnemonic, traits # [Pure, SameOperandsAndResultType]> {
+  let arguments = (ins Yz_NumericType:$lhs, Yz_NumericType:$rhs);
+  let results = (outs Yz_NumericType:$result);
+  let assemblyFormat = "$lhs `,` $rhs `:` type($result) attr-dict";
   let hasFolder = 1;
 }
 
-def Yz_AddOp : Yz_IntBinaryOp<"add", [Commutative]> {
-  let summary = "integer addition";
+def Yz_AddOp : Yz_ArithBinaryOp<"add", [Commutative]> {
+  let summary = "addition";
 }
 
-def Yz_SubOp : Yz_IntBinaryOp<"sub"> {
-  let summary = "integer subtraction";
+def Yz_SubOp : Yz_ArithBinaryOp<"sub"> {
+  let summary = "subtraction";
 }
 
-def Yz_MulOp : Yz_IntBinaryOp<"mul", [Commutative]> {
-  let summary = "integer multiplication";
+def Yz_MulOp : Yz_ArithBinaryOp<"mul", [Commutative]> {
+  let summary = "multiplication";
 }
 
-def Yz_DivOp : Yz_IntBinaryOp<"div"> {
-  let summary = "integer division; never folds a zero divisor";
+def Yz_DivOp : Yz_ArithBinaryOp<"div"> {
+  let summary = "division; never folds a zero divisor";
 }
 
-def Yz_RemOp : Yz_IntBinaryOp<"rem"> {
-  let summary = "integer remainder; never folds a zero divisor";
+def Yz_RemOp : Yz_ArithBinaryOp<"rem"> {
+  let summary = "remainder; never folds a zero divisor";
 }
 
-def Yz_NegOp : Yz_Op<"neg", [Pure]> {
-  let summary = "integer negation";
-  let arguments = (ins Yz_Int64Type:$value);
-  let results = (outs Yz_Int64Type:$result);
-  let assemblyFormat = "$value attr-dict";
+def Yz_NegOp : Yz_Op<"neg", [Pure, SameOperandsAndResultType]> {
+  let summary = "negation";
+  let arguments = (ins Yz_NumericType:$value);
+  let results = (outs Yz_NumericType:$result);
+  let assemblyFormat = "$value `:` type($result) attr-dict";
   let hasFolder = 1;
 }
 
 // Comparison and logic.
 
-def Yz_CmpOp : Yz_Op<"cmp", [Pure]> {
-  let summary = "integer comparison";
-  let arguments = (ins StrAttr:$predicate, Yz_Int64Type:$lhs, Yz_Int64Type:$rhs);
+def Yz_CmpOp : Yz_Op<"cmp", [Pure, AllTypesMatch<["lhs", "rhs"]>]> {
+  let summary = "numeric comparison";
+  let arguments = (ins StrAttr:$predicate, Yz_NumericType:$lhs,
+                       Yz_NumericType:$rhs);
   let results = (outs Yz_BoolType:$result);
-  let assemblyFormat = "$predicate `,` $lhs `,` $rhs attr-dict";
+  let assemblyFormat = "$predicate `,` $lhs `,` $rhs `:` type($lhs) attr-dict";
   let hasFolder = 1;
 }
 
-class Yz_BoolBinaryOp<string mnemonic> : Yz_Op<mnemonic, [Commutative, Pure]> {
+def Yz_AndOp : Yz_Op<"and", [Commutative, Pure]> {
+  let summary = "logical and";
   let arguments = (ins Yz_BoolType:$lhs, Yz_BoolType:$rhs);
   let results = (outs Yz_BoolType:$result);
   let assemblyFormat = "$lhs `,` $rhs attr-dict";
   let hasFolder = 1;
 }
 
-def Yz_AndOp : Yz_BoolBinaryOp<"and"> {
-  let summary = "logical and";
-}
-
-def Yz_OrOp : Yz_BoolBinaryOp<"or"> {
+def Yz_OrOp : Yz_Op<"or", [Commutative, Pure]> {
   let summary = "logical or";
+  let arguments = (ins Yz_BoolType:$lhs, Yz_BoolType:$rhs);
+  let results = (outs Yz_BoolType:$result);
+  let assemblyFormat = "$lhs `,` $rhs attr-dict";
+  let hasFolder = 1;
 }
 
 def Yz_NotOp : Yz_Op<"not", [Pure]> {
