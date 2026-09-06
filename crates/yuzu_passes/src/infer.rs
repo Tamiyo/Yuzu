@@ -6,8 +6,11 @@
 
 use std::collections::HashMap;
 
-use melior::ir::attribute::{AttributeLike, TypeAttribute};
+use melior::ir::attribute::{
+    AttributeLike, FlatSymbolRefAttribute, IntegerAttribute, StringAttribute, TypeAttribute,
+};
 use melior::ir::operation::{OperationLike, OperationRef};
+use melior::ir::r#type::FunctionType;
 use melior::ir::{BlockLike, BlockRef, Module, RegionLike, Type, Value, ValueLike};
 use yuzu_diagnostics::diagnostics::builder::DiagnosticBuilder;
 use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
@@ -481,50 +484,47 @@ fn last_region_op<'c, 'a>(op: OperationRef<'c, 'a>) -> Option<OperationRef<'c, '
 }
 
 fn text_attribute(op: OperationRef, name: &str) -> Option<String> {
-    op.attribute(name)
+    let attribute = op.attribute(name).ok()?;
+    StringAttribute::try_from(attribute)
         .ok()
-        .map(|attribute| attribute.to_string().trim_matches('"').to_string())
+        .map(|string| string.value().to_string())
 }
 
 fn symbol_attribute(op: OperationRef, name: &str) -> String {
-    text_attribute(op, name)
+    let Ok(attribute) = op.attribute(name) else {
+        return String::new();
+    };
+    FlatSymbolRefAttribute::try_from(attribute)
+        .map(|symbol| symbol.value().to_string())
+        .or_else(|_| StringAttribute::try_from(attribute).map(|string| string.value().to_string()))
         .unwrap_or_default()
-        .trim_start_matches('@')
-        .to_string()
 }
 
 fn index_attribute(op: OperationRef, name: &str) -> Option<usize> {
-    let printed = op.attribute(name).ok()?.to_string();
-    printed.split(' ').next()?.parse().ok()
+    let attribute = op.attribute(name).ok()?;
+    IntegerAttribute::try_from(attribute)
+        .ok()
+        .map(|index| index.value() as usize)
 }
 
 fn index_array_attribute(op: OperationRef, name: &str) -> Vec<usize> {
     let Ok(attribute) = op.attribute(name) else {
         return Vec::new();
     };
-    let printed = attribute.to_string();
-    printed
-        .trim_matches(['[', ']'])
-        .split(", ")
-        .filter_map(|element| element.split(' ').next()?.parse().ok())
+    yuzu_mlir::array_elements(attribute)
+        .into_iter()
+        .filter_map(|element| IntegerAttribute::try_from(element).ok())
+        .map(|index| index.value() as usize)
         .collect()
 }
 
 fn parse_signature<'c>(attribute: melior::ir::Attribute<'c>) -> Option<(Vec<Type<'c>>, Type<'c>)> {
-    let printed = attribute.to_string();
-    let (params, ret) = printed.split_once(") -> ")?;
-    let context = unsafe { attribute.context().to_ref() };
-    let ret = Type::parse(context, ret)?;
-    let params = params.strip_prefix('(')?;
-    let params = if params.is_empty() {
-        Vec::new()
-    } else {
-        params
-            .split(", ")
-            .filter_map(|param| Type::parse(context, param))
-            .collect()
-    };
-    Some((params, ret))
+    let signature =
+        FunctionType::try_from(TypeAttribute::try_from(attribute).ok()?.value()).ok()?;
+    let params = (0..signature.input_count())
+        .filter_map(|index| signature.input(index).ok())
+        .collect();
+    Some((params, signature.result(0).ok()?))
 }
 
 fn set_attribute(op: OperationRef, name: &str, attribute: melior::ir::Attribute) {
@@ -537,21 +537,15 @@ fn set_attribute(op: OperationRef, name: &str, attribute: melior::ir::Attribute)
     }
 }
 
-/// The column types of a printed `!yzr.rel<a: !yz.int64, …>` schema.
+/// The column types of the struct's `!yzr.rel` schema attribute.
 fn parse_schema_row<'c>(attribute: melior::ir::Attribute<'c>) -> Row<'c> {
-    let printed = attribute.to_string();
-    let context = unsafe { attribute.context().to_ref() };
-    let Some(inner) = printed
-        .split_once('<')
-        .and_then(|(_, tail)| tail.rsplit_once('>'))
-        .map(|(inner, _)| inner)
-    else {
+    let Ok(schema) = TypeAttribute::try_from(attribute) else {
         return Row::new();
     };
-    inner
-        .split(", ")
-        .filter_map(|column| column.split_once(": "))
-        .filter_map(|(_, ty)| Type::parse(context, ty))
-        .map(Term::Concrete)
+    let Some(rel) = yuzu_mlir::RelType::from_type(schema.value()) else {
+        return Row::new();
+    };
+    (0..rel.column_count())
+        .map(|index| Term::Concrete(rel.column_type(index)))
         .collect()
 }

@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 melior = { version = "0.27.6", features = ["ods-dialects"] }
 melior-macro = "0.20.6"
+mlir-sys = "220"
 text-size = "1.1.1"
 yuzu_diagnostics = { path = "../yuzu_diagnostics" }
 yuzu_mlir_sys = { path = "../yuzu_mlir_sys" }

@@ -1,10 +1,14 @@
 use melior::Context;
 
+mod attr;
 mod diagnostics_bridge;
 pub mod ods;
+mod rel;
 mod types;
 
+pub use attr::array_elements;
 pub use diagnostics_bridge::DiagnosticsBridge;
+pub use rel::RelType;
 pub use types::Types;
 
 pub fn context() -> Context {

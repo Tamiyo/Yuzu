@@ -7,7 +7,10 @@
 use std::collections::HashMap;
 
 use melior::ir::attribute::AttributeLike;
-use melior::ir::attribute::{ArrayAttribute, IntegerAttribute, StringAttribute};
+use melior::ir::attribute::{
+    ArrayAttribute, FlatSymbolRefAttribute, IntegerAttribute, StringAttribute, TypeAttribute,
+};
+
 use melior::ir::operation::{OperationLike, OperationRef};
 use melior::ir::{Attribute, BlockLike, BlockRef, Module, RegionLike, Value, ValueLike};
 use yuzu_diagnostics::diagnostics::builder::DiagnosticBuilder;
@@ -92,7 +95,7 @@ impl<'c, 'a, 'e> Resolver<'c, 'a, 'e> {
             match op.name().as_string_ref().as_str().unwrap_or_default() {
                 "yzl.struct" => {
                     if let Some(name) = symbol_name(op) {
-                        let schema = schema_of_type(&attribute_text(op, "schema"));
+                        let schema = schema_columns(op);
                         self.declare_named(op, "struct", &name);
                         self.structs.insert(name, schema);
                     }
@@ -276,7 +279,9 @@ impl<'c, 'a, 'e> Resolver<'c, 'a, 'e> {
                     }
                 };
                 if let Ok(alias) = op.attribute("rhs_alias") {
-                    let alias = quoted(&alias.to_string());
+                    let alias = StringAttribute::try_from(alias)
+                        .map(|alias| alias.value().to_string())
+                        .unwrap_or_default();
                     for column in &mut rhs {
                         column.qualifier = Some(alias.clone());
                     }
@@ -301,7 +306,7 @@ impl<'c, 'a, 'e> Resolver<'c, 'a, 'e> {
     }
 
     fn resolve_name(&mut self, op: OperationRef<'c, '_>, ambient: &Ambient) {
-        let reference = quoted(&attribute_text(op, "name"));
+        let reference = attribute_text(op, "name");
         match ambient {
             Ambient::Columns(schema) => {
                 if let Some(index) = self.find_column(op, schema, &reference) {
@@ -449,62 +454,58 @@ fn set_attribute(op: OperationRef, name: &str, attribute: Attribute) {
 }
 
 fn symbol_name(op: OperationRef) -> Option<String> {
-    op.attribute("sym_name")
+    let attribute = op.attribute("sym_name").ok()?;
+    StringAttribute::try_from(attribute)
         .ok()
-        .map(|attribute| quoted(&attribute.to_string()))
+        .map(|name| name.value().to_string())
 }
 
-/// A `FlatSymbolRefAttr` prints as `@name`; a string attribute as `"name"`.
+/// The referenced name, whether the attribute is a symbol reference or a
+/// plain string.
 fn symbol_text(op: OperationRef, name: &str) -> String {
-    let printed = attribute_text(op, name);
-    quoted(printed.trim_start_matches('@'))
+    let Ok(attribute) = op.attribute(name) else {
+        return String::new();
+    };
+    FlatSymbolRefAttribute::try_from(attribute)
+        .map(|symbol| symbol.value().to_string())
+        .or_else(|_| StringAttribute::try_from(attribute).map(|string| string.value().to_string()))
+        .unwrap_or_default()
 }
 
 fn attribute_text(op: OperationRef, name: &str) -> String {
     op.attribute(name)
-        .map(|attribute| attribute.to_string())
+        .ok()
+        .and_then(|attribute| StringAttribute::try_from(attribute).ok())
+        .map(|string| string.value().to_string())
         .unwrap_or_default()
-}
-
-fn quoted(printed: &str) -> String {
-    printed.trim_matches('"').to_string()
 }
 
 fn string_array(op: OperationRef, name: &str) -> Vec<String> {
     let Ok(attribute) = op.attribute(name) else {
         return Vec::new();
     };
-    let printed = attribute.to_string();
-    let Some(inner) = printed
-        .strip_prefix('[')
-        .and_then(|inner| inner.strip_suffix(']'))
-    else {
-        return Vec::new();
-    };
-    if inner.is_empty() {
-        return Vec::new();
-    }
-    inner
-        .split(", ")
-        .map(|element| quoted(element).to_string())
+    yuzu_mlir::array_elements(attribute)
+        .into_iter()
+        .filter_map(|element| StringAttribute::try_from(element).ok())
+        .map(|string| string.value().to_string())
         .collect()
 }
 
-/// The column names of a printed `!yzr.rel<a: !yz.int64, …>` schema.
-fn schema_of_type(printed: &str) -> Schema {
-    let Some(inner) = printed
-        .split_once('<')
-        .and_then(|(_, tail)| tail.rsplit_once('>'))
-        .map(|(inner, _)| inner)
-    else {
+/// The column names of the struct's `!yzr.rel` schema attribute.
+fn schema_columns(op: OperationRef) -> Schema {
+    let Ok(attribute) = op.attribute("schema") else {
         return Schema::new();
     };
-    inner
-        .split(", ")
-        .filter_map(|column| column.split_once(':'))
-        .map(|(name, _)| Column {
+    let Ok(schema) = TypeAttribute::try_from(attribute) else {
+        return Schema::new();
+    };
+    let Some(rel) = yuzu_mlir::RelType::from_type(schema.value()) else {
+        return Schema::new();
+    };
+    (0..rel.column_count())
+        .map(|index| Column {
             qualifier: None,
-            name: name.trim().to_string(),
+            name: rel.column_name(index).to_string(),
         })
         .collect()
 }

@@ -184,16 +184,12 @@ impl<'c> AstToYzl<'c> {
             .map(|name| StringAttribute::new(self.context, &name).into())
             .collect();
         let signature = {
-            let params: Vec<&str> = decl
+            let params: Vec<Type> = decl
                 .params()
                 .map(|param| self.annotation_type(param.ty()))
                 .collect();
             let result = self.annotation_type(decl.result());
-            Type::parse(
-                self.context,
-                &format!("({}) -> {result}", params.join(", ")),
-            )
-            .expect("a signature type parses")
+            melior::ir::r#type::FunctionType::new(self.context, &params, &[result]).into()
         };
 
         let region = Region::new();
@@ -838,17 +834,20 @@ impl<'c> AstToYzl<'c> {
     }
 
     fn schema_type(&self, fields: impl Iterator<Item = ast::StructField>) -> Type<'c> {
-        let columns: Vec<String> = fields
+        let columns: Vec<(String, Type<'c>)> = fields
             .filter_map(|field| {
                 let name = ident_text(field.name())?;
-                Some(format!("{name}: {}", self.annotation_type(field.ty())))
+                Some((name, self.annotation_type(field.ty())))
             })
             .collect();
-        Type::parse(self.context, &format!("!yzr.rel<{}>", columns.join(", ")))
-            .expect("a schema type parses")
+        let columns: Vec<(&str, Type<'c>)> = columns
+            .iter()
+            .map(|(name, ty)| (name.as_str(), *ty))
+            .collect();
+        yuzu_mlir::RelType::new(self.context, &columns).into()
     }
 
-    fn annotation_type(&self, annotation: Option<ast::TypeAnnotation>) -> &'static str {
+    fn annotation_type(&self, annotation: Option<ast::TypeAnnotation>) -> Type<'c> {
         let name = annotation
             .and_then(|annotation| match annotation {
                 ast::TypeAnnotation::NamedTypeAnnotation(named) => ident_text(named.name()),
@@ -856,11 +855,11 @@ impl<'c> AstToYzl<'c> {
             })
             .unwrap_or_default();
         match name.as_str() {
-            "int64" => "!yz.int64",
-            "float64" => "!yz.float64",
-            "bool" => "!yz.bool",
-            "str" => "!yz.str",
-            _ => "!yzl.var",
+            "int64" => self.types.int64,
+            "float64" => self.types.float64,
+            "bool" => self.types.boolean,
+            "str" => self.types.str,
+            _ => self.types.var,
         }
     }
 }
