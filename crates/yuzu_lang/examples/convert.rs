@@ -1,6 +1,6 @@
-//! Emit a Yuzu source file as yzl MLIR and print it.
+//! Convert a Yuzu source file to yzl MLIR and print it.
 //!
-//!   cargo run -p yuzu_lang --example emit -- query.yz
+//!   cargo run -p yuzu_lang --example convert -- query.yz
 
 use std::io::Read;
 
@@ -19,14 +19,14 @@ fn main() {
     };
 
     let context = yuzu_mlir::context();
-    let Some(emission) = yuzu_lang::emit_source(&context, "input.yz", &source) else {
+    let Some(conversion) = yuzu_lang::convert_source(&context, "input.yz", &source) else {
         std::process::exit(1);
     };
-    for what in &emission.unsupported {
+    for what in &conversion.unsupported {
         eprintln!("yuzu_lang: {what}");
     }
-    if !emission.module.as_operation().verify() {
-        eprintln!("yuzu_lang: the emitted module does not verify");
+    if !conversion.module.as_operation().verify() {
+        eprintln!("yuzu_lang: the converted module does not verify");
     }
-    print!("{}", emission.module.as_operation());
+    print!("{}", conversion.module.as_operation());
 }

@@ -1,6 +1,6 @@
-//! The AST → yzl emitter: the new pipeline's front door. Everything comes out
-//! at the source level — names as `yzl.name`, unresolved types as `!yzl.var`,
-//! sugar intact — for the checking passes to resolve.
+//! The AST → yzl conversion: the new pipeline's front door. Everything comes
+//! out at the source level — names as `yzl.name`, unresolved types as
+//! `!yzl.var`, sugar intact — for the checking passes to resolve.
 
 use std::collections::HashMap;
 
@@ -22,16 +22,20 @@ use yuzu_diagnostics::source_map::SourceMap;
 use yuzu_lexer::lexer::{Lexer, Token};
 use yuzu_mlir::ods::{yz, yzl};
 
-/// A parsed and emitted module, along with every construct the emitter does
-/// not carry yet.
-pub struct Emission<'c> {
+/// A parsed and converted module, along with every construct the
+/// conversion does not carry yet.
+pub struct Conversion<'c> {
     pub module: Module<'c>,
     pub unsupported: Vec<String>,
 }
 
-/// Parses the source and emits it as a yzl module, printing any parse
+/// Parses the source and converts it to a yzl module, printing any parse
 /// diagnostics to stderr. Returns `None` when the source has no root.
-pub fn emit_source<'c>(context: &'c Context, name: &str, source: &str) -> Option<Emission<'c>> {
+pub fn convert_source<'c>(
+    context: &'c Context,
+    name: &str,
+    source: &str,
+) -> Option<Conversion<'c>> {
     let mut diagnostics = DiagnosticsEngine::new();
     let mut sources = SourceMap::new();
     let source_id = sources.add(name.to_string(), source.to_string());
@@ -42,15 +46,15 @@ pub fn emit_source<'c>(context: &'c Context, name: &str, source: &str) -> Option
         eprintln!("{}", printer.print(diagnostic));
     }
     let root = ast::Root::cast(syntax)?;
-    let emitter = Emitter::new(context, name, source);
-    let module = emitter.emit(&root);
-    Some(Emission {
+    let converter = AstToYzl::new(context, name, source);
+    let module = converter.convert(&root);
+    Some(Conversion {
         module,
-        unsupported: emitter.unsupported.into_inner(),
+        unsupported: converter.unsupported.into_inner(),
     })
 }
 
-struct Emitter<'c> {
+struct AstToYzl<'c> {
     context: &'c Context,
     unsupported: std::cell::RefCell<Vec<String>>,
     name: String,
@@ -66,7 +70,7 @@ struct Emitter<'c> {
 
 type Locals<'c, 'a> = HashMap<String, Value<'c, 'a>>;
 
-impl<'c> Emitter<'c> {
+impl<'c> AstToYzl<'c> {
     fn new(context: &'c Context, name: &str, source: &str) -> Self {
         let mut line_starts = vec![0];
         line_starts.extend(source.match_indices('\n').map(|(at, _)| at + 1));
@@ -97,7 +101,7 @@ impl<'c> Emitter<'c> {
         Location::new(self.context, &self.name, line, column)
     }
 
-    fn emit(&self, root: &ast::Root) -> Module<'c> {
+    fn convert(&self, root: &ast::Root) -> Module<'c> {
         let module = Module::new(Location::new(self.context, &self.name, 1, 1));
         let top = module.body();
         let mut query = None;
@@ -105,13 +109,13 @@ impl<'c> Emitter<'c> {
             match &stmt {
                 ast::Stmt::ExprStmt(expr_stmt) => {
                     if let Some(expr) = expr_stmt.expr() {
-                        let value = self.emit_expr(top, &Locals::new(), &expr);
+                        let value = self.convert_expr(top, &Locals::new(), &expr);
                         if matches!(expr, ast::Expr::Rel(_)) {
                             query = Some((value, self.location(expr_stmt)));
                         }
                     }
                 }
-                _ => self.emit_stmt(top, &stmt),
+                _ => self.convert_stmt(top, &stmt),
             }
         }
         if let Some((value, loc)) = query {
@@ -120,22 +124,22 @@ impl<'c> Emitter<'c> {
         module
     }
 
-    fn emit_stmt<'a>(&self, block: BlockRef<'c, 'a>, stmt: &ast::Stmt) {
+    fn convert_stmt<'a>(&self, block: BlockRef<'c, 'a>, stmt: &ast::Stmt) {
         match stmt {
-            ast::Stmt::StructStmt(decl) => self.emit_struct(block, decl),
-            ast::Stmt::TableStmt(decl) => self.emit_table(block, decl),
-            ast::Stmt::FuncStmt(decl) => self.emit_fn(block, decl),
-            ast::Stmt::LetStmt(decl) => self.emit_let(block, decl),
+            ast::Stmt::StructStmt(decl) => self.convert_struct(block, decl),
+            ast::Stmt::TableStmt(decl) => self.convert_table(block, decl),
+            ast::Stmt::FuncStmt(decl) => self.convert_fn(block, decl),
+            ast::Stmt::LetStmt(decl) => self.convert_let(block, decl),
             ast::Stmt::ExprStmt(stmt) => {
                 if let Some(expr) = stmt.expr() {
-                    self.emit_expr(block, &Locals::new(), &expr);
+                    self.convert_expr(block, &Locals::new(), &expr);
                 }
             }
             unsupported => self.note(format!("unsupported statement {unsupported:?}")),
         }
     }
 
-    fn emit_struct<'a>(&self, block: BlockRef<'c, 'a>, decl: &ast::StructStmt) {
+    fn convert_struct<'a>(&self, block: BlockRef<'c, 'a>, decl: &ast::StructStmt) {
         let Some(name) = ident_text(decl.name()) else {
             return;
         };
@@ -151,7 +155,7 @@ impl<'c> Emitter<'c> {
         );
     }
 
-    fn emit_table<'a>(&self, block: BlockRef<'c, 'a>, decl: &ast::TableStmt) {
+    fn convert_table<'a>(&self, block: BlockRef<'c, 'a>, decl: &ast::TableStmt) {
         let Some(name) = ident_text(decl.name()) else {
             return;
         };
@@ -185,7 +189,7 @@ impl<'c> Emitter<'c> {
         );
     }
 
-    fn emit_fn<'a>(&self, block: BlockRef<'c, 'a>, decl: &ast::FuncStmt) {
+    fn convert_fn<'a>(&self, block: BlockRef<'c, 'a>, decl: &ast::FuncStmt) {
         let Some(name) = ident_text(decl.name()) else {
             return;
         };
@@ -206,7 +210,7 @@ impl<'c> Emitter<'c> {
                         else {
                             continue;
                         };
-                        let value = self.emit_expr(entry, &locals, &expr);
+                        let value = self.convert_expr(entry, &locals, &expr);
                         locals.insert(name, value);
                     }
                     ast::Stmt::AssignStmt(assign) => {
@@ -218,13 +222,13 @@ impl<'c> Emitter<'c> {
                             self.note(format!("unsupported assignment {assign:?}"));
                             continue;
                         };
-                        let value = self.emit_expr(entry, &locals, &value);
+                        let value = self.convert_expr(entry, &locals, &value);
                         locals.insert(name, value);
                     }
                     ast::Stmt::ReturnStmt(ret) => {
                         let values: Vec<Value> = ret
                             .expr()
-                            .map(|expr| self.emit_expr(entry, &locals, &expr))
+                            .map(|expr| self.convert_expr(entry, &locals, &expr))
                             .into_iter()
                             .collect();
                         entry.append_operation(
@@ -261,13 +265,13 @@ impl<'c> Emitter<'c> {
         block.append_operation(builder.build().expect("yzl.fn builds"));
     }
 
-    fn emit_let<'a>(&self, block: BlockRef<'c, 'a>, decl: &ast::LetStmt) {
+    fn convert_let<'a>(&self, block: BlockRef<'c, 'a>, decl: &ast::LetStmt) {
         let (Some(name), Some(expr)) = (ident_text(decl.name()), decl.expr()) else {
             return;
         };
         let region = Region::new();
         let body = region.append_block(Block::new(&[]));
-        let value = self.emit_expr(body, &Locals::new(), &expr);
+        let value = self.convert_expr(body, &Locals::new(), &expr);
         body.append_operation(yzl::r#yield(self.context, &[value], self.location(decl)).into());
         block.append_operation(
             yzl::r#let(
@@ -280,7 +284,7 @@ impl<'c> Emitter<'c> {
         );
     }
 
-    fn emit_expr<'a>(
+    fn convert_expr<'a>(
         &self,
         block: BlockRef<'c, 'a>,
         locals: &Locals<'c, 'a>,
@@ -288,7 +292,7 @@ impl<'c> Emitter<'c> {
     ) -> Value<'c, 'a> {
         let loc = self.location(expr);
         match expr {
-            ast::Expr::Literal(literal) => self.emit_literal(block, literal),
+            ast::Expr::Literal(literal) => self.convert_literal(block, literal),
             ast::Expr::IdentExpr(ident) => {
                 let name = ident_text(ident.name()).unwrap_or_default();
                 if let Some(&value) = locals.get(&name) {
@@ -309,10 +313,10 @@ impl<'c> Emitter<'c> {
                 let field = ident_text(access.field()).unwrap_or_default();
                 self.name_ref(block, &format!("{base}.{field}"), loc)
             }
-            ast::Expr::BinaryExpr(binary) => self.emit_binary(block, locals, binary),
+            ast::Expr::BinaryExpr(binary) => self.convert_binary(block, locals, binary),
             ast::Expr::UnaryExpr(unary) => {
                 let value = match unary.expr() {
-                    Some(expr) => self.emit_expr(block, locals, &expr),
+                    Some(expr) => self.convert_expr(block, locals, &expr),
                     None => self.name_ref(block, "", loc),
                 };
                 let result = match unary.op() {
@@ -337,7 +341,7 @@ impl<'c> Emitter<'c> {
                     .collect();
                 let operands: Vec<Value> = args
                     .iter()
-                    .map(|arg| self.emit_expr(block, locals, arg))
+                    .map(|arg| self.convert_expr(block, locals, arg))
                     .collect();
                 first_result(
                     block.append_operation(
@@ -356,17 +360,17 @@ impl<'c> Emitter<'c> {
                 let elements: Vec<ast::Expr> = list.elements().collect();
                 let values: Vec<Value> = elements
                     .iter()
-                    .map(|element| self.emit_expr(block, locals, element))
+                    .map(|element| self.convert_expr(block, locals, element))
                     .collect();
                 first_result(
                     block.append_operation(yzl::list(self.context, self.var, &values, loc).into()),
                 )
             }
             ast::Expr::ParenExpr(paren) => match paren.expr() {
-                Some(inner) => self.emit_expr(block, locals, &inner),
+                Some(inner) => self.convert_expr(block, locals, &inner),
                 None => self.name_ref(block, "", loc),
             },
-            ast::Expr::Rel(rel) => self.emit_rel(block, rel),
+            ast::Expr::Rel(rel) => self.convert_rel(block, rel),
             unsupported => {
                 self.note(format!("unsupported expression {unsupported:?}"));
                 self.name_ref(block, "", loc)
@@ -374,7 +378,7 @@ impl<'c> Emitter<'c> {
         }
     }
 
-    fn emit_binary<'a>(
+    fn convert_binary<'a>(
         &self,
         block: BlockRef<'c, 'a>,
         locals: &Locals<'c, 'a>,
@@ -382,11 +386,11 @@ impl<'c> Emitter<'c> {
     ) -> Value<'c, 'a> {
         let loc = self.location(binary);
         let lhs = match binary.lhs() {
-            Some(expr) => self.emit_expr(block, locals, &expr),
+            Some(expr) => self.convert_expr(block, locals, &expr),
             None => self.name_ref(block, "", loc),
         };
         let rhs = match binary.rhs() {
-            Some(expr) => self.emit_expr(block, locals, &expr),
+            Some(expr) => self.convert_expr(block, locals, &expr),
             None => self.name_ref(block, "", loc),
         };
         let context = self.context;
@@ -442,7 +446,11 @@ impl<'c> Emitter<'c> {
         first_result(block.append_operation(operation))
     }
 
-    fn emit_literal<'a>(&self, block: BlockRef<'c, 'a>, literal: &ast::Literal) -> Value<'c, 'a> {
+    fn convert_literal<'a>(
+        &self,
+        block: BlockRef<'c, 'a>,
+        literal: &ast::Literal,
+    ) -> Value<'c, 'a> {
         let loc = self.location(literal);
         let operation = match literal {
             ast::Literal::IntLiteral(int) => yz::constant_int(
@@ -489,7 +497,7 @@ impl<'c> Emitter<'c> {
         first_result(block.append_operation(operation))
     }
 
-    fn emit_rel<'a>(&self, block: BlockRef<'c, 'a>, rel: &ast::Rel) -> Value<'c, 'a> {
+    fn convert_rel<'a>(&self, block: BlockRef<'c, 'a>, rel: &ast::Rel) -> Value<'c, 'a> {
         let loc = self.location(rel);
         match rel {
             ast::Rel::FromExpr(from) => {
@@ -522,11 +530,11 @@ impl<'c> Emitter<'c> {
                 }
             }
             ast::Rel::WhereExpr(stage) => {
-                let input = self.emit_input(block, stage.input());
+                let input = self.convert_input(block, stage.input());
                 let region = Region::new();
                 let body = region.append_block(Block::new(&[]));
                 let predicate = match stage.predicate() {
-                    Some(expr) => self.emit_expr(body, &Locals::new(), &expr),
+                    Some(expr) => self.convert_expr(body, &Locals::new(), &expr),
                     None => self.name_ref(body, "", loc),
                 };
                 body.append_operation(yzl::r#yield(self.context, &[predicate], loc).into());
@@ -535,29 +543,29 @@ impl<'c> Emitter<'c> {
                 ))
             }
             ast::Rel::SelectExpr(stage) => {
-                let input = self.emit_input(block, stage.input());
+                let input = self.convert_input(block, stage.input());
                 let items = stage
                     .items()
                     .map(|item| (item.alias(), item.expr()))
                     .collect();
-                let (names, region) = self.emit_items(items, loc);
+                let (names, region) = self.convert_items(items, loc);
                 first_result(block.append_operation(
                     yzl::select(self.context, self.query, input, region, names, loc).into(),
                 ))
             }
             ast::Rel::ExtendExpr(stage) => {
-                let input = self.emit_input(block, stage.input());
+                let input = self.convert_input(block, stage.input());
                 let items = stage
                     .items()
                     .map(|item| (item.alias(), item.expr()))
                     .collect();
-                let (names, region) = self.emit_items(items, loc);
+                let (names, region) = self.convert_items(items, loc);
                 first_result(block.append_operation(
                     yzl::extend(self.context, self.query, input, region, names, loc).into(),
                 ))
             }
             ast::Rel::AggregateExpr(stage) => {
-                let input = self.emit_input(block, stage.input());
+                let input = self.convert_input(block, stage.input());
                 let group_by: Vec<Attribute> = stage
                     .group_by()
                     .into_iter()
@@ -569,7 +577,7 @@ impl<'c> Emitter<'c> {
                     .items()
                     .map(|item| (item.alias(), item.expr()))
                     .collect();
-                let (names, region) = self.emit_items(items, loc);
+                let (names, region) = self.convert_items(items, loc);
                 first_result(
                     block.append_operation(
                         yzl::aggregate(
@@ -586,7 +594,7 @@ impl<'c> Emitter<'c> {
                 )
             }
             ast::Rel::LimitExpr(stage) => {
-                let input = self.emit_input(block, stage.input());
+                let input = self.convert_input(block, stage.input());
                 let count = match stage.count() {
                     Some(ast::Expr::Literal(ast::Literal::IntLiteral(int))) => {
                         int.value().unwrap_or_default() as i64
@@ -610,7 +618,7 @@ impl<'c> Emitter<'c> {
                 )
             }
             ast::Rel::RenameExpr(stage) => {
-                let input = self.emit_input(block, stage.input());
+                let input = self.convert_input(block, stage.input());
                 let mut from = Vec::new();
                 let mut to = Vec::new();
                 for item in stage.items() {
@@ -636,7 +644,7 @@ impl<'c> Emitter<'c> {
                 )
             }
             ast::Rel::AliasExpr(stage) => {
-                let input = self.emit_input(block, stage.input());
+                let input = self.convert_input(block, stage.input());
                 let alias = ident_text(stage.alias()).unwrap_or_default();
                 first_result(
                     block.append_operation(
@@ -652,7 +660,7 @@ impl<'c> Emitter<'c> {
                 )
             }
             ast::Rel::JoinExpr(stage) => {
-                let lhs = self.emit_input(block, stage.input());
+                let lhs = self.convert_input(block, stage.input());
                 let kind = match stage.kind() {
                     Some(ast::JoinKind::Left) => "left",
                     Some(ast::JoinKind::Right) => "right",
@@ -663,7 +671,7 @@ impl<'c> Emitter<'c> {
                 let on = Region::new();
                 if let Some(condition) = stage.on().and_then(|on| on.condition()) {
                     let body = on.append_block(Block::new(&[]));
-                    let value = self.emit_expr(body, &Locals::new(), &condition);
+                    let value = self.convert_expr(body, &Locals::new(), &condition);
                     body.append_operation(yzl::r#yield(self.context, &[value], loc).into());
                 }
                 let mut builder = OperationBuilder::new("yzl.join", loc)
@@ -700,18 +708,18 @@ impl<'c> Emitter<'c> {
                 first_result(block.append_operation(builder.build().expect("yzl.join builds")))
             }
             ast::Rel::SetExpr(stage) => {
-                let input = self.emit_input(block, stage.input());
+                let input = self.convert_input(block, stage.input());
                 let items = stage
                     .items()
                     .map(|item| (item.column(), item.value()))
                     .collect();
-                let (names, region) = self.emit_items(items, loc);
+                let (names, region) = self.convert_items(items, loc);
                 first_result(block.append_operation(
                     yzl::set(self.context, self.query, input, region, names, loc).into(),
                 ))
             }
             ast::Rel::DistinctExpr(stage) => {
-                let input = self.emit_input(block, stage.input());
+                let input = self.convert_input(block, stage.input());
                 first_result(
                     block.append_operation(
                         yzl::distinct(self.context, self.query, input, loc).into(),
@@ -719,7 +727,7 @@ impl<'c> Emitter<'c> {
                 )
             }
             ast::Rel::DropExpr(stage) => {
-                let input = self.emit_input(block, stage.input());
+                let input = self.convert_input(block, stage.input());
                 let columns: Vec<Attribute> = stage
                     .columns()
                     .filter_map(|column| column.text())
@@ -743,9 +751,13 @@ impl<'c> Emitter<'c> {
 
     /// A stage's input is another stage, or a bare name referring to a bound
     /// relation — which `from` covers until resolution decides what it was.
-    fn emit_input<'a>(&self, block: BlockRef<'c, 'a>, input: Option<ast::Expr>) -> Value<'c, 'a> {
+    fn convert_input<'a>(
+        &self,
+        block: BlockRef<'c, 'a>,
+        input: Option<ast::Expr>,
+    ) -> Value<'c, 'a> {
         match input {
-            Some(ast::Expr::Rel(rel)) => self.emit_rel(block, &rel),
+            Some(ast::Expr::Rel(rel)) => self.convert_rel(block, &rel),
             Some(ast::Expr::IdentExpr(ident)) => {
                 let name = ident_text(ident.name()).unwrap_or_default();
                 let loc = self.location(&ident);
@@ -778,7 +790,7 @@ impl<'c> Emitter<'c> {
         }
     }
 
-    fn emit_items(
+    fn convert_items(
         &self,
         items: Vec<(Option<ast::Ident>, Option<ast::Expr>)>,
         loc: Location<'c>,
@@ -796,7 +808,7 @@ impl<'c> Emitter<'c> {
                 .unwrap_or_else(|| format!("column{index}"));
             names.push(StringAttribute::new(self.context, &name).into());
             let value = match &expr {
-                Some(expr) => self.emit_expr(body, &Locals::new(), expr),
+                Some(expr) => self.convert_expr(body, &Locals::new(), expr),
                 None => self.name_ref(body, "", loc),
             };
             values.push(value);
@@ -859,7 +871,7 @@ fn ident_text(ident: Option<ast::Ident>) -> Option<String> {
 fn first_result<'c, 'a>(operation: melior::ir::operation::OperationRef<'c, 'a>) -> Value<'c, 'a> {
     operation
         .result(0)
-        .expect("every emitted op has one result")
+        .expect("every converted op has one result")
         .into()
 }
 
@@ -868,9 +880,10 @@ mod tests {
     use expect_test::expect;
     use melior::ir::operation::OperationLike;
 
-    fn emitted(source: &str) -> String {
+    fn converted(source: &str) -> String {
         let context = yuzu_mlir::context();
-        let emission = super::emit_source(&context, "test.yz", source).expect("the source emits");
+        let emission =
+            super::convert_source(&context, "test.yz", source).expect("the source converts");
         assert!(
             emission.unsupported.is_empty(),
             "unsupported constructs: {:?}",
@@ -878,15 +891,15 @@ mod tests {
         );
         assert!(
             emission.module.as_operation().verify(),
-            "the emitted module verifies"
+            "the converted module verifies"
         );
         emission.module.as_operation().to_string()
     }
 
-    /// Every query the existing end-to-end suites compile must emit cleanly:
+    /// Every query the existing end-to-end suites compile must convert cleanly:
     /// no unsupported constructs, and a module that verifies.
     #[test]
-    fn the_correctness_corpus_emits() {
+    fn the_correctness_corpus_converts() {
         let corpus = concat!(env!("CARGO_MANIFEST_DIR"), "/../../python/tests");
         let mut sources = vec![std::fs::read_to_string(format!("{corpus}/support.py")).unwrap()];
         for entry in std::fs::read_dir(format!("{corpus}/correctness")).unwrap() {
@@ -907,7 +920,7 @@ mod tests {
                     continue;
                 }
                 queries += 1;
-                match super::emit_source(&context, "corpus.yz", chunk) {
+                match super::convert_source(&context, "corpus.yz", chunk) {
                     Some(emission)
                         if emission.unsupported.is_empty()
                             && emission.module.as_operation().verify() => {}
@@ -924,14 +937,14 @@ mod tests {
         );
         assert!(
             failures.is_empty(),
-            "{} of {queries} corpus queries failed to emit:\n{}",
+            "{} of {queries} corpus queries failed to convert:\n{}",
             failures.len(),
             failures.join("\n---\n")
         );
     }
 
     #[test]
-    fn emits_the_canonical_pipeline() {
+    fn converts_the_canonical_pipeline() {
         expect![[r#"
             module {
               yzl.struct @Row !yzr.rel<a: !yz.int64, b: !yz.int64>
@@ -959,7 +972,7 @@ mod tests {
               yzl.output %4
             }
         "#]]
-        .assert_eq(&emitted(
+        .assert_eq(&converted(
             r#"
 struct Row { a: int64, b: int64 }
 table t = Row
@@ -974,7 +987,7 @@ from t
     }
 
     #[test]
-    fn emits_declarations() {
+    fn converts_declarations() {
         expect![[r#"
             module {
               yzl.fn @f params ["x"] {
@@ -997,7 +1010,7 @@ from t
               }
             }
         "#]]
-        .assert_eq(&emitted(
+        .assert_eq(&converted(
             r#"
 fn f(x: int64) -> int64 {
     let doubled = x * 2
@@ -1014,7 +1027,7 @@ external fn upper(s: str) -> str
     }
 
     #[test]
-    fn emits_joins_sets_and_membership() {
+    fn converts_joins_sets_and_membership() {
         expect![[r#"
             module {
               %0 = yzl.from @employees
@@ -1043,7 +1056,7 @@ external fn upper(s: str) -> str
               yzl.output %5
             }
         "#]]
-        .assert_eq(&emitted(
+        .assert_eq(&converted(
             r#"
 from employees
 |> inner join departments as d on dept_id == d.id
@@ -1056,7 +1069,7 @@ from employees
     }
 
     #[test]
-    fn emits_sugar_and_bindings() {
+    fn converts_sugar_and_bindings() {
         expect![[r#"
             module {
               yzl.let @base {
@@ -1077,7 +1090,7 @@ from employees
               yzl.output %3
             }
         "#]]
-        .assert_eq(&emitted(
+        .assert_eq(&converted(
             r#"
 let base = from t |> where active
 
