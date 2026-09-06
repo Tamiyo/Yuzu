@@ -840,6 +840,7 @@ impl<'c> AstToYzl<'c> {
                 Some((name, self.annotation_type(field.ty())))
             })
             .collect();
+        
         let columns: Vec<(&str, Type<'c>)> = columns
             .iter()
             .map(|(name, ty)| (name.as_str(), *ty))

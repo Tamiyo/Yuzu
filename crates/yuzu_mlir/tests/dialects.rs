@@ -421,3 +421,32 @@ module {
     );
     assert!(module.is_none(), "yz.add over !yz.bool must not parse");
 }
+
+/// melior's generated matching, where it works today: on operations you own.
+/// A walk's borrowed refs cannot use this yet — the generated TryFrom
+/// consumes an owned Operation — which is what yuzu_mlir::ops covers.
+#[test]
+fn typed_matching_works_on_owned_operations() {
+    use melior::ir::attribute::IntegerAttribute;
+    use yuzu_mlir::ods::yz::{self, YzDialectOperation};
+
+    let context = yuzu_mlir::context();
+    let location = Location::unknown(&context);
+    let types = yuzu_mlir::Types::new(&context);
+    let operation: melior::ir::operation::Operation = yz::constant_int(
+        &context,
+        types.int64,
+        IntegerAttribute::new(types.i64, 7),
+        location,
+    )
+    .into();
+
+    match YzDialectOperation::try_new(operation) {
+        Ok(YzDialectOperation::ConstantInt(constant)) => {
+            let value = constant.value().expect("the value attribute exists");
+            assert_eq!(value.value(), 7);
+        }
+        Ok(other) => panic!("classified as the wrong op: {other}"),
+        Err(operation) => panic!("failed to classify {operation}"),
+    }
+}
