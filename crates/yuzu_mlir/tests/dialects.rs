@@ -450,3 +450,30 @@ fn typed_matching_works_on_owned_operations() {
         Err(operation) => panic!("failed to classify {operation}"),
     }
 }
+
+/// The melior 0.27 predicate bug, demonstrated on an attribute this stack
+/// actually produces. When this test FAILS, melior has fixed
+/// ArrayAttribute::try_from — delete yuzu_mlir::array_elements and switch
+/// its callers back to try_from + element().
+#[test]
+fn melior_rejects_a_real_array_attribute() {
+    use melior::ir::attribute::{ArrayAttribute, AttributeLike, StringAttribute};
+
+    let context = yuzu_mlir::context();
+    // The same attribute the converter puts on every yzl.fn: params ["x"].
+    let attribute: melior::ir::Attribute =
+        ArrayAttribute::new(&context, &[StringAttribute::new(&context, "x").into()]).into();
+
+    // MLIR agrees it is an array and nothing else exotic.
+    assert!(attribute.is_array());
+    assert!(!attribute.is_dense_i64_array());
+
+    // melior's typed conversion checks is_dense_i64_array instead of
+    // is_array, so converting a genuine array ALWAYS fails ...
+    assert!(ArrayAttribute::try_from(attribute).is_err());
+
+    // ... which is why reading it through the wrapper yields nothing, while
+    // the workaround sees the element.
+    let elements = yuzu_mlir::array_elements(attribute);
+    assert_eq!(elements.len(), 1);
+}
