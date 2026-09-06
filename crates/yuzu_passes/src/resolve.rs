@@ -15,7 +15,7 @@ use yuzu_diagnostics::diagnostics::builder::DiagnosticBuilder;
 use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
 use yuzu_types::Registry;
 
-use crate::Source;
+use yuzu_mlir::DiagnosticsBridge;
 
 /// A column the query carries at some stage: its name, and the alias
 /// qualifying it when an `alias` stage or a join has named its side.
@@ -54,7 +54,7 @@ enum Ambient<'a> {
 
 struct Resolver<'c, 'a, 'e> {
     registry: &'a dyn Registry,
-    source: &'a Source,
+    source: &'a DiagnosticsBridge,
     diagnostics: &'e mut DiagnosticsEngine,
     structs: HashMap<String, Schema>,
     relations: HashMap<String, Schema>,
@@ -66,7 +66,7 @@ struct Resolver<'c, 'a, 'e> {
 pub fn resolve_names(
     module: &Module,
     registry: &dyn Registry,
-    source: &Source,
+    source: &DiagnosticsBridge,
     diagnostics: &mut DiagnosticsEngine,
 ) {
     let context = module.context();

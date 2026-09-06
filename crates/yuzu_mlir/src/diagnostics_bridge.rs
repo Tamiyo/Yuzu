@@ -1,19 +1,20 @@
-//! The bridge from MLIR locations back to the diagnostics engine's spans.
+//! The bridge from MLIR locations back to the diagnostics engine's spans:
+//! the inverse of the locations a conversion mints on the way in.
 
 use melior::ir::Location;
 use text_size::{TextRange, TextSize};
 use yuzu_diagnostics::diagnostics::Span;
 use yuzu_diagnostics::source_map::SourceId;
 
-/// Where a module's ops came from: enough to turn an op's location back into
-/// a span the diagnostics printer can render source for.
-pub struct Source {
+/// Turns an op's location back into a span the diagnostics printer can
+/// render source for.
+pub struct DiagnosticsBridge {
     id: SourceId,
     line_starts: Vec<usize>,
     len: usize,
 }
 
-impl Source {
+impl DiagnosticsBridge {
     pub fn new(id: SourceId, text: &str) -> Self {
         let mut line_starts = vec![0];
         line_starts.extend(text.match_indices('\n').map(|(at, _)| at + 1));

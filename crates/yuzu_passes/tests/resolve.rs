@@ -6,7 +6,8 @@ use melior::ir::operation::OperationLike;
 use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
 use yuzu_diagnostics::diagnostics::printer::DiagnosticPrinter;
 use yuzu_diagnostics::source_map::SourceMap;
-use yuzu_passes::{Source, resolve_names};
+use yuzu_mlir::DiagnosticsBridge;
+use yuzu_passes::resolve_names;
 
 fn check(source: &str, expected: Expect) {
     let context = yuzu_mlir::context();
@@ -24,7 +25,7 @@ fn check(source: &str, expected: Expect) {
     resolve_names(
         &conversion.module,
         &yuzu_types::Builtins,
-        &Source::new(source_id, source),
+        &DiagnosticsBridge::new(source_id, source),
         &mut diagnostics,
     );
 

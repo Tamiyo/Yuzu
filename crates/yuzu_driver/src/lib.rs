@@ -184,7 +184,7 @@ pub fn compile_mlir(name: &str, source: &str) -> std::process::ExitCode {
     yuzu_passes::resolve_names(
         &conversion.module,
         &yuzu_types::Builtins,
-        &yuzu_passes::Source::new(source_id, source),
+        &yuzu_mlir::DiagnosticsBridge::new(source_id, source),
         &mut diagnostics,
     );
     print_diagnostics(&diagnostics, &sources);

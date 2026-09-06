@@ -2175,6 +2175,8 @@ dependencies = [
  "expect-test",
  "melior",
  "melior-macro",
+ "text-size",
+ "yuzu_diagnostics",
  "yuzu_mlir_sys",
 ]
 
@@ -2206,7 +2208,6 @@ dependencies = [
  "expect-test",
  "melior",
  "mlir-sys",
- "text-size",
  "yuzu_diagnostics",
  "yuzu_lang",
  "yuzu_mlir",
