@@ -181,12 +181,17 @@ pub fn compile_mlir(name: &str, source: &str) -> std::process::ExitCode {
     let mut sources = SourceMap::new();
     let source_id = sources.add(name.to_string(), source.to_string());
     let mut diagnostics = DiagnosticsEngine::new();
+    let bridge = yuzu_mlir::DiagnosticsBridge::new(source_id, source);
     yuzu_passes::resolve_names(
+        &context,
         &conversion.module,
         &yuzu_types::Builtins,
-        &yuzu_mlir::DiagnosticsBridge::new(source_id, source),
+        &bridge,
         &mut diagnostics,
     );
+    if !has_errors(&diagnostics) {
+        yuzu_passes::infer_types(&context, &conversion.module, &bridge, &mut diagnostics);
+    }
     print_diagnostics(&diagnostics, &sources);
     if has_errors(&diagnostics) {
         return std::process::ExitCode::FAILURE;

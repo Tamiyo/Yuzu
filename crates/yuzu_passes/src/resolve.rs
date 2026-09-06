@@ -6,18 +6,17 @@
 
 use std::collections::HashMap;
 
-use melior::ir::attribute::AttributeLike;
+use melior::Context;
 use melior::ir::attribute::{
     ArrayAttribute, FlatSymbolRefAttribute, IntegerAttribute, StringAttribute, TypeAttribute,
 };
-
-use melior::ir::operation::{OperationLike, OperationRef};
-use melior::ir::{Attribute, BlockLike, BlockRef, Module, RegionLike, Value, ValueLike};
+use melior::ir::operation::{OperationLike, OperationMutLike, OperationRefMut};
+use melior::ir::{Attribute, BlockLike, BlockRef, Module, RegionLike};
 use yuzu_diagnostics::diagnostics::builder::DiagnosticBuilder;
 use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
+use yuzu_mlir::ops::Yzl;
+use yuzu_mlir::{DiagnosticsBridge, value_id};
 use yuzu_types::Registry;
-
-use yuzu_mlir::DiagnosticsBridge;
 
 /// A column the query carries at some stage: its name, and the alias
 /// qualifying it when an `alias` stage or a join has named its side.
@@ -55,6 +54,7 @@ enum Ambient<'a> {
 }
 
 struct Resolver<'c, 'a, 'e> {
+    context: &'c Context,
     registry: &'a dyn Registry,
     source: &'a DiagnosticsBridge,
     diagnostics: &'e mut DiagnosticsEngine,
@@ -65,14 +65,15 @@ struct Resolver<'c, 'a, 'e> {
     types: yuzu_mlir::Types<'c>,
 }
 
-pub fn resolve_names(
-    module: &Module,
+pub fn resolve_names<'c>(
+    context: &'c Context,
+    module: &Module<'c>,
     registry: &dyn Registry,
     source: &DiagnosticsBridge,
     diagnostics: &mut DiagnosticsEngine,
 ) {
-    let context = module.context();
     let mut resolver = Resolver {
+        context,
         registry,
         source,
         diagnostics,
@@ -80,41 +81,40 @@ pub fn resolve_names(
         relations: HashMap::new(),
         callables: HashMap::new(),
         schemas: HashMap::new(),
-        types: yuzu_mlir::Types::new(unsafe { context.to_ref() }),
+        types: yuzu_mlir::Types::new(context),
     };
     resolver.declare(module.body());
     resolver.resolve_block(module.body(), &Ambient::None);
 }
 
-impl<'c, 'a, 'e> Resolver<'c, 'a, 'e> {
+impl<'c> Resolver<'c, '_, '_> {
     /// First walk: every declaration registers before anything resolves, so
     /// order between declarations does not matter.
     fn declare(&mut self, block: BlockRef<'c, '_>) {
         let mut operation = block.first_operation();
         while let Some(op) = operation {
-            match op.name().as_string_ref().as_str().unwrap_or_default() {
-                "yzl.struct" => {
-                    if let Some(name) = symbol_name(op) {
-                        let schema = schema_columns(op);
-                        self.declare_named(op, "struct", &name);
+            match Yzl::of(&op) {
+                Some(Yzl::Struct) => {
+                    if let Some(name) = symbol_name(&op) {
+                        let schema = schema_columns(&op);
+                        self.declare_named(&op, "struct", &name);
                         self.structs.insert(name, schema);
                     }
                 }
-                "yzl.table" => {
-                    if let Some(name) = symbol_name(op) {
-                        let row = symbol_text(op, "row");
-                        let Some(schema) = self.structs.get(&row).cloned() else {
-                            self.error(op, format!("unknown struct `{row}`"));
-                            operation = op.next_in_block();
-                            continue;
-                        };
-                        self.declare_named(op, "relation", &name);
-                        self.relations.insert(name, schema);
+                Some(Yzl::Table) => {
+                    if let Some(name) = symbol_name(&op) {
+                        let row = symbol_text(&op, "row");
+                        if let Some(schema) = self.structs.get(&row).cloned() {
+                            self.declare_named(&op, "relation", &name);
+                            self.relations.insert(name, schema);
+                        } else {
+                            self.error(&op, format!("unknown struct `{row}`"));
+                        }
                     }
                 }
-                "yzl.fn" => {
-                    if let Some(name) = symbol_name(op) {
-                        let params = string_array(op, "params").len();
+                Some(Yzl::Fn) => {
+                    if let Some(name) = symbol_name(&op) {
+                        let params = string_array(&op, "params").len();
                         let kind = if op.attribute("external").is_ok() {
                             "external"
                         } else if op.attribute("agg").is_ok() {
@@ -122,7 +122,7 @@ impl<'c, 'a, 'e> Resolver<'c, 'a, 'e> {
                         } else {
                             "fn"
                         };
-                        self.declare_named(op, "function", &name);
+                        self.declare_named(&op, "function", &name);
                         self.callables.insert(
                             name,
                             Callable {
@@ -139,7 +139,10 @@ impl<'c, 'a, 'e> Resolver<'c, 'a, 'e> {
         }
     }
 
-    fn declare_named(&mut self, op: OperationRef<'c, '_>, what: &str, name: &str) {
+    fn declare_named<'a>(&mut self, op: &impl OperationLike<'c, 'a>, what: &str, name: &str)
+    where
+        'c: 'a,
+    {
         if self.structs.contains_key(name)
             || self.relations.contains_key(name)
             || self.callables.contains_key(name)
@@ -149,22 +152,22 @@ impl<'c, 'a, 'e> Resolver<'c, 'a, 'e> {
     }
 
     fn resolve_block(&mut self, block: BlockRef<'c, '_>, ambient: &Ambient) {
-        let mut operation = block.first_operation();
-        while let Some(op) = operation {
-            self.resolve_op(op, ambient);
-            operation = op.next_in_block();
+        let mut operation = block.first_operation_mut();
+        while let Some(mut op) = operation {
+            self.resolve_op(&mut op, ambient);
+            operation = op.next_in_block_mut();
         }
     }
 
-    fn resolve_op(&mut self, op: OperationRef<'c, '_>, ambient: &Ambient) {
-        match op.name().as_string_ref().as_str().unwrap_or_default() {
-            "yzl.name" => self.resolve_name(op, ambient),
-            "yzl.call" => self.resolve_call(op, ambient),
-            "yzl.fn" => {
+    fn resolve_op(&mut self, op: &mut OperationRefMut<'c, '_>, ambient: &Ambient) {
+        match Yzl::of(op) {
+            Some(Yzl::Name) => self.resolve_name(op, ambient),
+            Some(Yzl::Call) => self.resolve_call(op, ambient),
+            Some(Yzl::Fn) => {
                 let params = string_array(op, "params");
                 self.resolve_regions(op, &Ambient::Params(&params));
             }
-            "yzl.let" => {
+            Some(Yzl::Let) => {
                 self.resolve_regions(op, &Ambient::None);
                 if let Some(name) = symbol_name(op) {
                     let schema = self.yielded_schema(op);
@@ -172,7 +175,7 @@ impl<'c, 'a, 'e> Resolver<'c, 'a, 'e> {
                     self.relations.insert(name, schema);
                 }
             }
-            "yzl.from" => {
+            Some(Yzl::From) => {
                 let source = symbol_text(op, "source");
                 let schema = match self.relations.get(&source) {
                     Some(schema) => schema.clone(),
@@ -183,7 +186,7 @@ impl<'c, 'a, 'e> Resolver<'c, 'a, 'e> {
                 };
                 self.record_schema(op, schema);
             }
-            "yzl.alias" => {
+            Some(Yzl::Alias) => {
                 let alias = attribute_text(op, "alias");
                 let schema = self
                     .input_schema(op)
@@ -195,23 +198,24 @@ impl<'c, 'a, 'e> Resolver<'c, 'a, 'e> {
                     .collect();
                 self.record_schema(op, schema);
             }
-            "yzl.where" | "yzl.distinct" | "yzl.limit" => {
+            Some(Yzl::Where | Yzl::Distinct | Yzl::Limit) => {
                 let schema = self.input_schema(op);
                 self.resolve_regions(op, &Ambient::Columns(&schema));
                 self.record_schema(op, schema);
             }
-            "yzl.select" => {
+            Some(Yzl::Select) => {
                 let input = self.input_schema(op);
                 self.resolve_regions(op, &Ambient::Columns(&input));
-                self.record_schema(op, unqualified(string_array(op, "names")));
+                let schema = unqualified(string_array(op, "names"));
+                self.record_schema(op, schema);
             }
-            "yzl.extend" => {
+            Some(Yzl::Extend) => {
                 let mut schema = self.input_schema(op);
                 self.resolve_regions(op, &Ambient::Columns(&schema));
                 schema.extend(unqualified(string_array(op, "names")));
                 self.record_schema(op, schema);
             }
-            "yzl.set" => {
+            Some(Yzl::Set) => {
                 let schema = self.input_schema(op);
                 let mut columns = Vec::new();
                 for name in string_array(op, "names") {
@@ -224,7 +228,7 @@ impl<'c, 'a, 'e> Resolver<'c, 'a, 'e> {
                 self.resolve_regions(op, &Ambient::Columns(&schema));
                 self.record_schema(op, schema);
             }
-            "yzl.drop" => {
+            Some(Yzl::Drop) => {
                 let mut schema = self.input_schema(op);
                 for name in string_array(op, "columns") {
                     match schema.iter().position(|column| column.matches(&name)) {
@@ -236,7 +240,7 @@ impl<'c, 'a, 'e> Resolver<'c, 'a, 'e> {
                 }
                 self.record_schema(op, schema);
             }
-            "yzl.rename" => {
+            Some(Yzl::Rename) => {
                 let mut schema = self.input_schema(op);
                 let to = string_array(op, "to");
                 for (from, to) in string_array(op, "from").iter().zip(to) {
@@ -247,7 +251,7 @@ impl<'c, 'a, 'e> Resolver<'c, 'a, 'e> {
                 }
                 self.record_schema(op, schema);
             }
-            "yzl.aggregate" => {
+            Some(Yzl::Aggregate) => {
                 let input = self.input_schema(op);
                 let mut keys = Vec::new();
                 let mut schema = Schema::new();
@@ -268,7 +272,7 @@ impl<'c, 'a, 'e> Resolver<'c, 'a, 'e> {
                 self.resolve_regions(op, &Ambient::Columns(&input));
                 self.record_schema(op, schema);
             }
-            "yzl.join" => {
+            Some(Yzl::Join) => {
                 let mut schema = self.input_schema(op);
                 let relation = symbol_text(op, "rhs");
                 let mut rhs = match self.relations.get(&relation) {
@@ -278,20 +282,16 @@ impl<'c, 'a, 'e> Resolver<'c, 'a, 'e> {
                         Schema::new()
                     }
                 };
-                if let Ok(alias) = op.attribute("rhs_alias") {
-                    let alias = StringAttribute::try_from(alias)
-                        .map(|alias| alias.value().to_string())
-                        .unwrap_or_default();
+                let alias = attribute_text(op, "rhs_alias");
+                if !alias.is_empty() {
                     for column in &mut rhs {
                         column.qualifier = Some(alias.clone());
                     }
                 }
-                if op.attribute("using_columns").is_ok() {
-                    for name in string_array(op, "using_columns") {
-                        for side in [&schema, &rhs] {
-                            if !side.iter().any(|column| column.matches(&name)) {
-                                self.error(op, format!("unknown column `{name}`"));
-                            }
+                for name in string_array(op, "using_columns") {
+                    for side in [&schema, &rhs] {
+                        if !side.iter().any(|column| column.matches(&name)) {
+                            self.error(op, format!("unknown column `{name}`"));
                         }
                     }
                 }
@@ -299,13 +299,13 @@ impl<'c, 'a, 'e> Resolver<'c, 'a, 'e> {
                 self.resolve_regions(op, &Ambient::Columns(&schema));
                 self.record_schema(op, schema);
             }
-            "yzl.output" | "yzl.yield" | "yzl.return" | "yzl.list" | "yzl.struct" | "yzl.table" => {
+            Some(Yzl::Output | Yzl::Yield | Yzl::Return | Yzl::List | Yzl::Struct | Yzl::Table) => {
             }
-            _ => self.resolve_regions(op, ambient),
+            None => self.resolve_regions(op, ambient),
         }
     }
 
-    fn resolve_name(&mut self, op: OperationRef<'c, '_>, ambient: &Ambient) {
+    fn resolve_name(&mut self, op: &mut OperationRefMut<'c, '_>, ambient: &Ambient) {
         let reference = attribute_text(op, "name");
         match ambient {
             Ambient::Columns(schema) => {
@@ -321,7 +321,7 @@ impl<'c, 'a, 'e> Resolver<'c, 'a, 'e> {
         }
     }
 
-    fn resolve_call(&mut self, op: OperationRef<'c, '_>, ambient: &Ambient) {
+    fn resolve_call(&mut self, op: &mut OperationRefMut<'c, '_>, ambient: &Ambient) {
         self.resolve_regions(op, ambient);
         let callee = symbol_text(op, "callee");
         let arguments = op.operand_count();
@@ -351,16 +351,21 @@ impl<'c, 'a, 'e> Resolver<'c, 'a, 'e> {
                 format!("`{callee}` expects {expected} arguments, got {arguments}"),
             );
         }
-        let attribute = StringAttribute::new(unsafe { op.context().to_ref() }, kind);
-        set_attribute(op, "callee_kind", attribute.into());
+        op.set_attribute(
+            "callee_kind",
+            StringAttribute::new(self.context, kind).into(),
+        );
     }
 
-    fn find_column(
+    fn find_column<'a>(
         &mut self,
-        op: OperationRef<'c, '_>,
+        op: &impl OperationLike<'c, 'a>,
         schema: &Schema,
         reference: &str,
-    ) -> Option<usize> {
+    ) -> Option<usize>
+    where
+        'c: 'a,
+    {
         let mut matches = schema
             .iter()
             .enumerate()
@@ -378,7 +383,10 @@ impl<'c, 'a, 'e> Resolver<'c, 'a, 'e> {
         }
     }
 
-    fn resolve_regions(&mut self, op: OperationRef<'c, '_>, ambient: &Ambient) {
+    fn resolve_regions<'a>(&mut self, op: &impl OperationLike<'c, 'a>, ambient: &Ambient)
+    where
+        'c: 'a,
+    {
         for region in op.regions() {
             let mut block = region.first_block();
             while let Some(current) = block {
@@ -390,7 +398,10 @@ impl<'c, 'a, 'e> Resolver<'c, 'a, 'e> {
 
     /// The schema flowing out of the op a region's yield hands back — the
     /// shape a `let`-bound query exposes to `from`.
-    fn yielded_schema(&mut self, op: OperationRef<'c, '_>) -> Schema {
+    fn yielded_schema<'a>(&mut self, op: &impl OperationLike<'c, 'a>) -> Schema
+    where
+        'c: 'a,
+    {
         op.regions()
             .next()
             .and_then(|region| region.first_block())
@@ -400,60 +411,56 @@ impl<'c, 'a, 'e> Resolver<'c, 'a, 'e> {
                     last = next;
                 }
                 let value = last.operand(0).ok()?;
-                self.schemas.get(&key(value)).cloned()
+                self.schemas.get(&value_id(value)).cloned()
             })
             .unwrap_or_default()
     }
 
-    fn input_schema(&mut self, op: OperationRef<'c, '_>) -> Schema {
+    fn input_schema<'a>(&mut self, op: &impl OperationLike<'c, 'a>) -> Schema
+    where
+        'c: 'a,
+    {
         op.operand(0)
             .ok()
-            .and_then(|input| self.schemas.get(&key(input)).cloned())
+            .and_then(|input| self.schemas.get(&value_id(input)).cloned())
             .unwrap_or_default()
     }
 
-    fn record_schema(&mut self, op: OperationRef<'c, '_>, schema: Schema) {
+    fn record_schema<'a>(&mut self, op: &impl OperationLike<'c, 'a>, schema: Schema)
+    where
+        'c: 'a,
+    {
         if let Ok(result) = op.result(0) {
-            self.schemas.insert(key(result.into()), schema);
+            self.schemas.insert(value_id(result.into()), schema);
         }
     }
 
-    fn set_index(&mut self, op: OperationRef<'c, '_>, name: &str, index: usize) {
-        let attribute = IntegerAttribute::new(self.types.i64, index as i64);
-        set_attribute(op, name, attribute.into());
+    fn set_index(&mut self, op: &mut OperationRefMut<'c, '_>, name: &str, index: usize) {
+        op.set_attribute(
+            name,
+            IntegerAttribute::new(self.types.i64, index as i64).into(),
+        );
     }
 
-    fn set_index_array(&mut self, op: OperationRef<'c, '_>, name: &str, indices: &[usize]) {
+    fn set_index_array(&mut self, op: &mut OperationRefMut<'c, '_>, name: &str, indices: &[usize]) {
         let elements: Vec<Attribute> = indices
             .iter()
             .map(|&index| IntegerAttribute::new(self.types.i64, index as i64).into())
             .collect();
-        let attribute = ArrayAttribute::new(unsafe { op.context().to_ref() }, &elements);
-        set_attribute(op, name, attribute.into());
+        op.set_attribute(name, ArrayAttribute::new(self.context, &elements).into());
     }
 
-    fn error(&mut self, op: OperationRef<'c, '_>, message: String) {
+    fn error<'a>(&mut self, op: &impl OperationLike<'c, 'a>, message: String)
+    where
+        'c: 'a,
+    {
         let span = self.source.span(op.location());
         self.diagnostics
             .emit(DiagnosticBuilder::error(span, message));
     }
 }
 
-fn key(value: Value) -> usize {
-    value.to_raw().ptr as usize
-}
-
-fn set_attribute(op: OperationRef, name: &str, attribute: Attribute) {
-    unsafe {
-        mlir_sys::mlirOperationSetAttributeByName(
-            op.to_raw(),
-            melior::StringRef::new(name).to_raw(),
-            attribute.to_raw(),
-        );
-    }
-}
-
-fn symbol_name(op: OperationRef) -> Option<String> {
+fn symbol_name<'c: 'a, 'a>(op: &impl OperationLike<'c, 'a>) -> Option<String> {
     let attribute = op.attribute("sym_name").ok()?;
     StringAttribute::try_from(attribute)
         .ok()
@@ -462,7 +469,7 @@ fn symbol_name(op: OperationRef) -> Option<String> {
 
 /// The referenced name, whether the attribute is a symbol reference or a
 /// plain string.
-fn symbol_text(op: OperationRef, name: &str) -> String {
+fn symbol_text<'c: 'a, 'a>(op: &impl OperationLike<'c, 'a>, name: &str) -> String {
     let Ok(attribute) = op.attribute(name) else {
         return String::new();
     };
@@ -472,7 +479,7 @@ fn symbol_text(op: OperationRef, name: &str) -> String {
         .unwrap_or_default()
 }
 
-fn attribute_text(op: OperationRef, name: &str) -> String {
+fn attribute_text<'c: 'a, 'a>(op: &impl OperationLike<'c, 'a>, name: &str) -> String {
     op.attribute(name)
         .ok()
         .and_then(|attribute| StringAttribute::try_from(attribute).ok())
@@ -480,7 +487,7 @@ fn attribute_text(op: OperationRef, name: &str) -> String {
         .unwrap_or_default()
 }
 
-fn string_array(op: OperationRef, name: &str) -> Vec<String> {
+fn string_array<'c: 'a, 'a>(op: &impl OperationLike<'c, 'a>, name: &str) -> Vec<String> {
     let Ok(attribute) = op.attribute(name) else {
         return Vec::new();
     };
@@ -492,7 +499,7 @@ fn string_array(op: OperationRef, name: &str) -> Vec<String> {
 }
 
 /// The column names of the struct's `!yzr.rel` schema attribute.
-fn schema_columns(op: OperationRef) -> Schema {
+fn schema_columns<'c: 'a, 'a>(op: &impl OperationLike<'c, 'a>) -> Schema {
     let Ok(attribute) = op.attribute("schema") else {
         return Schema::new();
     };

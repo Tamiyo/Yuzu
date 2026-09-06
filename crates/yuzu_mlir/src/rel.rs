@@ -13,6 +13,7 @@ impl<'c> RelType<'c> {
             .iter()
             .map(|(name, _)| melior::StringRef::new(name).to_raw())
             .collect();
+
         let types: Vec<mlir_sys::MlirType> = columns.iter().map(|(_, ty)| ty.to_raw()).collect();
         let raw = unsafe {
             yuzu_mlir_sys::yzuRelTypeGet(
@@ -22,6 +23,7 @@ impl<'c> RelType<'c> {
                 types.as_ptr(),
             )
         };
+
         Self(unsafe { Type::from_raw(raw) })
     }
 
@@ -35,8 +37,9 @@ impl<'c> RelType<'c> {
 
     pub fn column_name(&self, index: usize) -> &'c str {
         let raw = unsafe { yuzu_mlir_sys::yzuRelTypeColumnName(self.0.to_raw(), index as isize) };
-        let bytes = unsafe { std::slice::from_raw_parts(raw.data.cast(), raw.length) };
-        std::str::from_utf8(bytes).expect("column names are utf-8")
+        unsafe { melior::StringRef::from_raw(raw) }
+            .as_str()
+            .expect("column names are utf-8")
     }
 
     pub fn column_type(&self, index: usize) -> Type<'c> {

@@ -2,7 +2,6 @@
 //! land as attributes, failures land in the diagnostics engine.
 
 use expect_test::{Expect, expect};
-use melior::ir::operation::OperationLike;
 use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
 use yuzu_diagnostics::diagnostics::printer::DiagnosticPrinter;
 use yuzu_diagnostics::source_map::SourceMap;
@@ -23,6 +22,7 @@ fn check(source: &str, expected: Expect) {
     let source_id = sources.add("test.yz".to_string(), source.to_string());
     let mut diagnostics = DiagnosticsEngine::new();
     resolve_names(
+        &context,
         &conversion.module,
         &yuzu_types::Builtins,
         &DiagnosticsBridge::new(source_id, source),

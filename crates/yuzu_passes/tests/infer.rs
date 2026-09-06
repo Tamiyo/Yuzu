@@ -2,7 +2,6 @@
 //! solved types land as `{ty = …}` attributes, conflicts land as diagnostics.
 
 use expect_test::{Expect, expect};
-use melior::ir::operation::OperationLike;
 use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
 use yuzu_diagnostics::diagnostics::printer::DiagnosticPrinter;
 use yuzu_diagnostics::source_map::SourceMap;
@@ -24,6 +23,7 @@ fn check(source: &str, expected: Expect) {
     let bridge = DiagnosticsBridge::new(source_id, source);
     let mut diagnostics = DiagnosticsEngine::new();
     resolve_names(
+        &context,
         &conversion.module,
         &yuzu_types::Builtins,
         &bridge,
@@ -33,7 +33,7 @@ fn check(source: &str, expected: Expect) {
         diagnostics.diagnostics().is_empty(),
         "resolution failed before inference"
     );
-    infer_types(&conversion.module, &bridge, &mut diagnostics);
+    infer_types(&context, &conversion.module, &bridge, &mut diagnostics);
 
     let printer = DiagnosticPrinter::new(&sources);
     let rendered: Vec<String> = diagnostics

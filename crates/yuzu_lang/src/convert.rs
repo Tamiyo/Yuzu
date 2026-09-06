@@ -844,6 +844,7 @@ impl<'c> AstToYzl<'c> {
             .iter()
             .map(|(name, ty)| (name.as_str(), *ty))
             .collect();
+
         yuzu_mlir::RelType::new(self.context, &columns).into()
     }
 

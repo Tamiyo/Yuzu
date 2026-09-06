@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 
+use melior::Context;
 use melior::ir::attribute::{
     AttributeLike, FlatSymbolRefAttribute, IntegerAttribute, StringAttribute, TypeAttribute,
 };
@@ -15,6 +16,7 @@ use melior::ir::{BlockLike, BlockRef, Module, RegionLike, Type, Value, ValueLike
 use yuzu_diagnostics::diagnostics::builder::DiagnosticBuilder;
 use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
 use yuzu_mlir::DiagnosticsBridge;
+use yuzu_mlir::ops::{Yz, Yzl};
 
 /// A type either known or still being solved for: a concrete MLIR type, or a
 /// union-find class shared by every value that must agree.
@@ -41,12 +43,12 @@ struct Inferrer<'c, 'a, 'e> {
     types: yuzu_mlir::Types<'c>,
 }
 
-pub fn infer_types(
-    module: &Module,
+pub fn infer_types<'c>(
+    context: &'c Context,
+    module: &Module<'c>,
     source: &DiagnosticsBridge,
     diagnostics: &mut DiagnosticsEngine,
 ) {
-    let context = unsafe { module.context().to_ref() };
     let mut inferrer = Inferrer {
         source,
         diagnostics,
@@ -71,7 +73,7 @@ impl<'c, 'a, 'e> Inferrer<'c, 'a, 'e> {
         if ty != self.types.var {
             return Term::Concrete(ty);
         }
-        let key = value.to_raw().ptr as usize;
+        let key = yuzu_mlir::value_id(value);
         if let Some(&class) = self.classes.get(&key) {
             return Term::Class(class);
         }
@@ -146,8 +148,8 @@ impl<'c, 'a, 'e> Inferrer<'c, 'a, 'e> {
     fn declare_signatures(&mut self, block: BlockRef<'c, '_>) {
         let mut operation = block.first_operation();
         while let Some(op) = operation {
-            match op_name(op).as_str() {
-                "yzl.fn" => {
+            match Yzl::of(&op) {
+                Some(Yzl::Fn) => {
                     if let Some(name) = text_attribute(op, "sym_name")
                         && let Ok(attribute) = op.attribute("signature")
                         && let Some(signature) = parse_signature(attribute)
@@ -155,7 +157,7 @@ impl<'c, 'a, 'e> Inferrer<'c, 'a, 'e> {
                         self.signatures.insert(name, signature);
                     }
                 }
-                "yzl.struct" => {
+                Some(Yzl::Struct) => {
                     if let Some(name) = text_attribute(op, "sym_name")
                         && let Ok(schema) = op.attribute("schema")
                     {
@@ -163,7 +165,7 @@ impl<'c, 'a, 'e> Inferrer<'c, 'a, 'e> {
                         self.relations.insert(name, row);
                     }
                 }
-                "yzl.table" => {
+                Some(Yzl::Table) => {
                     if let Some(name) = text_attribute(op, "sym_name") {
                         let row = self
                             .relations
@@ -188,8 +190,9 @@ impl<'c, 'a, 'e> Inferrer<'c, 'a, 'e> {
     }
 
     fn infer_op(&mut self, op: OperationRef<'c, '_>, columns: &Row<'c>, params: &[Type<'c>]) {
-        match op_name(op).as_str() {
-            "yzl.name" => {
+        let class = Yzl::of(&op);
+        match class {
+            Some(Yzl::Name) => {
                 let term = self.term_of(result(op));
                 if let Some(index) = index_attribute(op, "col") {
                     if let Some(&column) = columns.get(index) {
@@ -201,7 +204,7 @@ impl<'c, 'a, 'e> Inferrer<'c, 'a, 'e> {
                     self.unify(op, term, Term::Concrete(param));
                 }
             }
-            "yzl.call" => {
+            Some(Yzl::Call) => {
                 let callee = symbol_attribute(op, "callee");
                 match text_attribute(op, "callee_kind").as_deref() {
                     Some("builtin") => self.infer_builtin(op, &callee),
@@ -221,7 +224,7 @@ impl<'c, 'a, 'e> Inferrer<'c, 'a, 'e> {
                     }
                 }
             }
-            "yzl.fn" => {
+            Some(Yzl::Fn) => {
                 let Some((parameters, ret)) =
                     text_attribute(op, "sym_name").and_then(|name| self.signatures.get(&name))
                 else {
@@ -231,7 +234,7 @@ impl<'c, 'a, 'e> Inferrer<'c, 'a, 'e> {
                 self.infer_regions(op, &Row::new(), &parameters);
                 self.unify_returns(op, ret);
             }
-            "yzl.from" => {
+            Some(Yzl::From) => {
                 let row = self
                     .relations
                     .get(&symbol_attribute(op, "source"))
@@ -239,23 +242,24 @@ impl<'c, 'a, 'e> Inferrer<'c, 'a, 'e> {
                     .unwrap_or_default();
                 self.record_row(op, row);
             }
-            "yzl.let" => {
+            Some(Yzl::Let) => {
                 self.infer_regions(op, &Row::new(), &[]);
                 if let Some(name) = text_attribute(op, "sym_name") {
                     let row = self.yield_terms(op);
                     self.relations.insert(name, row);
                 }
             }
-            "yzl.where" | "yzl.distinct" | "yzl.limit" | "yzl.alias" | "yzl.rename"
-            | "yzl.drop" => {
+            Some(
+                Yzl::Where | Yzl::Distinct | Yzl::Limit | Yzl::Alias | Yzl::Rename | Yzl::Drop,
+            ) => {
                 let row = self.input_row(op);
                 self.infer_regions(op, &row, &[]);
-                if op_name(op) == "yzl.where" {
+                if class == Some(Yzl::Where) {
                     self.unify_yield(op, Term::Concrete(self.types.boolean));
                 }
                 self.record_row(op, row);
             }
-            "yzl.set" => {
+            Some(Yzl::Set) => {
                 let row = self.input_row(op);
                 self.infer_regions(op, &row, &[]);
                 let yields = self.yield_terms(op);
@@ -269,19 +273,19 @@ impl<'c, 'a, 'e> Inferrer<'c, 'a, 'e> {
                 }
                 self.record_row(op, row);
             }
-            "yzl.select" => {
+            Some(Yzl::Select) => {
                 let input = self.input_row(op);
                 self.infer_regions(op, &input, &[]);
                 let row = self.yield_terms(op);
                 self.record_row(op, row);
             }
-            "yzl.extend" => {
+            Some(Yzl::Extend) => {
                 let mut row = self.input_row(op);
                 self.infer_regions(op, &row, &[]);
                 row.extend(self.yield_terms(op));
                 self.record_row(op, row);
             }
-            "yzl.aggregate" => {
+            Some(Yzl::Aggregate) => {
                 let input = self.input_row(op);
                 self.infer_regions(op, &input, &[]);
                 let mut row: Row = index_array_attribute(op, "key_cols")
@@ -291,36 +295,40 @@ impl<'c, 'a, 'e> Inferrer<'c, 'a, 'e> {
                 row.extend(self.yield_terms(op));
                 self.record_row(op, row);
             }
-            "yzl.join" => {
+            Some(Yzl::Join) => {
                 let row = self.input_row(op);
                 self.infer_regions(op, &row, &[]);
                 self.record_row(op, row);
             }
-            "yz.add" | "yz.sub" | "yz.mul" | "yz.div" | "yz.rem" => {
+            None if matches!(
+                Yz::of(&op),
+                Some(Yz::Add | Yz::Sub | Yz::Mul | Yz::Div | Yz::Rem)
+            ) =>
+            {
                 let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
                 let out = self.term_of(result(op));
                 self.unify(op, lhs, rhs);
                 self.unify(op, lhs, out);
             }
-            "yz.neg" => {
+            None if Yz::of(&op) == Some(Yz::Neg) => {
                 let value = self.operand_term(op, 0);
                 let out = self.term_of(result(op));
                 self.unify(op, value, out);
             }
-            "yz.cmp" => {
+            None if Yz::of(&op) == Some(Yz::Cmp) => {
                 let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
                 let out = self.term_of(result(op));
                 self.unify(op, lhs, rhs);
                 self.unify(op, out, Term::Concrete(self.types.boolean));
             }
-            "yz.and" | "yz.or" => {
+            None if matches!(Yz::of(&op), Some(Yz::And | Yz::Or)) => {
                 let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
                 let out = self.term_of(result(op));
                 self.unify(op, lhs, Term::Concrete(self.types.boolean));
                 self.unify(op, rhs, Term::Concrete(self.types.boolean));
                 self.unify(op, out, Term::Concrete(self.types.boolean));
             }
-            "yz.not" => {
+            None if Yz::of(&op) == Some(Yz::Not) => {
                 let value = self.operand_term(op, 0);
                 let out = self.term_of(result(op));
                 self.unify(op, value, Term::Concrete(self.types.boolean));
@@ -386,13 +394,13 @@ impl<'c, 'a, 'e> Inferrer<'c, 'a, 'e> {
     fn input_row(&mut self, op: OperationRef<'c, '_>) -> Row<'c> {
         op.operand(0)
             .ok()
-            .and_then(|input| self.rows.get(&key(input)).cloned())
+            .and_then(|input| self.rows.get(&yuzu_mlir::value_id(input)).cloned())
             .unwrap_or_default()
     }
 
     fn record_row(&mut self, op: OperationRef<'c, '_>, row: Row<'c>) {
         if let Ok(result) = op.result(0) {
-            self.rows.insert(key(result.into()), row);
+            self.rows.insert(yuzu_mlir::value_id(result.into()), row);
         }
     }
 
@@ -417,7 +425,7 @@ impl<'c, 'a, 'e> Inferrer<'c, 'a, 'e> {
 
     fn unify_returns(&mut self, op: OperationRef<'c, '_>, ret: Type<'c>) {
         if let Some(terminator) = last_region_op(op)
-            && op_name(terminator) == "yzl.return"
+            && Yzl::of(&terminator) == Some(Yzl::Return)
             && let Ok(value) = terminator.operand(0)
         {
             let term = self.term_of(value);
@@ -458,20 +466,8 @@ impl<'c, 'a, 'e> Inferrer<'c, 'a, 'e> {
 
 // --- op reading helpers ---
 
-fn op_name(op: OperationRef) -> String {
-    op.name()
-        .as_string_ref()
-        .as_str()
-        .unwrap_or_default()
-        .to_string()
-}
-
 fn result<'c, 'a>(op: OperationRef<'c, 'a>) -> Value<'c, 'a> {
     op.result(0).expect("the op has a result").into()
-}
-
-fn key(value: Value) -> usize {
-    value.to_raw().ptr as usize
 }
 
 fn last_region_op<'c, 'a>(op: OperationRef<'c, 'a>) -> Option<OperationRef<'c, 'a>> {
