@@ -75,15 +75,25 @@ def Yz_ConstantStrOp : Yz_Op<"constant_str", [ConstantLike, Pure]> {
 
 // Arithmetic. One op per surface operator, polymorphic over the numeric
 // types the way the language's operators are; folds dispatch on the
-// literal's kind.
+// literal's kind. The constraints also admit !yzl.var — the pre-inference
+// window, the way Mojo's pop ops admit unbound parametrics — so operand
+// types are spelled individually until InferTypes stamps them concrete.
 
-def Yz_NumericType : AnyTypeOf<[Yz_Int64Type, Yz_Float64Type]>;
+def Yz_NumericType : Type<
+    CPred<"::llvm::isa<::yuzu::yz::Int64Type, ::yuzu::yz::Float64Type, "
+          "::yuzu::yzl::VarType>($_self)">,
+    "numeric or !yzl.var">;
+
+def Yz_BoolOrVarType : Type<
+    CPred<"::llvm::isa<::yuzu::yz::BoolType, ::yuzu::yzl::VarType>($_self)">,
+    "!yz.bool or !yzl.var">;
 
 class Yz_ArithBinaryOp<string mnemonic, list<Trait> traits = []>
-    : Yz_Op<mnemonic, traits # [Pure, SameOperandsAndResultType]> {
+    : Yz_Op<mnemonic, traits # [Pure]> {
   let arguments = (ins Yz_NumericType:$lhs, Yz_NumericType:$rhs);
   let results = (outs Yz_NumericType:$result);
-  let assemblyFormat = "$lhs `,` $rhs `:` type($result) attr-dict";
+  let assemblyFormat =
+      "$lhs `,` $rhs `:` type($lhs) `,` type($rhs) `->` type($result) attr-dict";
   let hasFolder = 1;
 }
 
@@ -107,46 +117,49 @@ def Yz_RemOp : Yz_ArithBinaryOp<"rem"> {
   let summary = "remainder; never folds a zero divisor";
 }
 
-def Yz_NegOp : Yz_Op<"neg", [Pure, SameOperandsAndResultType]> {
+def Yz_NegOp : Yz_Op<"neg", [Pure]> {
   let summary = "negation";
   let arguments = (ins Yz_NumericType:$value);
   let results = (outs Yz_NumericType:$result);
-  let assemblyFormat = "$value `:` type($result) attr-dict";
+  let assemblyFormat = "$value `:` type($value) `->` type($result) attr-dict";
   let hasFolder = 1;
 }
 
 // Comparison and logic.
 
-def Yz_CmpOp : Yz_Op<"cmp", [Pure, AllTypesMatch<["lhs", "rhs"]>]> {
+def Yz_CmpOp : Yz_Op<"cmp", [Pure]> {
   let summary = "numeric comparison";
   let arguments = (ins StrAttr:$predicate, Yz_NumericType:$lhs,
                        Yz_NumericType:$rhs);
-  let results = (outs Yz_BoolType:$result);
-  let assemblyFormat = "$predicate `,` $lhs `,` $rhs `:` type($lhs) attr-dict";
+  let results = (outs Yz_BoolOrVarType:$result);
+  let assemblyFormat =
+      "$predicate `,` $lhs `,` $rhs `:` type($lhs) `,` type($rhs) `->` type($result) attr-dict";
   let hasFolder = 1;
 }
 
 def Yz_AndOp : Yz_Op<"and", [Commutative, Pure]> {
   let summary = "logical and";
-  let arguments = (ins Yz_BoolType:$lhs, Yz_BoolType:$rhs);
-  let results = (outs Yz_BoolType:$result);
-  let assemblyFormat = "$lhs `,` $rhs attr-dict";
+  let arguments = (ins Yz_BoolOrVarType:$lhs, Yz_BoolOrVarType:$rhs);
+  let results = (outs Yz_BoolOrVarType:$result);
+  let assemblyFormat =
+      "$lhs `,` $rhs `:` type($lhs) `,` type($rhs) `->` type($result) attr-dict";
   let hasFolder = 1;
 }
 
 def Yz_OrOp : Yz_Op<"or", [Commutative, Pure]> {
   let summary = "logical or";
-  let arguments = (ins Yz_BoolType:$lhs, Yz_BoolType:$rhs);
-  let results = (outs Yz_BoolType:$result);
-  let assemblyFormat = "$lhs `,` $rhs attr-dict";
+  let arguments = (ins Yz_BoolOrVarType:$lhs, Yz_BoolOrVarType:$rhs);
+  let results = (outs Yz_BoolOrVarType:$result);
+  let assemblyFormat =
+      "$lhs `,` $rhs `:` type($lhs) `,` type($rhs) `->` type($result) attr-dict";
   let hasFolder = 1;
 }
 
 def Yz_NotOp : Yz_Op<"not", [Pure]> {
   let summary = "logical negation";
-  let arguments = (ins Yz_BoolType:$value);
-  let results = (outs Yz_BoolType:$result);
-  let assemblyFormat = "$value attr-dict";
+  let arguments = (ins Yz_BoolOrVarType:$value);
+  let results = (outs Yz_BoolOrVarType:$result);
+  let assemblyFormat = "$value `:` type($value) `->` type($result) attr-dict";
   let hasFolder = 1;
 }
 

@@ -9,6 +9,8 @@
 #include "mlir/Interfaces/InferTypeOpInterface.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
+#include "YzlDialect.h"
+
 #include "YzDialect.h.inc"
 
 #define GET_TYPEDEF_CLASSES

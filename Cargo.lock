@@ -2144,6 +2144,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "yuzu_lang"
+version = "0.0.0"
+dependencies = [
+ "expect-test",
+ "melior",
+ "yuzu_ast",
+ "yuzu_diagnostics",
+ "yuzu_lexer",
+ "yuzu_mlir",
+ "yuzu_parser",
+]
+
+[[package]]
 name = "yuzu_lexer"
 version = "0.0.0"
 dependencies = [
