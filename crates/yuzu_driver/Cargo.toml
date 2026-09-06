@@ -9,13 +9,16 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+melior = { version = "0.27.6", features = ["ods-dialects"] }
 
 yuzu_anf = { path = "../yuzu_anf" }
 yuzu_ast = { path = "../yuzu_ast" }
 yuzu_core = { path = "../yuzu_core" }
 yuzu_diagnostics = { path = "../yuzu_diagnostics" }
 yuzu_hir = { path = "../yuzu_hir" }
+yuzu_lang = { path = "../yuzu_lang" }
 yuzu_lexer = { path = "../yuzu_lexer" }
+yuzu_mlir = { path = "../yuzu_mlir" }
 yuzu_parser = { path = "../yuzu_parser" }
 yuzu_plan = { path = "../yuzu_plan" }
 yuzu_substrait = { path = "../yuzu_substrait" }

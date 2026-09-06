@@ -160,6 +160,27 @@ pub fn compile(name: &str, source: &str, options: &CompileOptions) {
     print_diagnostics(&diagnostics, &sources);
 }
 
+/// Compiles through the MLIR pipeline — as far as it goes today: the AST →
+/// yzl conversion, printed. The checking and lowering conversions extend this
+/// path until it reaches Substrait and the old pipeline retires.
+pub fn compile_mlir(name: &str, source: &str) -> std::process::ExitCode {
+    use melior::ir::operation::OperationLike;
+
+    let context = yuzu_mlir::context();
+    let Some(conversion) = yuzu_lang::convert_source(&context, name, source) else {
+        return std::process::ExitCode::FAILURE;
+    };
+    for what in &conversion.unsupported {
+        eprintln!("yuzu: {what}");
+    }
+    if !conversion.module.as_operation().verify() {
+        eprintln!("yuzu: the converted module does not verify");
+        return std::process::ExitCode::FAILURE;
+    }
+    print!("{}", conversion.module.as_operation());
+    std::process::ExitCode::SUCCESS
+}
+
 /// Wall-clock time spent in each compile phase.
 struct Phases {
     entries: Vec<(&'static str, std::time::Duration)>,

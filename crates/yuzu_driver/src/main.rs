@@ -39,10 +39,24 @@ struct Cli {
 
     #[arg(long, help = "Dump all of the above")]
     debug: bool,
+
+    #[arg(long, help = "Compile through the MLIR pipeline instead")]
+    pipeline: Option<String>,
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+
+    if cli.pipeline.as_deref() == Some("mlir") {
+        let source = match std::fs::read_to_string(&cli.file) {
+            Ok(source) => source,
+            Err(err) => {
+                eprintln!("yuzu: cannot read '{}': {err}", cli.file.display());
+                return ExitCode::FAILURE;
+            }
+        };
+        return yuzu_driver::compile_mlir(&cli.file.display().to_string(), &source);
+    }
 
     let options = CompileOptions {
         debug_tokens: cli.debug_tokens || cli.debug,

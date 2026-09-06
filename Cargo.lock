@@ -2116,12 +2116,15 @@ name = "yuzu_driver"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "melior",
  "yuzu_anf",
  "yuzu_ast",
  "yuzu_core",
  "yuzu_diagnostics",
  "yuzu_hir",
+ "yuzu_lang",
  "yuzu_lexer",
+ "yuzu_mlir",
  "yuzu_parser",
  "yuzu_plan",
  "yuzu_substrait",
