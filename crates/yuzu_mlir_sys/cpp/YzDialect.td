@@ -46,8 +46,17 @@ def Yz_StructType : Yz_Type<"Struct", "struct"> {
   let hasCustomAssemblyFormat = 1;
 }
 
+// Declarations. The dialect that owns `!yz.struct` owns what declares it.
+
 class Yz_Op<string mnemonic, list<Trait> traits = []>
     : Op<Yz_Dialect, mnemonic, traits>;
+
+def Yz_StructOp : Yz_Op<"struct", [Symbol]> {
+  let summary = "the fields of the struct `!yz.struct<@sym>` names";
+  let arguments = (ins SymbolNameAttr:$sym_name, StrArrayAttr:$names,
+      TypeArrayAttr:$types);
+  let assemblyFormat = "$sym_name $names `:` $types attr-dict";
+}
 
 // Literals — one op per type, each constant-like and foldable so the stock
 // canonicalizer can materialize fold results back into them.

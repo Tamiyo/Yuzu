@@ -2,10 +2,12 @@
 
 mod check_aggregates;
 mod infer;
+mod lower_yzl;
 mod resolve;
 
 pub use check_aggregates::check_aggregates;
 pub use infer::infer_types;
+pub use lower_yzl::lower_yzl;
 pub use resolve::resolve_names;
 
 #[cfg(test)]
@@ -29,6 +31,39 @@ pub(crate) mod test_support {
             module
         } else {
             rendered
+        };
+
+        expected.assert_eq(&output);
+    }
+
+    /// Renders what the lowering produced, or the diagnostics that stopped
+    /// it — the pass returns a new module rather than stamping this one.
+    pub(crate) fn check_lowered(source: &str, expected: Expect) {
+        let context = yuzu_mlir::context();
+        let mut sources = SourceMap::new();
+        let source_id = sources.add("test.yz".to_string(), source.to_string());
+        let mut diagnostics = DiagnosticsEngine::new();
+        let module =
+            yuzu_lang::convert_source(&context, "test.yz", source, source_id, &mut diagnostics)
+                .expect("the source converts");
+
+        let lowered =
+            yuzu_mlir::diagnostics::capture(&context, source_id, source, &mut diagnostics, || {
+                crate::resolve_names(&context, &module, &yuzu_types::Builtins);
+                crate::infer_types(&context, &module);
+                crate::lower_yzl(&context, &module)
+            });
+
+        let printer = DiagnosticPrinter::new(&sources);
+        let rendered: Vec<String> = diagnostics
+            .diagnostics()
+            .iter()
+            .map(|diagnostic| printer.print(diagnostic))
+            .collect();
+        let output = if rendered.is_empty() {
+            lowered.as_operation().to_string()
+        } else {
+            rendered.join("\n")
         };
 
         expected.assert_eq(&output);
