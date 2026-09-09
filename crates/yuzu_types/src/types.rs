@@ -240,12 +240,16 @@ impl Func {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BuiltinFunc {
     Aggregate(AggFunc),
+    /// A scalar the language spells as an operator — the parser lowers `**`,
+    /// `<<`, `>>` and `in` to calls, so they resolve like any other builtin.
+    Scalar(Func),
 }
 
 impl BuiltinFunc {
     pub fn name(self) -> &'static str {
         match self {
             BuiltinFunc::Aggregate(func) => func.name(),
+            BuiltinFunc::Scalar(func) => func.symbol(),
         }
     }
 }

@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use yuzu_core::adt::StringInterner;
 use yuzu_diagnostics::diagnostics::{builder::DiagnosticBuilder, engine::DiagnosticsEngine};
-use yuzu_types::{AggFunc, BuiltinFunc, Column, InferKind, SymbolId, Type, TypeCtx, TypeId};
+use yuzu_types::{AggFunc, BuiltinFunc, Column, Func, InferKind, SymbolId, Type, TypeCtx, TypeId};
 
 use crate::{
     Expr, ExprId, FuncParam, HirCtx, HirSourceMap, Ident, JoinCondition, Literal, Mutability, Op,
@@ -1444,6 +1444,37 @@ impl<'i> TypeInferrer<'i> {
                 }
 
                 let ty = self.resolve_agg_ty(expr_id, agg, &arg_tys);
+                self.infer.bind_builtin_call(expr_id, func);
+                self.infer.bind_expr_ty(expr_id, ty)
+            }
+            BuiltinFunc::Scalar(scalar) => {
+                let arg_tys: Vec<TypeId> = args.iter().map(|&arg| self.infer_expr(arg)).collect();
+                if args.len() < entry.min_args || args.len() > entry.max_args {
+                    let expected = if entry.min_args == entry.max_args {
+                        entry.min_args.to_string()
+                    } else {
+                        format!("{} to {}", entry.min_args, entry.max_args)
+                    };
+                    let message = format!(
+                        "`{}` expects {expected} argument(s), found {}",
+                        func.name(),
+                        args.len()
+                    );
+                    return self.error_expr(expr_id, message);
+                }
+
+                let op = match scalar {
+                    Func::Power => Op::Pow,
+                    Func::ShiftLeft => Op::ShiftLeft,
+                    Func::ShiftRight => Op::ShiftRight,
+                    Func::In => Op::In,
+                    other => {
+                        let message = format!("`{}` is not callable by name", other.symbol());
+                        return self.error_expr(expr_id, message);
+                    }
+                };
+
+                let ty = op.resolve(&arg_tys, &mut self.infer);
                 self.infer.bind_builtin_call(expr_id, func);
                 self.infer.bind_expr_ty(expr_id, ty)
             }
