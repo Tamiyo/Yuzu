@@ -69,9 +69,7 @@ mod support {
         parent.children().filter_map(N::cast).nth(n)
     }
 
-    pub(super) fn children<'a, N: AstNode + 'a>(
-        parent: &'a SyntaxNode,
-    ) -> impl Iterator<Item = N> + 'a {
+    pub(super) fn children<N: AstNode>(parent: &SyntaxNode) -> impl Iterator<Item = N> + use<N> {
         parent.children().filter_map(N::cast)
     }
 }
@@ -156,7 +154,7 @@ impl UnaryOp {
 
 ast_node!(Root);
 impl Root {
-    pub fn stmts(&self) -> impl Iterator<Item = Stmt> + '_ {
+    pub fn stmts(&self) -> impl Iterator<Item = Stmt> + use<> {
         support::children(self.syntax())
     }
 }
@@ -178,7 +176,7 @@ impl NamedTypeAnnotation {
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
-    pub fn args(&self) -> impl Iterator<Item = TypeAnnotation> + '_ {
+    pub fn args(&self) -> impl Iterator<Item = TypeAnnotation> + use<> {
         support::children(self.syntax())
     }
 }
@@ -195,7 +193,7 @@ impl FuncTypeAnnotation {
 
 ast_node!(FuncTypeAnnotationParams);
 impl FuncTypeAnnotationParams {
-    pub fn params(&self) -> impl Iterator<Item = TypeAnnotation> + '_ {
+    pub fn params(&self) -> impl Iterator<Item = TypeAnnotation> + use<> {
         support::children(self.syntax())
     }
 }
@@ -213,7 +211,7 @@ impl TypeBound {
         support::child(self.syntax())
     }
 
-    pub fn traits(&self) -> impl Iterator<Item = TraitRef> + '_ {
+    pub fn traits(&self) -> impl Iterator<Item = TraitRef> + use<> {
         support::children(self.syntax())
     }
 }
@@ -244,7 +242,7 @@ impl StructStmt {
         support::child(self.syntax())
     }
 
-    pub fn fields(&self) -> impl Iterator<Item = StructField> + '_ {
+    pub fn fields(&self) -> impl Iterator<Item = StructField> + use<> {
         support::children(self.syntax())
     }
 }
@@ -280,7 +278,7 @@ impl TraitStmt {
         support::child(self.syntax())
     }
 
-    pub fn methods(&self) -> impl Iterator<Item = FuncStmt> + '_ {
+    pub fn methods(&self) -> impl Iterator<Item = FuncStmt> + use<> {
         support::children(self.syntax())
     }
 }
@@ -295,7 +293,7 @@ impl ImplStmt {
         support::child(self.syntax())
     }
 
-    pub fn methods(&self) -> impl Iterator<Item = FuncStmt> + '_ {
+    pub fn methods(&self) -> impl Iterator<Item = FuncStmt> + use<> {
         support::children(self.syntax())
     }
 }
@@ -325,11 +323,11 @@ impl FuncStmt {
         support::child(self.syntax())
     }
 
-    pub fn type_params(&self) -> impl Iterator<Item = TypeParam> + '_ {
+    pub fn type_params(&self) -> impl Iterator<Item = TypeParam> + use<> {
         support::children(self.syntax())
     }
 
-    pub fn params(&self) -> impl Iterator<Item = FuncParam> + '_ {
+    pub fn params(&self) -> impl Iterator<Item = FuncParam> + use<> {
         support::children(self.syntax())
     }
 
@@ -337,7 +335,7 @@ impl FuncStmt {
         support::child(self.syntax())
     }
 
-    pub fn bounds(&self) -> impl Iterator<Item = TypeBound> + '_ {
+    pub fn bounds(&self) -> impl Iterator<Item = TypeBound> + use<> {
         support::children(self.syntax())
     }
 
@@ -367,14 +365,14 @@ impl TableStmt {
         support::nth_child(self.syntax(), 1)
     }
 
-    pub fn inline_fields(&self) -> impl Iterator<Item = StructField> + '_ {
+    pub fn inline_fields(&self) -> impl Iterator<Item = StructField> + use<> {
         support::children(self.syntax())
     }
 }
 
 ast_node!(BlockStmt);
 impl BlockStmt {
-    pub fn stmts(&self) -> impl Iterator<Item = Stmt> + '_ {
+    pub fn stmts(&self) -> impl Iterator<Item = Stmt> + use<> {
         support::children(self.syntax())
     }
 }
@@ -466,7 +464,7 @@ impl CallExpr {
 
 ast_node!(ArgList);
 impl ArgList {
-    pub fn args(&self) -> impl Iterator<Item = Expr> + '_ {
+    pub fn args(&self) -> impl Iterator<Item = Expr> + use<> {
         support::children(self.syntax())
     }
 }
@@ -488,7 +486,7 @@ impl StructExpr {
         support::child(self.syntax())
     }
 
-    pub fn fields(&self) -> impl Iterator<Item = StructFieldInit> + '_ {
+    pub fn fields(&self) -> impl Iterator<Item = StructFieldInit> + use<> {
         support::children(self.syntax())
     }
 }
@@ -506,7 +504,7 @@ impl StructFieldInit {
 
 ast_node!(ListExpr);
 impl ListExpr {
-    pub fn elements(&self) -> impl Iterator<Item = Expr> + '_ {
+    pub fn elements(&self) -> impl Iterator<Item = Expr> + use<> {
         support::children(self.syntax())
     }
 }
@@ -582,7 +580,7 @@ impl SelectExpr {
         support::child(self.syntax())
     }
 
-    pub fn items(&self) -> impl Iterator<Item = SelectItem> + '_ {
+    pub fn items(&self) -> impl Iterator<Item = SelectItem> + use<> {
         support::children(self.syntax())
     }
 }
@@ -622,7 +620,7 @@ impl DropExpr {
         support::child(self.syntax())
     }
 
-    pub fn columns(&self) -> impl Iterator<Item = Ident> + '_ {
+    pub fn columns(&self) -> impl Iterator<Item = Ident> + use<> {
         support::children(self.syntax())
     }
 }
@@ -633,7 +631,7 @@ impl RenameExpr {
         support::child(self.syntax())
     }
 
-    pub fn items(&self) -> impl Iterator<Item = RenameItem> + '_ {
+    pub fn items(&self) -> impl Iterator<Item = RenameItem> + use<> {
         support::children(self.syntax())
     }
 }
@@ -670,7 +668,7 @@ impl ExtendExpr {
         support::child(self.syntax())
     }
 
-    pub fn items(&self) -> impl Iterator<Item = SelectItem> + '_ {
+    pub fn items(&self) -> impl Iterator<Item = SelectItem> + use<> {
         support::children(self.syntax())
     }
 }
@@ -734,7 +732,7 @@ impl JoinOn {
 
 ast_node!(JoinUsing);
 impl JoinUsing {
-    pub fn columns(&self) -> impl Iterator<Item = Ident> + '_ {
+    pub fn columns(&self) -> impl Iterator<Item = Ident> + use<> {
         support::children(self.syntax())
     }
 }
@@ -745,7 +743,7 @@ impl SetExpr {
         support::child(self.syntax())
     }
 
-    pub fn items(&self) -> impl Iterator<Item = SetItem> + '_ {
+    pub fn items(&self) -> impl Iterator<Item = SetItem> + use<> {
         support::children(self.syntax())
     }
 }
@@ -793,7 +791,7 @@ impl AggregateExpr {
         support::child(self.syntax())
     }
 
-    pub fn items(&self) -> impl Iterator<Item = AggregateItem> + '_ {
+    pub fn items(&self) -> impl Iterator<Item = AggregateItem> + use<> {
         support::children(self.syntax())
     }
 
@@ -815,7 +813,7 @@ impl AggregateItem {
 
 ast_node!(GroupBy);
 impl GroupBy {
-    pub fn items(&self) -> impl Iterator<Item = GroupByItem> + '_ {
+    pub fn items(&self) -> impl Iterator<Item = GroupByItem> + use<> {
         support::children(self.syntax())
     }
 }
