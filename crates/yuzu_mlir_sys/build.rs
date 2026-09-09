@@ -18,6 +18,11 @@ fn main() {
     ];
     for dialect in ["Yz", "Yzl", "Yzr"] {
         for (flag, suffix) in generators {
+            // yzr declares no types of its own; its ops are typed by yz's.
+            if dialect == "Yzr" && flag.starts_with("--gen-typedef") {
+                continue;
+            }
+
             let status = Command::new(&tblgen)
                 .arg(flag)
                 .arg(format!("cpp/{dialect}Dialect.td"))

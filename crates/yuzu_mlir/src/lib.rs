@@ -1,16 +1,18 @@
 use melior::Context;
 
-mod attr;
-mod diagnostics_bridge;
+pub mod diagnostics;
+pub mod ext;
 pub mod ods;
 pub mod ops;
-mod rel;
+mod param_type;
+mod struct_type;
+mod symbol_table;
 mod types;
 mod value;
 
-pub use attr::array_elements;
-pub use diagnostics_bridge::DiagnosticsBridge;
-pub use rel::RelType;
+pub use param_type::ParamType;
+pub use struct_type::StructType;
+pub use symbol_table::SymbolTable;
 pub use types::Types;
 pub use value::value_id;
 

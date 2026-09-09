@@ -25,15 +25,58 @@ def Yzl_QueryType : Yzl_Type<"Query", "query"> {
   let summary = "a relation whose schema resolution has not computed yet";
 }
 
+def Yzl_ParamType : Yzl_Type<"Param", "param"> {
+  let summary = "a generic parameter in type position, by name";
+  let description = [{
+    The sibling of `!yzl.var`: both stand for a type the checking passes
+    resolve, but a parameter is named by the program and a variable is minted
+    by inference. `Self` is the parameter a trait declares implicitly.
+  }];
+  let parameters = (ins "::mlir::StringAttr":$name);
+  let assemblyFormat = "`<` $name `>`";
+}
+
 class Yzl_Op<string mnemonic, list<Trait> traits = []>
     : Op<Yzl_Dialect, mnemonic, traits>;
 
 // Declarations.
 
+def Yzl_MissingOp : Yzl_Op<"missing", [Pure]> {
+  let summary = "a hole where a parse error removed the source";
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "attr-dict `:` type($result)";
+}
+
 def Yzl_StructOp : Yzl_Op<"struct", [Symbol]> {
-  let summary = "a row type declaration; annotations are syntactically known";
-  let arguments = (ins SymbolNameAttr:$sym_name, TypeAttr:$schema);
-  let assemblyFormat = "$sym_name $schema attr-dict";
+  let summary = "a struct declaration: the identity `!yz.struct<@sym>` refers to";
+  let arguments = (ins SymbolNameAttr:$sym_name, StrArrayAttr:$names,
+      TypeArrayAttr:$types);
+  let assemblyFormat = "$sym_name $names `:` $types attr-dict";
+}
+
+def Yzl_TraitOp : Yzl_Op<"trait",
+    [Symbol, SymbolTable, IsolatedFromAbove, NoTerminator]> {
+  let summary = "a trait declaration: the signatures an implementation supplies";
+  let description = [{
+    The body holds one body-less `yzl.fn` per method, typed against the
+    implicit `!yzl.param<"Self">`.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name);
+  let regions = (region AnyRegion:$body);
+  let assemblyFormat = "$sym_name $body attr-dict";
+}
+
+def Yzl_ImplOp : Yzl_Op<"impl",
+    [SymbolTable, IsolatedFromAbove, NoTerminator]> {
+  let summary = "an implementation of a trait for one type";
+  let description = [{
+    `Self` is the target. It is a name, not a type: whether `@Money` is a
+    declared struct, a builtin scalar, or nothing at all is resolution's
+    question, so a declared struct and a builtin are the same shape here.
+  }];
+  let arguments = (ins FlatSymbolRefAttr:$trait, FlatSymbolRefAttr:$target);
+  let regions = (region AnyRegion:$body);
+  let assemblyFormat = "$trait `for` $target $body attr-dict";
 }
 
 def Yzl_TableOp : Yzl_Op<"table", [Symbol]> {
@@ -46,10 +89,15 @@ def Yzl_FnOp : Yzl_Op<"fn", [Symbol, IsolatedFromAbove]> {
   let summary = "a function declaration; parameters are referenced by name";
   let arguments = (ins SymbolNameAttr:$sym_name, StrArrayAttr:$params,
                        TypeAttrOf<FunctionType>:$signature,
+                       OptionalAttr<StrArrayAttr>:$type_params,
+                       OptionalAttr<StrArrayAttr>:$bound_params,
+                       OptionalAttr<ArrayAttr>:$bound_traits,
                        UnitAttr:$agg, UnitAttr:$external);
   let regions = (region AnyRegion:$body);
   let assemblyFormat =
-      "$sym_name `params` $params $signature (`agg` $agg^)? "
+      "$sym_name (`generics` $type_params^)? "
+      "(`where` $bound_params^ `:` $bound_traits)? "
+      "`params` $params $signature (`agg` $agg^)? "
       "(`external` $external^)? $body attr-dict";
 }
 

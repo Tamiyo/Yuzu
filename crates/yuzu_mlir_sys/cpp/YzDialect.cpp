@@ -28,6 +28,20 @@ void YzDialect::initialize() {
       >();
 }
 
+// !yz.struct<@Row> — the declared struct the symbol names.
+mlir::Type StructType::parse(mlir::AsmParser &parser) {
+  mlir::StringAttr name;
+  if (parser.parseLess() || parser.parseSymbolName(name) ||
+      parser.parseGreater())
+    return {};
+  return StructType::get(parser.getContext(),
+                         mlir::FlatSymbolRefAttr::get(name));
+}
+
+void StructType::print(mlir::AsmPrinter &printer) const {
+  printer << "<" << getName() << ">";
+}
+
 mlir::Operation *YzDialect::materializeConstant(mlir::OpBuilder &builder,
                                                 mlir::Attribute value,
                                                 mlir::Type type,

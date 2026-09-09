@@ -255,9 +255,9 @@ dependencies = [
 
 [[package]]
 name = "convert_case"
-version = "0.11.0"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "affbf0190ed2caf063e3def54ff444b449371d55c58e513a95ab98eca50adb49"
+checksum = "1af709f1f33454bf52eadfc8c78b3b9ef9cb26fb54d16dc9cd9a7299f899fd1b"
 dependencies = [
  "unicode-segmentation",
 ]
@@ -666,9 +666,9 @@ dependencies = [
 
 [[package]]
 name = "melior"
-version = "0.27.6"
+version = "0.27.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "196b6d9116db38343e0469d72a3b7772c25e2ae93c06b250b4b5b970a27fa289"
+checksum = "0d59851331b81c51d05cdfb8a2e363ec1ef74e5eea5af96081550650a3f1b3da"
 dependencies = [
  "melior-macro",
  "mlir-sys",
@@ -676,9 +676,9 @@ dependencies = [
 
 [[package]]
 name = "melior-macro"
-version = "0.20.6"
+version = "0.20.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eca289a8a4c081b26d1a97fdca3d21fef2e67dd3847179a4acd28e19d0526246"
+checksum = "420179c9543c0d1fca98b6ee0f722c9e50e14d0fe4d85a9aa4679a014b665e02"
 dependencies = [
  "comrak",
  "convert_case",
@@ -2153,6 +2153,7 @@ version = "0.0.0"
 dependencies = [
  "expect-test",
  "melior",
+ "text-size",
  "yuzu_ast",
  "yuzu_diagnostics",
  "yuzu_lexer",
@@ -2176,6 +2177,7 @@ dependencies = [
  "melior",
  "melior-macro",
  "mlir-sys",
+ "serde_json",
  "text-size",
  "yuzu_diagnostics",
  "yuzu_mlir_sys",

@@ -10,8 +10,5 @@
 
 #include "YzrDialect.h.inc"
 
-#define GET_TYPEDEF_CLASSES
-#include "YzrTypes.h.inc"
-
 #define GET_OP_CLASSES
 #include "YzrOps.h.inc"

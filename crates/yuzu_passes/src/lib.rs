@@ -1,7 +1,78 @@
 //! The conversions and checks that carry a yzl module toward yzr.
 
+mod check_aggregates;
 mod infer;
 mod resolve;
 
+pub use check_aggregates::check_aggregates;
 pub use infer::infer_types;
 pub use resolve::resolve_names;
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use expect_test::Expect;
+    use melior::Context;
+    use melior::ir::Module;
+    use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
+    use yuzu_diagnostics::diagnostics::printer::DiagnosticPrinter;
+    use yuzu_diagnostics::source_map::SourceMap;
+
+    /// Runs the passes over converted source and renders the module they
+    /// stamped, or the diagnostics when the source did not get that far.
+    pub(crate) fn check(
+        source: &str,
+        passes: impl FnOnce(&Context, &Module<'_>),
+        expected: Expect,
+    ) {
+        let (module, rendered) = run(source, passes);
+        let output = if rendered.is_empty() {
+            module
+        } else {
+            rendered
+        };
+
+        expected.assert_eq(&output);
+    }
+
+    /// Runs the passes and renders only what they reported — for the checks
+    /// that stamp nothing.
+    pub(crate) fn check_diagnostics(
+        source: &str,
+        passes: impl FnOnce(&Context, &Module<'_>),
+        expected: Expect,
+    ) {
+        let (_, rendered) = run(source, passes);
+        let output = if rendered.is_empty() {
+            String::from("no diagnostics")
+        } else {
+            rendered
+        };
+
+        expected.assert_eq(&output);
+    }
+
+    /// Converts the source, runs the passes under diagnostic capture, and
+    /// hands back the module's text and the rendered diagnostics.
+    fn run(source: &str, passes: impl FnOnce(&Context, &Module<'_>)) -> (String, String) {
+        let context = yuzu_mlir::context();
+        let mut sources = SourceMap::new();
+        let source_id = sources.add("test.yz".to_string(), source.to_string());
+        let mut diagnostics = DiagnosticsEngine::new();
+        let module =
+            yuzu_lang::convert_source(&context, "test.yz", source, source_id, &mut diagnostics)
+                .expect("the source converts");
+
+        yuzu_mlir::diagnostics::capture(&context, source_id, source, &mut diagnostics, || {
+            passes(&context, &module);
+        });
+
+        let printer = DiagnosticPrinter::new(&sources);
+        let rendered: Vec<String> = diagnostics
+            .diagnostics()
+            .iter()
+            .map(|diagnostic| printer.print(diagnostic))
+            .collect();
+
+        (module.as_operation().to_string(), rendered.join("\n"))
+    }
+}

@@ -35,6 +35,17 @@ def Yz_StrType : Yz_Type<"Str", "str"> {
   let summary = "string";
 }
 
+def Yz_StructType : Yz_Type<"Struct", "struct"> {
+  let summary = "a declared struct, by name — the declaration is the identity";
+  let description = [{
+    Nominal, as in Mojo: `!yz.struct<@Row>` is the struct the symbol declares,
+    and two declarations with identical fields are different types. The field
+    list lives on the declaring op, not here.
+  }];
+  let parameters = (ins "::mlir::FlatSymbolRefAttr":$name);
+  let hasCustomAssemblyFormat = 1;
+}
+
 class Yz_Op<string mnemonic, list<Trait> traits = []>
     : Op<Yz_Dialect, mnemonic, traits>;
 

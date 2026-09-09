@@ -112,8 +112,8 @@ fn a_full_pipeline_round_trips() {
         &context,
         r#"
 module {
-  %t = yzr.table @t : !yzr.rel<a: !yz.int64, b: !yz.int64>
-  %w = yzr.filter %t : !yzr.rel<a: !yz.int64, b: !yz.int64> {
+  %t = yzr.table @t : !yz.struct<@row_ab>
+  %w = yzr.filter %t : !yz.struct<@row_ab> {
   ^bb0(%a: !yz.int64, %b: !yz.int64):
 %c10 = yz.constant_int 10
 %p = yz.cmp "gt", %a, %c10 : !yz.int64, !yz.int64 -> !yz.bool
@@ -125,21 +125,21 @@ yzr.yield %p : !yz.bool
 %0 = yz.mul %a, %c3 : !yz.int64, !yz.int64 -> !yz.int64
 %1 = yz.add %0, %b : !yz.int64, !yz.int64 -> !yz.int64
 yzr.yield %1 : !yz.int64
-  } : !yzr.rel<a: !yz.int64, b: !yz.int64> -> !yzr.rel<a: !yz.int64, b: !yz.int64, e: !yz.int64>
+  } : !yz.struct<@row_ab> -> !yz.struct<@row_e>
   %g = yzr.aggregate %e keys [1] {
   ^bb0(%a: !yz.int64, %b: !yz.int64, %e0: !yz.int64):
 %m = yzr.agg "sum", %e0 : !yz.int64 -> !yz.int64
 yzr.yield %m : !yz.int64
-  } : !yzr.rel<a: !yz.int64, b: !yz.int64, e: !yz.int64> -> !yzr.rel<b: !yz.int64, s: !yz.int64>
-  %l = yzr.limit %g, 10 : !yzr.rel<b: !yz.int64, s: !yz.int64>
+  } : !yz.struct<@row_e> -> !yz.struct<@agg>
+  %l = yzr.limit %g, 10 : !yz.struct<@agg>
 }
 "#,
     )
     .expect("the whole pipeline parses and verifies");
     expect![[r#"
         module {
-          %0 = yzr.table @t : <a: !yz.int64, b: !yz.int64>
-          %1 = yzr.filter %0 : <a: !yz.int64, b: !yz.int64> {
+          %0 = yzr.table @t : !yz.struct<@row_ab>
+          %1 = yzr.filter %0 : !yz.struct<@row_ab> {
           ^bb0(%arg0: !yz.int64, %arg1: !yz.int64):
             %5 = yz.constant_int 10
             %6 = yz.cmp "gt", %arg0, %5 : !yz.int64, !yz.int64 -> !yz.bool
@@ -151,13 +151,13 @@ yzr.yield %m : !yz.int64
             %6 = yz.mul %arg0, %5 : !yz.int64, !yz.int64 -> !yz.int64
             %7 = yz.add %6, %arg1 : !yz.int64, !yz.int64 -> !yz.int64
             yzr.yield %7 : !yz.int64
-          } : <a: !yz.int64, b: !yz.int64> -> <a: !yz.int64, b: !yz.int64, e: !yz.int64>
+          } : !yz.struct<@row_ab> -> !yz.struct<@row_e>
           %3 = yzr.aggregate %2 keys [1] {
           ^bb0(%arg0: !yz.int64, %arg1: !yz.int64, %arg2: !yz.int64):
             %5 = yzr.agg "sum", %arg2 : !yz.int64 -> !yz.int64
             yzr.yield %5 : !yz.int64
-          } : <a: !yz.int64, b: !yz.int64, e: !yz.int64> -> <b: !yz.int64, s: !yz.int64>
-          %4 = yzr.limit %3, 10 : <b: !yz.int64, s: !yz.int64>
+          } : !yz.struct<@row_e> -> !yz.struct<@agg>
+          %4 = yzr.limit %3, 10 : !yz.struct<@agg>
         }
     "#]]
     .assert_eq(&module.as_operation().to_string());
@@ -284,42 +284,42 @@ fn joins_set_ops_and_count_round_trip() {
         &context,
         r#"
 module {
-  %l = yzr.table @l : !yzr.rel<a: !yz.int64>
-  %r = yzr.table @r : !yzr.rel<b: !yz.int64>
+  %l = yzr.table @l : !yz.struct<@row>
+  %r = yzr.table @r : !yz.struct<@row_b>
   %j = yzr.join "inner", %l, %r {
   ^bb0(%a: !yz.int64, %b: !yz.int64):
 %p = yz.cmp "eq", %a, %b : !yz.int64, !yz.int64 -> !yz.bool
 yzr.yield %p : !yz.bool
-  } : !yzr.rel<a: !yz.int64>, !yzr.rel<b: !yz.int64> -> !yzr.rel<a: !yz.int64, b: !yz.int64>
-  %u = yzr.union %l, %l : !yzr.rel<a: !yz.int64>
-  %i = yzr.intersect %l, %u : !yzr.rel<a: !yz.int64>
-  %e = yzr.except %u, %i : !yzr.rel<a: !yz.int64>
+  } : !yz.struct<@row>, !yz.struct<@row_b> -> !yz.struct<@row_ab>
+  %u = yzr.union %l, %l : !yz.struct<@row>
+  %i = yzr.intersect %l, %u : !yz.struct<@row>
+  %e = yzr.except %u, %i : !yz.struct<@row>
   %g = yzr.aggregate %e keys [] {
   ^bb0(%a: !yz.int64):
 %n = yzr.count : !yz.int64
 yzr.yield %n : !yz.int64
-  } : !yzr.rel<a: !yz.int64> -> !yzr.rel<n: !yz.int64>
+  } : !yz.struct<@row> -> !yz.struct<@counted>
 }
 "#,
     )
     .expect("joins, set ops, and count parse");
     expect![[r#"
         module {
-          %0 = yzr.table @l : <a: !yz.int64>
-          %1 = yzr.table @r : <b: !yz.int64>
+          %0 = yzr.table @l : !yz.struct<@row>
+          %1 = yzr.table @r : !yz.struct<@row_b>
           %2 = yzr.join "inner", %0, %1 {
           ^bb0(%arg0: !yz.int64, %arg1: !yz.int64):
             %7 = yz.cmp "eq", %arg0, %arg1 : !yz.int64, !yz.int64 -> !yz.bool
             yzr.yield %7 : !yz.bool
-          } : <a: !yz.int64>, <b: !yz.int64> -> <a: !yz.int64, b: !yz.int64>
-          %3 = yzr.union %0, %0 : <a: !yz.int64>
-          %4 = yzr.intersect %0, %3 : <a: !yz.int64>
-          %5 = yzr.except %3, %4 : <a: !yz.int64>
+          } : !yz.struct<@row>, !yz.struct<@row_b> -> !yz.struct<@row_ab>
+          %3 = yzr.union %0, %0 : !yz.struct<@row>
+          %4 = yzr.intersect %0, %3 : !yz.struct<@row>
+          %5 = yzr.except %3, %4 : !yz.struct<@row>
           %6 = yzr.aggregate %5 keys [] {
           ^bb0(%arg0: !yz.int64):
             %7 = yzr.count : !yz.int64
             yzr.yield %7 : !yz.int64
-          } : <a: !yz.int64> -> <n: !yz.int64>
+          } : !yz.struct<@row> -> !yz.struct<@counted>
         }
     "#]]
     .assert_eq(&module.as_operation().to_string());
@@ -332,8 +332,8 @@ fn the_canonicalizer_folds_across_a_stage_region() {
         &context,
         r#"
 module {
-  %t = yzr.table @t : !yzr.rel<a: !yz.int64>
-  %w = yzr.filter %t : !yzr.rel<a: !yz.int64> {
+  %t = yzr.table @t : !yz.struct<@row>
+  %w = yzr.filter %t : !yz.struct<@row> {
   ^bb0(%a: !yz.int64):
 %c3 = yz.constant_int 3
 %c4 = yz.constant_int 4
@@ -342,7 +342,7 @@ module {
 %r = yz.and %p, %q : !yz.bool, !yz.bool -> !yz.bool
 yzr.yield %r : !yz.bool
   }
-  %d = yzr.filter %w : !yzr.rel<a: !yz.int64> {
+  %d = yzr.filter %w : !yz.struct<@row> {
   ^bb0(%a: !yz.int64):
 %c0 = yz.constant_int 0
 %c1 = yz.constant_int 1
@@ -367,14 +367,14 @@ yzr.yield %p : !yz.bool
           %1 = yz.constant_int 1
           %2 = yz.constant_int 0
           %3 = yz.constant_int 3
-          %4 = yzr.table @t : <a: !yz.int64>
-          %5 = yzr.filter %4 : <a: !yz.int64> {
+          %4 = yzr.table @t : !yz.struct<@row>
+          %5 = yzr.filter %4 : !yz.struct<@row> {
           ^bb0(%arg0: !yz.int64):
             %7 = yz.cmp "gt", %arg0, %3 : !yz.int64, !yz.int64 -> !yz.bool
             %8 = yz.and %7, %0 : !yz.bool, !yz.bool -> !yz.bool
             yzr.yield %8 : !yz.bool
           }
-          %6 = yzr.filter %5 : <a: !yz.int64> {
+          %6 = yzr.filter %5 : !yz.struct<@row> {
           ^bb0(%arg0: !yz.int64):
             %7 = yz.div %1, %2 : !yz.int64, !yz.int64 -> !yz.int64
             %8 = yz.cmp "eq", %7, %1 : !yz.int64, !yz.int64 -> !yz.bool
@@ -451,29 +451,234 @@ fn typed_matching_works_on_owned_operations() {
     }
 }
 
-/// The melior 0.27 predicate bug, demonstrated on an attribute this stack
-/// actually produces. When this test FAILS, melior has fixed
-/// ArrayAttribute::try_from — delete yuzu_mlir::array_elements and switch
-/// its callers back to try_from + element().
+/// The struct type is nominal: the symbol is the identity, so equal names
+/// unify and different names never do, whatever their fields.
 #[test]
-fn melior_rejects_a_real_array_attribute() {
-    use melior::ir::attribute::{ArrayAttribute, AttributeLike, StringAttribute};
+fn struct_types_are_nominal() {
+    let context = yuzu_mlir::context();
+    let parse = |text| Type::parse(&context, text).expect("the struct type parses");
+    let row = parse("!yz.struct<@Row>");
+    let same = parse("!yz.struct<@Row>");
+    let other = parse("!yz.struct<@Other>");
+    assert_eq!(row, same);
+    assert_ne!(row, other);
+    assert_eq!(row.to_string(), "!yz.struct<@Row>");
+}
+
+/// The generated borrowed views: typed matching and accessors over a
+/// walk's refs, which melior's owned conversions cannot serve.
+#[test]
+fn borrowed_views_match_and_read_during_walks() {
+    use melior::ir::RegionLike;
+    use yuzu_mlir::ext::BlockExt;
+    use yuzu_mlir::ops::yzl::YzlOperationRef;
 
     let context = yuzu_mlir::context();
-    // The same attribute the converter puts on every yzl.fn: params ["x"].
+    let module = parse(
+        &context,
+        r#"
+module {
+  %0 = yzl.from @t
+  %1 = yzl.where %0 {
+    %2 = yzl.name "a" : !yzl.var
+    yzl.yield %2 : !yzl.var
+  }
+  yzl.output %1
+}
+"#,
+    )
+    .expect("the fixture parses");
+
+    let mut seen = Vec::new();
+    let mut source = None;
+    for op in module.body().operations() {
+        match YzlOperationRef::of(&op) {
+            Some(YzlOperationRef::From(from)) => {
+                assert_eq!(from.source().value(), "t");
+                source = Some(yuzu_mlir::value_id(from.result().into()));
+                seen.push("from");
+            }
+            Some(YzlOperationRef::Where(filter)) => {
+                assert_eq!(Some(yuzu_mlir::value_id(filter.input())), source);
+                let predicate = filter
+                    .body()
+                    .first_block()
+                    .and_then(|block| block.first_operation())
+                    .expect("the where region holds the predicate");
+                match YzlOperationRef::of(&predicate) {
+                    Some(YzlOperationRef::Name(name)) => assert_eq!(name.name().value(), "a"),
+                    _ => panic!("the predicate starts with a yzl.name"),
+                }
+
+                seen.push("where");
+            }
+            Some(YzlOperationRef::Output(_)) => seen.push("output"),
+            _ => panic!("unclassified op in the fixture"),
+        }
+    }
+
+    assert_eq!(seen, ["from", "where", "output"]);
+}
+
+/// The remaining accessor shapes: optional attributes, unit attributes, and
+/// variadic operands through the generated views.
+#[test]
+fn views_read_optional_unit_and_variadic_arguments() {
+    use melior::ir::attribute::{FlatSymbolRefAttribute, StringAttribute};
+    use melior::ir::{Attribute, Identifier, Region, RegionLike};
+    use yuzu_mlir::ops::yzl::YzlOperationRef;
+
+    let context = yuzu_mlir::context();
+    let location = Location::unknown(&context);
+    let types = yuzu_mlir::Types::new(&context);
+
+    // Unit attributes and a variadic call, through parsed IR.
+    let module = parse(
+        &context,
+        r#"
+module {
+  yzl.fn @f params ["x", "y"] (!yz.int64, !yz.int64) -> !yz.int64 {
+    %0 = yzl.name "x" : !yzl.var
+    %1 = yzl.name "y" : !yzl.var
+    %2 = yzl.call @g(%0, %1) : (!yzl.var, !yzl.var) -> !yzl.var
+    yzl.return %2 : !yzl.var
+  }
+}
+"#,
+    )
+    .expect("the fixture parses");
+
+    let function = module.body().first_operation().expect("the fn is present");
+    let Some(YzlOperationRef::Fn(function)) = YzlOperationRef::of(&function) else {
+        panic!("the first op is the yzl.fn");
+    };
+
+    assert!(!function.agg());
+    assert!(!function.external());
+    let call = function
+        .body()
+        .first_block()
+        .and_then(|block| {
+            let mut op = block.first_operation()?;
+            while let Some(next) = op.next_in_block() {
+                match YzlOperationRef::of(&op) {
+                    Some(YzlOperationRef::Call(_)) => break,
+                    _ => op = next,
+                }
+            }
+
+            Some(op)
+        })
+        .expect("the body holds the call");
+    let Some(YzlOperationRef::Call(call)) = YzlOperationRef::of(&call) else {
+        panic!("the op is the yzl.call");
+    };
+
+    assert_eq!(call.callee().value(), "g");
+    assert_eq!(call.operands().count(), 2);
+
+    // Optional attributes, present and absent, on unverified built joins.
+    let join = |alias: Option<&str>| {
+        let mut attributes = vec![
+            (
+                Identifier::new(&context, "kind"),
+                StringAttribute::new(&context, "inner").into(),
+            ),
+            (
+                Identifier::new(&context, "rhs"),
+                FlatSymbolRefAttribute::new(&context, "teams").into(),
+            ),
+        ];
+        if let Some(alias) = alias {
+            attributes.push((
+                Identifier::new(&context, "rhs_alias"),
+                StringAttribute::new(&context, alias).into(),
+            ));
+        }
+
+        OperationBuilder::new("yzl.join", location)
+            .add_attributes(&attributes)
+            .add_regions([Region::new()])
+            .add_results(&[types.query])
+            .build()
+            .expect("the join builds")
+    };
+
+    let aliased = join(Some("t"));
+    let Some(YzlOperationRef::Join(view)) = YzlOperationRef::of(&aliased) else {
+        panic!("the op is the yzl.join");
+    };
+
+    assert_eq!(view.rhs_alias().map(|alias| alias.value()), Some("t"));
+    assert!(view.using_columns().is_none());
+
+    let bare = join(None);
+    let Some(YzlOperationRef::Join(view)) = YzlOperationRef::of(&bare) else {
+        panic!("the op is the yzl.join");
+    };
+
+    assert!(view.rhs_alias().is_none());
+
+    // A unit attribute that is present reads as true.
+    let aggregate_fn = OperationBuilder::new("yzl.fn", location)
+        .add_attributes(&[(Identifier::new(&context, "agg"), Attribute::unit(&context))])
+        .add_regions([Region::new()])
+        .build()
+        .expect("the fn builds");
+    let Some(YzlOperationRef::Fn(view)) = YzlOperationRef::of(&aggregate_fn) else {
+        panic!("the op is the yzl.fn");
+    };
+
+    assert!(view.agg());
+    assert!(!view.external());
+}
+
+/// A view classifies only its own dialect; foreign ops come back as None.
+#[test]
+fn borrowed_views_reject_foreign_operations() {
+    use melior::ir::attribute::IntegerAttribute;
+    use yuzu_mlir::ods::yz;
+    use yuzu_mlir::ops::yz::YzOperationRef;
+    use yuzu_mlir::ops::yzl::YzlOperationRef;
+
+    let context = yuzu_mlir::context();
+    let location = Location::unknown(&context);
+    let types = yuzu_mlir::Types::new(&context);
+    let operation: melior::ir::operation::Operation = yz::constant_int(
+        &context,
+        types.int64,
+        IntegerAttribute::new(types.i64, 7),
+        location,
+    )
+    .into();
+
+    assert!(YzlOperationRef::of(&operation).is_none());
+    match YzOperationRef::of(&operation) {
+        Some(YzOperationRef::ConstantInt(constant)) => {
+            assert_eq!(constant.value().value(), 7);
+        }
+        _ => panic!("the constant classifies as yz.constant_int"),
+    }
+}
+
+/// The melior 0.27.6 predicate bug is fixed upstream as of 0.27.7:
+/// converting a genuine array succeeds, on the attribute this stack puts on
+/// every yzl.fn.
+#[test]
+fn melior_accepts_a_real_array_attribute() {
+    use melior::ir::attribute::{ArrayAttribute, StringAttribute};
+
+    let context = yuzu_mlir::context();
     let attribute: melior::ir::Attribute =
         ArrayAttribute::new(&context, &[StringAttribute::new(&context, "x").into()]).into();
 
-    // MLIR agrees it is an array and nothing else exotic.
-    assert!(attribute.is_array());
-    assert!(!attribute.is_dense_i64_array());
-
-    // melior's typed conversion checks is_dense_i64_array instead of
-    // is_array, so converting a genuine array ALWAYS fails ...
-    assert!(ArrayAttribute::try_from(attribute).is_err());
-
-    // ... which is why reading it through the wrapper yields nothing, while
-    // the workaround sees the element.
-    let elements = yuzu_mlir::array_elements(attribute);
-    assert_eq!(elements.len(), 1);
+    let array = ArrayAttribute::try_from(attribute).expect("a real array converts");
+    assert_eq!(array.len(), 1);
+    let element = array.element(0).expect("the element reads");
+    assert_eq!(
+        StringAttribute::try_from(element)
+            .expect("the element is a string")
+            .value(),
+        "x"
+    );
 }

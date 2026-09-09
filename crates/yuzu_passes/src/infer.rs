@@ -1,96 +1,120 @@
 //! InferTypes: unification over MLIR values. Every `!yzl.var`-typed value is
-//! a variable; concrete types anchor classes; op semantics, function
-//! signatures, and the schema types flowing through the stages supply the
-//! equations. Answers are stamped as `{ty = …}` attributes — LowerYZL applies
-//! them during its rebuild, so inference itself rewrites nothing.
+//! a type variable; op semantics, function signatures, and the field types
+//! flowing through the stages fill the substitutions. Answers are stamped as
+//! `{ty = …}` attributes — LowerYZL applies them during its rebuild, so
+//! inference itself rewrites nothing.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use melior::Context;
-use melior::ir::attribute::{
-    AttributeLike, FlatSymbolRefAttribute, IntegerAttribute, StringAttribute, TypeAttribute,
-};
-use melior::ir::operation::{OperationLike, OperationRef};
+use melior::ir::attribute::TypeAttribute;
+use melior::ir::operation::{OperationLike, OperationMutLike, OperationRef};
 use melior::ir::r#type::FunctionType;
-use melior::ir::{BlockLike, BlockRef, Module, RegionLike, Type, Value, ValueLike};
-use yuzu_diagnostics::diagnostics::builder::DiagnosticBuilder;
-use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
-use yuzu_mlir::DiagnosticsBridge;
-use yuzu_mlir::ops::{Yz, Yzl};
+use melior::ir::{BlockRef, Location, Module, RegionLike, Type, Value, ValueLike};
+use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationExt, RegionExt};
+use yuzu_mlir::ops::yz::YzOperationRef;
+use yuzu_mlir::ops::yzl::YzlOperationRef;
 
 /// A type either known or still being solved for: a concrete MLIR type, or a
-/// union-find class shared by every value that must agree.
+/// type variable whose substitution is still being filled.
 #[derive(Clone, Copy)]
 enum Term<'c> {
     Concrete(Type<'c>),
-    Class(usize),
+    Var(usize),
 }
 
 type Row<'c> = Vec<Term<'c>>;
 
-struct Inferrer<'c, 'a, 'e> {
-    source: &'a DiagnosticsBridge,
-    diagnostics: &'e mut DiagnosticsEngine,
-    /// Union-find parents; a root's entry in `resolved` is its answer.
-    parents: Vec<usize>,
-    resolved: HashMap<usize, Type<'c>>,
-    /// The class of each var-typed value, keyed by the value's identity.
-    classes: HashMap<usize, usize>,
+/// A function's declared shape: the types as written, plus the parameters
+/// a call instantiates and the bounds those parameters carry.
+#[derive(Clone)]
+struct Signature<'c> {
+    params: Vec<Type<'c>>,
+    result: Type<'c>,
+    type_params: Vec<String>,
+    bounds: Vec<(String, String)>,
+}
+
+/// A bound owed by one instantiation: the variable standing for the
+/// parameter, the trait it must satisfy, and where to report.
+struct Obligation<'c> {
+    var: usize,
+    r#trait: String,
+    callee: String,
+    location: Location<'c>,
+}
+
+struct TypeInferrer<'c> {
+    /// One slot per type variable: unbound, substituted by another variable,
+    /// or filled with its concrete type.
+    filled: Vec<Option<Term<'c>>>,
+    /// The type variable of each `!yzl.var` value, keyed by value identity —
+    /// a hash map because MLIR values are pointers, not arena indices.
+    vars: HashMap<usize, usize>,
     /// The row of column terms flowing out of each stage value.
     rows: HashMap<usize, Row<'c>>,
-    signatures: HashMap<String, (Vec<Type<'c>>, Type<'c>)>,
+    signatures: HashMap<String, Signature<'c>>,
+    /// The `(trait, type)` pairs the module's implementations supply.
+    impls: HashSet<(String, String)>,
+    /// A bound to check once the type variable standing for its parameter
+    /// resolves — deferred, because the argument may resolve after the call.
+    obligations: Vec<Obligation<'c>>,
     relations: HashMap<String, Row<'c>>,
     types: yuzu_mlir::Types<'c>,
 }
 
-pub fn infer_types<'c>(
-    context: &'c Context,
-    module: &Module<'c>,
-    source: &DiagnosticsBridge,
-    diagnostics: &mut DiagnosticsEngine,
-) {
-    let mut inferrer = Inferrer {
-        source,
-        diagnostics,
-        parents: Vec::new(),
-        resolved: HashMap::new(),
-        classes: HashMap::new(),
+/// Expects a verified module: required ODS attributes are read through
+/// typed accessors that panic when absent. Diagnostics go through MLIR —
+/// run this inside `yuzu_mlir::diagnostics::capture` to collect them.
+pub fn infer_types<'c>(context: &'c Context, module: &Module<'c>) {
+    let mut inferrer = TypeInferrer {
+        filled: Vec::new(),
+        vars: HashMap::new(),
         rows: HashMap::new(),
         signatures: HashMap::new(),
+        impls: HashSet::new(),
+        obligations: Vec::new(),
         relations: HashMap::new(),
         types: yuzu_mlir::Types::new(context),
     };
-    inferrer.declare_signatures(module.body());
+
+    inferrer.hoist(module.body());
     inferrer.infer_block(module.body(), &Row::new(), &[]);
+    inferrer.check_obligations();
     inferrer.stamp_block(module.body());
 }
 
-impl<'c, 'a, 'e> Inferrer<'c, 'a, 'e> {
-    // --- union-find ---
-
+impl<'c> TypeInferrer<'c> {
+    /// The term of a value: its concrete type, or the type variable minted
+    /// for it — a `!yzl.var` value is its own variable.
     fn term_of(&mut self, value: Value<'c, '_>) -> Term<'c> {
         let ty = value.r#type();
         if ty != self.types.var {
             return Term::Concrete(ty);
         }
+
         let key = yuzu_mlir::value_id(value);
-        if let Some(&class) = self.classes.get(&key) {
-            return Term::Class(class);
+        if let Some(&var) = self.vars.get(&key) {
+            return Term::Var(var);
         }
-        let class = self.parents.len();
-        self.parents.push(class);
-        self.classes.insert(key, class);
-        Term::Class(class)
+
+        let var = self.filled.len();
+        self.filled.push(None);
+        self.vars.insert(key, var);
+        Term::Var(var)
     }
 
-    fn root(&mut self, class: usize) -> usize {
-        let parent = self.parents[class];
-        if parent == class {
-            return class;
+    /// Follows the substitution chain to a variable's root, compressing the
+    /// chain on the way.
+    fn find(&mut self, var: usize) -> usize {
+        match self.filled[var] {
+            Some(Term::Var(next)) => {
+                let root = self.find(next);
+                self.filled[var] = Some(Term::Var(root));
+                root
+            }
+            _ => var,
         }
-        let root = self.root(parent);
-        self.parents[class] = root;
-        root
     }
 
     fn unify(&mut self, op: OperationRef<'c, '_>, a: Term<'c>, b: Term<'c>) {
@@ -100,235 +124,257 @@ impl<'c, 'a, 'e> Inferrer<'c, 'a, 'e> {
                     self.error(op, format!("expected `{a}`, found `{b}`"));
                 }
             }
-            (Term::Class(class), Term::Concrete(ty)) | (Term::Concrete(ty), Term::Class(class)) => {
-                let root = self.root(class);
-                match self.resolved.get(&root) {
-                    Some(&resolved) if resolved != ty => {
-                        self.error(op, format!("expected `{resolved}`, found `{ty}`"));
-                    }
-                    _ => {
-                        self.resolved.insert(root, ty);
-                    }
-                }
+            (Term::Var(var), Term::Concrete(ty)) | (Term::Concrete(ty), Term::Var(var)) => {
+                self.fill(op, var, ty);
             }
-            (Term::Class(a), Term::Class(b)) => {
-                let a = self.root(a);
-                let b = self.root(b);
-                if a == b {
-                    return;
-                }
-                let merged = match (self.resolved.get(&a), self.resolved.get(&b)) {
-                    (Some(&left), Some(&right)) if left != right => {
-                        self.error(op, format!("expected `{left}`, found `{right}`"));
-                        Some(left)
-                    }
-                    (Some(&ty), _) | (_, Some(&ty)) => Some(ty),
-                    (None, None) => None,
-                };
-                self.parents[b] = a;
-                if let Some(ty) = merged {
-                    self.resolved.insert(a, ty);
-                }
-            }
+            (Term::Var(a), Term::Var(b)) => self.merge(op, a, b),
         }
     }
 
+    /// Fills a type variable's substitution with a concrete type.
+    fn fill(&mut self, op: OperationRef<'c, '_>, var: usize, ty: Type<'c>) {
+        let root = self.find(var);
+        match self.filled[root] {
+            Some(Term::Concrete(filled)) if filled != ty => {
+                self.error(op, format!("expected `{filled}`, found `{ty}`"));
+            }
+            _ => self.filled[root] = Some(Term::Concrete(ty)),
+        }
+    }
+
+    /// Merges the substitutions of two type variables.
+    fn merge(&mut self, op: OperationRef<'c, '_>, a: usize, b: usize) {
+        let a = self.find(a);
+        let b = self.find(b);
+        if a == b {
+            return;
+        }
+
+        let merged = match (self.filled[a], self.filled[b]) {
+            (Some(Term::Concrete(left)), Some(Term::Concrete(right))) if left != right => {
+                self.error(op, format!("expected `{left}`, found `{right}`"));
+                Some(left)
+            }
+            (Some(Term::Concrete(ty)), _) | (_, Some(Term::Concrete(ty))) => Some(ty),
+            _ => None,
+        };
+
+        self.filled[b] = Some(Term::Var(a));
+        if let Some(ty) = merged {
+            self.filled[a] = Some(Term::Concrete(ty));
+        }
+    }
+
+    /// Resolves (collapses) a term to its final type, when it has one.
     fn resolve(&mut self, term: Term<'c>) -> Option<Type<'c>> {
         match term {
             Term::Concrete(ty) => Some(ty),
-            Term::Class(class) => {
-                let root = self.root(class);
-                self.resolved.get(&root).copied()
+            Term::Var(var) => {
+                let root = self.find(var);
+                match self.filled[root] {
+                    Some(Term::Concrete(ty)) => Some(ty),
+                    _ => None,
+                }
             }
         }
     }
 
-    // --- the walk ---
-
-    fn declare_signatures(&mut self, block: BlockRef<'c, '_>) {
-        let mut operation = block.first_operation();
-        while let Some(op) = operation {
-            match Yzl::of(&op) {
-                Some(Yzl::Fn) => {
-                    if let Some(name) = text_attribute(op, "sym_name")
-                        && let Ok(attribute) = op.attribute("signature")
-                        && let Some(signature) = parse_signature(attribute)
-                    {
-                        self.signatures.insert(name, signature);
+    fn hoist(&mut self, block: BlockRef<'c, '_>) {
+        for op in block.operations() {
+            match YzlOperationRef::of(&op) {
+                Some(YzlOperationRef::Fn(function)) => {
+                    if let Some(signature) = parse_signature(&function) {
+                        self.signatures
+                            .insert(function.sym_name().value().to_string(), signature);
                     }
                 }
-                Some(Yzl::Struct) => {
-                    if let Some(name) = text_attribute(op, "sym_name")
-                        && let Ok(schema) = op.attribute("schema")
-                    {
-                        let row = parse_schema_row(schema);
-                        self.relations.insert(name, row);
-                    }
+                Some(YzlOperationRef::Impl(item)) => {
+                    self.impls.insert((
+                        item.r#trait().value().to_string(),
+                        item.target().value().to_string(),
+                    ));
                 }
-                Some(Yzl::Table) => {
-                    if let Some(name) = text_attribute(op, "sym_name") {
-                        let row = self
-                            .relations
-                            .get(&symbol_attribute(op, "row"))
-                            .cloned()
-                            .unwrap_or_default();
-                        self.relations.insert(name, row);
-                    }
+                Some(YzlOperationRef::Struct(item)) => {
+                    let row = field_row(item.types());
+                    self.relations
+                        .insert(item.sym_name().value().to_string(), row);
+                }
+                Some(YzlOperationRef::Table(table)) => {
+                    let row = self
+                        .relations
+                        .get(table.row().value())
+                        .cloned()
+                        .unwrap_or_default();
+                    self.relations
+                        .insert(table.sym_name().value().to_string(), row);
                 }
                 _ => {}
             }
-            operation = op.next_in_block();
         }
     }
 
     fn infer_block(&mut self, block: BlockRef<'c, '_>, columns: &Row<'c>, params: &[Type<'c>]) {
-        let mut operation = block.first_operation();
-        while let Some(op) = operation {
+        for op in block.operations() {
             self.infer_op(op, columns, params);
-            operation = op.next_in_block();
         }
     }
 
     fn infer_op(&mut self, op: OperationRef<'c, '_>, columns: &Row<'c>, params: &[Type<'c>]) {
-        let class = Yzl::of(&op);
-        match class {
-            Some(Yzl::Name) => {
+        match YzlOperationRef::of(&op) {
+            Some(YzlOperationRef::Name(_)) => {
                 let term = self.term_of(result(op));
-                if let Some(index) = index_attribute(op, "col") {
+                if let Some(index) = op.index_attribute("col") {
                     if let Some(&column) = columns.get(index) {
                         self.unify(op, term, column);
                     }
-                } else if let Some(index) = index_attribute(op, "param")
+                } else if let Some(index) = op.index_attribute("param")
                     && let Some(&param) = params.get(index)
                 {
                     self.unify(op, term, Term::Concrete(param));
                 }
             }
-            Some(Yzl::Call) => {
-                let callee = symbol_attribute(op, "callee");
-                match text_attribute(op, "callee_kind").as_deref() {
-                    Some("builtin") => self.infer_builtin(op, &callee),
+            Some(YzlOperationRef::Call(call)) => {
+                let callee = call.callee().value();
+                match op.text_attribute("callee_kind").as_deref() {
+                    Some("builtin") => self.resolve_builtin_ty(op, callee),
                     Some("external") => {}
                     _ => {
-                        let Some((parameters, ret)) = self.signatures.get(&callee).cloned() else {
+                        let Some(signature) = self.signatures.get(callee).cloned() else {
                             return;
                         };
-                        for (index, parameter) in parameters.iter().enumerate() {
+
+                        let bindings = self.instantiate(op, callee, &signature);
+                        for (index, parameter) in signature.params.iter().enumerate() {
                             if let Ok(argument) = op.operand(index) {
                                 let term = self.term_of(argument);
-                                self.unify(op, term, Term::Concrete(*parameter));
+                                let expected = self.substitute(*parameter, &bindings);
+                                self.unify(op, term, expected);
                             }
                         }
+
                         let term = self.term_of(result(op));
-                        self.unify(op, term, Term::Concrete(ret));
+                        let expected = self.substitute(signature.result, &bindings);
+                        self.unify(op, term, expected);
                     }
                 }
             }
-            Some(Yzl::Fn) => {
-                let Some((parameters, ret)) =
-                    text_attribute(op, "sym_name").and_then(|name| self.signatures.get(&name))
-                else {
+            Some(YzlOperationRef::Fn(function)) => {
+                let Some(signature) = self.signatures.get(function.sym_name().value()) else {
                     return;
                 };
-                let (parameters, ret) = (parameters.clone(), *ret);
+
+                let (parameters, result) = (signature.params.clone(), signature.result);
                 self.infer_regions(op, &Row::new(), &parameters);
-                self.unify_returns(op, ret);
+                self.unify_returns(op, result);
             }
-            Some(Yzl::From) => {
+            Some(YzlOperationRef::From(from)) => {
                 let row = self
                     .relations
-                    .get(&symbol_attribute(op, "source"))
+                    .get(from.source().value())
                     .cloned()
                     .unwrap_or_default();
                 self.record_row(op, row);
             }
-            Some(Yzl::Let) => {
+            Some(YzlOperationRef::Let(binding)) => {
                 self.infer_regions(op, &Row::new(), &[]);
-                if let Some(name) = text_attribute(op, "sym_name") {
-                    let row = self.yield_terms(op);
-                    self.relations.insert(name, row);
-                }
+                let row = self.yield_terms(op);
+                self.relations
+                    .insert(binding.sym_name().value().to_string(), row);
             }
             Some(
-                Yzl::Where | Yzl::Distinct | Yzl::Limit | Yzl::Alias | Yzl::Rename | Yzl::Drop,
+                stage @ (YzlOperationRef::Where(_)
+                | YzlOperationRef::Distinct(_)
+                | YzlOperationRef::Limit(_)
+                | YzlOperationRef::Alias(_)
+                | YzlOperationRef::Rename(_)
+                | YzlOperationRef::Drop(_)),
             ) => {
                 let row = self.input_row(op);
                 self.infer_regions(op, &row, &[]);
-                if class == Some(Yzl::Where) {
+                if matches!(stage, YzlOperationRef::Where(_)) {
                     self.unify_yield(op, Term::Concrete(self.types.boolean));
                 }
+
                 self.record_row(op, row);
             }
-            Some(Yzl::Set) => {
+            Some(YzlOperationRef::Set(_)) => {
                 let row = self.input_row(op);
                 self.infer_regions(op, &row, &[]);
                 let yields = self.yield_terms(op);
-                for (index, term) in index_array_attribute(op, "set_cols")
-                    .into_iter()
-                    .zip(yields)
-                {
+                for (index, term) in op.index_array_attribute("set_cols").into_iter().zip(yields) {
                     if let Some(&column) = row.get(index) {
                         self.unify(op, column, term);
                     }
                 }
+
                 self.record_row(op, row);
             }
-            Some(Yzl::Select) => {
+            Some(YzlOperationRef::Select(_)) => {
                 let input = self.input_row(op);
                 self.infer_regions(op, &input, &[]);
                 let row = self.yield_terms(op);
                 self.record_row(op, row);
             }
-            Some(Yzl::Extend) => {
+            Some(YzlOperationRef::Extend(_)) => {
                 let mut row = self.input_row(op);
                 self.infer_regions(op, &row, &[]);
                 row.extend(self.yield_terms(op));
                 self.record_row(op, row);
             }
-            Some(Yzl::Aggregate) => {
+            Some(YzlOperationRef::Aggregate(_)) => {
                 let input = self.input_row(op);
                 self.infer_regions(op, &input, &[]);
-                let mut row: Row = index_array_attribute(op, "key_cols")
+                let mut row: Row = op
+                    .index_array_attribute("key_cols")
                     .into_iter()
                     .filter_map(|index| input.get(index).copied())
                     .collect();
                 row.extend(self.yield_terms(op));
                 self.record_row(op, row);
             }
-            Some(Yzl::Join) => {
+            Some(YzlOperationRef::Join(_)) => {
                 let row = self.input_row(op);
                 self.infer_regions(op, &row, &[]);
                 self.record_row(op, row);
             }
-            None if matches!(
-                Yz::of(&op),
-                Some(Yz::Add | Yz::Sub | Yz::Mul | Yz::Div | Yz::Rem)
-            ) =>
-            {
+            Some(_) => self.infer_regions(op, columns, params),
+            None => self.infer_yz_op(op, columns, params),
+        }
+    }
+
+    fn infer_yz_op(&mut self, op: OperationRef<'c, '_>, columns: &Row<'c>, params: &[Type<'c>]) {
+        match YzOperationRef::of(&op) {
+            Some(
+                YzOperationRef::Add(_)
+                | YzOperationRef::Sub(_)
+                | YzOperationRef::Mul(_)
+                | YzOperationRef::Div(_)
+                | YzOperationRef::Rem(_),
+            ) => {
                 let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
                 let out = self.term_of(result(op));
                 self.unify(op, lhs, rhs);
                 self.unify(op, lhs, out);
             }
-            None if Yz::of(&op) == Some(Yz::Neg) => {
+            Some(YzOperationRef::Neg(_)) => {
                 let value = self.operand_term(op, 0);
                 let out = self.term_of(result(op));
                 self.unify(op, value, out);
             }
-            None if Yz::of(&op) == Some(Yz::Cmp) => {
+            Some(YzOperationRef::Cmp(_)) => {
                 let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
                 let out = self.term_of(result(op));
                 self.unify(op, lhs, rhs);
                 self.unify(op, out, Term::Concrete(self.types.boolean));
             }
-            None if matches!(Yz::of(&op), Some(Yz::And | Yz::Or)) => {
+            Some(YzOperationRef::And(_) | YzOperationRef::Or(_)) => {
                 let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
                 let out = self.term_of(result(op));
                 self.unify(op, lhs, Term::Concrete(self.types.boolean));
                 self.unify(op, rhs, Term::Concrete(self.types.boolean));
                 self.unify(op, out, Term::Concrete(self.types.boolean));
             }
-            None if Yz::of(&op) == Some(Yz::Not) => {
+            Some(YzOperationRef::Not(_)) => {
                 let value = self.operand_term(op, 0);
                 let out = self.term_of(result(op));
                 self.unify(op, value, Term::Concrete(self.types.boolean));
@@ -336,6 +382,95 @@ impl<'c, 'a, 'e> Inferrer<'c, 'a, 'e> {
             }
             _ => self.infer_regions(op, columns, params),
         }
+    }
+
+    /// Mints one fresh variable per type parameter, so every call to a
+    /// generic function solves its own instance, and records the bounds that
+    /// instance owes.
+    fn instantiate(
+        &mut self,
+        op: OperationRef<'c, '_>,
+        callee: &str,
+        signature: &Signature<'c>,
+    ) -> HashMap<String, usize> {
+        let mut bindings = HashMap::new();
+        for name in &signature.type_params {
+            let var = self.filled.len();
+            self.filled.push(None);
+            bindings.insert(name.clone(), var);
+        }
+
+        for (subject, r#trait) in &signature.bounds {
+            if let Some(&var) = bindings.get(subject) {
+                self.obligations.push(Obligation {
+                    var,
+                    r#trait: r#trait.clone(),
+                    callee: callee.to_string(),
+                    location: op.location(),
+                });
+            }
+        }
+
+        bindings
+    }
+
+    /// A declared type with this instance's parameters swapped in.
+    fn substitute(&self, ty: Type<'c>, bindings: &HashMap<String, usize>) -> Term<'c> {
+        if let Some(param) = yuzu_mlir::ParamType::from_type(ty)
+            && let Some(&var) = bindings.get(param.name())
+        {
+            return Term::Var(var);
+        }
+
+        Term::Concrete(ty)
+    }
+
+    /// Every instantiation owes its bounds once its type is known.
+    fn check_obligations(&mut self) {
+        for index in 0..self.obligations.len() {
+            let (var, r#trait, callee, location) = {
+                let obligation = &self.obligations[index];
+                (
+                    obligation.var,
+                    obligation.r#trait.clone(),
+                    obligation.callee.clone(),
+                    obligation.location,
+                )
+            };
+
+            let Some(ty) = self.resolve(Term::Var(var)) else {
+                continue;
+            };
+
+            let Some(name) = self.type_name(ty) else {
+                continue;
+            };
+
+            if !self.impls.contains(&(r#trait.clone(), name.clone())) {
+                yuzu_mlir::diagnostics::emit_error(
+                    location,
+                    &format!("`{name}` does not implement `{trait}`, required by `{callee}`"),
+                );
+            }
+        }
+    }
+
+    /// The name an `impl` would target this type by.
+    fn type_name(&self, ty: Type<'c>) -> Option<String> {
+        if ty == self.types.int64 {
+            return Some("int64".to_string());
+        }
+        if ty == self.types.float64 {
+            return Some("float64".to_string());
+        }
+        if ty == self.types.boolean {
+            return Some("bool".to_string());
+        }
+        if ty == self.types.str {
+            return Some("str".to_string());
+        }
+
+        None
     }
 
     fn operand_term(&mut self, op: OperationRef<'c, '_>, index: usize) -> Term<'c> {
@@ -347,7 +482,7 @@ impl<'c, 'a, 'e> Inferrer<'c, 'a, 'e> {
 
     /// The aggregate builtins are polymorphic; these are the old
     /// `resolve_agg_ty` rules over terms.
-    fn infer_builtin(&mut self, op: OperationRef<'c, '_>, callee: &str) {
+    fn resolve_builtin_ty(&mut self, op: OperationRef<'c, '_>, callee: &str) {
         let out = self.term_of(result(op));
         match callee {
             "count" | "count_distinct" => {
@@ -362,6 +497,7 @@ impl<'c, 'a, 'e> Inferrer<'c, 'a, 'e> {
                         } else {
                             self.types.int64
                         };
+
                         self.unify(op, out, Term::Concrete(result));
                     }
                 }
@@ -375,16 +511,27 @@ impl<'c, 'a, 'e> Inferrer<'c, 'a, 'e> {
                     self.unify(op, out, term);
                 }
             }
+            // The scalar builtins the parser lowers operators to: `**` keeps
+            // its operands' type, the shifts are integer-only.
+            "pow" => {
+                let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
+                self.unify(op, lhs, rhs);
+                self.unify(op, lhs, out);
+            }
+            "shift_left" | "shift_right" => {
+                let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
+                self.unify(op, lhs, Term::Concrete(self.types.int64));
+                self.unify(op, rhs, Term::Concrete(self.types.int64));
+                self.unify(op, out, Term::Concrete(self.types.int64));
+            }
             _ => {}
         }
     }
 
     fn infer_regions(&mut self, op: OperationRef<'c, '_>, columns: &Row<'c>, params: &[Type<'c>]) {
         for region in op.regions() {
-            let mut block = region.first_block();
-            while let Some(current) = block {
-                self.infer_block(current, columns, params);
-                block = current.next_in_region();
+            for block in region.blocks() {
+                self.infer_block(block, columns, params);
             }
         }
     }
@@ -408,6 +555,7 @@ impl<'c, 'a, 'e> Inferrer<'c, 'a, 'e> {
         let Some(terminator) = last_region_op(op) else {
             return Row::new();
         };
+
         (0..terminator.operand_count())
             .filter_map(|index| terminator.operand(index).ok())
             .map(|value| self.term_of(value))
@@ -425,7 +573,10 @@ impl<'c, 'a, 'e> Inferrer<'c, 'a, 'e> {
 
     fn unify_returns(&mut self, op: OperationRef<'c, '_>, ret: Type<'c>) {
         if let Some(terminator) = last_region_op(op)
-            && Yzl::of(&terminator) == Some(Yzl::Return)
+            && matches!(
+                YzlOperationRef::of(&terminator),
+                Some(YzlOperationRef::Return(_))
+            )
             && let Ok(value) = terminator.operand(0)
         {
             let term = self.term_of(value);
@@ -433,115 +584,297 @@ impl<'c, 'a, 'e> Inferrer<'c, 'a, 'e> {
         }
     }
 
-    // --- stamping ---
-
     fn stamp_block(&mut self, block: BlockRef<'c, '_>) {
-        let mut operation = block.first_operation();
-        while let Some(op) = operation {
+        for mut op in block.operations_mut() {
             for region in op.regions() {
-                let mut inner = region.first_block();
-                while let Some(current) = inner {
-                    self.stamp_block(current);
-                    inner = current.next_in_region();
+                for inner in region.blocks() {
+                    self.stamp_block(inner);
                 }
             }
+
             if let Ok(result) = op.result(0) {
                 let term = self.term_of(result.into());
-                if let Term::Class(_) = term
+                if let Term::Var(_) = term
                     && let Some(ty) = self.resolve(term)
                 {
-                    set_attribute(op, "ty", TypeAttribute::new(ty).into());
+                    op.set_attribute("ty", TypeAttribute::new(ty).into());
                 }
             }
-            operation = op.next_in_block();
         }
     }
 
     fn error(&mut self, op: OperationRef<'c, '_>, message: String) {
-        let span = self.source.span(op.location());
-        self.diagnostics
-            .emit(DiagnosticBuilder::error(span, message));
+        yuzu_mlir::diagnostics::emit_error(op.location(), &message);
     }
 }
-
-// --- op reading helpers ---
 
 fn result<'c, 'a>(op: OperationRef<'c, 'a>) -> Value<'c, 'a> {
     op.result(0).expect("the op has a result").into()
 }
 
 fn last_region_op<'c, 'a>(op: OperationRef<'c, 'a>) -> Option<OperationRef<'c, 'a>> {
-    let block = op.regions().next()?.first_block()?;
-    let mut last = block.first_operation()?;
-    while let Some(next) = last.next_in_block() {
-        last = next;
-    }
-    Some(last)
+    op.regions().next()?.first_block()?.last_operation()
 }
 
-fn text_attribute(op: OperationRef, name: &str) -> Option<String> {
-    let attribute = op.attribute(name).ok()?;
-    StringAttribute::try_from(attribute)
-        .ok()
-        .map(|string| string.value().to_string())
-}
-
-fn symbol_attribute(op: OperationRef, name: &str) -> String {
-    let Ok(attribute) = op.attribute(name) else {
-        return String::new();
-    };
-    FlatSymbolRefAttribute::try_from(attribute)
-        .map(|symbol| symbol.value().to_string())
-        .or_else(|_| StringAttribute::try_from(attribute).map(|string| string.value().to_string()))
-        .unwrap_or_default()
-}
-
-fn index_attribute(op: OperationRef, name: &str) -> Option<usize> {
-    let attribute = op.attribute(name).ok()?;
-    IntegerAttribute::try_from(attribute)
-        .ok()
-        .map(|index| index.value() as usize)
-}
-
-fn index_array_attribute(op: OperationRef, name: &str) -> Vec<usize> {
-    let Ok(attribute) = op.attribute(name) else {
-        return Vec::new();
-    };
-    yuzu_mlir::array_elements(attribute)
-        .into_iter()
-        .filter_map(|element| IntegerAttribute::try_from(element).ok())
-        .map(|index| index.value() as usize)
-        .collect()
-}
-
-fn parse_signature<'c>(attribute: melior::ir::Attribute<'c>) -> Option<(Vec<Type<'c>>, Type<'c>)> {
-    let signature =
-        FunctionType::try_from(TypeAttribute::try_from(attribute).ok()?.value()).ok()?;
+fn parse_signature<'c>(
+    function: &yuzu_mlir::ops::yzl::FnOperationRef<'c, '_>,
+) -> Option<Signature<'c>> {
+    let signature = FunctionType::try_from(function.signature().value()).ok()?;
     let params = (0..signature.input_count())
         .filter_map(|index| signature.input(index).ok())
         .collect();
-    Some((params, signature.result(0).ok()?))
+    let subjects = function
+        .bound_params()
+        .map(|names| names.strings())
+        .unwrap_or_default();
+    let traits = function
+        .bound_traits()
+        .map(|names| names.symbols())
+        .unwrap_or_default();
+
+    Some(Signature {
+        params,
+        result: signature.result(0).ok()?,
+        type_params: function
+            .type_params()
+            .map(|names| names.strings())
+            .unwrap_or_default(),
+        bounds: subjects.into_iter().zip(traits).collect(),
+    })
 }
 
-fn set_attribute(op: OperationRef, name: &str, attribute: melior::ir::Attribute) {
-    unsafe {
-        mlir_sys::mlirOperationSetAttributeByName(
-            op.to_raw(),
-            melior::StringRef::new(name).to_raw(),
-            attribute.to_raw(),
+/// The field types of a struct declaration's `types` array.
+fn field_row<'c>(types: melior::ir::attribute::ArrayAttribute<'c>) -> Row<'c> {
+    types
+        .elements()
+        .filter_map(|element| TypeAttribute::try_from(element).ok())
+        .map(|ty| Term::Concrete(ty.value()))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use expect_test::{Expect, expect};
+
+    use crate::test_support;
+    use crate::{infer_types, resolve_names};
+
+    fn check(source: &str, expected: Expect) {
+        test_support::check(
+            source,
+            |context, module| {
+                resolve_names(context, module, &yuzu_types::Builtins);
+                infer_types(context, module);
+            },
+            expected,
         );
     }
+
+    #[test]
+    fn infers_columns_calls_and_measures() {
+        check(
+            r#"
+struct Row { a: int64, b: int64, rating: float64 }
+table t = Row
+
+fn f(x: int64) -> int64 { return x * 3 }
+
+from t
+|> where a > 10
+|> extend f(a) + b as e
+|> aggregate sum(e) as s, avg(rating) as r group by b
+    "#,
+            expect![[r#"
+            module {
+              yzl.struct @Row ["a", "b", "rating"] : [!yz.int64, !yz.int64, !yz.float64]
+              yzl.table @t of @Row
+              yzl.fn @f params ["x"] (!yz.int64) -> !yz.int64 {
+                %4 = yzl.name "x" : !yzl.var {param = 0 : i64, ty = !yz.int64}
+                %5 = yz.constant_int 3
+                %6 = yz.mul %4, %5 : !yzl.var, !yz.int64 -> !yzl.var {ty = !yz.int64}
+                yzl.return %6 : !yzl.var
+              }
+              %0 = yzl.from @t
+              %1 = yzl.where %0 {
+                %4 = yzl.name "a" : !yzl.var {col = 0 : i64, ty = !yz.int64}
+                %5 = yz.constant_int 10
+                %6 = yz.cmp "gt", %4, %5 : !yzl.var, !yz.int64 -> !yzl.var {ty = !yz.bool}
+                yzl.yield %6 : !yzl.var
+              }
+              %2 = yzl.extend %1 as ["e"] {
+                %4 = yzl.name "a" : !yzl.var {col = 0 : i64, ty = !yz.int64}
+                %5 = yzl.call @f(%4) : (!yzl.var) -> !yzl.var {callee_kind = "fn", ty = !yz.int64}
+                %6 = yzl.name "b" : !yzl.var {col = 1 : i64, ty = !yz.int64}
+                %7 = yz.add %5, %6 : !yzl.var, !yzl.var -> !yzl.var {ty = !yz.int64}
+                yzl.yield %7 : !yzl.var
+              }
+              %3 = yzl.aggregate %2 group_by ["b"] as ["s", "r"] {
+                %4 = yzl.name "e" : !yzl.var {col = 3 : i64, ty = !yz.int64}
+                %5 = yzl.call @sum(%4) : (!yzl.var) -> !yzl.var {callee_kind = "builtin", ty = !yz.int64}
+                %6 = yzl.name "rating" : !yzl.var {col = 2 : i64, ty = !yz.float64}
+                %7 = yzl.call @avg(%6) : (!yzl.var) -> !yzl.var {callee_kind = "builtin", ty = !yz.float64}
+                yzl.yield %5, %7 : !yzl.var, !yzl.var
+              } {key_cols = [1]}
+              yzl.output %3
+            }
+            "#]],
+        );
+    }
+
+    /// Each call to a generic function solves its own instance, so one
+    /// declaration serves both column types.
+    #[test]
+    fn instantiates_a_generic_call_per_site() {
+        check(
+            r#"
+trait Numeric {
+    fn zero(x: Self) -> Self
 }
 
-/// The column types of the struct's `!yzr.rel` schema attribute.
-fn parse_schema_row<'c>(attribute: melior::ir::Attribute<'c>) -> Row<'c> {
-    let Ok(schema) = TypeAttribute::try_from(attribute) else {
-        return Row::new();
-    };
-    let Some(rel) = yuzu_mlir::RelType::from_type(schema.value()) else {
-        return Row::new();
-    };
-    (0..rel.column_count())
-        .map(|index| Term::Concrete(rel.column_type(index)))
-        .collect()
+impl Numeric for int64 {
+    fn zero(x: int64) -> int64 { return 0 }
+}
+
+impl Numeric for float64 {
+    fn zero(x: float64) -> float64 { return 0.0 }
+}
+
+fn id[T](x: T) -> T where T: Numeric { return x }
+
+struct Row { a: int64, r: float64 }
+table t = Row
+
+from t
+|> extend id(a) as m, id(r) as n
+"#,
+            expect![[r#"
+                module {
+                  yzl.trait @Numeric {
+                    yzl.fn @zero generics ["Self"] params ["x"] (!yzl.param<"Self">) -> !yzl.param<"Self"> {
+                    }
+                  }
+                  yzl.impl @Numeric for @int64 {
+                    yzl.fn @zero generics ["Self"] params ["x"] (!yz.int64) -> !yz.int64 {
+                      %2 = yz.constant_int 0
+                      yzl.return %2 : !yz.int64
+                    }
+                  }
+                  yzl.impl @Numeric for @float64 {
+                    yzl.fn @zero generics ["Self"] params ["x"] (!yz.float64) -> !yz.float64 {
+                      %2 = yz.constant_float 0.000000e+00
+                      yzl.return %2 : !yz.float64
+                    }
+                  }
+                  yzl.fn @id generics ["T"] where ["T"] : [@Numeric] params ["x"] (!yzl.param<"T">) -> !yzl.param<"T"> {
+                    %2 = yzl.name "x" : !yzl.var {param = 0 : i64, ty = !yzl.param<"T">}
+                    yzl.return %2 : !yzl.var
+                  }
+                  yzl.struct @Row ["a", "r"] : [!yz.int64, !yz.float64]
+                  yzl.table @t of @Row
+                  %0 = yzl.from @t
+                  %1 = yzl.extend %0 as ["m", "n"] {
+                    %2 = yzl.name "a" : !yzl.var {col = 0 : i64, ty = !yz.int64}
+                    %3 = yzl.call @id(%2) : (!yzl.var) -> !yzl.var {callee_kind = "fn", ty = !yz.int64}
+                    %4 = yzl.name "r" : !yzl.var {col = 1 : i64, ty = !yz.float64}
+                    %5 = yzl.call @id(%4) : (!yzl.var) -> !yzl.var {callee_kind = "fn", ty = !yz.float64}
+                    yzl.yield %3, %5 : !yzl.var, !yzl.var
+                  }
+                  yzl.output %1
+                }
+            "#]],
+        );
+    }
+
+    /// A bound is owed by the instance, and reported where the call is.
+    #[test]
+    fn reports_an_unsatisfied_bound() {
+        check(
+            r#"
+trait Numeric {
+    fn zero(x: Self) -> Self
+}
+
+impl Numeric for int64 {
+    fn zero(x: int64) -> int64 { return 0 }
+}
+
+fn id[T](x: T) -> T where T: Numeric { return x }
+
+struct Row { name: str }
+table t = Row
+
+from t
+|> extend id(name) as n
+"#,
+            expect![[r#"
+                error: `str` does not implement `Numeric`, required by `id`
+                 --> test.yz:16:11
+                   |
+                16 | |> extend id(name) as n
+                   |           ^
+            "#]],
+        );
+    }
+
+    #[test]
+    fn reports_a_comparison_mismatch() {
+        check(
+            r#"
+struct Row { name: str }
+table t = Row
+
+from t
+|> where name == 1
+    "#,
+            expect![[r#"
+            error: expected `!yz.str`, found `!yz.int64`
+             --> test.yz:6:10
+              |
+            6 | |> where name == 1
+              |          ^
+            "#]],
+        );
+    }
+
+    #[test]
+    fn reports_a_return_mismatch() {
+        check(
+            r#"
+struct Row { a: int64 }
+table t = Row
+
+fn f(x: int64) -> bool { return x }
+
+from t
+|> extend f(a) as e
+    "#,
+            expect![[r#"
+            error: expected `!yz.int64`, found `!yz.bool`
+             --> test.yz:5:26
+              |
+            5 | fn f(x: int64) -> bool { return x }
+              |                          ^
+            "#]],
+        );
+    }
+
+    #[test]
+    fn reports_a_set_mismatch() {
+        check(
+            r#"
+struct Row { level: int64 }
+table t = Row
+
+from t
+|> set level = "high"
+    "#,
+            expect![[r#"
+            error: expected `!yz.int64`, found `!yz.str`
+             --> test.yz:5:1
+              |
+            5 | from t
+              | ^
+            "#]],
+        );
+    }
 }

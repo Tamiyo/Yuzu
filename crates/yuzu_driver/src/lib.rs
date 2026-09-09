@@ -167,36 +167,35 @@ pub fn compile_mlir(name: &str, source: &str) -> std::process::ExitCode {
     use melior::ir::operation::OperationLike;
 
     let context = yuzu_mlir::context();
-    let Some(conversion) = yuzu_lang::convert_source(&context, name, source) else {
-        return std::process::ExitCode::FAILURE;
-    };
-    for what in &conversion.unsupported {
-        eprintln!("yuzu: {what}");
-    }
-    if !conversion.module.as_operation().verify() {
-        eprintln!("yuzu: the converted module does not verify");
-        return std::process::ExitCode::FAILURE;
-    }
-
     let mut sources = SourceMap::new();
     let source_id = sources.add(name.to_string(), source.to_string());
     let mut diagnostics = DiagnosticsEngine::new();
-    let bridge = yuzu_mlir::DiagnosticsBridge::new(source_id, source);
-    yuzu_passes::resolve_names(
-        &context,
-        &conversion.module,
-        &yuzu_types::Builtins,
-        &bridge,
-        &mut diagnostics,
-    );
-    if !has_errors(&diagnostics) {
-        yuzu_passes::infer_types(&context, &conversion.module, &bridge, &mut diagnostics);
+    let Some(module) =
+        yuzu_lang::convert_source(&context, name, source, source_id, &mut diagnostics)
+    else {
+        print_diagnostics(&diagnostics, &sources);
+        return std::process::ExitCode::FAILURE;
+    };
+
+    let verified =
+        yuzu_mlir::diagnostics::capture(&context, source_id, source, &mut diagnostics, || {
+            let verified = module.as_operation().verify();
+            if verified {
+                yuzu_passes::resolve_names(&context, &module, &yuzu_types::Builtins);
+            }
+            verified
+        });
+    if verified && !has_errors(&diagnostics) {
+        yuzu_mlir::diagnostics::capture(&context, source_id, source, &mut diagnostics, || {
+            yuzu_passes::infer_types(&context, &module);
+            yuzu_passes::check_aggregates(&module, &yuzu_types::Builtins);
+        });
     }
     print_diagnostics(&diagnostics, &sources);
-    if has_errors(&diagnostics) {
+    if !verified || has_errors(&diagnostics) {
         return std::process::ExitCode::FAILURE;
     }
-    print!("{}", conversion.module.as_operation());
+    print!("{}", module.as_operation());
     std::process::ExitCode::SUCCESS
 }
 

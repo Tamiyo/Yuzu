@@ -2,16 +2,12 @@ use mlir_sys::{MlirContext, MlirStringRef, MlirType};
 
 unsafe extern "C" {
     fn yzuRegisterAllDialects(ctx: MlirContext);
-    pub fn yzuRelTypeGet(
-        ctx: MlirContext,
-        count: isize,
-        names: *const MlirStringRef,
-        types: *const MlirType,
-    ) -> MlirType;
-    pub fn yzuTypeIsRelType(ty: MlirType) -> bool;
-    pub fn yzuRelTypeColumnCount(ty: MlirType) -> isize;
-    pub fn yzuRelTypeColumnName(ty: MlirType, index: isize) -> MlirStringRef;
-    pub fn yzuRelTypeColumnType(ty: MlirType, index: isize) -> MlirType;
+    pub fn yzuParamTypeGet(ctx: MlirContext, name: MlirStringRef) -> MlirType;
+    pub fn yzuTypeIsParamType(ty: MlirType) -> bool;
+    pub fn yzuParamTypeName(ty: MlirType) -> MlirStringRef;
+    pub fn yzuStructTypeGet(ctx: MlirContext, name: MlirStringRef) -> MlirType;
+    pub fn yzuTypeIsStructType(ty: MlirType) -> bool;
+    pub fn yzuStructTypeName(ty: MlirType) -> MlirStringRef;
 }
 
 pub fn register_all(ctx: MlirContext) {
