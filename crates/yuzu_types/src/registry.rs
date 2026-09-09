@@ -5,7 +5,7 @@ use crate::{AggFunc, BuiltinFunc, Func};
 /// on the function itself, so new entries extend the language without touching
 /// the checks.
 #[derive(Clone, Copy)]
-pub struct Entry {
+pub struct FunctionRegistryEntry {
     pub name: &'static str,
     pub func: BuiltinFunc,
     pub min_args: usize,
@@ -15,72 +15,72 @@ pub struct Entry {
 /// What names exist and how their calls are shaped. Chainable: a custom
 /// registry composes with the builtins via [`Registry::chain`], earlier
 /// registries winning on a name collision.
-pub trait Registry {
-    fn entries(&self) -> &[Entry];
+pub trait FunctionRegistry {
+    fn entries(&self) -> &[FunctionRegistryEntry];
 
-    fn resolve(&self, func: BuiltinFunc) -> Option<&Entry> {
+    fn resolve(&self, func: BuiltinFunc) -> Option<&FunctionRegistryEntry> {
         self.entries().iter().find(|entry| entry.func == func)
     }
 }
 
 pub struct Builtins;
 
-const BUILTINS: &[Entry] = &[
-    Entry {
+const BUILTINS: &[FunctionRegistryEntry] = &[
+    FunctionRegistryEntry {
         name: "pow",
         func: BuiltinFunc::Scalar(Func::Power),
         min_args: 2,
         max_args: 2,
     },
-    Entry {
+    FunctionRegistryEntry {
         name: "shift_left",
         func: BuiltinFunc::Scalar(Func::ShiftLeft),
         min_args: 2,
         max_args: 2,
     },
-    Entry {
+    FunctionRegistryEntry {
         name: "shift_right",
         func: BuiltinFunc::Scalar(Func::ShiftRight),
         min_args: 2,
         max_args: 2,
     },
-    Entry {
+    FunctionRegistryEntry {
         name: "in",
         func: BuiltinFunc::Scalar(Func::In),
         min_args: 2,
         max_args: 2,
     },
-    Entry {
+    FunctionRegistryEntry {
         name: "count",
         func: BuiltinFunc::Aggregate(AggFunc::Count),
         min_args: 0,
         max_args: 1,
     },
-    Entry {
+    FunctionRegistryEntry {
         name: "count_distinct",
         func: BuiltinFunc::Aggregate(AggFunc::CountDistinct),
         min_args: 1,
         max_args: 1,
     },
-    Entry {
+    FunctionRegistryEntry {
         name: "sum",
         func: BuiltinFunc::Aggregate(AggFunc::Sum),
         min_args: 1,
         max_args: 1,
     },
-    Entry {
+    FunctionRegistryEntry {
         name: "min",
         func: BuiltinFunc::Aggregate(AggFunc::Min),
         min_args: 1,
         max_args: 1,
     },
-    Entry {
+    FunctionRegistryEntry {
         name: "max",
         func: BuiltinFunc::Aggregate(AggFunc::Max),
         min_args: 1,
         max_args: 1,
     },
-    Entry {
+    FunctionRegistryEntry {
         name: "avg",
         func: BuiltinFunc::Aggregate(AggFunc::Avg),
         min_args: 1,
@@ -88,20 +88,20 @@ const BUILTINS: &[Entry] = &[
     },
 ];
 
-impl Registry for Builtins {
-    fn entries(&self) -> &[Entry] {
+impl FunctionRegistry for Builtins {
+    fn entries(&self) -> &[FunctionRegistryEntry] {
         BUILTINS
     }
 }
 
 /// Registries tried in order; the first entry for a name or function wins.
 pub struct Chain {
-    entries: Vec<Entry>,
+    entries: Vec<FunctionRegistryEntry>,
 }
 
 impl Chain {
-    pub fn new(registries: Vec<Box<dyn Registry>>) -> Self {
-        let mut entries: Vec<Entry> = Vec::new();
+    pub fn new(registries: Vec<Box<dyn FunctionRegistry>>) -> Self {
+        let mut entries: Vec<FunctionRegistryEntry> = Vec::new();
         for registry in &registries {
             for &entry in registry.entries() {
                 if !entries.iter().any(|seen| seen.name == entry.name) {
@@ -113,13 +113,13 @@ impl Chain {
     }
 }
 
-impl Registry for Chain {
-    fn entries(&self) -> &[Entry] {
+impl FunctionRegistry for Chain {
+    fn entries(&self) -> &[FunctionRegistryEntry] {
         &self.entries
     }
 }
 
-pub fn chain(registries: Vec<Box<dyn Registry>>) -> Chain {
+pub fn chain(registries: Vec<Box<dyn FunctionRegistry>>) -> Chain {
     Chain::new(registries)
 }
 
@@ -129,14 +129,14 @@ mod tests {
 
     struct Aliases;
 
-    const ALIASES: &[Entry] = &[
-        Entry {
+    const ALIASES: &[FunctionRegistryEntry] = &[
+        FunctionRegistryEntry {
             name: "total",
             func: BuiltinFunc::Aggregate(AggFunc::Sum),
             min_args: 1,
             max_args: 1,
         },
-        Entry {
+        FunctionRegistryEntry {
             name: "count",
             func: BuiltinFunc::Aggregate(AggFunc::CountDistinct),
             min_args: 1,
@@ -144,8 +144,8 @@ mod tests {
         },
     ];
 
-    impl Registry for Aliases {
-        fn entries(&self) -> &[Entry] {
+    impl FunctionRegistry for Aliases {
+        fn entries(&self) -> &[FunctionRegistryEntry] {
             ALIASES
         }
     }

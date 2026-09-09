@@ -13,7 +13,7 @@ use melior::ir::{BlockRef, Module, RegionLike};
 use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationMutExt, RegionExt};
 use yuzu_mlir::ops::yzl::YzlOperationRef;
 use yuzu_mlir::value_id;
-use yuzu_types::Registry;
+use yuzu_types::FunctionRegistry;
 
 /// A column the query carries at some stage: its name, and the alias
 /// qualifying it when an `alias` stage or a join has named its side.
@@ -52,7 +52,7 @@ enum Ambient<'a> {
 
 struct Resolver<'c, 'a> {
     context: &'c Context,
-    registry: &'a dyn Registry,
+    registry: &'a dyn FunctionRegistry,
     structs: HashMap<String, Schema>,
     relations: HashMap<String, Schema>,
     callables: HashMap<String, Callable>,
@@ -64,7 +64,7 @@ struct Resolver<'c, 'a> {
 /// Expects a verified module: required ODS attributes are read through
 /// typed accessors that panic when absent. Diagnostics go through MLIR —
 /// run this inside `yuzu_mlir::diagnostics::capture` to collect them.
-pub fn resolve_names<'c>(context: &'c Context, module: &Module<'c>, registry: &dyn Registry) {
+pub fn resolve_names<'c>(context: &'c Context, module: &Module<'c>, registry: &dyn FunctionRegistry) {
     let mut resolver = Resolver {
         context,
         registry,

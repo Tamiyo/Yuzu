@@ -11,7 +11,9 @@
 use std::collections::HashMap;
 
 use melior::Context;
-use melior::ir::attribute::{FlatSymbolRefAttribute, StringAttribute, TypeAttribute};
+use melior::ir::attribute::{
+    DenseI64ArrayAttribute, FlatSymbolRefAttribute, StringAttribute, TypeAttribute,
+};
 use melior::ir::operation::{OperationBuilder, OperationLike, OperationRef};
 use melior::ir::{
     Attribute, Block, BlockLike, BlockRef, Identifier, Location, Module, Region, RegionLike, Type,
@@ -20,12 +22,14 @@ use melior::ir::{
 use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationExt};
 use yuzu_mlir::ops::yzl::YzlOperationRef;
 use yuzu_mlir::{StructType, SymbolTable, value_id};
+use yuzu_types::{BuiltinFunc, FunctionRegistry};
 
 /// A row: the columns flowing out of a stage, in order.
 type Schema<'c> = Vec<(String, Type<'c>)>;
 
-struct Lowering<'c, 'a> {
+struct Lowering<'c, 'a, 'r> {
     context: &'c Context,
+    registry: &'r dyn FunctionRegistry,
     /// The fields of each declared struct, by symbol.
     structs: HashMap<String, Schema<'c>>,
     /// The struct a relation's rows have, by relation name.
@@ -39,13 +43,18 @@ struct Lowering<'c, 'a> {
 
 /// Expects a resolved, inferred module. Returns the `yz` + `yzr` module it
 /// lowers to; anything it cannot lower is reported and left out.
-pub fn lower_yzl<'c>(context: &'c Context, module: &Module<'c>) -> Module<'c> {
+pub fn lower_yzl<'c>(
+    context: &'c Context,
+    module: &Module<'c>,
+    registry: &dyn FunctionRegistry,
+) -> Module<'c> {
     let lowered = Module::new(Location::unknown(context));
     {
         let target = lowered.body();
         let mut symbols = SymbolTable::new(&lowered);
         let mut lowering = Lowering {
             context,
+            registry,
             structs: HashMap::new(),
             relations: HashMap::new(),
             stages: HashMap::new(),
@@ -59,7 +68,7 @@ pub fn lower_yzl<'c>(context: &'c Context, module: &Module<'c>) -> Module<'c> {
     lowered
 }
 
-impl<'c, 'a> Lowering<'c, 'a> {
+impl<'c, 'a> Lowering<'c, 'a, '_> {
     /// Declarations first, so a stage can ask for a relation's row before
     /// the walk reaches the op that declared it.
     fn declare(&mut self, block: BlockRef<'c, '_>) {
@@ -137,12 +146,83 @@ impl<'c, 'a> Lowering<'c, 'a> {
                     return;
                 };
 
-                let region = self.lower_region(stage.body(), &schema, op.location());
+                let (region, _) = self.lower_region(stage.body(), &schema, op.location());
                 let filtered = target.append_operation(
                     yuzu_mlir::ods::yzr::filter(self.context, input, region, op.location()).into(),
                 );
 
                 self.record_stage(op, first_result(filtered), schema);
+            }
+            Some(YzlOperationRef::Select(stage)) => {
+                let Some((input, schema)) = self.input_stage(op) else {
+                    return;
+                };
+
+                let (region, yielded) = self.lower_region(stage.body(), &schema, op.location());
+                let produced = self.named_row(stage.names().strings(), yielded);
+                let row = self.row_type(&produced, symbols);
+                let projected = target.append_operation(
+                    yuzu_mlir::ods::yzr::project(self.context, row, input, region, op.location())
+                        .into(),
+                );
+
+                self.record_stage(op, first_result(projected), produced);
+            }
+            Some(YzlOperationRef::Extend(stage)) => {
+                let Some((input, mut schema)) = self.input_stage(op) else {
+                    return;
+                };
+
+                let (region, yielded) = self.lower_region(stage.body(), &schema, op.location());
+                schema.extend(self.named_row(stage.names().strings(), yielded));
+                let row = self.row_type(&schema, symbols);
+                let extended = target.append_operation(
+                    yuzu_mlir::ods::yzr::extend(self.context, row, input, region, op.location())
+                        .into(),
+                );
+
+                self.record_stage(op, first_result(extended), schema);
+            }
+            Some(YzlOperationRef::Aggregate(stage)) => {
+                let Some((input, schema)) = self.input_stage(op) else {
+                    return;
+                };
+
+                let keys = op.index_array_attribute("key_cols");
+                let (region, yielded) = self.lower_region(stage.body(), &schema, op.location());
+                let mut produced: Schema<'c> = keys
+                    .iter()
+                    .filter_map(|&index| schema.get(index).cloned())
+                    .collect();
+                produced.extend(self.named_row(stage.names().strings(), yielded));
+
+                let row = self.row_type(&produced, symbols);
+                let indices: Vec<i64> = keys.iter().map(|&index| index as i64).collect();
+                let grouped = target.append_operation(
+                    yuzu_mlir::ods::yzr::aggregate(
+                        self.context,
+                        row,
+                        input,
+                        region,
+                        DenseI64ArrayAttribute::new(self.context, &indices).into(),
+                        op.location(),
+                    )
+                    .into(),
+                );
+
+                self.record_stage(op, first_result(grouped), produced);
+            }
+            Some(YzlOperationRef::Limit(stage)) => {
+                let Some((input, schema)) = self.input_stage(op) else {
+                    return;
+                };
+
+                let limited = target.append_operation(
+                    yuzu_mlir::ods::yzr::limit(self.context, input, stage.count(), op.location())
+                        .into(),
+                );
+
+                self.record_stage(op, first_result(limited), schema);
             }
             Some(YzlOperationRef::Output(_)) => {
                 let Some((query, _)) = self.input_stage(op) else {
@@ -164,7 +244,7 @@ impl<'c, 'a> Lowering<'c, 'a> {
         source: melior::ir::RegionRef<'c, '_>,
         schema: &Schema<'c>,
         location: Location<'c>,
-    ) -> Region<'c> {
+    ) -> (Region<'c>, Vec<Type<'c>>) {
         let region = Region::new();
         let arguments: Vec<(Type<'c>, Location<'c>)> = schema
             .iter()
@@ -173,15 +253,16 @@ impl<'c, 'a> Lowering<'c, 'a> {
         let body = region.append_block(Block::new(&arguments));
 
         let Some(block) = source.first_block() else {
-            return region;
+            return (region, Vec::new());
         };
 
         let mut values: HashMap<usize, Value<'c, '_>> = HashMap::new();
+        let mut yielded = Vec::new();
         for op in block.operations() {
-            self.lower_expression(op, body, &mut values);
+            self.lower_expression(op, body, &mut values, &mut yielded);
         }
 
-        region
+        (region, yielded)
     }
 
     /// An expression op, rebuilt against the values its operands became.
@@ -190,6 +271,7 @@ impl<'c, 'a> Lowering<'c, 'a> {
         op: OperationRef<'c, '_>,
         body: BlockRef<'c, 'b>,
         values: &mut HashMap<usize, Value<'c, 'b>>,
+        yielded: &mut Vec<Type<'c>>,
     ) {
         match YzlOperationRef::of(&op) {
             Some(YzlOperationRef::Name(_)) => {
@@ -207,9 +289,40 @@ impl<'c, 'a> Lowering<'c, 'a> {
             }
             Some(YzlOperationRef::Yield(_)) => {
                 let operands = self.mapped_operands(op, values);
+                yielded.extend(operands.iter().map(|value| value.r#type()));
                 body.append_operation(
                     yuzu_mlir::ods::yzr::r#yield(self.context, &operands, op.location()).into(),
                 );
+            }
+            Some(YzlOperationRef::Call(call)) => {
+                let callee = call.callee().value().to_string();
+                let operands = self.mapped_operands(op, values);
+                let ty = self.stamped_type(op);
+                let kind = op.text_attribute("callee_kind").unwrap_or_default();
+                let lowered = if kind == "builtin" && self.is_aggregate(&callee) {
+                    self.lower_measure(op, &callee, &operands, ty, body)
+                } else if kind == "external" {
+                    yuzu_mlir::ods::yz::extern_call(
+                        self.context,
+                        ty,
+                        &operands,
+                        StringAttribute::new(self.context, &callee),
+                        op.location(),
+                    )
+                    .into()
+                } else {
+                    yuzu_mlir::ods::yz::call(
+                        self.context,
+                        ty,
+                        &operands,
+                        FlatSymbolRefAttribute::new(self.context, &callee),
+                        op.location(),
+                    )
+                    .into()
+                };
+
+                let appended = body.append_operation(lowered);
+                values.insert(value_id(result(op)), first_result(appended));
             }
             // Everything else is a `yz` op, structurally unchanged: the
             // operands it was given, and the type inference stamped on it.
@@ -270,6 +383,49 @@ impl<'c, 'a> Lowering<'c, 'a> {
         op.operands()
             .filter_map(|operand| values.get(&value_id(operand)).copied())
             .collect()
+    }
+
+    /// A measure: `count` takes no value, every other aggregate does.
+    fn lower_measure(
+        &self,
+        op: OperationRef<'c, '_>,
+        callee: &str,
+        operands: &[Value<'c, '_>],
+        ty: Type<'c>,
+        _body: BlockRef<'c, '_>,
+    ) -> melior::ir::Operation<'c> {
+        match operands.first() {
+            Some(value) => yuzu_mlir::ods::yzr::agg(
+                self.context,
+                ty,
+                *value,
+                StringAttribute::new(self.context, callee),
+                op.location(),
+            )
+            .into(),
+            None => yuzu_mlir::ods::yzr::count(self.context, ty, op.location()).into(),
+        }
+    }
+
+    fn is_aggregate(&self, callee: &str) -> bool {
+        self.registry
+            .entries()
+            .iter()
+            .any(|entry| entry.name == callee && matches!(entry.func, BuiltinFunc::Aggregate(_)))
+    }
+
+    /// The type inference stamped, or the one the op already carries.
+    fn stamped_type(&self, op: OperationRef<'c, '_>) -> Type<'c> {
+        op.attribute("ty")
+            .ok()
+            .and_then(|attribute| TypeAttribute::try_from(attribute).ok())
+            .map(|attribute| attribute.value())
+            .unwrap_or_else(|| result(op).r#type())
+    }
+
+    /// The columns a stage names, paired with what its region yielded.
+    fn named_row(&self, names: Vec<String>, yielded: Vec<Type<'c>>) -> Schema<'c> {
+        names.into_iter().zip(yielded).collect()
     }
 
     /// The row a relation's rows have: a table's declared struct, or a
@@ -406,6 +562,71 @@ from t
         );
     }
 
+    /// The stages that name columns declare the row they produce, and a
+    /// shape nobody declared is interned under a name of its own.
+    #[test]
+    fn named_stages_declare_the_row_they_produce() {
+        check_lowered(
+            r#"
+struct Row { a: int64, b: int64 }
+table t = Row
+
+from t
+|> extend a + b as e
+|> select a as x, e as y
+|> limit 5
+"#,
+            expect![[r#"
+                module {
+                  yz.struct @Row ["a", "b"] : [!yz.int64, !yz.int64]
+                  %0 = yzr.table @t : !yz.struct<@Row>
+                  yz.struct @row ["a", "b", "e"] : [!yz.int64, !yz.int64, !yz.int64]
+                  %1 = yzr.extend %0 {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.int64):
+                    %4 = yz.add %arg0, %arg1 : !yz.int64, !yz.int64 -> !yz.int64
+                    yzr.yield %4 : !yz.int64
+                  } : !yz.struct<@Row> -> !yz.struct<@row>
+                  yz.struct @row_0 ["x", "y"] : [!yz.int64, !yz.int64]
+                  %2 = yzr.project %1 {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.int64, %arg2: !yz.int64):
+                    yzr.yield %arg0, %arg2 : !yz.int64, !yz.int64
+                  } : !yz.struct<@row> -> !yz.struct<@row_0>
+                  %3 = yzr.limit %2, 5 : !yz.struct<@row_0>
+                  yzr.output %3 : !yz.struct<@row_0>
+                }
+            "#]],
+        );
+    }
+
+    /// Measures become `yzr.agg`, and the keys come from the stamp
+    /// resolution left.
+    #[test]
+    fn measures_become_aggregate_ops() {
+        check_lowered(
+            r#"
+struct Row { a: int64, b: int64 }
+table t = Row
+
+from t
+|> aggregate sum(a) as total, count() as n group by b
+"#,
+            expect![[r#"
+                module {
+                  yz.struct @Row ["a", "b"] : [!yz.int64, !yz.int64]
+                  %0 = yzr.table @t : !yz.struct<@Row>
+                  yz.struct @row ["b", "total", "n"] : [!yz.int64, !yz.int64, !yz.int64]
+                  %1 = yzr.aggregate %0 keys [1] {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.int64):
+                    %2 = yzr.agg "sum", %arg0 : !yz.int64 -> !yz.int64
+                    %3 = yzr.count : !yz.int64
+                    yzr.yield %2, %3 : !yz.int64, !yz.int64
+                  } : !yz.struct<@Row> -> !yz.struct<@row>
+                  yzr.output %1 : !yz.struct<@row>
+                }
+            "#]],
+        );
+    }
+
     /// A stage the lowering does not carry yet is an error, not a silent gap.
     #[test]
     fn reports_a_stage_that_is_not_lowered() {
@@ -415,10 +636,10 @@ struct Row { a: int64 }
 table t = Row
 
 from t
-|> limit 5
+|> distinct
 "#,
             expect![[r#"
-                error: `yzl.limit` is not lowered yet
+                error: `yzl.distinct` is not lowered yet
                  --> test.yz:5:1
                   |
                 5 | from t

@@ -10,7 +10,7 @@ use melior::ir::{BlockRef, Location, Module, RegionLike};
 use yuzu_mlir::ext::{BlockExt, OperationExt, RegionExt};
 use yuzu_mlir::ops::yzl::YzlOperationRef;
 use yuzu_mlir::value_id;
-use yuzu_types::{BuiltinFunc, Registry};
+use yuzu_types::{BuiltinFunc, FunctionRegistry};
 
 /// Where the walk currently is, aggregate-wise.
 #[derive(Clone, Copy, PartialEq)]
@@ -24,7 +24,7 @@ enum Grouping<'m> {
 }
 
 struct Checker<'a, 'c> {
-    registry: &'a dyn Registry,
+    registry: &'a dyn FunctionRegistry,
     /// Each group-level value, with the aggregate calls it came from.
     group_values: HashMap<usize, Vec<usize>>,
     /// The location and callee of each aggregate call, by its result.
@@ -38,7 +38,7 @@ struct Checker<'a, 'c> {
 /// Expects a resolved module: callees are classified by their stamped
 /// `callee_kind`. Diagnostics go through MLIR — run this inside
 /// `yuzu_mlir::diagnostics::capture` to collect them.
-pub fn check_aggregates(module: &Module, registry: &dyn Registry) {
+pub fn check_aggregates(module: &Module, registry: &dyn FunctionRegistry) {
     let mut checker = Checker {
         registry,
         group_values: HashMap::new(),

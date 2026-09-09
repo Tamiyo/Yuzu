@@ -51,7 +51,7 @@ pub(crate) mod test_support {
             yuzu_mlir::diagnostics::capture(&context, source_id, source, &mut diagnostics, || {
                 crate::resolve_names(&context, &module, &yuzu_types::Builtins);
                 crate::infer_types(&context, &module);
-                crate::lower_yzl(&context, &module)
+                crate::lower_yzl(&context, &module, &yuzu_types::Builtins)
             });
 
         let printer = DiagnosticPrinter::new(&sources);

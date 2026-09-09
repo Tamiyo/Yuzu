@@ -51,7 +51,7 @@ struct ScopeKey {
 
 pub(crate) struct TypeInferrer<'i> {
     hir: &'i HirCtx,
-    registry: &'i dyn yuzu_types::Registry,
+    registry: &'i dyn yuzu_types::FunctionRegistry,
     infer: InferCtx<'i>,
     symbols: SymbolTable,
     interner: &'i mut StringInterner,
@@ -64,7 +64,7 @@ impl<'i> TypeInferrer<'i> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         hir: &'i HirCtx,
-        registry: &'i dyn yuzu_types::Registry,
+        registry: &'i dyn yuzu_types::FunctionRegistry,
         types: &'i mut TypeCtx,
         interner: &'i mut StringInterner,
         diagnostics: &'i mut DiagnosticsEngine,
@@ -2733,17 +2733,17 @@ mod tests {
     #[test]
     fn src_chained_registry_aliases_a_builtin() {
         use yuzu_types::{AggFunc, BuiltinFunc};
-        use yuzu_types::{Builtins, Entry, Registry, chain};
+        use yuzu_types::{Builtins, FunctionRegistryEntry, FunctionRegistry, chain};
 
         struct Total;
-        const TOTAL: &[Entry] = &[Entry {
+        const TOTAL: &[FunctionRegistryEntry] = &[FunctionRegistryEntry {
             name: "total",
             func: BuiltinFunc::Aggregate(AggFunc::Sum),
             min_args: 1,
             max_args: 1,
         }];
-        impl Registry for Total {
-            fn entries(&self) -> &[Entry] {
+        impl FunctionRegistry for Total {
+            fn entries(&self) -> &[FunctionRegistryEntry] {
                 TOTAL
             }
         }

@@ -194,7 +194,7 @@ pub fn compile_mlir(name: &str, source: &str) -> std::process::ExitCode {
     if verified && !has_errors(&diagnostics) {
         let lowered =
             yuzu_mlir::diagnostics::capture(&context, source_id, source, &mut diagnostics, || {
-                yuzu_passes::lower_yzl(&context, &module)
+                yuzu_passes::lower_yzl(&context, &module, &yuzu_types::Builtins)
             });
 
         print_diagnostics(&diagnostics, &sources);
