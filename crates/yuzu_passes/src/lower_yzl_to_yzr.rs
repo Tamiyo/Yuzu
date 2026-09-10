@@ -19,7 +19,7 @@ use melior::ir::{
     Attribute, Block, BlockLike, BlockRef, Identifier, Location, Module, Region, RegionLike, Type,
     Value, ValueLike,
 };
-use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationExt};
+use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationExt, RegionExt};
 use yuzu_mlir::ops::yzl::YzlOperationRef;
 use yuzu_mlir::{StructType, SymbolTable, value_id};
 use yuzu_types::{BuiltinFunc, FunctionRegistry};
@@ -42,6 +42,8 @@ struct YzlToYzr<'c, 'a, 'r> {
     /// The symbol declaring each distinct row shape, so a shape nobody
     /// declared is declared once.
     shapes: HashMap<Schema<'c>, &'c str>,
+    /// The rows each `let` name stands for, already produced.
+    bindings: HashMap<&'c str, (Value<'c, 'a>, Schema<'c>)>,
 }
 
 /// Expects a resolved, inferred module. Returns the `yz` + `yzr` module it
@@ -60,6 +62,7 @@ pub fn lower_yzl_to_yzr<'c>(
             registry,
             stages: HashMap::new(),
             shapes: HashMap::new(),
+            bindings: HashMap::new(),
         };
 
         let source = SymbolTable::new(module);
@@ -117,23 +120,39 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
             Some(YzlOperationRef::Table(_)) => {}
             Some(YzlOperationRef::From(from)) => {
                 let relation = from.source().value();
-                let Some(schema) = self.relation_schema(relation, source) else {
+                let Some((rows, schema)) =
+                    self.relation_input(relation, source, target, symbols, op.location())
+                else {
                     self.error(op, format!("`{relation}` has no row shape to scan"));
                     return;
                 };
 
-                let row = self.row_type(&schema, symbols);
-                let scanned = target.append_operation(
-                    yuzu_mlir::ods::yzr::table(
-                        self.context,
-                        row,
-                        FlatSymbolRefAttribute::new(self.context, relation),
-                        op.location(),
-                    )
-                    .into(),
-                );
+                self.record_stage(op, rows, schema);
+            }
+            // Queries are expressions, so a binding is a name for the value
+            // its body yields: the stages inside lower into the module just
+            // as they would outside it, and the name reaches the result.
+            Some(YzlOperationRef::Let(binding)) => {
+                let Some(block) = binding.body().first_block() else {
+                    self.error(op, "`let` has no body to bind");
+                    return;
+                };
 
-                self.record_stage(op, scanned.first_result(), schema);
+                for inner in block.operations() {
+                    self.lower_op(inner, target, source, symbols);
+                }
+
+                let bound = block
+                    .last_operation()
+                    .and_then(|yielded| yielded.try_first_operand())
+                    .and_then(|value| self.stages.get(&value_id(value)).cloned());
+
+                match bound {
+                    Some(rows) => {
+                        self.bindings.insert(binding.sym_name().value(), rows);
+                    }
+                    None => self.error(op, "only a query can be bound by `let`"),
+                }
             }
             Some(YzlOperationRef::Where(stage)) => {
                 let Some((input, schema)) = self.input_stage(op) else {
@@ -218,21 +237,12 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                 // The one stage that has to conjure an input: yzl names the
                 // right side, yzr joins two relations.
                 let relation = stage.rhs().value();
-                let Some(right) = self.relation_schema(relation, source) else {
+                let Some((rows, right)) =
+                    self.relation_input(relation, source, target, symbols, op.location())
+                else {
                     self.error(op, format!("`{relation}` has no row shape to scan"));
                     return;
                 };
-
-                let right_row = self.row_type(&right, symbols);
-                let scanned = target.append_operation(
-                    yuzu_mlir::ods::yzr::table(
-                        self.context,
-                        right_row,
-                        FlatSymbolRefAttribute::new(self.context, relation),
-                        op.location(),
-                    )
-                    .into(),
-                );
 
                 // Both sides carry through, and the `on` region's names were
                 // resolved against exactly this concatenation — a qualifier
@@ -254,7 +264,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                         self.context,
                         row,
                         lhs,
-                        scanned.first_result(),
+                        rows,
                         region,
                         stage.kind(),
                         op.location(),
@@ -362,7 +372,6 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
             }
             Some(
                 YzlOperationRef::Rename(_)
-                | YzlOperationRef::Let(_)
                 | YzlOperationRef::Fn(_)
                 | YzlOperationRef::Trait(_)
                 | YzlOperationRef::Impl(_)
@@ -792,6 +801,35 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
             .value()
     }
 
+    /// The rows a relation name stands for: a `let` has already produced
+    /// them, and a table is scanned where it is used.
+    fn relation_input(
+        &mut self,
+        name: &str,
+        source: &SymbolTable<'c, '_>,
+        target: BlockRef<'c, 'a>,
+        symbols: &mut SymbolTable<'c, '_>,
+        location: Location<'c>,
+    ) -> Option<(Value<'c, 'a>, Schema<'c>)> {
+        if let Some(bound) = self.bindings.get(name) {
+            return Some(bound.clone());
+        }
+
+        let schema = self.relation_schema(name, source)?;
+        let row = self.row_type(&schema, symbols);
+        let scanned = target.append_operation(
+            yuzu_mlir::ods::yzr::table(
+                self.context,
+                row,
+                FlatSymbolRefAttribute::new(self.context, name),
+                location,
+            )
+            .into(),
+        );
+
+        Some((scanned.first_result(), schema))
+    }
+
     /// The columns that survive a `drop`, in order. Resolution removes the
     /// first column each name matches, so dropping one name twice drops two
     /// columns — the lowering has to agree with it exactly.
@@ -1136,6 +1174,65 @@ from t
                   } : !yz.struct<@Row> -> !yz.struct<@Row>
                   yzr.output %1 : !yz.struct<@Row>
                 }
+            "#]],
+        );
+    }
+
+    /// A binding is a name for rows that already exist: two uses share the
+    /// one scan rather than each producing their own.
+    #[test]
+    fn a_binding_is_reused_not_rescanned() {
+        check_lowered(
+            r#"
+struct Row { a: int64, b: int64 }
+table t = Row
+
+let big = from t |> where a > 10
+
+from big
+|> inner join big using (a)
+"#,
+            expect![[r#"
+                module {
+                  yz.struct @Row ["a", "b"] : [!yz.int64, !yz.int64]
+                  %0 = yzr.table @t : !yz.struct<@Row>
+                  %1 = yzr.filter %0 : !yz.struct<@Row> {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.int64):
+                    %3 = yz.constant_int 10
+                    %4 = yz.cmp "gt", %arg0, %3 : !yz.int64, !yz.int64 -> !yz.bool
+                    yzr.yield %4 : !yz.bool
+                  }
+                  yz.struct @row ["a", "b", "a", "b"] : [!yz.int64, !yz.int64, !yz.int64, !yz.int64]
+                  %2 = yzr.join "inner", %1, %1 {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.int64, %arg2: !yz.int64, %arg3: !yz.int64):
+                    %3 = yz.cmp "eq", %arg0, %arg2 : !yz.int64, !yz.int64 -> !yz.bool
+                    yzr.yield %3 : !yz.bool
+                  } : !yz.struct<@Row>, !yz.struct<@Row> -> !yz.struct<@row>
+                  yzr.output %2 : !yz.struct<@row>
+                }
+            "#]],
+        );
+    }
+
+    /// Binding something that is not a query is not carried yet, and a gap
+    /// is an error rather than a silently dropped binding.
+    #[test]
+    fn reports_a_binding_that_is_not_a_query() {
+        check_lowered(
+            r#"
+struct Row { a: int64 }
+table t = Row
+
+let n = 1 + 2
+
+from t
+"#,
+            expect![[r#"
+                error: only a query can be bound by `let`
+                 --> test.yz:5:1
+                  |
+                5 | let n = 1 + 2
+                  | ^
             "#]],
         );
     }
