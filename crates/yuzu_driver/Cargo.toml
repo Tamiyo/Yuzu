@@ -16,7 +16,6 @@ yuzu_ast = { path = "../yuzu_ast" }
 yuzu_core = { path = "../yuzu_core" }
 yuzu_diagnostics = { path = "../yuzu_diagnostics" }
 yuzu_hir = { path = "../yuzu_hir" }
-yuzu_lang = { path = "../yuzu_lang" }
 yuzu_lexer = { path = "../yuzu_lexer" }
 yuzu_mlir = { path = "../yuzu_mlir" }
 yuzu_parser = { path = "../yuzu_parser" }

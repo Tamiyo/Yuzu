@@ -18,12 +18,12 @@ use yuzu_types::FunctionRegistry;
 /// A column the query carries at some stage: its name, and the alias
 /// qualifying it when an `alias` stage or a join has named its side.
 #[derive(Clone, PartialEq)]
-struct Column {
-    qualifier: Option<String>,
-    name: String,
+struct Column<'c> {
+    qualifier: Option<&'c str>,
+    name: &'c str,
 }
 
-impl Column {
+impl Column<'_> {
     fn matches(&self, reference: &str) -> bool {
         match reference.split_once('.') {
             Some((qualifier, name)) => {
@@ -34,7 +34,7 @@ impl Column {
     }
 }
 
-type Schema = Vec<Column>;
+type Schema<'c> = Vec<Column<'c>>;
 
 /// What a callable name resolved to, recorded as the op's `callee_kind`.
 struct Callable {
@@ -44,27 +44,30 @@ struct Callable {
 }
 
 /// The columns a region's names may refer to.
-enum Ambient<'a> {
-    Columns(&'a Schema),
-    Params(&'a [String]),
+enum Ambient<'c, 'a> {
+    Columns(&'a Schema<'c>),
+    Params(&'a [&'c str]),
     None,
 }
 
 struct Resolver<'c, 'a> {
     context: &'c Context,
     registry: &'a dyn FunctionRegistry,
-    structs: HashMap<String, Schema>,
-    relations: HashMap<String, Schema>,
-    callables: HashMap<String, Callable>,
-    /// The declared traits, which bounds and impls refer to.
-    traits: HashSet<String>,
-    schemas: HashMap<usize, Schema>,
+    structs: HashMap<&'c str, Schema<'c>>,
+    relations: HashMap<&'c str, Schema<'c>>,
+    callables: HashMap<&'c str, Callable>,
+    traits: HashSet<&'c str>,
+    schemas: HashMap<usize, Schema<'c>>,
 }
 
 /// Expects a verified module: required ODS attributes are read through
 /// typed accessors that panic when absent. Diagnostics go through MLIR —
 /// run this inside `yuzu_mlir::diagnostics::capture` to collect them.
-pub fn resolve_names<'c>(context: &'c Context, module: &Module<'c>, registry: &dyn FunctionRegistry) {
+pub fn resolve_names<'c>(
+    context: &'c Context,
+    module: &Module<'c>,
+    registry: &dyn FunctionRegistry,
+) {
     let mut resolver = Resolver {
         context,
         registry,
@@ -75,39 +78,39 @@ pub fn resolve_names<'c>(context: &'c Context, module: &Module<'c>, registry: &d
         schemas: HashMap::new(),
     };
 
-    resolver.declare(module.body());
+    resolver.hoist(module.body());
     resolver.resolve_block(module.body(), &Ambient::None);
 }
 
 impl<'c> Resolver<'c, '_> {
     /// First walk: every declaration registers before anything resolves, so
     /// order between declarations does not matter.
-    fn declare(&mut self, block: BlockRef<'c, '_>) {
+    fn hoist(&mut self, block: BlockRef<'c, '_>) {
         for op in block.operations() {
             match YzlOperationRef::of(&op) {
                 Some(YzlOperationRef::Struct(item)) => {
-                    let name = item.sym_name().value().to_string();
+                    let name = item.sym_name().value();
                     let schema = unqualified(item.names().strings());
-                    self.declare_named(&op, "struct", &name);
+                    self.check_duplicate(&op, "struct", name);
                     self.structs.insert(name, schema);
                 }
                 Some(YzlOperationRef::Table(table)) => {
-                    let name = table.sym_name().value().to_string();
+                    let name = table.sym_name().value();
                     let row = table.row().value();
                     if let Some(schema) = self.structs.get(row).cloned() {
-                        self.declare_named(&op, "relation", &name);
+                        self.check_duplicate(&op, "relation", name);
                         self.relations.insert(name, schema);
                     } else {
                         self.error(&op, format!("unknown struct `{row}`"));
                     }
                 }
                 Some(YzlOperationRef::Trait(item)) => {
-                    let name = item.sym_name().value().to_string();
-                    self.declare_named(&op, "trait", &name);
+                    let name = item.sym_name().value();
+                    self.check_duplicate(&op, "trait", name);
                     self.traits.insert(name);
                 }
                 Some(YzlOperationRef::Fn(function)) => {
-                    let name = function.sym_name().value().to_string();
+                    let name = function.sym_name().value();
                     let params = function.params().strings().len();
                     let kind = if function.external() {
                         "external"
@@ -117,7 +120,7 @@ impl<'c> Resolver<'c, '_> {
                         "fn"
                     };
 
-                    self.declare_named(&op, "function", &name);
+                    self.check_duplicate(&op, "function", name);
                     self.callables.insert(
                         name,
                         Callable {
@@ -132,7 +135,7 @@ impl<'c> Resolver<'c, '_> {
         }
     }
 
-    fn declare_named<'a>(&mut self, op: &impl OperationLike<'c, 'a>, what: &str, name: &str)
+    fn check_duplicate<'a>(&mut self, op: &impl OperationLike<'c, 'a>, what: &str, name: &str)
     where
         'c: 'a,
     {
@@ -145,13 +148,13 @@ impl<'c> Resolver<'c, '_> {
         }
     }
 
-    fn resolve_block(&mut self, block: BlockRef<'c, '_>, ambient: &Ambient) {
+    fn resolve_block(&mut self, block: BlockRef<'c, '_>, ambient: &Ambient<'c, '_>) {
         for mut op in block.operations_mut() {
             self.resolve_op(&mut op, ambient);
         }
     }
 
-    fn resolve_op(&mut self, op: &mut OperationRefMut<'c, '_>, ambient: &Ambient) {
+    fn resolve_op(&mut self, op: &mut OperationRefMut<'c, '_>, ambient: &Ambient<'c, '_>) {
         match YzlOperationRef::of(op) {
             Some(YzlOperationRef::Name(name)) => {
                 let reference = name.name().value();
@@ -187,9 +190,9 @@ impl<'c> Resolver<'c, '_> {
             }
             Some(YzlOperationRef::Let(binding)) => {
                 self.resolve_regions(op, &Ambient::None);
-                let name = binding.sym_name().value().to_string();
+                let name = binding.sym_name().value();
                 let schema = self.yielded_schema(op);
-                self.declare_named(op, "binding", &name);
+                self.check_duplicate(op, "binding", name);
                 self.relations.insert(name, schema);
             }
             Some(YzlOperationRef::From(from)) => {
@@ -210,7 +213,7 @@ impl<'c> Resolver<'c, '_> {
                     .input_schema(op)
                     .into_iter()
                     .map(|column| Column {
-                        qualifier: Some(alias.to_string()),
+                        qualifier: Some(alias),
                         ..column
                     })
                     .collect();
@@ -321,7 +324,7 @@ impl<'c> Resolver<'c, '_> {
 
                 if let Some(alias) = alias {
                     for column in &mut rhs {
-                        column.qualifier = Some(alias.to_string());
+                        column.qualifier = Some(alias);
                     }
                 }
 
@@ -356,7 +359,7 @@ impl<'c> Resolver<'c, '_> {
         &mut self,
         op: &OperationRefMut<'c, '_>,
         function: &yuzu_mlir::ops::yzl::FnOperationRef<'c, '_>,
-        generics: &[String],
+        generics: &[&'c str],
     ) {
         let subjects = function
             .bound_params()
@@ -387,7 +390,7 @@ impl<'c> Resolver<'c, '_> {
         &mut self,
         op: &mut OperationRefMut<'c, '_>,
         reference: &str,
-        ambient: &Ambient,
+        ambient: &Ambient<'c, '_>,
     ) {
         match ambient {
             Ambient::Columns(schema) => {
@@ -395,7 +398,7 @@ impl<'c> Resolver<'c, '_> {
                     op.set_index_attribute(self.context, "col", index);
                 }
             }
-            Ambient::Params(params) => match params.iter().position(|param| param == reference) {
+            Ambient::Params(params) => match params.iter().position(|param| *param == reference) {
                 Some(index) => op.set_index_attribute(self.context, "param", index),
                 None => self.error(op, format!("unknown name `{reference}`")),
             },
@@ -404,7 +407,12 @@ impl<'c> Resolver<'c, '_> {
         }
     }
 
-    fn resolve_call(&mut self, op: &mut OperationRefMut<'c, '_>, callee: &str, ambient: &Ambient) {
+    fn resolve_call(
+        &mut self,
+        op: &mut OperationRefMut<'c, '_>,
+        callee: &str,
+        ambient: &Ambient<'c, '_>,
+    ) {
         self.resolve_regions(op, ambient);
         let arguments = op.operand_count();
         let (kind, min, max) = match self.callables.get(callee) {
@@ -468,7 +476,7 @@ impl<'c> Resolver<'c, '_> {
         }
     }
 
-    fn resolve_regions<'a>(&mut self, op: &impl OperationLike<'c, 'a>, ambient: &Ambient)
+    fn resolve_regions<'a>(&mut self, op: &impl OperationLike<'c, 'a>, ambient: &Ambient<'c, '_>)
     where
         'c: 'a,
     {
@@ -481,7 +489,7 @@ impl<'c> Resolver<'c, '_> {
 
     /// The schema flowing out of the op a region's yield hands back — the
     /// shape a `let`-bound query exposes to `from`.
-    fn yielded_schema<'a>(&mut self, op: &impl OperationLike<'c, 'a>) -> Schema
+    fn yielded_schema<'a>(&mut self, op: &impl OperationLike<'c, 'a>) -> Schema<'c>
     where
         'c: 'a,
     {
@@ -494,7 +502,7 @@ impl<'c> Resolver<'c, '_> {
             .unwrap_or_default()
     }
 
-    fn input_schema<'a>(&mut self, op: &impl OperationLike<'c, 'a>) -> Schema
+    fn input_schema<'a>(&mut self, op: &impl OperationLike<'c, 'a>) -> Schema<'c>
     where
         'c: 'a,
     {
@@ -504,7 +512,7 @@ impl<'c> Resolver<'c, '_> {
             .unwrap_or_default()
     }
 
-    fn record_schema<'a>(&mut self, op: &impl OperationLike<'c, 'a>, schema: Schema)
+    fn record_schema<'a>(&mut self, op: &impl OperationLike<'c, 'a>, schema: Schema<'c>)
     where
         'c: 'a,
     {
@@ -521,7 +529,7 @@ impl<'c> Resolver<'c, '_> {
     }
 }
 
-fn unqualified(names: Vec<String>) -> Schema {
+fn unqualified<'c>(names: Vec<&'c str>) -> Schema<'c> {
     names
         .into_iter()
         .map(|name| Column {

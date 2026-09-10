@@ -12,8 +12,8 @@ use melior::ir::{Attribute, BlockLike, BlockRef, RegionLike};
 /// Element access for array attributes.
 pub trait ArrayAttributeExt<'c> {
     fn elements(&self) -> impl Iterator<Item = Attribute<'c>>;
-    fn strings(&self) -> Vec<String>;
-    fn symbols(&self) -> Vec<String>;
+    fn strings(&self) -> Vec<&'c str>;
+    fn symbols(&self) -> Vec<&'c str>;
 }
 
 impl<'c> ArrayAttributeExt<'c> for ArrayAttribute<'c> {
@@ -23,17 +23,19 @@ impl<'c> ArrayAttributeExt<'c> for ArrayAttribute<'c> {
             .map(move |index| array.element(index).expect("the element index is in range"))
     }
 
-    fn strings(&self) -> Vec<String> {
+    /// Borrowed: attribute strings are context-uniqued, so they outlive any
+    /// pass reading them.
+    fn strings(&self) -> Vec<&'c str> {
         self.elements()
             .filter_map(|element| StringAttribute::try_from(element).ok())
-            .map(|string| string.value().to_string())
+            .map(|string| string.value())
             .collect()
     }
 
-    fn symbols(&self) -> Vec<String> {
+    fn symbols(&self) -> Vec<&'c str> {
         self.elements()
             .filter_map(|element| FlatSymbolRefAttribute::try_from(element).ok())
-            .map(|symbol| symbol.value().to_string())
+            .map(|symbol| symbol.value())
             .collect()
     }
 }

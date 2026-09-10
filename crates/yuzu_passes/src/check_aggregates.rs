@@ -56,7 +56,7 @@ impl<'c> Checker<'_, 'c> {
             match YzlOperationRef::of(&op) {
                 Some(YzlOperationRef::Call(call)) => {
                     let callee = call.callee().value();
-                    if self.is_aggregate_call(&op, callee) {
+                    if self.is_aggregate_call(&call, callee) {
                         self.check_aggregate_call(op, callee, grouping);
                     } else {
                         self.propagate_group_values(op);
@@ -191,8 +191,12 @@ impl<'c> Checker<'_, 'c> {
         Some(OperationResult::try_from(returned).ok()?.owner().location())
     }
 
-    fn is_aggregate_call(&self, op: &OperationRef<'c, '_>, callee: &str) -> bool {
-        match op.text_attribute("callee_kind").as_deref() {
+    fn is_aggregate_call(
+        &self,
+        call: &yuzu_mlir::ops::yzl::CallOperationRef<'c, '_>,
+        callee: &str,
+    ) -> bool {
+        match call.callee_kind().map(|kind| kind.value()) {
             Some("agg_fn") => true,
             Some("builtin") => self.registry.entries().iter().any(|entry| {
                 entry.name == callee && matches!(entry.func, BuiltinFunc::Aggregate(_))

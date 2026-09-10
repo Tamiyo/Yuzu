@@ -2733,7 +2733,7 @@ mod tests {
     #[test]
     fn src_chained_registry_aliases_a_builtin() {
         use yuzu_types::{AggFunc, BuiltinFunc};
-        use yuzu_types::{Builtins, FunctionRegistryEntry, FunctionRegistry, chain};
+        use yuzu_types::{Builtins, FunctionRegistry, FunctionRegistryEntry, chain};
 
         struct Total;
         const TOTAL: &[FunctionRegistryEntry] = &[FunctionRegistryEntry {

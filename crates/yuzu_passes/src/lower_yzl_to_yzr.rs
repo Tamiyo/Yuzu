@@ -25,25 +25,21 @@ use yuzu_mlir::{StructType, SymbolTable, value_id};
 use yuzu_types::{BuiltinFunc, FunctionRegistry};
 
 /// A row: the columns flowing out of a stage, in order.
-type Schema<'c> = Vec<(String, Type<'c>)>;
+type Schema<'c> = Vec<(&'c str, Type<'c>)>;
 
-struct Lowering<'c, 'a, 'r> {
+struct YzlToYzr<'c, 'a, 'r> {
     context: &'c Context,
     registry: &'r dyn FunctionRegistry,
-    /// The fields of each declared struct, by symbol.
-    structs: HashMap<String, Schema<'c>>,
-    /// The struct a relation's rows have, by relation name.
-    relations: HashMap<String, String>,
     /// What each yzl stage value became, and the row it carries.
     stages: HashMap<usize, (Value<'c, 'a>, Schema<'c>)>,
     /// The symbol declaring each distinct row shape, so a shape nobody
     /// declared is declared once.
-    shapes: HashMap<Schema<'c>, String>,
+    shapes: HashMap<Schema<'c>, &'c str>,
 }
 
 /// Expects a resolved, inferred module. Returns the `yz` + `yzr` module it
 /// lowers to; anything it cannot lower is reported and left out.
-pub fn lower_yzl<'c>(
+pub fn lower_yzl_to_yzr<'c>(
     context: &'c Context,
     module: &Module<'c>,
     registry: &dyn FunctionRegistry,
@@ -52,45 +48,35 @@ pub fn lower_yzl<'c>(
     {
         let target = lowered.body();
         let mut symbols = SymbolTable::new(&lowered);
-        let mut lowering = Lowering {
+        let mut lowering = YzlToYzr {
             context,
             registry,
-            structs: HashMap::new(),
-            relations: HashMap::new(),
             stages: HashMap::new(),
             shapes: HashMap::new(),
         };
 
-        lowering.declare(module.body());
-        lowering.lower_block(module.body(), target, &mut symbols);
+        let source = SymbolTable::new(module);
+        lowering.intern_declared_shapes(module.body());
+        lowering.lower_block(module.body(), target, &source, &mut symbols);
     }
 
     lowered
 }
 
-impl<'c, 'a> Lowering<'c, 'a, '_> {
+impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
     /// Declarations first, so a stage can ask for a relation's row before
     /// the walk reaches the op that declared it.
-    fn declare(&mut self, block: BlockRef<'c, '_>) {
+    /// Seeds the shape index with what the program declared, so a stage
+    /// whose row matches a declared struct reuses its name instead of
+    /// interning a second one. Name lookups go through the symbol table;
+    /// only shape-to-symbol needs an index of its own.
+    fn intern_declared_shapes(&mut self, block: BlockRef<'c, '_>) {
         for op in block.operations() {
-            match YzlOperationRef::of(&op) {
-                Some(YzlOperationRef::Struct(item)) => {
-                    let fields = item
-                        .names()
-                        .strings()
-                        .into_iter()
-                        .zip(field_types(item.types()))
-                        .collect();
-                    self.structs
-                        .insert(item.sym_name().value().to_string(), fields);
-                }
-                Some(YzlOperationRef::Table(table)) => {
-                    self.relations.insert(
-                        table.sym_name().value().to_string(),
-                        table.row().value().to_string(),
-                    );
-                }
-                _ => {}
+            if let Some(YzlOperationRef::Struct(item)) = YzlOperationRef::of(&op) {
+                let fields = struct_fields(&item);
+                self.shapes
+                    .entry(fields)
+                    .or_insert_with(|| item.sym_name().value());
             }
         }
     }
@@ -99,10 +85,11 @@ impl<'c, 'a> Lowering<'c, 'a, '_> {
         &mut self,
         block: BlockRef<'c, '_>,
         target: BlockRef<'c, 'a>,
+        source: &SymbolTable<'c, '_>,
         symbols: &mut SymbolTable<'c, '_>,
     ) {
         for op in block.operations() {
-            self.lower_op(op, target, symbols);
+            self.lower_op(op, target, source, symbols);
         }
     }
 
@@ -110,21 +97,21 @@ impl<'c, 'a> Lowering<'c, 'a, '_> {
         &mut self,
         op: OperationRef<'c, '_>,
         target: BlockRef<'c, 'a>,
+        source: &SymbolTable<'c, '_>,
         symbols: &mut SymbolTable<'c, '_>,
     ) {
         match YzlOperationRef::of(&op) {
             Some(YzlOperationRef::Struct(item)) => {
-                let name = item.sym_name().value();
-                let fields = self.structs[name].clone();
-                self.declare_struct(name, &fields, symbols);
+                let fields = struct_fields(&item);
+                self.declare_struct(item.sym_name().value(), &fields, symbols);
             }
             // A table declaration says nothing yzr needs: `yzr.table` names
             // the relation and carries its row as the result type.
             Some(YzlOperationRef::Table(_)) => {}
             Some(YzlOperationRef::From(from)) => {
-                let source = from.source().value();
-                let Some(schema) = self.relation_schema(source) else {
-                    self.error(op, format!("`{source}` has no row shape to scan"));
+                let relation = from.source().value();
+                let Some(schema) = self.relation_schema(relation, source) else {
+                    self.error(op, format!("`{relation}` has no row shape to scan"));
                     return;
                 };
 
@@ -133,7 +120,7 @@ impl<'c, 'a> Lowering<'c, 'a, '_> {
                     yuzu_mlir::ods::yzr::table(
                         self.context,
                         row,
-                        FlatSymbolRefAttribute::new(self.context, source),
+                        FlatSymbolRefAttribute::new(self.context, relation),
                         op.location(),
                     )
                     .into(),
@@ -188,7 +175,7 @@ impl<'c, 'a> Lowering<'c, 'a, '_> {
                     return;
                 };
 
-                let keys = op.index_array_attribute("key_cols");
+                let keys = crate::infer_types::indices(stage.key_cols());
                 let (region, yielded) = self.lower_region(stage.body(), &schema, op.location());
                 let mut produced: Schema<'c> = keys
                     .iter()
@@ -274,8 +261,8 @@ impl<'c, 'a> Lowering<'c, 'a, '_> {
         yielded: &mut Vec<Type<'c>>,
     ) {
         match YzlOperationRef::of(&op) {
-            Some(YzlOperationRef::Name(_)) => {
-                let Some(index) = op.index_attribute("col") else {
+            Some(YzlOperationRef::Name(name)) => {
+                let Some(index) = name.col().map(|col| col.value() as usize) else {
                     self.error(op, "a name outside a column context is not lowered yet");
                     return;
                 };
@@ -298,7 +285,10 @@ impl<'c, 'a> Lowering<'c, 'a, '_> {
                 let callee = call.callee().value().to_string();
                 let operands = self.mapped_operands(op, values);
                 let ty = self.stamped_type(op);
-                let kind = op.text_attribute("callee_kind").unwrap_or_default();
+                let kind = call
+                    .callee_kind()
+                    .map(|kind| kind.value())
+                    .unwrap_or_default();
                 let lowered = if kind == "builtin" && self.is_aggregate(&callee) {
                     self.lower_measure(op, &callee, &operands, ty, body)
                 } else if kind == "external" {
@@ -424,15 +414,24 @@ impl<'c, 'a> Lowering<'c, 'a, '_> {
     }
 
     /// The columns a stage names, paired with what its region yielded.
-    fn named_row(&self, names: Vec<String>, yielded: Vec<Type<'c>>) -> Schema<'c> {
+    fn named_row(&self, names: Vec<&'c str>, yielded: Vec<Type<'c>>) -> Schema<'c> {
         names.into_iter().zip(yielded).collect()
     }
 
-    /// The row a relation's rows have: a table's declared struct, or a
-    /// binding's computed shape.
-    fn relation_schema(&self, name: &str) -> Option<Schema<'c>> {
-        let row = self.relations.get(name)?;
-        self.structs.get(row).cloned()
+    /// The row a relation's rows have, found the way MLIR finds any symbol:
+    /// the table names its struct, and the struct carries its fields.
+    fn relation_schema(&self, name: &str, source: &SymbolTable<'c, '_>) -> Option<Schema<'c>> {
+        let table = source.lookup(name)?;
+        let YzlOperationRef::Table(table) = YzlOperationRef::of(&table)? else {
+            return None;
+        };
+
+        let declaration = source.lookup(table.row().value())?;
+        let YzlOperationRef::Struct(item) = YzlOperationRef::of(&declaration)? else {
+            return None;
+        };
+
+        Some(struct_fields(&item))
     }
 
     /// The type standing for a row — declaring the shape when nothing has.
@@ -441,12 +440,7 @@ impl<'c, 'a> Lowering<'c, 'a, '_> {
             return StructType::new(self.context, name).into();
         }
 
-        let declared = self
-            .structs
-            .iter()
-            .find(|(_, fields)| *fields == schema)
-            .map(|(name, _)| name.clone());
-        let name = match declared {
+        let name = match self.shapes.get(schema).cloned() {
             Some(name) => name,
             None => self.declare_struct("row", schema, symbols),
         };
@@ -463,7 +457,7 @@ impl<'c, 'a> Lowering<'c, 'a, '_> {
         name: &str,
         fields: &Schema<'c>,
         symbols: &mut SymbolTable<'c, '_>,
-    ) -> String {
+    ) -> &'c str {
         let names: Vec<Attribute<'c>> = fields
             .iter()
             .map(|(column, _)| StringAttribute::new(self.context, column).into())
@@ -485,7 +479,6 @@ impl<'c, 'a> Lowering<'c, 'a, '_> {
         StringAttribute::try_from(assigned)
             .expect("a symbol name is a string")
             .value()
-            .to_string()
     }
 
     fn input_stage(&mut self, op: OperationRef<'c, '_>) -> Option<(Value<'c, 'a>, Schema<'c>)> {
@@ -510,6 +503,15 @@ fn op_name<'c>(op: OperationRef<'c, '_>) -> String {
         .as_str()
         .unwrap_or("<non-utf8>")
         .to_string()
+}
+
+/// The fields a struct declaration carries, in order.
+fn struct_fields<'c>(item: &yuzu_mlir::ops::yzl::StructOperationRef<'c, '_>) -> Schema<'c> {
+    item.names()
+        .strings()
+        .into_iter()
+        .zip(field_types(item.types()))
+        .collect()
 }
 
 fn field_types<'c>(types: melior::ir::attribute::ArrayAttribute<'c>) -> Vec<Type<'c>> {

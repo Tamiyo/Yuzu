@@ -5,7 +5,7 @@ use melior::ir::{
 use yuzu_ast::{AstNode, ast};
 use yuzu_mlir::ods::yzl;
 
-use crate::convert::{AstToYzl, Locals, first_result, ident_text};
+use crate::lower_ast_to_yzl::{AstToYzl, Locals, first_result, ident_text};
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
     pub(super) fn convert_rel<'a>(&self, block: BlockRef<'c, 'a>, rel: &ast::Rel) -> Value<'c, 'a> {
@@ -372,7 +372,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 mod tests {
     use expect_test::expect;
 
-    use crate::convert::test_support::converted;
+    use crate::lower_ast_to_yzl::test_support::converted;
 
     #[test]
     fn converts_the_canonical_pipeline() {

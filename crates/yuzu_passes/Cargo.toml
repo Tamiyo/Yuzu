@@ -5,6 +5,10 @@ edition = "2024"
 
 [dependencies]
 melior = { version = "0.27.6", features = ["ods-dialects"] }
+text-size = "1.1.1"
+yuzu_ast = { path = "../yuzu_ast" }
+yuzu_lexer = { path = "../yuzu_lexer" }
+yuzu_parser = { path = "../yuzu_parser" }
 mlir-sys = "220"
 yuzu_diagnostics = { path = "../yuzu_diagnostics" }
 yuzu_mlir = { path = "../yuzu_mlir" }
@@ -12,4 +16,3 @@ yuzu_types = { path = "../yuzu_types" }
 
 [dev-dependencies]
 expect-test = "1.5.0"
-yuzu_lang = { path = "../yuzu_lang" }

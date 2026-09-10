@@ -1,14 +1,16 @@
 //! The conversions and checks that carry a yzl module toward yzr.
 
 mod check_aggregates;
-mod infer;
-mod lower_yzl;
-mod resolve;
+mod infer_types;
+mod lower_ast_to_yzl;
+mod lower_yzl_to_yzr;
+mod resolve_names;
 
 pub use check_aggregates::check_aggregates;
-pub use infer::infer_types;
-pub use lower_yzl::lower_yzl;
-pub use resolve::resolve_names;
+pub use infer_types::infer_types;
+pub use lower_ast_to_yzl::lower_ast_to_yzl;
+pub use lower_yzl_to_yzr::lower_yzl_to_yzr;
+pub use resolve_names::resolve_names;
 
 #[cfg(test)]
 pub(crate) mod test_support {
@@ -44,14 +46,14 @@ pub(crate) mod test_support {
         let source_id = sources.add("test.yz".to_string(), source.to_string());
         let mut diagnostics = DiagnosticsEngine::new();
         let module =
-            yuzu_lang::convert_source(&context, "test.yz", source, source_id, &mut diagnostics)
+            crate::lower_ast_to_yzl(&context, "test.yz", source, source_id, &mut diagnostics)
                 .expect("the source converts");
 
         let lowered =
             yuzu_mlir::diagnostics::capture(&context, source_id, source, &mut diagnostics, || {
                 crate::resolve_names(&context, &module, &yuzu_types::Builtins);
                 crate::infer_types(&context, &module);
-                crate::lower_yzl(&context, &module, &yuzu_types::Builtins)
+                crate::lower_yzl_to_yzr(&context, &module, &yuzu_types::Builtins)
             });
 
         let printer = DiagnosticPrinter::new(&sources);
@@ -94,7 +96,7 @@ pub(crate) mod test_support {
         let source_id = sources.add("test.yz".to_string(), source.to_string());
         let mut diagnostics = DiagnosticsEngine::new();
         let module =
-            yuzu_lang::convert_source(&context, "test.yz", source, source_id, &mut diagnostics)
+            crate::lower_ast_to_yzl(&context, "test.yz", source, source_id, &mut diagnostics)
                 .expect("the source converts");
 
         yuzu_mlir::diagnostics::capture(&context, source_id, source, &mut diagnostics, || {

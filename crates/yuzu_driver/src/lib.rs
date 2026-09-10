@@ -160,9 +160,9 @@ pub fn compile(name: &str, source: &str, options: &CompileOptions) {
     print_diagnostics(&diagnostics, &sources);
 }
 
-/// Compiles through the MLIR pipeline — as far as it goes today: the AST →
-/// yzl conversion, printed. The checking and lowering conversions extend this
-/// path until it reaches Substrait and the old pipeline retires.
+/// Compiles through the MLIR pipeline — as far as it goes today: source to
+/// yzr, printed. Translation to Substrait extends this path until the old
+/// pipeline retires.
 pub fn compile_mlir(name: &str, source: &str) -> std::process::ExitCode {
     use melior::ir::operation::OperationLike;
 
@@ -171,7 +171,7 @@ pub fn compile_mlir(name: &str, source: &str) -> std::process::ExitCode {
     let source_id = sources.add(name.to_string(), source.to_string());
     let mut diagnostics = DiagnosticsEngine::new();
     let Some(module) =
-        yuzu_lang::convert_source(&context, name, source, source_id, &mut diagnostics)
+        yuzu_passes::lower_ast_to_yzl(&context, name, source, source_id, &mut diagnostics)
     else {
         print_diagnostics(&diagnostics, &sources);
         return std::process::ExitCode::FAILURE;
@@ -194,7 +194,7 @@ pub fn compile_mlir(name: &str, source: &str) -> std::process::ExitCode {
     if verified && !has_errors(&diagnostics) {
         let lowered =
             yuzu_mlir::diagnostics::capture(&context, source_id, source, &mut diagnostics, || {
-                yuzu_passes::lower_yzl(&context, &module, &yuzu_types::Builtins)
+                yuzu_passes::lower_yzl_to_yzr(&context, &module, &yuzu_types::Builtins)
             });
 
         print_diagnostics(&diagnostics, &sources);

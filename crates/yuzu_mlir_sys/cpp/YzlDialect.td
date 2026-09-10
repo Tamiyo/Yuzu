@@ -150,7 +150,8 @@ def Yzl_ExtendOp : Yzl_Op<"extend", [Pure]> {
 def Yzl_AggregateOp : Yzl_Op<"aggregate", [Pure]> {
   let summary = "group by named columns and compute the yielded measures";
   let arguments = (ins Yzl_QueryType:$input, StrArrayAttr:$group_by,
-                       StrArrayAttr:$names);
+                       StrArrayAttr:$names,
+                       OptionalAttr<I64ArrayAttr>:$key_cols);
   let results = (outs Yzl_QueryType:$result);
   let regions = (region SizedRegion<1>:$body);
   let assemblyFormat = "$input `group_by` $group_by `as` $names $body attr-dict";
@@ -194,7 +195,8 @@ def Yzl_JoinOp : Yzl_Op<"join", [Pure]> {
 
 def Yzl_SetOp : Yzl_Op<"set", [Pure]> {
   let summary = "assign the yielded values to existing columns";
-  let arguments = (ins Yzl_QueryType:$input, StrArrayAttr:$names);
+  let arguments = (ins Yzl_QueryType:$input, StrArrayAttr:$names,
+                       OptionalAttr<I64ArrayAttr>:$set_cols);
   let results = (outs Yzl_QueryType:$result);
   let regions = (region SizedRegion<1>:$body);
   let assemblyFormat = "$input `as` $names $body attr-dict";
@@ -222,7 +224,8 @@ def Yzl_OutputOp : Yzl_Op<"output"> {
 
 def Yzl_NameOp : Yzl_Op<"name", [Pure]> {
   let summary = "an unresolved reference: column, binding, or parameter";
-  let arguments = (ins StrAttr:$name);
+  let arguments = (ins StrAttr:$name, OptionalAttr<I64Attr>:$col,
+                       OptionalAttr<I64Attr>:$param);
   let results = (outs AnyType:$result);
   let assemblyFormat = "$name `:` type($result) attr-dict";
 }
@@ -237,7 +240,8 @@ def Yzl_ListOp : Yzl_Op<"list", [Pure]> {
 
 def Yzl_CallOp : Yzl_Op<"call", [Pure]> {
   let summary = "a call by name; registry and shadowing unresolved";
-  let arguments = (ins FlatSymbolRefAttr:$callee, Variadic<AnyType>:$operands);
+  let arguments = (ins FlatSymbolRefAttr:$callee, Variadic<AnyType>:$operands,
+                       OptionalAttr<StrAttr>:$callee_kind);
   let results = (outs AnyType:$result);
   let assemblyFormat =
       "$callee `(` $operands `)` `:` functional-type($operands, $result) attr-dict";

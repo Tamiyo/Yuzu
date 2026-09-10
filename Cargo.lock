@@ -2122,7 +2122,6 @@ dependencies = [
  "yuzu_core",
  "yuzu_diagnostics",
  "yuzu_hir",
- "yuzu_lang",
  "yuzu_lexer",
  "yuzu_mlir",
  "yuzu_parser",
@@ -2145,20 +2144,6 @@ dependencies = [
  "yuzu_parser",
  "yuzu_syntax",
  "yuzu_types",
-]
-
-[[package]]
-name = "yuzu_lang"
-version = "0.0.0"
-dependencies = [
- "expect-test",
- "melior",
- "text-size",
- "yuzu_ast",
- "yuzu_diagnostics",
- "yuzu_lexer",
- "yuzu_mlir",
- "yuzu_parser",
 ]
 
 [[package]]
@@ -2211,9 +2196,12 @@ dependencies = [
  "expect-test",
  "melior",
  "mlir-sys",
+ "text-size",
+ "yuzu_ast",
  "yuzu_diagnostics",
- "yuzu_lang",
+ "yuzu_lexer",
  "yuzu_mlir",
+ "yuzu_parser",
  "yuzu_types",
 ]
 

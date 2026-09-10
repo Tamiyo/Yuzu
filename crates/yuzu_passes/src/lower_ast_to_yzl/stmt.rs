@@ -5,7 +5,7 @@ use melior::ir::{
 use yuzu_ast::ast;
 use yuzu_mlir::ods::yzl;
 
-use crate::convert::{AstToYzl, Locals, ident_text};
+use crate::lower_ast_to_yzl::{AstToYzl, Locals, ident_text};
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
     pub(super) fn convert_stmt<'a>(&self, block: BlockRef<'c, 'a>, stmt: &ast::Stmt) {
@@ -386,7 +386,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 mod tests {
     use expect_test::expect;
 
-    use crate::convert::test_support::{convert, converted};
+    use crate::lower_ast_to_yzl::test_support::{convert, converted};
 
     #[test]
     fn converts_declarations() {

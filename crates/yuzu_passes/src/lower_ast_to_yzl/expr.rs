@@ -5,7 +5,7 @@ use melior::ir::{
 use yuzu_ast::{BinOp, UnaryOp, ast};
 use yuzu_mlir::ods::{yz, yzl};
 
-use crate::convert::{AstToYzl, Locals, first_result, ident_text};
+use crate::lower_ast_to_yzl::{AstToYzl, Locals, first_result, ident_text};
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
     pub(super) fn convert_expr<'a>(
@@ -352,7 +352,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 mod tests {
     use expect_test::expect;
 
-    use crate::convert::test_support::convert;
+    use crate::lower_ast_to_yzl::test_support::convert;
 
     /// The HIR lowerer's missing-piece mechanics, ported: a hole in the
     /// parse converts to a reported diagnostic and a `yzl.missing` value.

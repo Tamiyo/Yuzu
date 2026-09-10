@@ -1,4 +1,4 @@
-//! The AST → yzl conversion. Names come out as `yzl.name`, unresolved
+//! LowerAst: the AST → yzl conversion. Names come out as `yzl.name`, unresolved
 //! types as `!yzl.var`, sugar intact — the checking passes resolve them.
 
 use std::collections::HashMap;
@@ -20,7 +20,7 @@ use yuzu_mlir::ods::yzl;
 /// constructs — lands in the engine as an error, and a missing piece
 /// converts to a `yzl.missing` value, the way HIR lowered `Expr::Missing`.
 /// Returns `None` when the source has no root.
-pub fn convert_source<'c>(
+pub fn lower_ast_to_yzl<'c>(
     context: &'c Context,
     name: &str,
     source: &str,
@@ -174,7 +174,7 @@ pub(crate) mod test_support {
         let mut sources = SourceMap::new();
         let source_id = sources.add(name.to_string(), source.to_string());
         let mut diagnostics = DiagnosticsEngine::new();
-        let module = super::convert_source(context, name, source, source_id, &mut diagnostics)
+        let module = super::lower_ast_to_yzl(context, name, source, source_id, &mut diagnostics)
             .expect("the source converts");
 
         (module, sources, diagnostics)
@@ -239,7 +239,7 @@ mod tests {
                 let source_id = sources.add("corpus.yz".to_string(), chunk.to_string());
                 let mut diagnostics =
                     yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine::new();
-                match super::convert_source(
+                match super::lower_ast_to_yzl(
                     &context,
                     "corpus.yz",
                     chunk,

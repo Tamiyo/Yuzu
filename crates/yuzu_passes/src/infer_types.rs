@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 
 use melior::Context;
-use melior::ir::attribute::TypeAttribute;
+use melior::ir::attribute::{IntegerAttribute, TypeAttribute};
 use melior::ir::operation::{OperationLike, OperationMutLike, OperationRef};
 use melior::ir::r#type::FunctionType;
 use melior::ir::{BlockRef, Location, Module, RegionLike, Type, Value, ValueLike};
@@ -31,16 +31,16 @@ type Row<'c> = Vec<Term<'c>>;
 struct Signature<'c> {
     params: Vec<Type<'c>>,
     result: Type<'c>,
-    type_params: Vec<String>,
-    bounds: Vec<(String, String)>,
+    type_params: Vec<&'c str>,
+    bounds: Vec<(&'c str, &'c str)>,
 }
 
-/// A bound owed by one instantiation: the variable standing for the
-/// parameter, the trait it must satisfy, and where to report.
-struct Obligation<'c> {
+/// A bound one instantiation owes: the variable standing for the parameter,
+/// the trait it must satisfy, and where to report if it does not.
+struct PendingBound<'c> {
     var: usize,
-    r#trait: String,
-    callee: String,
+    r#trait: &'c str,
+    callee: &'c str,
     location: Location<'c>,
 }
 
@@ -53,13 +53,13 @@ struct TypeInferrer<'c> {
     vars: HashMap<usize, usize>,
     /// The row of column terms flowing out of each stage value.
     rows: HashMap<usize, Row<'c>>,
-    signatures: HashMap<String, Signature<'c>>,
+    signatures: HashMap<&'c str, Signature<'c>>,
     /// The `(trait, type)` pairs the module's implementations supply.
-    impls: HashSet<(String, String)>,
+    impls: HashSet<(&'c str, &'c str)>,
     /// A bound to check once the type variable standing for its parameter
     /// resolves — deferred, because the argument may resolve after the call.
-    obligations: Vec<Obligation<'c>>,
-    relations: HashMap<String, Row<'c>>,
+    pending: Vec<PendingBound<'c>>,
+    relations: HashMap<&'c str, Row<'c>>,
     types: yuzu_mlir::Types<'c>,
 }
 
@@ -73,14 +73,14 @@ pub fn infer_types<'c>(context: &'c Context, module: &Module<'c>) {
         rows: HashMap::new(),
         signatures: HashMap::new(),
         impls: HashSet::new(),
-        obligations: Vec::new(),
+        pending: Vec::new(),
         relations: HashMap::new(),
         types: yuzu_mlir::Types::new(context),
     };
 
     inferrer.hoist(module.body());
     inferrer.infer_block(module.body(), &Row::new(), &[]);
-    inferrer.check_obligations();
+    inferrer.check_pending_bounds();
     inferrer.stamp_block(module.body());
 }
 
@@ -185,19 +185,16 @@ impl<'c> TypeInferrer<'c> {
                 Some(YzlOperationRef::Fn(function)) => {
                     if let Some(signature) = parse_signature(&function) {
                         self.signatures
-                            .insert(function.sym_name().value().to_string(), signature);
+                            .insert(function.sym_name().value(), signature);
                     }
                 }
                 Some(YzlOperationRef::Impl(item)) => {
-                    self.impls.insert((
-                        item.r#trait().value().to_string(),
-                        item.target().value().to_string(),
-                    ));
+                    self.impls
+                        .insert((item.r#trait().value(), item.target().value()));
                 }
                 Some(YzlOperationRef::Struct(item)) => {
                     let row = field_row(item.types());
-                    self.relations
-                        .insert(item.sym_name().value().to_string(), row);
+                    self.relations.insert(item.sym_name().value(), row);
                 }
                 Some(YzlOperationRef::Table(table)) => {
                     let row = self
@@ -205,8 +202,8 @@ impl<'c> TypeInferrer<'c> {
                         .get(table.row().value())
                         .cloned()
                         .unwrap_or_default();
-                    self.relations
-                        .insert(table.sym_name().value().to_string(), row);
+
+                    self.relations.insert(table.sym_name().value(), row);
                 }
                 _ => {}
             }
@@ -221,13 +218,13 @@ impl<'c> TypeInferrer<'c> {
 
     fn infer_op(&mut self, op: OperationRef<'c, '_>, columns: &Row<'c>, params: &[Type<'c>]) {
         match YzlOperationRef::of(&op) {
-            Some(YzlOperationRef::Name(_)) => {
+            Some(YzlOperationRef::Name(name)) => {
                 let term = self.term_of(result(op));
-                if let Some(index) = op.index_attribute("col") {
+                if let Some(index) = name.col().map(|col| col.value() as usize) {
                     if let Some(&column) = columns.get(index) {
                         self.unify(op, term, column);
                     }
-                } else if let Some(index) = op.index_attribute("param")
+                } else if let Some(index) = name.param().map(|param| param.value() as usize)
                     && let Some(&param) = params.get(index)
                 {
                     self.unify(op, term, Term::Concrete(param));
@@ -235,7 +232,7 @@ impl<'c> TypeInferrer<'c> {
             }
             Some(YzlOperationRef::Call(call)) => {
                 let callee = call.callee().value();
-                match op.text_attribute("callee_kind").as_deref() {
+                match call.callee_kind().map(|kind| kind.value()) {
                     Some("builtin") => self.resolve_builtin_ty(op, callee),
                     Some("external") => {}
                     _ => {
@@ -278,8 +275,7 @@ impl<'c> TypeInferrer<'c> {
             Some(YzlOperationRef::Let(binding)) => {
                 self.infer_regions(op, &Row::new(), &[]);
                 let row = self.yield_terms(op);
-                self.relations
-                    .insert(binding.sym_name().value().to_string(), row);
+                self.relations.insert(binding.sym_name().value(), row);
             }
             Some(
                 stage @ (YzlOperationRef::Where(_)
@@ -297,11 +293,11 @@ impl<'c> TypeInferrer<'c> {
 
                 self.record_row(op, row);
             }
-            Some(YzlOperationRef::Set(_)) => {
+            Some(YzlOperationRef::Set(stage)) => {
                 let row = self.input_row(op);
                 self.infer_regions(op, &row, &[]);
                 let yields = self.yield_terms(op);
-                for (index, term) in op.index_array_attribute("set_cols").into_iter().zip(yields) {
+                for (index, term) in indices(stage.set_cols()).into_iter().zip(yields) {
                     if let Some(&column) = row.get(index) {
                         self.unify(op, column, term);
                     }
@@ -321,11 +317,10 @@ impl<'c> TypeInferrer<'c> {
                 row.extend(self.yield_terms(op));
                 self.record_row(op, row);
             }
-            Some(YzlOperationRef::Aggregate(_)) => {
+            Some(YzlOperationRef::Aggregate(stage)) => {
                 let input = self.input_row(op);
                 self.infer_regions(op, &input, &[]);
-                let mut row: Row = op
-                    .index_array_attribute("key_cols")
+                let mut row: Row = indices(stage.key_cols())
                     .into_iter()
                     .filter_map(|index| input.get(index).copied())
                     .collect();
@@ -390,22 +385,22 @@ impl<'c> TypeInferrer<'c> {
     fn instantiate(
         &mut self,
         op: OperationRef<'c, '_>,
-        callee: &str,
+        callee: &'c str,
         signature: &Signature<'c>,
-    ) -> HashMap<String, usize> {
+    ) -> HashMap<&'c str, usize> {
         let mut bindings = HashMap::new();
         for name in &signature.type_params {
             let var = self.filled.len();
             self.filled.push(None);
-            bindings.insert(name.clone(), var);
+            bindings.insert(*name, var);
         }
 
         for (subject, r#trait) in &signature.bounds {
             if let Some(&var) = bindings.get(subject) {
-                self.obligations.push(Obligation {
+                self.pending.push(PendingBound {
                     var,
-                    r#trait: r#trait.clone(),
-                    callee: callee.to_string(),
+                    r#trait,
+                    callee,
                     location: op.location(),
                 });
             }
@@ -415,7 +410,7 @@ impl<'c> TypeInferrer<'c> {
     }
 
     /// A declared type with this instance's parameters swapped in.
-    fn substitute(&self, ty: Type<'c>, bindings: &HashMap<String, usize>) -> Term<'c> {
+    fn substitute(&self, ty: Type<'c>, bindings: &HashMap<&'c str, usize>) -> Term<'c> {
         if let Some(param) = yuzu_mlir::ParamType::from_type(ty)
             && let Some(&var) = bindings.get(param.name())
         {
@@ -426,27 +421,20 @@ impl<'c> TypeInferrer<'c> {
     }
 
     /// Every instantiation owes its bounds once its type is known.
-    fn check_obligations(&mut self) {
-        for index in 0..self.obligations.len() {
-            let (var, r#trait, callee, location) = {
-                let obligation = &self.obligations[index];
-                (
-                    obligation.var,
-                    obligation.r#trait.clone(),
-                    obligation.callee.clone(),
-                    obligation.location,
-                )
-            };
-
-            let Some(ty) = self.resolve(Term::Var(var)) else {
+    fn check_pending_bounds(&mut self) {
+        for index in 0..self.pending.len() {
+            let bound = &self.pending[index];
+            let (var, r#trait, callee, location) =
+                (bound.var, bound.r#trait, bound.callee, bound.location);
+            let Some(resolved) = self.resolve(Term::Var(var)) else {
                 continue;
             };
 
-            let Some(name) = self.type_name(ty) else {
+            let Some(name) = self.type_name(resolved) else {
                 continue;
             };
 
-            if !self.impls.contains(&(r#trait.clone(), name.clone())) {
+            if !self.impls.contains(&(r#trait, name)) {
                 yuzu_mlir::diagnostics::emit_error(
                     location,
                     &format!("`{name}` does not implement `{trait}`, required by `{callee}`"),
@@ -456,18 +444,18 @@ impl<'c> TypeInferrer<'c> {
     }
 
     /// The name an `impl` would target this type by.
-    fn type_name(&self, ty: Type<'c>) -> Option<String> {
+    fn type_name(&self, ty: Type<'c>) -> Option<&'static str> {
         if ty == self.types.int64 {
-            return Some("int64".to_string());
+            return Some("int64");
         }
         if ty == self.types.float64 {
-            return Some("float64".to_string());
+            return Some("float64");
         }
         if ty == self.types.boolean {
-            return Some("bool".to_string());
+            return Some("bool");
         }
         if ty == self.types.str {
-            return Some("str".to_string());
+            return Some("str");
         }
 
         None
@@ -641,6 +629,19 @@ fn parse_signature<'c>(
             .unwrap_or_default(),
         bounds: subjects.into_iter().zip(traits).collect(),
     })
+}
+
+/// The indices an optional stamp carries.
+pub(crate) fn indices(stamp: Option<melior::ir::attribute::ArrayAttribute>) -> Vec<usize> {
+    stamp
+        .map(|array| {
+            array
+                .elements()
+                .filter_map(|element| IntegerAttribute::try_from(element).ok())
+                .map(|index| index.value() as usize)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The field types of a struct declaration's `types` array.
