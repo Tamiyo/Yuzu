@@ -27,6 +27,13 @@ use yuzu_types::{BuiltinFunc, FunctionRegistry};
 /// A row: the columns flowing out of a stage, in order.
 type Schema<'c> = Vec<(&'c str, Type<'c>)>;
 
+/// What a lowered region yields: the values its body computed, or the whole
+/// row with those values substituted into the columns they replace.
+enum Yielded<'k> {
+    Body,
+    Row(&'k [usize]),
+}
+
 struct YzlToYzr<'c, 'a, 'r> {
     context: &'c Context,
     registry: &'r dyn FunctionRegistry,
@@ -133,7 +140,8 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                     return;
                 };
 
-                let (region, _) = self.lower_region(stage.body(), &schema, op.location());
+                let (region, _) =
+                    self.lower_region(stage.body(), &schema, op.location(), Yielded::Body);
                 let filtered = target.append_operation(
                     yuzu_mlir::ods::yzr::filter(self.context, input, region, op.location()).into(),
                 );
@@ -145,7 +153,8 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                     return;
                 };
 
-                let (region, yielded) = self.lower_region(stage.body(), &schema, op.location());
+                let (region, yielded) =
+                    self.lower_region(stage.body(), &schema, op.location(), Yielded::Body);
                 let produced = self.named_row(stage.names().strings(), yielded);
                 let row = self.row_type(&produced, symbols);
                 let projected = target.append_operation(
@@ -160,7 +169,8 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                     return;
                 };
 
-                let (region, yielded) = self.lower_region(stage.body(), &schema, op.location());
+                let (region, yielded) =
+                    self.lower_region(stage.body(), &schema, op.location(), Yielded::Body);
                 schema.extend(self.named_row(stage.names().strings(), yielded));
                 let row = self.row_type(&schema, symbols);
                 let extended = target.append_operation(
@@ -176,7 +186,8 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                 };
 
                 let keys = crate::infer_types::indices(stage.key_cols());
-                let (region, yielded) = self.lower_region(stage.body(), &schema, op.location());
+                let (region, yielded) =
+                    self.lower_region(stage.body(), &schema, op.location(), Yielded::Body);
                 let mut produced: Schema<'c> = keys
                     .iter()
                     .filter_map(|&index| schema.get(index).cloned())
@@ -231,7 +242,10 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
 
                 let region = match stage.using_columns() {
                     Some(columns) => self.join_keys(op, &columns.strings(), left_width, &schema),
-                    None => self.lower_region(stage.on(), &schema, op.location()).0,
+                    None => {
+                        self.lower_region(stage.on(), &schema, op.location(), Yielded::Body)
+                            .0
+                    }
                 };
 
                 let row = self.row_type(&schema, symbols);
@@ -271,12 +285,83 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                     yuzu_mlir::ods::yzr::output(self.context, query, op.location()).into(),
                 );
             }
+            // A qualifier only ever chose a column, and resolution has spent
+            // it by now: the row that arrives is the row that leaves.
+            Some(YzlOperationRef::Alias(_)) => {
+                let Some((input, schema)) = self.input_stage(op) else {
+                    return;
+                };
+
+                self.record_stage(op, input, schema);
+            }
+            // A group with no measures: every column is a key, so each
+            // distinct row survives exactly once.
+            Some(YzlOperationRef::Distinct(_)) => {
+                let Some((input, schema)) = self.input_stage(op) else {
+                    return;
+                };
+
+                let keys: Vec<i64> = (0..schema.len() as i64).collect();
+                let region = self.column_region(&schema, &[], op.location());
+                let row = self.row_type(&schema, symbols);
+                let grouped = target.append_operation(
+                    yuzu_mlir::ods::yzr::aggregate(
+                        self.context,
+                        row,
+                        input,
+                        region,
+                        DenseI64ArrayAttribute::new(self.context, &keys).into(),
+                        op.location(),
+                    )
+                    .into(),
+                );
+
+                self.record_stage(op, grouped.first_result(), schema);
+            }
+            Some(YzlOperationRef::Drop(stage)) => {
+                let Some((input, schema)) = self.input_stage(op) else {
+                    return;
+                };
+
+                let Some(kept) = self.kept_columns(op, &stage.columns().strings(), &schema) else {
+                    return;
+                };
+
+                let region = self.column_region(&schema, &kept, op.location());
+                let produced: Schema<'c> = kept.iter().map(|&index| schema[index]).collect();
+                let row = self.row_type(&produced, symbols);
+                let projected = target.append_operation(
+                    yuzu_mlir::ods::yzr::project(self.context, row, input, region, op.location())
+                        .into(),
+                );
+
+                self.record_stage(op, projected.first_result(), produced);
+            }
+            Some(YzlOperationRef::Set(stage)) => {
+                let Some((input, mut schema)) = self.input_stage(op) else {
+                    return;
+                };
+
+                // The body computes replacements, not a new row: every column
+                // it does not name carries through in place.
+                let columns = crate::infer_types::indices(stage.set_cols());
+                let (region, yielded) =
+                    self.lower_region(stage.body(), &schema, op.location(), Yielded::Row(&columns));
+
+                for (column, ty) in schema.iter_mut().zip(&yielded) {
+                    column.1 = *ty;
+                }
+
+                let row = self.row_type(&schema, symbols);
+                let projected = target.append_operation(
+                    yuzu_mlir::ods::yzr::project(self.context, row, input, region, op.location())
+                        .into(),
+                );
+
+                self.record_stage(op, projected.first_result(), schema);
+            }
             Some(
                 YzlOperationRef::Rename(_)
-                | YzlOperationRef::Alias(_)
-                | YzlOperationRef::Distinct(_)
-                | YzlOperationRef::Drop(_)
-                | YzlOperationRef::Set(_)
                 | YzlOperationRef::Let(_)
                 | YzlOperationRef::Fn(_)
                 | YzlOperationRef::Trait(_)
@@ -303,6 +388,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
         source: melior::ir::RegionRef<'c, '_>,
         schema: &Schema<'c>,
         location: Location<'c>,
+        yielded: Yielded<'_>,
     ) -> (Region<'c>, Vec<Type<'c>>) {
         let region = Region::new();
         let arguments: Vec<(Type<'c>, Location<'c>)> = schema
@@ -311,17 +397,78 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
             .collect();
         let body = region.append_block(Block::new(&arguments));
 
-        let Some(block) = source.first_block() else {
-            return (region, Vec::new());
-        };
-
-        let mut values: HashMap<usize, Value<'c, '_>> = HashMap::new();
-        let mut yielded = Vec::new();
-        for op in block.operations() {
-            self.lower_expression(op, body, &mut values, &mut yielded);
+        let mut produced = Vec::new();
+        if let Some(block) = source.first_block() {
+            let mut values: HashMap<usize, Value<'c, '_>> = HashMap::new();
+            for op in block.operations() {
+                self.lower_expression(op, body, &mut values, &mut produced);
+            }
         }
 
-        (region, yielded)
+        let row = match yielded {
+            Yielded::Body => produced,
+            Yielded::Row(columns) => Self::substituted_row(body, schema.len(), columns, &produced),
+        };
+
+        let types = row.iter().map(|value| value.r#type()).collect();
+        body.append_operation(yuzu_mlir::ods::yzr::r#yield(self.context, &row, location).into());
+
+        (region, types)
+    }
+
+    /// The whole row, with each replaced column taking the value the body
+    /// computed for it — what `set` means, against a yzr that only projects.
+    fn substituted_row<'b>(
+        body: BlockRef<'c, 'b>,
+        width: usize,
+        columns: &[usize],
+        produced: &[Value<'c, 'b>],
+    ) -> Vec<Value<'c, 'b>> {
+        (0..width)
+            .map(|index| {
+                columns
+                    .iter()
+                    .position(|&column| column == index)
+                    .and_then(|slot| produced.get(slot).copied())
+                    .unwrap_or_else(|| {
+                        body.argument(index)
+                            .expect("the column is in the row")
+                            .into()
+                    })
+            })
+            .collect()
+    }
+
+    /// A region yielding the row's own columns, in the order given — what the
+    /// stages that only move names become, since yzr projects rows and has no
+    /// op for a change of name alone.
+    fn column_region(
+        &self,
+        schema: &Schema<'c>,
+        columns: &[usize],
+        location: Location<'c>,
+    ) -> Region<'c> {
+        let region = Region::new();
+        let arguments: Vec<(Type<'c>, Location<'c>)> = schema
+            .iter()
+            .map(|(_, column)| (*column, location))
+            .collect();
+        let body = region.append_block(Block::new(&arguments));
+
+        let yielded: Vec<Value<'c, '_>> = columns
+            .iter()
+            .map(|&index| {
+                body.argument(index)
+                    .expect("the column is in the row")
+                    .into()
+            })
+            .collect();
+
+        body.append_operation(
+            yuzu_mlir::ods::yzr::r#yield(self.context, &yielded, location).into(),
+        );
+
+        region
     }
 
     /// An expression op, rebuilt against the values its operands became.
@@ -330,7 +477,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
         op: OperationRef<'c, '_>,
         body: BlockRef<'c, 'b>,
         values: &mut HashMap<usize, Value<'c, 'b>>,
-        yielded: &mut Vec<Type<'c>>,
+        produced: &mut Vec<Value<'c, 'b>>,
     ) {
         match YzlOperationRef::of(&op) {
             Some(YzlOperationRef::Name(name)) => {
@@ -347,11 +494,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                 values.insert(value_id(op.first_result()), column.into());
             }
             Some(YzlOperationRef::Yield(_)) => {
-                let operands = self.mapped_operands(op, values);
-                yielded.extend(operands.iter().map(|value| value.r#type()));
-                body.append_operation(
-                    yuzu_mlir::ods::yzr::r#yield(self.context, &operands, op.location()).into(),
-                );
+                produced.extend(self.mapped_operands(op, values));
             }
             Some(YzlOperationRef::Call(call)) => {
                 let callee = call.callee().value().to_string();
@@ -649,6 +792,39 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
             .value()
     }
 
+    /// The columns that survive a `drop`, in order. Resolution removes the
+    /// first column each name matches, so dropping one name twice drops two
+    /// columns — the lowering has to agree with it exactly.
+    fn kept_columns(
+        &self,
+        op: OperationRef<'c, '_>,
+        columns: &[&str],
+        schema: &Schema<'c>,
+    ) -> Option<Vec<usize>> {
+        let mut dropped: Vec<usize> = Vec::new();
+        for column in columns {
+            let found = schema
+                .iter()
+                .enumerate()
+                .find(|(index, (name, _))| name == column && !dropped.contains(index))
+                .map(|(index, _)| index);
+
+            match found {
+                Some(index) => dropped.push(index),
+                None => {
+                    self.error(op, format!("`{column}` is not in the row"));
+                    return None;
+                }
+            }
+        }
+
+        Some(
+            (0..schema.len())
+                .filter(|index| !dropped.contains(index))
+                .collect(),
+        )
+    }
+
     fn input_stage(&mut self, op: OperationRef<'c, '_>) -> Option<(Value<'c, 'a>, Schema<'c>)> {
         let input = op.try_first_operand()?;
         self.stages.get(&value_id(input)).cloned()
@@ -855,6 +1031,115 @@ from t
         );
     }
 
+    /// `alias` only qualifies names, and resolution has already used them
+    /// to choose columns: nothing is left for yzr to represent.
+    #[test]
+    fn alias_leaves_no_trace() {
+        check_lowered(
+            r#"
+struct Row { a: int64, b: int64 }
+table t = Row
+
+from t
+|> as r
+|> where r.a > 1
+"#,
+            expect![[r#"
+                module {
+                  yz.struct @Row ["a", "b"] : [!yz.int64, !yz.int64]
+                  %0 = yzr.table @t : !yz.struct<@Row>
+                  %1 = yzr.filter %0 : !yz.struct<@Row> {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.int64):
+                    %2 = yz.constant_int 1
+                    %3 = yz.cmp "gt", %arg0, %2 : !yz.int64, !yz.int64 -> !yz.bool
+                    yzr.yield %3 : !yz.bool
+                  }
+                  yzr.output %1 : !yz.struct<@Row>
+                }
+            "#]],
+        );
+    }
+
+    /// yzr has no distinct: it is a group keyed on every column, measuring
+    /// nothing.
+    #[test]
+    fn distinct_groups_on_every_column() {
+        check_lowered(
+            r#"
+struct Row { a: int64, b: str }
+table t = Row
+
+from t
+|> distinct
+"#,
+            expect![[r#"
+                module {
+                  yz.struct @Row ["a", "b"] : [!yz.int64, !yz.str]
+                  %0 = yzr.table @t : !yz.struct<@Row>
+                  %1 = yzr.aggregate %0 keys [0, 1] {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.str):
+                    yzr.yield
+                  } : !yz.struct<@Row> -> !yz.struct<@Row>
+                  yzr.output %1 : !yz.struct<@Row>
+                }
+            "#]],
+        );
+    }
+
+    /// `drop` names what leaves; the projection yields what stays.
+    #[test]
+    fn drop_projects_the_columns_that_stay() {
+        check_lowered(
+            r#"
+struct Row { a: int64, b: str, c: int64 }
+table t = Row
+
+from t
+|> drop b
+"#,
+            expect![[r#"
+                module {
+                  yz.struct @Row ["a", "b", "c"] : [!yz.int64, !yz.str, !yz.int64]
+                  %0 = yzr.table @t : !yz.struct<@Row>
+                  yz.struct @row ["a", "c"] : [!yz.int64, !yz.int64]
+                  %1 = yzr.project %0 {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.str, %arg2: !yz.int64):
+                    yzr.yield %arg0, %arg2 : !yz.int64, !yz.int64
+                  } : !yz.struct<@Row> -> !yz.struct<@row>
+                  yzr.output %1 : !yz.struct<@row>
+                }
+            "#]],
+        );
+    }
+
+    /// `set` replaces columns in place, so the projection has to yield the
+    /// columns it did not name as well.
+    #[test]
+    fn set_yields_the_untouched_columns_too() {
+        check_lowered(
+            r#"
+struct Row { a: int64, b: int64, c: int64 }
+table t = Row
+
+from t
+|> set b = a + 1
+"#,
+            expect![[r#"
+                module {
+                  yz.struct @Row ["a", "b", "c"] : [!yz.int64, !yz.int64, !yz.int64]
+                  %0 = yzr.table @t : !yz.struct<@Row>
+                  %1 = yzr.project %0 {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.int64, %arg2: !yz.int64):
+                    %2 = yz.constant_int 1
+                    %3 = yz.add %arg0, %2 : !yz.int64, !yz.int64 -> !yz.int64
+                    yzr.yield %arg0, %3, %arg2 : !yz.int64, !yz.int64, !yz.int64
+                  } : !yz.struct<@Row> -> !yz.struct<@Row>
+                  yzr.output %1 : !yz.struct<@Row>
+                }
+            "#]],
+        );
+    }
+
     /// A stage the lowering does not carry yet is an error, not a silent gap.
     #[test]
     fn reports_a_stage_that_is_not_lowered() {
@@ -864,10 +1149,10 @@ struct Row { a: int64 }
 table t = Row
 
 from t
-|> distinct
+|> rename a as b
 "#,
             expect![[r#"
-                error: `yzl.distinct` is not lowered yet
+                error: `yzl.rename` is not lowered yet
                  --> test.yz:5:1
                   |
                 5 | from t
