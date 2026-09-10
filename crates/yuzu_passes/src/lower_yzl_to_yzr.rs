@@ -199,6 +199,57 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
 
                 self.record_stage(op, grouped.first_result(), produced);
             }
+            Some(YzlOperationRef::Join(stage)) => {
+                let Some((lhs, mut schema)) = self.input_stage(op) else {
+                    return;
+                };
+
+                // The one stage that has to conjure an input: yzl names the
+                // right side, yzr joins two relations.
+                let relation = stage.rhs().value();
+                let Some(right) = self.relation_schema(relation, source) else {
+                    self.error(op, format!("`{relation}` has no row shape to scan"));
+                    return;
+                };
+
+                let right_row = self.row_type(&right, symbols);
+                let scanned = target.append_operation(
+                    yuzu_mlir::ods::yzr::table(
+                        self.context,
+                        right_row,
+                        FlatSymbolRefAttribute::new(self.context, relation),
+                        op.location(),
+                    )
+                    .into(),
+                );
+
+                // Both sides carry through, and the `on` region's names were
+                // resolved against exactly this concatenation — a qualifier
+                // only ever chose a column, so it is spent by now.
+                let left_width = schema.len();
+                schema.extend(right.iter().copied());
+
+                let region = match stage.using_columns() {
+                    Some(columns) => self.join_keys(op, &columns.strings(), left_width, &schema),
+                    None => self.lower_region(stage.on(), &schema, op.location()).0,
+                };
+
+                let row = self.row_type(&schema, symbols);
+                let joined = target.append_operation(
+                    yuzu_mlir::ods::yzr::join(
+                        self.context,
+                        row,
+                        lhs,
+                        scanned.first_result(),
+                        region,
+                        stage.kind(),
+                        op.location(),
+                    )
+                    .into(),
+                );
+
+                self.record_stage(op, joined.first_result(), schema);
+            }
             Some(YzlOperationRef::Limit(stage)) => {
                 let Some((input, schema)) = self.input_stage(op) else {
                     return;
@@ -221,8 +272,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                 );
             }
             Some(
-                YzlOperationRef::Join(_)
-                | YzlOperationRef::Rename(_)
+                YzlOperationRef::Rename(_)
                 | YzlOperationRef::Alias(_)
                 | YzlOperationRef::Distinct(_)
                 | YzlOperationRef::Drop(_)
@@ -459,6 +509,78 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
             .unwrap_or_else(|| op.first_result().r#type())
     }
 
+    /// `using [a, b]` is sugar: yzr has only an on-region, so the columns
+    /// become the equality the join was asking for.
+    fn join_keys(
+        &mut self,
+        op: OperationRef<'c, '_>,
+        columns: &[&str],
+        left_width: usize,
+        schema: &Schema<'c>,
+    ) -> Region<'c> {
+        let location = op.location();
+        let region = Region::new();
+        let arguments: Vec<(Type<'c>, Location<'c>)> = schema
+            .iter()
+            .map(|(_, column)| (*column, location))
+            .collect();
+        let body = region.append_block(Block::new(&arguments));
+
+        let mut condition: Option<Value<'c, '_>> = None;
+        for column in columns {
+            let left = schema[..left_width]
+                .iter()
+                .position(|(name, _)| name == column);
+            let right = schema[left_width..]
+                .iter()
+                .position(|(name, _)| name == column)
+                .map(|index| index + left_width);
+            let (Some(left), Some(right)) = (left, right) else {
+                self.error(op, format!("`{column}` is not present in both relations"));
+                continue;
+            };
+
+            let equal = body.append_operation(
+                yuzu_mlir::ods::yz::cmp(
+                    self.context,
+                    yuzu_mlir::types::boolean(self.context),
+                    body.argument(left)
+                        .expect("the left column is in range")
+                        .into(),
+                    body.argument(right)
+                        .expect("the right column is in range")
+                        .into(),
+                    StringAttribute::new(self.context, "eq"),
+                    location,
+                )
+                .into(),
+            );
+
+            condition = Some(match condition {
+                Some(previous) => body
+                    .append_operation(
+                        yuzu_mlir::ods::yz::and(
+                            self.context,
+                            yuzu_mlir::types::boolean(self.context),
+                            previous,
+                            equal.first_result(),
+                            location,
+                        )
+                        .into(),
+                    )
+                    .first_result(),
+                None => equal.first_result(),
+            });
+        }
+
+        let yielded: Vec<Value<'c, '_>> = condition.into_iter().collect();
+        body.append_operation(
+            yuzu_mlir::ods::yzr::r#yield(self.context, &yielded, location).into(),
+        );
+
+        region
+    }
+
     /// The columns a stage names, paired with what its region yielded.
     fn named_row(&self, names: Vec<&'c str>, yielded: Vec<Type<'c>>) -> Schema<'c> {
         names.into_iter().zip(yielded).collect()
@@ -662,6 +784,72 @@ from t
                     yzr.yield %2, %3 : !yz.int64, !yz.int64
                   } : !yz.struct<@Row> -> !yz.struct<@row>
                   yzr.output %1 : !yz.struct<@row>
+                }
+            "#]],
+        );
+    }
+
+    /// The one stage with two inputs: the named right side becomes a scan,
+    /// and the `on` region sees both rows' columns as one block.
+    #[test]
+    fn join_materialises_its_right_side() {
+        check_lowered(
+            r#"
+struct Row { id: int64, dept_id: int64 }
+table t = Row
+struct Dept { key: int64, name: str }
+table depts = Dept
+
+from t
+|> left join depts as d on dept_id == d.key
+"#,
+            expect![[r#"
+                module {
+                  yz.struct @Row ["id", "dept_id"] : [!yz.int64, !yz.int64]
+                  yz.struct @Dept ["key", "name"] : [!yz.int64, !yz.str]
+                  %0 = yzr.table @t : !yz.struct<@Row>
+                  %1 = yzr.table @depts : !yz.struct<@Dept>
+                  yz.struct @row ["id", "dept_id", "key", "name"] : [!yz.int64, !yz.int64, !yz.int64, !yz.str]
+                  %2 = yzr.join "left", %0, %1 {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.int64, %arg2: !yz.int64, %arg3: !yz.str):
+                    %3 = yz.cmp "eq", %arg1, %arg2 : !yz.int64, !yz.int64 -> !yz.bool
+                    yzr.yield %3 : !yz.bool
+                  } : !yz.struct<@Row>, !yz.struct<@Dept> -> !yz.struct<@row>
+                  yzr.output %2 : !yz.struct<@row>
+                }
+            "#]],
+        );
+    }
+
+    /// `using` is sugar for the equality it asks for; both sides' columns
+    /// carry through, as they do for `on`.
+    #[test]
+    fn using_becomes_the_equality_it_means() {
+        check_lowered(
+            r#"
+struct Row { id: int64, tag: str, part: int64 }
+table t = Row
+struct Other { id: int64, part: int64, extra: int64 }
+table u = Other
+
+from t
+|> inner join u using (id, part)
+"#,
+            expect![[r#"
+                module {
+                  yz.struct @Row ["id", "tag", "part"] : [!yz.int64, !yz.str, !yz.int64]
+                  yz.struct @Other ["id", "part", "extra"] : [!yz.int64, !yz.int64, !yz.int64]
+                  %0 = yzr.table @t : !yz.struct<@Row>
+                  %1 = yzr.table @u : !yz.struct<@Other>
+                  yz.struct @row ["id", "tag", "part", "id", "part", "extra"] : [!yz.int64, !yz.str, !yz.int64, !yz.int64, !yz.int64, !yz.int64]
+                  %2 = yzr.join "inner", %0, %1 {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.str, %arg2: !yz.int64, %arg3: !yz.int64, %arg4: !yz.int64, %arg5: !yz.int64):
+                    %3 = yz.cmp "eq", %arg0, %arg3 : !yz.int64, !yz.int64 -> !yz.bool
+                    %4 = yz.cmp "eq", %arg2, %arg4 : !yz.int64, !yz.int64 -> !yz.bool
+                    %5 = yz.and %3, %4 : !yz.bool, !yz.bool -> !yz.bool
+                    yzr.yield %5 : !yz.bool
+                  } : !yz.struct<@Row>, !yz.struct<@Other> -> !yz.struct<@row>
+                  yzr.output %2 : !yz.struct<@row>
                 }
             "#]],
         );
