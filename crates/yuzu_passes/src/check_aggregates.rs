@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 
 use melior::ir::operation::{OperationLike, OperationRef, OperationResult};
 use melior::ir::{BlockRef, Location, Module, RegionLike};
-use yuzu_mlir::ext::{BlockExt, OperationExt, RegionExt};
+use yuzu_mlir::ext::{BlockExt, RegionExt};
 use yuzu_mlir::ops::yzl::YzlOperationRef;
 use yuzu_mlir::value_id;
 use yuzu_types::{BuiltinFunc, FunctionRegistry};

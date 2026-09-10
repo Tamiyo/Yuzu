@@ -26,9 +26,7 @@ struct Column<'c> {
 impl Column<'_> {
     fn matches(&self, reference: &str) -> bool {
         match reference.split_once('.') {
-            Some((qualifier, name)) => {
-                self.qualifier.as_deref() == Some(qualifier) && self.name == name
-            }
+            Some((qualifier, name)) => self.qualifier == Some(qualifier) && self.name == name,
             None => self.name == reference,
         }
     }
@@ -246,7 +244,7 @@ impl<'c> Resolver<'c, '_> {
                 let schema = self.input_schema(op);
                 let mut columns = Vec::new();
                 for name in names {
-                    match schema.iter().position(|column| column.matches(&name)) {
+                    match schema.iter().position(|column| column.matches(name)) {
                         Some(index) => columns.push(index),
                         None => self.error(op, format!("unknown column `{name}`")),
                     }
@@ -260,7 +258,7 @@ impl<'c> Resolver<'c, '_> {
                 let columns = stage.columns().strings();
                 let mut schema = self.input_schema(op);
                 for name in columns {
-                    match schema.iter().position(|column| column.matches(&name)) {
+                    match schema.iter().position(|column| column.matches(name)) {
                         Some(index) => {
                             schema.remove(index);
                         }
@@ -289,7 +287,7 @@ impl<'c> Resolver<'c, '_> {
                 let mut keys = Vec::new();
                 let mut schema = Schema::new();
                 for name in group_by {
-                    match self.find_column(op, &input, &name) {
+                    match self.find_column(op, &input, name) {
                         Some(index) => {
                             keys.push(index);
                             schema.push(input[index].clone());
@@ -330,7 +328,7 @@ impl<'c> Resolver<'c, '_> {
 
                 for name in using_columns {
                     for side in [&schema, &rhs] {
-                        if !side.iter().any(|column| column.matches(&name)) {
+                        if !side.iter().any(|column| column.matches(name)) {
                             self.error(op, format!("unknown column `{name}`"));
                         }
                     }

@@ -126,7 +126,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                     .into(),
                 );
 
-                self.record_stage(op, first_result(scanned), schema);
+                self.record_stage(op, scanned.first_result(), schema);
             }
             Some(YzlOperationRef::Where(stage)) => {
                 let Some((input, schema)) = self.input_stage(op) else {
@@ -138,7 +138,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                     yuzu_mlir::ods::yzr::filter(self.context, input, region, op.location()).into(),
                 );
 
-                self.record_stage(op, first_result(filtered), schema);
+                self.record_stage(op, filtered.first_result(), schema);
             }
             Some(YzlOperationRef::Select(stage)) => {
                 let Some((input, schema)) = self.input_stage(op) else {
@@ -153,7 +153,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                         .into(),
                 );
 
-                self.record_stage(op, first_result(projected), produced);
+                self.record_stage(op, projected.first_result(), produced);
             }
             Some(YzlOperationRef::Extend(stage)) => {
                 let Some((input, mut schema)) = self.input_stage(op) else {
@@ -168,7 +168,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                         .into(),
                 );
 
-                self.record_stage(op, first_result(extended), schema);
+                self.record_stage(op, extended.first_result(), schema);
             }
             Some(YzlOperationRef::Aggregate(stage)) => {
                 let Some((input, schema)) = self.input_stage(op) else {
@@ -197,7 +197,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                     .into(),
                 );
 
-                self.record_stage(op, first_result(grouped), produced);
+                self.record_stage(op, grouped.first_result(), produced);
             }
             Some(YzlOperationRef::Limit(stage)) => {
                 let Some((input, schema)) = self.input_stage(op) else {
@@ -209,7 +209,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                         .into(),
                 );
 
-                self.record_stage(op, first_result(limited), schema);
+                self.record_stage(op, limited.first_result(), schema);
             }
             Some(YzlOperationRef::Output(_)) => {
                 let Some((query, _)) = self.input_stage(op) else {
@@ -272,7 +272,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                     return;
                 };
 
-                values.insert(value_id(result(op)), column.into());
+                values.insert(value_id(op.first_result()), column.into());
             }
             Some(YzlOperationRef::Yield(_)) => {
                 let operands = self.mapped_operands(op, values);
@@ -312,7 +312,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                 };
 
                 let appended = body.append_operation(lowered);
-                values.insert(value_id(result(op)), first_result(appended));
+                values.insert(value_id(op.first_result()), appended.first_result());
             }
             // Everything else is a `yz` op, structurally unchanged: the
             // operands it was given, and the type inference stamped on it.
@@ -320,7 +320,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                 let operands = self.mapped_operands(op, values);
                 let rebuilt = self.rebuild(op, &operands, body);
                 if let Some(rebuilt) = rebuilt {
-                    values.insert(value_id(result(op)), rebuilt);
+                    values.insert(value_id(op.first_result()), rebuilt);
                 }
             }
             Some(_) => self.error(op, format!("`{}` is not lowered yet", op_name(op))),
@@ -362,7 +362,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
         .build()
         .expect("a stamped yz op rebuilds");
 
-        Some(first_result(body.append_operation(rebuilt)))
+        Some(body.append_operation(rebuilt).first_result())
     }
 
     fn mapped_operands<'b>(
@@ -410,7 +410,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
             .ok()
             .and_then(|attribute| TypeAttribute::try_from(attribute).ok())
             .map(|attribute| attribute.value())
-            .unwrap_or_else(|| result(op).r#type())
+            .unwrap_or_else(|| op.first_result().r#type())
     }
 
     /// The columns a stage names, paired with what its region yielded.
@@ -445,8 +445,8 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
             None => self.declare_struct("row", schema, symbols),
         };
 
-        self.shapes.insert(schema.clone(), name.clone());
-        StructType::new(self.context, &name).into()
+        self.shapes.insert(schema.clone(), name);
+        StructType::new(self.context, name).into()
     }
 
     /// Declares a struct in the lowered module, returning the name it got —
@@ -520,14 +520,6 @@ fn field_types<'c>(types: melior::ir::attribute::ArrayAttribute<'c>) -> Vec<Type
         .filter_map(|element| TypeAttribute::try_from(element).ok())
         .map(|attribute| attribute.value())
         .collect()
-}
-
-fn result<'c, 'a>(op: OperationRef<'c, 'a>) -> Value<'c, 'a> {
-    op.result(0).expect("the op has a result").into()
-}
-
-fn first_result<'c, 'a>(op: OperationRef<'c, 'a>) -> Value<'c, 'a> {
-    op.result(0).expect("the built op has a result").into()
 }
 
 #[cfg(test)]

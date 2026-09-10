@@ -5,7 +5,8 @@ use melior::ir::{
 use yuzu_ast::{BinOp, UnaryOp, ast};
 use yuzu_mlir::ods::{yz, yzl};
 
-use crate::lower_ast_to_yzl::{AstToYzl, Locals, first_result, ident_text};
+use crate::lower_ast_to_yzl::{AstToYzl, Locals, ident_text};
+use yuzu_mlir::ext::OperationExt;
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
     pub(super) fn convert_expr<'a>(
@@ -97,7 +98,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     }
                 };
 
-                first_result(block.append_operation(result))
+                block.append_operation(result).first_result()
             }
             ast::Expr::CallExpr(call) => {
                 let callee = match call.callee() {
@@ -140,8 +141,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .iter()
                     .map(|arg| self.convert_expr(block, locals, arg))
                     .collect();
-                first_result(
-                    block.append_operation(
+                block
+                    .append_operation(
                         yzl::call(
                             self.context,
                             self.types.var,
@@ -150,8 +151,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                             loc,
                         )
                         .into(),
-                    ),
-                )
+                    )
+                    .first_result()
             }
             ast::Expr::ListExpr(list) => {
                 let elements: Vec<ast::Expr> = list.elements().collect();
@@ -159,11 +160,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .iter()
                     .map(|element| self.convert_expr(block, locals, element))
                     .collect();
-                first_result(
-                    block.append_operation(
-                        yzl::list(self.context, self.types.var, &values, loc).into(),
-                    ),
-                )
+                block
+                    .append_operation(yzl::list(self.context, self.types.var, &values, loc).into())
+                    .first_result()
             }
             ast::Expr::ParenExpr(paren) => match paren.expr() {
                 Some(inner) => self.convert_expr(block, locals, &inner),
@@ -260,7 +259,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             Some(BinOp::ShiftRight) => call("shift_right"),
             Some(BinOp::In) => call("in"),
             Some(BinOp::NotIn) => {
-                let contains = first_result(block.append_operation(call("in")));
+                let contains = block.append_operation(call("in")).first_result();
                 yz::not(context, self.types.var, contains, loc).into()
             }
             None => {
@@ -273,7 +272,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             }
         };
 
-        first_result(block.append_operation(operation))
+        block.append_operation(operation).first_result()
     }
 
     fn convert_literal<'a>(
@@ -325,7 +324,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .into(),
         };
 
-        first_result(block.append_operation(operation))
+        block.append_operation(operation).first_result()
     }
 
     fn name_ref<'a>(
@@ -334,8 +333,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         name: &str,
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
-        first_result(
-            block.append_operation(
+        block
+            .append_operation(
                 yzl::_name(
                     self.context,
                     self.types.var,
@@ -343,8 +342,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     loc,
                 )
                 .into(),
-            ),
-        )
+            )
+            .first_result()
     }
 }
 

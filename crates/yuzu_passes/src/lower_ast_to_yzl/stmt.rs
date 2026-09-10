@@ -110,11 +110,13 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .filter_map(|param| ident_text(param.name())),
             )
             .collect();
+
         let signature = {
             let params: Vec<Type> = decl
                 .params()
                 .map(|param| self.annotation_type(param.ty(), &generics))
                 .collect();
+
             let result = self.annotation_type(decl.result(), &generics);
             melior::ir::r#type::FunctionType::new(self.context, &params, &[result]).into()
         };
@@ -133,6 +135,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .params(ArrayAttribute::new(self.context, &params))
             .signature(TypeAttribute::new(signature))
             .body(region);
+
         if decl.is_agg() {
             builder = builder.agg(Attribute::unit(self.context));
         }

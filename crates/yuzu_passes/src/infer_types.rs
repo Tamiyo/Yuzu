@@ -219,7 +219,7 @@ impl<'c> TypeInferrer<'c> {
     fn infer_op(&mut self, op: OperationRef<'c, '_>, columns: &Row<'c>, params: &[Type<'c>]) {
         match YzlOperationRef::of(&op) {
             Some(YzlOperationRef::Name(name)) => {
-                let term = self.term_of(result(op));
+                let term = self.term_of(op.first_result());
                 if let Some(index) = name.col().map(|col| col.value() as usize) {
                     if let Some(&column) = columns.get(index) {
                         self.unify(op, term, column);
@@ -249,7 +249,7 @@ impl<'c> TypeInferrer<'c> {
                             }
                         }
 
-                        let term = self.term_of(result(op));
+                        let term = self.term_of(op.first_result());
                         let expected = self.substitute(signature.result, &bindings);
                         self.unify(op, term, expected);
                     }
@@ -347,31 +347,31 @@ impl<'c> TypeInferrer<'c> {
                 | YzOperationRef::Rem(_),
             ) => {
                 let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
-                let out = self.term_of(result(op));
+                let out = self.term_of(op.first_result());
                 self.unify(op, lhs, rhs);
                 self.unify(op, lhs, out);
             }
             Some(YzOperationRef::Neg(_)) => {
                 let value = self.operand_term(op, 0);
-                let out = self.term_of(result(op));
+                let out = self.term_of(op.first_result());
                 self.unify(op, value, out);
             }
             Some(YzOperationRef::Cmp(_)) => {
                 let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
-                let out = self.term_of(result(op));
+                let out = self.term_of(op.first_result());
                 self.unify(op, lhs, rhs);
                 self.unify(op, out, Term::Concrete(self.types.boolean));
             }
             Some(YzOperationRef::And(_) | YzOperationRef::Or(_)) => {
                 let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
-                let out = self.term_of(result(op));
+                let out = self.term_of(op.first_result());
                 self.unify(op, lhs, Term::Concrete(self.types.boolean));
                 self.unify(op, rhs, Term::Concrete(self.types.boolean));
                 self.unify(op, out, Term::Concrete(self.types.boolean));
             }
             Some(YzOperationRef::Not(_)) => {
                 let value = self.operand_term(op, 0);
-                let out = self.term_of(result(op));
+                let out = self.term_of(op.first_result());
                 self.unify(op, value, Term::Concrete(self.types.boolean));
                 self.unify(op, out, Term::Concrete(self.types.boolean));
             }
@@ -471,7 +471,7 @@ impl<'c> TypeInferrer<'c> {
     /// The aggregate builtins are polymorphic; these are the old
     /// `resolve_agg_ty` rules over terms.
     fn resolve_builtin_ty(&mut self, op: OperationRef<'c, '_>, callee: &str) {
-        let out = self.term_of(result(op));
+        let out = self.term_of(op.first_result());
         match callee {
             "count" | "count_distinct" => {
                 self.unify(op, out, Term::Concrete(self.types.int64));
@@ -594,10 +594,6 @@ impl<'c> TypeInferrer<'c> {
     fn error(&mut self, op: OperationRef<'c, '_>, message: String) {
         yuzu_mlir::diagnostics::emit_error(op.location(), &message);
     }
-}
-
-fn result<'c, 'a>(op: OperationRef<'c, 'a>) -> Value<'c, 'a> {
-    op.result(0).expect("the op has a result").into()
 }
 
 fn last_region_op<'c, 'a>(op: OperationRef<'c, 'a>) -> Option<OperationRef<'c, 'a>> {

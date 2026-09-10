@@ -13,6 +13,7 @@ use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
 use yuzu_diagnostics::source_map::SourceId;
 use yuzu_lexer::lexer::{Lexer, Token};
 use yuzu_mlir::ext::BlockExt;
+use yuzu_mlir::ext::OperationExt;
 use yuzu_mlir::ods::yzl;
 
 /// Parses the source and converts it to a yzl module. Everything the
@@ -102,7 +103,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         ty: Type<'c>,
     ) -> Value<'c, 'a> {
         let loc = self.location_at(range.start().into());
-        first_result(block.append_operation(yzl::missing(self.context, ty, loc).into()))
+        block
+            .append_operation(yzl::missing(self.context, ty, loc).into())
+            .first_result()
     }
 
     fn location(&self, node: &impl AstNode) -> Location<'c> {
@@ -144,13 +147,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
 fn ident_text(ident: Option<ast::Ident>) -> Option<String> {
     ident.and_then(|ident| ident.text())
-}
-
-fn first_result<'c, 'a>(operation: melior::ir::operation::OperationRef<'c, 'a>) -> Value<'c, 'a> {
-    operation
-        .result(0)
-        .expect("every converted op has one result")
-        .into()
 }
 
 mod expr;

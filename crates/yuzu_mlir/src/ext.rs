@@ -7,7 +7,7 @@ use melior::ir::attribute::{
 };
 use melior::ir::operation::{OperationLike, OperationMutLike, OperationRef, OperationRefMut};
 use melior::ir::r#type::IntegerType;
-use melior::ir::{Attribute, BlockLike, BlockRef, RegionLike};
+use melior::ir::{Attribute, BlockLike, BlockRef, RegionLike, Value};
 
 /// Element access for array attributes.
 pub trait ArrayAttributeExt<'c> {
@@ -75,6 +75,12 @@ impl<'c: 'a, 'a, T: RegionLike<'c, 'a>> RegionExt<'c, 'a> for T {
 /// Typed reads of the attributes ops carry outside their ODS arguments,
 /// such as the indices the passes stamp.
 pub trait OperationExt<'c: 'a, 'a>: OperationLike<'c, 'a> {
+    /// The op's single result, as a value. Every op the passes build has
+    /// one; a terminator has none and must not be asked.
+    fn first_result(&self) -> Value<'c, 'a> {
+        self.result(0).expect("the operation has a result").into()
+    }
+
     /// A string attribute, by name.
     fn text_attribute(&self, name: &str) -> Option<String> {
         let attribute = self.attribute(name).ok()?;

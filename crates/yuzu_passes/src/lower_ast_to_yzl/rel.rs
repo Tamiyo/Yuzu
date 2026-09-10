@@ -5,7 +5,8 @@ use melior::ir::{
 use yuzu_ast::{AstNode, ast};
 use yuzu_mlir::ods::yzl;
 
-use crate::lower_ast_to_yzl::{AstToYzl, Locals, first_result, ident_text};
+use crate::lower_ast_to_yzl::{AstToYzl, Locals, ident_text};
+use yuzu_mlir::ext::OperationExt;
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
     pub(super) fn convert_rel<'a>(&self, block: BlockRef<'c, 'a>, rel: &ast::Rel) -> Value<'c, 'a> {
@@ -21,8 +22,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     );
                 };
 
-                let value = first_result(
-                    block.append_operation(
+                let value = block
+                    .append_operation(
                         yzl::from(
                             self.context,
                             self.types.query,
@@ -30,11 +31,11 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                             loc,
                         )
                         .into(),
-                    ),
-                );
+                    )
+                    .first_result();
                 match ident_text(from.alias()) {
-                    Some(alias) => first_result(
-                        block.append_operation(
+                    Some(alias) => block
+                        .append_operation(
                             yzl::alias(
                                 self.context,
                                 self.types.query,
@@ -43,8 +44,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                                 loc,
                             )
                             .into(),
-                        ),
-                    ),
+                        )
+                        .first_result(),
                     None => value,
                 }
             }
@@ -63,9 +64,11 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 };
 
                 body.append_operation(yzl::r#yield(self.context, &[predicate], loc).into());
-                first_result(block.append_operation(
-                    yzl::r#where(self.context, self.types.query, input, region, loc).into(),
-                ))
+                block
+                    .append_operation(
+                        yzl::r#where(self.context, self.types.query, input, region, loc).into(),
+                    )
+                    .first_result()
             }
             ast::Rel::SelectExpr(stage) => {
                 let input = self.convert_input(block, stage, "`select`", stage.input());
@@ -74,9 +77,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .map(|item| (item.alias(), item.expr(), item.syntax().text_range()))
                     .collect();
                 let (names, region) = self.convert_items(items, "select item", loc);
-                first_result(block.append_operation(
-                    yzl::select(self.context, self.types.query, input, region, names, loc).into(),
-                ))
+                block
+                    .append_operation(
+                        yzl::select(self.context, self.types.query, input, region, names, loc)
+                            .into(),
+                    )
+                    .first_result()
             }
             ast::Rel::ExtendExpr(stage) => {
                 let input = self.convert_input(block, stage, "`extend`", stage.input());
@@ -85,9 +91,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .map(|item| (item.alias(), item.expr(), item.syntax().text_range()))
                     .collect();
                 let (names, region) = self.convert_items(items, "extend item", loc);
-                first_result(block.append_operation(
-                    yzl::extend(self.context, self.types.query, input, region, names, loc).into(),
-                ))
+                block
+                    .append_operation(
+                        yzl::extend(self.context, self.types.query, input, region, names, loc)
+                            .into(),
+                    )
+                    .first_result()
             }
             ast::Rel::AggregateExpr(stage) => {
                 let input = self.convert_input(block, stage, "`aggregate`", stage.input());
@@ -106,8 +115,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .map(|item| (item.alias(), item.expr(), item.syntax().text_range()))
                     .collect();
                 let (names, region) = self.convert_items(items, "aggregate item", loc);
-                first_result(
-                    block.append_operation(
+                block
+                    .append_operation(
                         yzl::aggregate(
                             self.context,
                             self.types.query,
@@ -118,8 +127,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                             loc,
                         )
                         .into(),
-                    ),
-                )
+                    )
+                    .first_result()
             }
             ast::Rel::LimitExpr(stage) => {
                 let input = self.convert_input(block, stage, "`limit`", stage.input());
@@ -137,8 +146,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     }
                 };
 
-                first_result(
-                    block.append_operation(
+                block
+                    .append_operation(
                         yzl::limit(
                             self.context,
                             self.types.query,
@@ -147,8 +156,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                             loc,
                         )
                         .into(),
-                    ),
-                )
+                    )
+                    .first_result()
             }
             ast::Rel::RenameExpr(stage) => {
                 let input = self.convert_input(block, stage, "`rename`", stage.input());
@@ -165,8 +174,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     to.push(StringAttribute::new(self.context, &new).into());
                 }
 
-                first_result(
-                    block.append_operation(
+                block
+                    .append_operation(
                         yzl::rename(
                             self.context,
                             self.types.query,
@@ -176,8 +185,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                             loc,
                         )
                         .into(),
-                    ),
-                )
+                    )
+                    .first_result()
             }
             ast::Rel::AliasExpr(stage) => {
                 let input = self.convert_input(block, stage, "`alias`", stage.input());
@@ -186,8 +195,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     return input;
                 };
 
-                first_result(
-                    block.append_operation(
+                block
+                    .append_operation(
                         yzl::alias(
                             self.context,
                             self.types.query,
@@ -196,8 +205,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                             loc,
                         )
                         .into(),
-                    ),
-                )
+                    )
+                    .first_result()
             }
             ast::Rel::JoinExpr(stage) => {
                 let lhs = self.convert_input(block, stage, "`join`", stage.input());
@@ -243,7 +252,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     builder = builder.using_columns(ArrayAttribute::new(self.context, &columns));
                 }
 
-                first_result(block.append_operation(builder.build().into()))
+                block
+                    .append_operation(builder.build().into())
+                    .first_result()
             }
             ast::Rel::SetExpr(stage) => {
                 let input = self.convert_input(block, stage, "`set`", stage.input());
@@ -252,15 +263,19 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .map(|item| (item.column(), item.value(), item.syntax().text_range()))
                     .collect();
                 let (names, region) = self.convert_items(items, "set item", loc);
-                first_result(block.append_operation(
-                    yzl::set(self.context, self.types.query, input, region, names, loc).into(),
-                ))
+                block
+                    .append_operation(
+                        yzl::set(self.context, self.types.query, input, region, names, loc).into(),
+                    )
+                    .first_result()
             }
             ast::Rel::DistinctExpr(stage) => {
                 let input = self.convert_input(block, stage, "`distinct`", stage.input());
-                first_result(block.append_operation(
-                    yzl::distinct(self.context, self.types.query, input, loc).into(),
-                ))
+                block
+                    .append_operation(
+                        yzl::distinct(self.context, self.types.query, input, loc).into(),
+                    )
+                    .first_result()
             }
             ast::Rel::DropExpr(stage) => {
                 let input = self.convert_input(block, stage, "`drop`", stage.input());
@@ -269,8 +284,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .filter_map(|column| column.text())
                     .map(|name| StringAttribute::new(self.context, &name).into())
                     .collect();
-                first_result(
-                    block.append_operation(
+                block
+                    .append_operation(
                         yzl::drop(
                             self.context,
                             self.types.query,
@@ -279,8 +294,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                             loc,
                         )
                         .into(),
-                    ),
-                )
+                    )
+                    .first_result()
             }
         }
     }
@@ -307,8 +322,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 };
 
                 let loc = self.location(&ident);
-                first_result(
-                    block.append_operation(
+                block
+                    .append_operation(
                         yzl::from(
                             self.context,
                             self.types.query,
@@ -316,8 +331,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                             loc,
                         )
                         .into(),
-                    ),
-                )
+                    )
+                    .first_result()
             }
             Some(other) => self.missing(
                 block,
