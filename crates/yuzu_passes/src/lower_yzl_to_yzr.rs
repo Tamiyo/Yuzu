@@ -220,7 +220,29 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                     yuzu_mlir::ods::yzr::output(self.context, query, op.location()).into(),
                 );
             }
-            _ => self.error(op, format!("`{}` is not lowered yet", op_name(op))),
+            Some(
+                YzlOperationRef::Join(_)
+                | YzlOperationRef::Rename(_)
+                | YzlOperationRef::Alias(_)
+                | YzlOperationRef::Distinct(_)
+                | YzlOperationRef::Drop(_)
+                | YzlOperationRef::Set(_)
+                | YzlOperationRef::Let(_)
+                | YzlOperationRef::Fn(_)
+                | YzlOperationRef::Trait(_)
+                | YzlOperationRef::Impl(_)
+                | YzlOperationRef::Missing(_),
+            ) => self.error(op, format!("`{}` is not lowered yet", op_name(op))),
+            // Declarations yzr does not need, and the terminators a region
+            // owns rather than the module.
+            Some(
+                YzlOperationRef::Name(_)
+                | YzlOperationRef::Call(_)
+                | YzlOperationRef::List(_)
+                | YzlOperationRef::Yield(_)
+                | YzlOperationRef::Return(_),
+            )
+            | None => {}
         }
     }
 
@@ -323,7 +345,30 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                     values.insert(value_id(op.first_result()), rebuilt);
                 }
             }
-            Some(_) => self.error(op, format!("`{}` is not lowered yet", op_name(op))),
+            Some(
+                YzlOperationRef::Missing(_)
+                | YzlOperationRef::List(_)
+                | YzlOperationRef::From(_)
+                | YzlOperationRef::Where(_)
+                | YzlOperationRef::Select(_)
+                | YzlOperationRef::Extend(_)
+                | YzlOperationRef::Aggregate(_)
+                | YzlOperationRef::Limit(_)
+                | YzlOperationRef::Join(_)
+                | YzlOperationRef::Rename(_)
+                | YzlOperationRef::Alias(_)
+                | YzlOperationRef::Distinct(_)
+                | YzlOperationRef::Drop(_)
+                | YzlOperationRef::Set(_)
+                | YzlOperationRef::Output(_)
+                | YzlOperationRef::Struct(_)
+                | YzlOperationRef::Table(_)
+                | YzlOperationRef::Fn(_)
+                | YzlOperationRef::Trait(_)
+                | YzlOperationRef::Impl(_)
+                | YzlOperationRef::Let(_)
+                | YzlOperationRef::Return(_),
+            ) => self.error(op, format!("`{}` is not lowered yet", op_name(op))),
         }
     }
 
@@ -336,19 +381,20 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
         body: BlockRef<'c, 'b>,
     ) -> Option<Value<'c, 'b>> {
         let name = op.name();
-        let Ok(existing) = op.result(0) else {
-            return None;
-        };
+        let existing = op.try_first_result()?;
 
         let ty = op
             .attribute("ty")
             .ok()
             .and_then(|attribute| TypeAttribute::try_from(attribute).ok())
             .map(|attribute| attribute.value())
-            .unwrap_or_else(|| Value::from(existing).r#type());
+            .unwrap_or_else(|| existing.r#type());
 
         let attributes: Vec<(Identifier<'c>, Attribute<'c>)> = (0..op.attribute_count())
-            .filter_map(|index| op.attribute_at(index).ok())
+            .map(|index| {
+                op.attribute_at(index)
+                    .expect("the attribute index is in range")
+            })
             .filter(|(name, _)| name.as_string_ref().as_str() != Ok("ty"))
             .collect();
 
@@ -482,13 +528,13 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
     }
 
     fn input_stage(&mut self, op: OperationRef<'c, '_>) -> Option<(Value<'c, 'a>, Schema<'c>)> {
-        let input = op.operand(0).ok()?;
+        let input = op.try_first_operand()?;
         self.stages.get(&value_id(input)).cloned()
     }
 
     fn record_stage(&mut self, op: OperationRef<'c, '_>, value: Value<'c, 'a>, schema: Schema<'c>) {
-        if let Ok(result) = op.result(0) {
-            self.stages.insert(value_id(result.into()), (value, schema));
+        if let Some(result) = op.try_first_result() {
+            self.stages.insert(value_id(result), (value, schema));
         }
     }
 

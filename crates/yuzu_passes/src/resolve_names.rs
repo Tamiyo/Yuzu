@@ -10,7 +10,7 @@ use melior::Context;
 use melior::ir::attribute::StringAttribute;
 use melior::ir::operation::{OperationLike, OperationMutLike, OperationRefMut};
 use melior::ir::{BlockRef, Module, RegionLike};
-use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationMutExt, RegionExt};
+use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationExt, OperationMutExt, RegionExt};
 use yuzu_mlir::ops::yzl::YzlOperationRef;
 use yuzu_mlir::value_id;
 use yuzu_types::FunctionRegistry;
@@ -495,7 +495,7 @@ impl<'c> Resolver<'c, '_> {
             .next()
             .and_then(|region| region.first_block())
             .and_then(|block| block.last_operation())
-            .and_then(|last| last.operand(0).ok())
+            .and_then(|last| last.try_first_operand())
             .and_then(|value| self.schemas.get(&value_id(value)).cloned())
             .unwrap_or_default()
     }
@@ -504,8 +504,7 @@ impl<'c> Resolver<'c, '_> {
     where
         'c: 'a,
     {
-        op.operand(0)
-            .ok()
+        op.try_first_operand()
             .and_then(|input| self.schemas.get(&value_id(input)).cloned())
             .unwrap_or_default()
     }
@@ -514,8 +513,8 @@ impl<'c> Resolver<'c, '_> {
     where
         'c: 'a,
     {
-        if let Ok(result) = op.result(0) {
-            self.schemas.insert(value_id(result.into()), schema);
+        if let Some(result) = op.try_first_result() {
+            self.schemas.insert(value_id(result), schema);
         }
     }
 

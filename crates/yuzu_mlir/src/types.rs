@@ -1,35 +1,27 @@
-//! The dialect types, parsed once per context. MLIR types are uniqued inside
-//! a context, so these are handles, not constants — every crate that would
-//! otherwise re-parse "!yz.int64" takes them from here.
+//! The dialects' parameterless types. MLIR uniques types in the context, so
+//! each of these is a lookup that returns the same type every time — hold
+//! one in a field where a hot path wants it, rather than passing a bag of
+//! them around.
 
 use melior::Context;
 use melior::ir::Type;
-use melior::ir::r#type::IntegerType;
 
-pub struct Types<'c> {
-    /// The unification variable: a type inference has not resolved yet.
-    pub var: Type<'c>,
-    /// A relation whose schema resolution has not computed yet.
-    pub query: Type<'c>,
-    pub int64: Type<'c>,
-    pub float64: Type<'c>,
-    pub boolean: Type<'c>,
-    pub str: Type<'c>,
-    /// The builtin i64, which integer attributes are typed with.
-    pub i64: Type<'c>,
-}
-
-impl<'c> Types<'c> {
-    pub fn new(context: &'c Context) -> Self {
-        let parse = |text| Type::parse(context, text).expect("the dialect types parse");
-        Self {
-            var: parse("!yzl.var"),
-            query: parse("!yzl.query"),
-            int64: parse("!yz.int64"),
-            float64: parse("!yz.float64"),
-            boolean: parse("!yz.bool"),
-            str: parse("!yz.str"),
-            i64: IntegerType::new(context, 64).into(),
+macro_rules! singleton {
+    ($name:ident, $get:ident, $doc:literal) => {
+        #[doc = $doc]
+        pub fn $name(context: &Context) -> Type<'_> {
+            unsafe { Type::from_raw(yuzu_mlir_sys::$get(context.to_raw())) }
         }
-    }
+    };
 }
+
+singleton!(int64, yzuInt64TypeGet, "`!yz.int64`");
+singleton!(float64, yzuFloat64TypeGet, "`!yz.float64`");
+singleton!(boolean, yzuBoolTypeGet, "`!yz.bool`");
+singleton!(str, yzuStrTypeGet, "`!yz.str`");
+singleton!(var, yzuVarTypeGet, "`!yzl.var`, the unification variable");
+singleton!(
+    query,
+    yzuQueryTypeGet,
+    "`!yzl.query`, a relation before its schema is known"
+);

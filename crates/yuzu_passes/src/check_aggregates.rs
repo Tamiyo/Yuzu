@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 
 use melior::ir::operation::{OperationLike, OperationRef, OperationResult};
 use melior::ir::{BlockRef, Location, Module, RegionLike};
-use yuzu_mlir::ext::{BlockExt, RegionExt};
+use yuzu_mlir::ext::{BlockExt, OperationExt, RegionExt};
 use yuzu_mlir::ops::yzl::YzlOperationRef;
 use yuzu_mlir::value_id;
 use yuzu_types::{BuiltinFunc, FunctionRegistry};
@@ -136,8 +136,8 @@ impl<'c> Checker<'_, 'c> {
             }
         }
 
-        if let Ok(result) = op.result(0) {
-            let id = value_id(result.into());
+        if let Some(result) = op.try_first_result() {
+            let id = value_id(result);
             let mut calls = nested;
             calls.push(id);
             self.aggregate_calls
@@ -153,8 +153,8 @@ impl<'c> Checker<'_, 'c> {
             return;
         }
 
-        if let Ok(result) = op.result(0) {
-            self.group_values.insert(value_id(result.into()), calls);
+        if let Some(result) = op.try_first_result() {
+            self.group_values.insert(value_id(result), calls);
         }
     }
 
@@ -185,8 +185,7 @@ impl<'c> Checker<'_, 'c> {
             .next()?
             .first_block()?
             .last_operation()?
-            .operand(0)
-            .ok()?;
+            .try_first_operand()?;
 
         Some(OperationResult::try_from(returned).ok()?.owner().location())
     }

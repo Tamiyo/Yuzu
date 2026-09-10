@@ -6,7 +6,9 @@ use yuzu_ast::{BinOp, UnaryOp, ast};
 use yuzu_mlir::ods::{yz, yzl};
 
 use crate::lower_ast_to_yzl::{AstToYzl, Locals, ident_text};
+use melior::ir::r#type::IntegerType;
 use yuzu_mlir::ext::OperationExt;
+use yuzu_mlir::types;
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
     pub(super) fn convert_expr<'a>(
@@ -24,7 +26,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                         block,
                         ident,
                         "identifier expression is missing its name",
-                        self.types.var,
+                        types::var(self.context),
                     );
                 };
 
@@ -44,7 +46,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                             block,
                             access,
                             "field access on an expression is not supported yet",
-                            self.types.var,
+                            types::var(self.context),
                         );
                     }
                     None => None,
@@ -55,7 +57,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                         block,
                         access,
                         "field access is missing its base",
-                        self.types.var,
+                        types::var(self.context),
                     );
                 };
 
@@ -64,7 +66,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                         block,
                         access,
                         "field access is missing its field",
-                        self.types.var,
+                        types::var(self.context),
                     );
                 };
 
@@ -79,21 +81,25 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                             block,
                             unary,
                             "unary expression is missing its operand",
-                            self.types.var,
+                            types::var(self.context),
                         );
                     }
                 };
 
                 let result = match unary.op() {
-                    Some(UnaryOp::Neg) => yz::neg(self.context, self.types.var, value, loc).into(),
-                    Some(UnaryOp::Not) => yz::not(self.context, self.types.var, value, loc).into(),
+                    Some(UnaryOp::Neg) => {
+                        yz::neg(self.context, types::var(self.context), value, loc).into()
+                    }
+                    Some(UnaryOp::Not) => {
+                        yz::not(self.context, types::var(self.context), value, loc).into()
+                    }
                     Some(UnaryOp::Pos) => return value,
                     None => {
                         return self.missing(
                             block,
                             unary,
                             "unary expression is missing its operator",
-                            self.types.var,
+                            types::var(self.context),
                         );
                     }
                 };
@@ -109,7 +115,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                                 block,
                                 call,
                                 "call is missing its callee",
-                                self.types.var,
+                                types::var(self.context),
                             );
                         }
                     },
@@ -119,7 +125,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                             block,
                             call,
                             "calling an expression is not supported yet",
-                            self.types.var,
+                            types::var(self.context),
                         );
                     }
                     None => {
@@ -127,7 +133,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                             block,
                             call,
                             "call is missing its callee",
-                            self.types.var,
+                            types::var(self.context),
                         );
                     }
                 };
@@ -145,7 +151,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .append_operation(
                         yzl::call(
                             self.context,
-                            self.types.var,
+                            types::var(self.context),
                             &operands,
                             FlatSymbolRefAttribute::new(self.context, &callee),
                             loc,
@@ -161,7 +167,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .map(|element| self.convert_expr(block, locals, element))
                     .collect();
                 block
-                    .append_operation(yzl::list(self.context, self.types.var, &values, loc).into())
+                    .append_operation(
+                        yzl::list(self.context, types::var(self.context), &values, loc).into(),
+                    )
                     .first_result()
             }
             ast::Expr::ParenExpr(paren) => match paren.expr() {
@@ -170,16 +178,16 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     block,
                     paren,
                     "parenthesized expression is missing its inner expression",
-                    self.types.var,
+                    types::var(self.context),
                 ),
             },
 
             ast::Expr::Rel(rel) => self.convert_rel(block, rel),
-            unsupported => self.missing(
+            ast::Expr::StructExpr(literal) => self.missing(
                 block,
-                unsupported,
-                "this expression is not supported yet",
-                self.types.var,
+                literal,
+                "struct literals are not supported yet",
+                types::var(self.context),
             ),
         }
     }
@@ -198,7 +206,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     block,
                     binary,
                     "binary expression is missing its left operand",
-                    self.types.var,
+                    types::var(self.context),
                 );
             }
         };
@@ -210,7 +218,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     block,
                     binary,
                     "binary expression is missing its right operand",
-                    self.types.var,
+                    types::var(self.context),
                 );
             }
         };
@@ -219,7 +227,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let cmp = |predicate| {
             yz::cmp(
                 context,
-                self.types.var,
+                types::var(self.context),
                 lhs,
                 rhs,
                 StringAttribute::new(context, predicate),
@@ -233,7 +241,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let call = |callee| {
             yzl::call(
                 context,
-                self.types.var,
+                types::var(self.context),
                 &[lhs, rhs],
                 FlatSymbolRefAttribute::new(context, callee),
                 loc,
@@ -242,12 +250,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         };
 
         let operation = match binary.op() {
-            Some(BinOp::Add) => yz::add(context, self.types.var, lhs, rhs, loc).into(),
-            Some(BinOp::Sub) => yz::sub(context, self.types.var, lhs, rhs, loc).into(),
-            Some(BinOp::Mul) => yz::mul(context, self.types.var, lhs, rhs, loc).into(),
-            Some(BinOp::Div) => yz::div(context, self.types.var, lhs, rhs, loc).into(),
-            Some(BinOp::And) => yz::and(context, self.types.var, lhs, rhs, loc).into(),
-            Some(BinOp::Or) => yz::or(context, self.types.var, lhs, rhs, loc).into(),
+            Some(BinOp::Add) => yz::add(context, types::var(self.context), lhs, rhs, loc).into(),
+            Some(BinOp::Sub) => yz::sub(context, types::var(self.context), lhs, rhs, loc).into(),
+            Some(BinOp::Mul) => yz::mul(context, types::var(self.context), lhs, rhs, loc).into(),
+            Some(BinOp::Div) => yz::div(context, types::var(self.context), lhs, rhs, loc).into(),
+            Some(BinOp::And) => yz::and(context, types::var(self.context), lhs, rhs, loc).into(),
+            Some(BinOp::Or) => yz::or(context, types::var(self.context), lhs, rhs, loc).into(),
             Some(BinOp::Eq) => cmp("eq"),
             Some(BinOp::Neq) => cmp("ne"),
             Some(BinOp::Lt) => cmp("lt"),
@@ -260,14 +268,14 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             Some(BinOp::In) => call("in"),
             Some(BinOp::NotIn) => {
                 let contains = block.append_operation(call("in")).first_result();
-                yz::not(context, self.types.var, contains, loc).into()
+                yz::not(context, types::var(self.context), contains, loc).into()
             }
             None => {
                 return self.missing(
                     block,
                     binary,
                     "binary expression is missing its operator",
-                    self.types.var,
+                    types::var(self.context),
                 );
             }
         };
@@ -284,14 +292,17 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let operation = match literal {
             ast::Literal::IntLiteral(int) => yz::constant_int(
                 self.context,
-                self.types.int64,
-                IntegerAttribute::new(self.types.i64, int.value().unwrap_or_default() as i64),
+                types::int64(self.context),
+                IntegerAttribute::new(
+                    IntegerType::new(self.context, 64).into(),
+                    int.value().unwrap_or_default() as i64,
+                ),
                 loc,
             )
             .into(),
             ast::Literal::FloatLiteral(float) => yz::constant_float(
                 self.context,
-                self.types.float64,
+                types::float64(self.context),
                 FloatAttribute::new(
                     self.context,
                     Type::float64(self.context),
@@ -302,7 +313,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .into(),
             ast::Literal::BoolLiteral(boolean) => yz::constant_bool(
                 self.context,
-                self.types.boolean,
+                types::boolean(self.context),
                 Attribute::parse(
                     self.context,
                     if boolean.value().unwrap_or_default() {
@@ -317,7 +328,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .into(),
             ast::Literal::StringLiteral(string) => yz::constant_str(
                 self.context,
-                self.types.str,
+                types::str(self.context),
                 StringAttribute::new(self.context, &string.value().unwrap_or_default()),
                 loc,
             )
@@ -337,7 +348,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .append_operation(
                 yzl::_name(
                     self.context,
-                    self.types.var,
+                    types::var(self.context),
                     StringAttribute::new(self.context, name),
                     loc,
                 )

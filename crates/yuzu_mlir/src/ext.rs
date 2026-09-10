@@ -81,6 +81,22 @@ pub trait OperationExt<'c: 'a, 'a>: OperationLike<'c, 'a> {
         self.result(0).expect("the operation has a result").into()
     }
 
+    /// The op's single result, when it has one.
+    ///
+    /// Ask the count rather than attempting `result(0)` and discarding the
+    /// error: that error reports a real contract violation and carries the
+    /// printed operation, so using it to mean "no result" is both a misuse
+    /// and O(enclosing scope) per op.
+    fn try_first_result(&self) -> Option<Value<'c, 'a>> {
+        (self.result_count() > 0).then(|| self.first_result())
+    }
+
+    /// The op's first operand, when it has one — asked by count, for the
+    /// same reason as `try_first_result`.
+    fn try_first_operand(&self) -> Option<Value<'c, 'a>> {
+        (self.operand_count() > 0).then(|| self.operand(0).expect("the operand index is in range"))
+    }
+
     /// A string attribute, by name.
     fn text_attribute(&self, name: &str) -> Option<String> {
         let attribute = self.attribute(name).ok()?;

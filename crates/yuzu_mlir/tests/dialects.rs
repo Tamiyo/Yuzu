@@ -432,11 +432,10 @@ fn typed_matching_works_on_owned_operations() {
 
     let context = yuzu_mlir::context();
     let location = Location::unknown(&context);
-    let types = yuzu_mlir::Types::new(&context);
     let operation: melior::ir::operation::Operation = yz::constant_int(
         &context,
-        types.int64,
-        IntegerAttribute::new(types.i64, 7),
+        yuzu_mlir::types::int64(&context),
+        IntegerAttribute::new(melior::ir::r#type::IntegerType::new(&context, 64).into(), 7),
         location,
     )
     .into();
@@ -530,7 +529,6 @@ fn views_read_optional_unit_and_variadic_arguments() {
 
     let context = yuzu_mlir::context();
     let location = Location::unknown(&context);
-    let types = yuzu_mlir::Types::new(&context);
 
     // Unit attributes and a variadic call, through parsed IR.
     let module = parse(
@@ -599,7 +597,7 @@ module {
         OperationBuilder::new("yzl.join", location)
             .add_attributes(&attributes)
             .add_regions([Region::new()])
-            .add_results(&[types.query])
+            .add_results(&[yuzu_mlir::types::query(&context)])
             .build()
             .expect("the join builds")
     };
@@ -643,11 +641,10 @@ fn borrowed_views_reject_foreign_operations() {
 
     let context = yuzu_mlir::context();
     let location = Location::unknown(&context);
-    let types = yuzu_mlir::Types::new(&context);
     let operation: melior::ir::operation::Operation = yz::constant_int(
         &context,
-        types.int64,
-        IntegerAttribute::new(types.i64, 7),
+        yuzu_mlir::types::int64(&context),
+        IntegerAttribute::new(melior::ir::r#type::IntegerType::new(&context, 64).into(), 7),
         location,
     )
     .into();

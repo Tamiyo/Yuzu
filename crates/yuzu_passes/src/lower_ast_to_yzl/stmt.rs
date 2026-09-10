@@ -6,6 +6,7 @@ use yuzu_ast::ast;
 use yuzu_mlir::ods::yzl;
 
 use crate::lower_ast_to_yzl::{AstToYzl, Locals, ident_text};
+use yuzu_mlir::types;
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
     pub(super) fn convert_stmt<'a>(&self, block: BlockRef<'c, 'a>, stmt: &ast::Stmt) {
@@ -21,7 +22,13 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     self.convert_expr(block, &Locals::new(), &expr);
                 }
             }
-            unsupported => self.error(unsupported, "this statement is not supported yet"),
+            ast::Stmt::BlockStmt(stmt) => self.error(stmt, "a block is not a top-level statement"),
+            ast::Stmt::AssignStmt(stmt) => {
+                self.error(stmt, "an assignment is not a top-level statement")
+            }
+            ast::Stmt::ReturnStmt(stmt) => {
+                self.error(stmt, "a return is not a top-level statement")
+            }
         }
     }
 
@@ -303,11 +310,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     self.convert_body_stmt(block, &mut scope, &stmt);
                 }
             }
-            unsupported => {
-                self.error(
-                    unsupported,
-                    "declarations inside functions are not supported yet",
-                );
+            ast::Stmt::StructStmt(_)
+            | ast::Stmt::TraitStmt(_)
+            | ast::Stmt::ImplStmt(_)
+            | ast::Stmt::FuncStmt(_)
+            | ast::Stmt::TableStmt(_) => {
+                self.error(stmt, "declarations inside functions are not supported yet");
             }
         }
     }
@@ -376,11 +384,11 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
 
         match name.as_str() {
-            "int64" => self.types.int64,
-            "float64" => self.types.float64,
-            "bool" => self.types.boolean,
-            "str" => self.types.str,
-            _ => self.types.var,
+            "int64" => types::int64(self.context),
+            "float64" => types::float64(self.context),
+            "bool" => types::boolean(self.context),
+            "str" => types::str(self.context),
+            _ => types::var(self.context),
         }
     }
 }

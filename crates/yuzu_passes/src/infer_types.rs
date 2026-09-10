@@ -14,6 +14,7 @@ use melior::ir::{BlockRef, Location, Module, RegionLike, Type, Value, ValueLike}
 use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationExt, RegionExt};
 use yuzu_mlir::ops::yz::YzOperationRef;
 use yuzu_mlir::ops::yzl::YzlOperationRef;
+use yuzu_mlir::types;
 
 /// A type either known or still being solved for: a concrete MLIR type, or a
 /// type variable whose substitution is still being filled.
@@ -45,6 +46,7 @@ struct PendingBound<'c> {
 }
 
 struct TypeInferrer<'c> {
+    context: &'c Context,
     /// One slot per type variable: unbound, substituted by another variable,
     /// or filled with its concrete type.
     filled: Vec<Option<Term<'c>>>,
@@ -60,7 +62,6 @@ struct TypeInferrer<'c> {
     /// resolves — deferred, because the argument may resolve after the call.
     pending: Vec<PendingBound<'c>>,
     relations: HashMap<&'c str, Row<'c>>,
-    types: yuzu_mlir::Types<'c>,
 }
 
 /// Expects a verified module: required ODS attributes are read through
@@ -68,6 +69,7 @@ struct TypeInferrer<'c> {
 /// run this inside `yuzu_mlir::diagnostics::capture` to collect them.
 pub fn infer_types<'c>(context: &'c Context, module: &Module<'c>) {
     let mut inferrer = TypeInferrer {
+        context,
         filled: Vec::new(),
         vars: HashMap::new(),
         rows: HashMap::new(),
@@ -75,7 +77,6 @@ pub fn infer_types<'c>(context: &'c Context, module: &Module<'c>) {
         impls: HashSet::new(),
         pending: Vec::new(),
         relations: HashMap::new(),
-        types: yuzu_mlir::Types::new(context),
     };
 
     inferrer.hoist(module.body());
@@ -89,7 +90,7 @@ impl<'c> TypeInferrer<'c> {
     /// for it — a `!yzl.var` value is its own variable.
     fn term_of(&mut self, value: Value<'c, '_>) -> Term<'c> {
         let ty = value.r#type();
-        if ty != self.types.var {
+        if ty != types::var(self.context) {
             return Term::Concrete(ty);
         }
 
@@ -241,12 +242,10 @@ impl<'c> TypeInferrer<'c> {
                         };
 
                         let bindings = self.instantiate(op, callee, &signature);
-                        for (index, parameter) in signature.params.iter().enumerate() {
-                            if let Ok(argument) = op.operand(index) {
-                                let term = self.term_of(argument);
-                                let expected = self.substitute(*parameter, &bindings);
-                                self.unify(op, term, expected);
-                            }
+                        for (argument, parameter) in op.operands().zip(&signature.params) {
+                            let term = self.term_of(argument);
+                            let expected = self.substitute(*parameter, &bindings);
+                            self.unify(op, term, expected);
                         }
 
                         let term = self.term_of(op.first_result());
@@ -288,7 +287,7 @@ impl<'c> TypeInferrer<'c> {
                 let row = self.input_row(op);
                 self.infer_regions(op, &row, &[]);
                 if matches!(stage, YzlOperationRef::Where(_)) {
-                    self.unify_yield(op, Term::Concrete(self.types.boolean));
+                    self.unify_yield(op, Term::Concrete(types::boolean(self.context)));
                 }
 
                 self.record_row(op, row);
@@ -360,20 +359,20 @@ impl<'c> TypeInferrer<'c> {
                 let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
                 let out = self.term_of(op.first_result());
                 self.unify(op, lhs, rhs);
-                self.unify(op, out, Term::Concrete(self.types.boolean));
+                self.unify(op, out, Term::Concrete(types::boolean(self.context)));
             }
             Some(YzOperationRef::And(_) | YzOperationRef::Or(_)) => {
                 let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
                 let out = self.term_of(op.first_result());
-                self.unify(op, lhs, Term::Concrete(self.types.boolean));
-                self.unify(op, rhs, Term::Concrete(self.types.boolean));
-                self.unify(op, out, Term::Concrete(self.types.boolean));
+                self.unify(op, lhs, Term::Concrete(types::boolean(self.context)));
+                self.unify(op, rhs, Term::Concrete(types::boolean(self.context)));
+                self.unify(op, out, Term::Concrete(types::boolean(self.context)));
             }
             Some(YzOperationRef::Not(_)) => {
                 let value = self.operand_term(op, 0);
                 let out = self.term_of(op.first_result());
-                self.unify(op, value, Term::Concrete(self.types.boolean));
-                self.unify(op, out, Term::Concrete(self.types.boolean));
+                self.unify(op, value, Term::Concrete(types::boolean(self.context)));
+                self.unify(op, out, Term::Concrete(types::boolean(self.context)));
             }
             _ => self.infer_regions(op, columns, params),
         }
@@ -445,16 +444,16 @@ impl<'c> TypeInferrer<'c> {
 
     /// The name an `impl` would target this type by.
     fn type_name(&self, ty: Type<'c>) -> Option<&'static str> {
-        if ty == self.types.int64 {
+        if ty == types::int64(self.context) {
             return Some("int64");
         }
-        if ty == self.types.float64 {
+        if ty == types::float64(self.context) {
             return Some("float64");
         }
-        if ty == self.types.boolean {
+        if ty == types::boolean(self.context) {
             return Some("bool");
         }
-        if ty == self.types.str {
+        if ty == types::str(self.context) {
             return Some("str");
         }
 
@@ -464,7 +463,7 @@ impl<'c> TypeInferrer<'c> {
     fn operand_term(&mut self, op: OperationRef<'c, '_>, index: usize) -> Term<'c> {
         match op.operand(index) {
             Ok(value) => self.term_of(value),
-            Err(_) => Term::Concrete(self.types.var),
+            Err(_) => Term::Concrete(types::var(self.context)),
         }
     }
 
@@ -474,16 +473,16 @@ impl<'c> TypeInferrer<'c> {
         let out = self.term_of(op.first_result());
         match callee {
             "count" | "count_distinct" => {
-                self.unify(op, out, Term::Concrete(self.types.int64));
+                self.unify(op, out, Term::Concrete(types::int64(self.context)));
             }
             "sum" => {
-                if let Ok(argument) = op.operand(0) {
+                if let Some(argument) = op.try_first_operand() {
                     let term = self.term_of(argument);
                     if let Some(ty) = self.resolve(term) {
-                        let result = if ty == self.types.float64 {
-                            self.types.float64
+                        let result = if ty == types::float64(self.context) {
+                            types::float64(self.context)
                         } else {
-                            self.types.int64
+                            types::int64(self.context)
                         };
 
                         self.unify(op, out, Term::Concrete(result));
@@ -491,10 +490,10 @@ impl<'c> TypeInferrer<'c> {
                 }
             }
             "in" => {
-                self.unify(op, out, Term::Concrete(self.types.boolean));
+                self.unify(op, out, Term::Concrete(types::boolean(self.context)));
             }
             "min" | "max" | "avg" => {
-                if let Ok(argument) = op.operand(0) {
+                if let Some(argument) = op.try_first_operand() {
                     let term = self.term_of(argument);
                     self.unify(op, out, term);
                 }
@@ -508,9 +507,9 @@ impl<'c> TypeInferrer<'c> {
             }
             "shift_left" | "shift_right" => {
                 let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
-                self.unify(op, lhs, Term::Concrete(self.types.int64));
-                self.unify(op, rhs, Term::Concrete(self.types.int64));
-                self.unify(op, out, Term::Concrete(self.types.int64));
+                self.unify(op, lhs, Term::Concrete(types::int64(self.context)));
+                self.unify(op, rhs, Term::Concrete(types::int64(self.context)));
+                self.unify(op, out, Term::Concrete(types::int64(self.context)));
             }
             _ => {}
         }
@@ -527,15 +526,14 @@ impl<'c> TypeInferrer<'c> {
     // --- rows and yields ---
 
     fn input_row(&mut self, op: OperationRef<'c, '_>) -> Row<'c> {
-        op.operand(0)
-            .ok()
+        op.try_first_operand()
             .and_then(|input| self.rows.get(&yuzu_mlir::value_id(input)).cloned())
             .unwrap_or_default()
     }
 
     fn record_row(&mut self, op: OperationRef<'c, '_>, row: Row<'c>) {
-        if let Ok(result) = op.result(0) {
-            self.rows.insert(yuzu_mlir::value_id(result.into()), row);
+        if let Some(result) = op.try_first_result() {
+            self.rows.insert(yuzu_mlir::value_id(result), row);
         }
     }
 
@@ -544,15 +542,15 @@ impl<'c> TypeInferrer<'c> {
             return Row::new();
         };
 
-        (0..terminator.operand_count())
-            .filter_map(|index| terminator.operand(index).ok())
+        terminator
+            .operands()
             .map(|value| self.term_of(value))
             .collect()
     }
 
     fn unify_yield(&mut self, op: OperationRef<'c, '_>, expected: Term<'c>) {
         if let Some(terminator) = last_region_op(op)
-            && let Ok(value) = terminator.operand(0)
+            && let Some(value) = terminator.try_first_operand()
         {
             let term = self.term_of(value);
             self.unify(op, term, expected);
@@ -565,7 +563,7 @@ impl<'c> TypeInferrer<'c> {
                 YzlOperationRef::of(&terminator),
                 Some(YzlOperationRef::Return(_))
             )
-            && let Ok(value) = terminator.operand(0)
+            && let Some(value) = terminator.try_first_operand()
         {
             let term = self.term_of(value);
             self.unify(terminator, term, Term::Concrete(ret));
@@ -580,8 +578,8 @@ impl<'c> TypeInferrer<'c> {
                 }
             }
 
-            if let Ok(result) = op.result(0) {
-                let term = self.term_of(result.into());
+            if let Some(result) = op.try_first_result() {
+                let term = self.term_of(result);
                 if let Term::Var(_) = term
                     && let Some(ty) = self.resolve(term)
                 {

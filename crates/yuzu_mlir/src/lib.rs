@@ -7,13 +7,12 @@ pub mod ops;
 mod param_type;
 mod struct_type;
 mod symbol_table;
-mod types;
+pub mod types;
 mod value;
 
 pub use param_type::ParamType;
 pub use struct_type::StructType;
 pub use symbol_table::SymbolTable;
-pub use types::Types;
 pub use value::value_id;
 
 pub fn context() -> Context {

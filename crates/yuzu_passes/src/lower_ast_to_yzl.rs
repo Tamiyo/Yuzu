@@ -15,6 +15,7 @@ use yuzu_lexer::lexer::{Lexer, Token};
 use yuzu_mlir::ext::BlockExt;
 use yuzu_mlir::ext::OperationExt;
 use yuzu_mlir::ods::yzl;
+use yuzu_mlir::types;
 
 /// Parses the source and converts it to a yzl module. Everything the
 /// conversion cannot carry — parse errors, missing pieces, unsupported
@@ -41,7 +42,6 @@ struct AstToYzl<'c, 'd> {
     source_id: SourceId,
     diagnostics: std::cell::RefCell<&'d mut DiagnosticsEngine>,
     line_starts: Vec<usize>,
-    types: yuzu_mlir::Types<'c>,
 }
 
 type Locals<'c, 'a> = HashMap<String, Value<'c, 'a>>;
@@ -62,7 +62,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             source_id,
             diagnostics: std::cell::RefCell::new(diagnostics),
             line_starts,
-            types: yuzu_mlir::Types::new(context),
         }
     }
 
@@ -135,8 +134,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let query = top
             .operations()
             .filter_map(|op| {
-                let value = Value::from(op.result(0).ok()?);
-                (value.r#type() == self.types.query).then(|| (value, op.location()))
+                let value = op.try_first_result()?;
+                (value.r#type() == types::query(self.context)).then(|| (value, op.location()))
             })
             .last();
         if let Some((value, loc)) = query {
