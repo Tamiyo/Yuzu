@@ -279,4 +279,50 @@ from t
             "#]],
         );
     }
+
+    /// A relation can be unused for its values and still decide the answer.
+    /// No column of `u` is read here, but the join says which rows exist and
+    /// how many: an inner join drops left rows that match nothing, and
+    /// multiplies them when the key repeats. So the join stays, and with it
+    /// both sides.
+    ///
+    /// Dropping it would need the right side to be known unique on the key,
+    /// and nothing declares keys — a guard rail for column pruning, which
+    /// will see these columns go unread and must not conclude from that
+    /// alone that the relation is dead.
+    #[test]
+    fn a_join_survives_when_nothing_reads_its_right_side() {
+        check_simplified(
+            r#"
+struct Row { a: int64 }
+table t = Row
+struct Other { k: int64, extra: str }
+table u = Other
+
+from t
+|> inner join u on a == k
+|> select a as x
+"#,
+            expect![[r#"
+                module {
+                  yz.struct @Row ["a"] : [!yz.int64]
+                  yz.struct @Other ["k", "extra"] : [!yz.int64, !yz.str]
+                  %0 = yzr.table @t : !yz.struct<@Row>
+                  %1 = yzr.table @u : !yz.struct<@Other>
+                  yz.struct @row ["a", "k", "extra"] : [!yz.int64, !yz.int64, !yz.str]
+                  %2 = yzr.join "inner", %0, %1 {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.int64, %arg2: !yz.str):
+                    %4 = yz.cmp "eq", %arg0, %arg1 : !yz.int64, !yz.int64 -> !yz.bool
+                    yzr.yield %4 : !yz.bool
+                  } : !yz.struct<@Row>, !yz.struct<@Other> -> !yz.struct<@row>
+                  yz.struct @row_0 ["x"] : [!yz.int64]
+                  %3 = yzr.project %2 {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.int64, %arg2: !yz.str):
+                    yzr.yield %arg0 : !yz.int64
+                  } : !yz.struct<@row> -> !yz.struct<@row_0>
+                  yzr.output %3 : !yz.struct<@row_0>
+                }
+            "#]],
+        );
+    }
 }
