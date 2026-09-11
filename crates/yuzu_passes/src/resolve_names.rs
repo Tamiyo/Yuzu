@@ -280,13 +280,18 @@ impl<'c> Resolver<'c, '_> {
             Some(YzlOperationRef::Rename(stage)) => {
                 let (from, to) = (stage.from().strings(), stage.to().strings());
                 let mut schema = self.input_schema(op);
+                let mut renamed = Vec::new();
                 for (from, to) in from.iter().zip(to) {
                     match schema.iter().position(|column| column.matches(from)) {
-                        Some(index) => schema[index].name = to,
+                        Some(index) => {
+                            renamed.push(index);
+                            schema[index].name = to;
+                        }
                         None => self.error(op, format!("unknown column `{from}`")),
                     }
                 }
 
+                op.set_index_array_attribute(self.context, "rename_cols", &renamed);
                 self.record_schema(op, schema);
             }
             Some(YzlOperationRef::Aggregate(stage)) => {

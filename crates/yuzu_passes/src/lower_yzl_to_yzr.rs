@@ -365,9 +365,35 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
 
                 self.record_stage(op, projected.first_result(), schema);
             }
+            // yzr has no op for a change of name alone, so a rename is the
+            // projection of every column under the names the stage gave them.
+            Some(YzlOperationRef::Rename(stage)) => {
+                let Some((input, mut schema)) = self.input_stage(op) else {
+                    return;
+                };
+
+                let columns = crate::infer_types::indices(stage.rename_cols());
+                for (&index, name) in columns.iter().zip(stage.to().strings()) {
+                    match schema.get_mut(index) {
+                        Some(column) => column.0 = name,
+                        None => {
+                            self.error(op, format!("column {index} is not in the row"));
+                            return;
+                        }
+                    }
+                }
+
+                let all: Vec<usize> = (0..schema.len()).collect();
+                let region = self.column_region(&schema, &all, op.location());
+                let row = self.row_type(&schema, symbols);
+                let projected = target.append_operation(
+                    yzr::project(self.context, row, input, region, op.location()).into(),
+                );
+
+                self.record_stage(op, projected.first_result(), schema);
+            }
             Some(
-                YzlOperationRef::Rename(_)
-                | YzlOperationRef::Fn(_)
+                YzlOperationRef::Fn(_)
                 | YzlOperationRef::Trait(_)
                 | YzlOperationRef::Impl(_)
                 | YzlOperationRef::Missing(_),
@@ -1228,6 +1254,72 @@ from t
         );
     }
 
+    /// A rename moves names, not values, but yzr rows are typed by their
+    /// struct — so the new names need a projection to live on.
+    #[test]
+    fn rename_projects_under_the_new_names() {
+        check_lowered(
+            r#"
+struct Row { a: int64, b: str }
+table t = Row
+
+from t
+|> rename a as x, b as y
+"#,
+            expect![[r#"
+                module {
+                  yz.struct @Row ["a", "b"] : [!yz.int64, !yz.str]
+                  %0 = yzr.table @t : !yz.struct<@Row>
+                  yz.struct @row ["x", "y"] : [!yz.int64, !yz.str]
+                  %1 = yzr.project %0 {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.str):
+                    yzr.yield %arg0, %arg1 : !yz.int64, !yz.str
+                  } : !yz.struct<@Row> -> !yz.struct<@row>
+                  yzr.output %1 : !yz.struct<@row>
+                }
+            "#]],
+        );
+    }
+
+    /// The stamp resolution left says which column each name applies to, so
+    /// a qualified rename after a join renames one side rather than guessing.
+    #[test]
+    fn rename_follows_the_stamped_column() {
+        check_lowered(
+            r#"
+struct Row { id: int64 }
+table l = Row
+struct Other { id: int64 }
+table r = Other
+
+from l
+|> as a
+|> inner join r as b on a.id == b.id
+|> rename b.id as other
+"#,
+            expect![[r#"
+                module {
+                  yz.struct @Row ["id"] : [!yz.int64]
+                  yz.struct @Other ["id"] : [!yz.int64]
+                  %0 = yzr.table @l : !yz.struct<@Row>
+                  %1 = yzr.table @r : !yz.struct<@Row>
+                  yz.struct @row ["id", "id"] : [!yz.int64, !yz.int64]
+                  %2 = yzr.join "inner", %0, %1 {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.int64):
+                    %4 = yz.cmp "eq", %arg0, %arg1 : !yz.int64, !yz.int64 -> !yz.bool
+                    yzr.yield %4 : !yz.bool
+                  } : !yz.struct<@Row>, !yz.struct<@Row> -> !yz.struct<@row>
+                  yz.struct @row_0 ["id", "other"] : [!yz.int64, !yz.int64]
+                  %3 = yzr.project %2 {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.int64):
+                    yzr.yield %arg0, %arg1 : !yz.int64, !yz.int64
+                  } : !yz.struct<@row> -> !yz.struct<@row_0>
+                  yzr.output %3 : !yz.struct<@row_0>
+                }
+            "#]],
+        );
+    }
+
     /// A stage the lowering does not carry yet is an error, not a silent gap.
     #[test]
     fn reports_a_stage_that_is_not_lowered() {
@@ -1240,11 +1332,16 @@ from t
 |> rename a as b
 "#,
             expect![[r#"
-                error: `yzl.rename` is not lowered yet
-                 --> test.yz:5:1
-                  |
-                5 | from t
-                  | ^
+                module {
+                  yz.struct @Row ["a"] : [!yz.int64]
+                  %0 = yzr.table @t : !yz.struct<@Row>
+                  yz.struct @row ["b"] : [!yz.int64]
+                  %1 = yzr.project %0 {
+                  ^bb0(%arg0: !yz.int64):
+                    yzr.yield %arg0 : !yz.int64
+                  } : !yz.struct<@Row> -> !yz.struct<@row>
+                  yzr.output %1 : !yz.struct<@row>
+                }
             "#]],
         );
     }

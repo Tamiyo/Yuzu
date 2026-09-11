@@ -167,7 +167,8 @@ def Yzl_LimitOp : Yzl_Op<"limit", [Pure]> {
 def Yzl_RenameOp : Yzl_Op<"rename", [Pure]> {
   let summary = "rename columns; a pure name effect";
   let arguments = (ins Yzl_QueryType:$input, StrArrayAttr:$from,
-                       StrArrayAttr:$to);
+                       StrArrayAttr:$to,
+                       OptionalAttr<I64ArrayAttr>:$rename_cols);
   let results = (outs Yzl_QueryType:$result);
   let assemblyFormat = "$input `from` $from `to` $to attr-dict";
 }
