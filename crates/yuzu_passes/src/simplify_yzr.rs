@@ -129,4 +129,122 @@ from t
             "#]],
         );
     }
+
+    /// Integers compare as integers. These two differ by one and share a
+    /// double, so folding through one would answer `false` and silently
+    /// return no rows.
+    #[test]
+    fn large_integers_compare_exactly() {
+        check_simplified(
+            r#"
+struct Row { a: int64 }
+table t = Row
+
+from t
+|> where 9007199254740993 > 9007199254740992
+"#,
+            expect![[r#"
+                module {
+                  yz.struct @Row ["a"] : [!yz.int64]
+                  %0 = yzr.table @t : !yz.struct<@Row>
+                  %1 = yzr.filter %0 : !yz.struct<@Row> {
+                  ^bb0(%arg0: !yz.int64):
+                    %2 = yz.constant_bool true
+                    yzr.yield %2 : !yz.bool
+                  }
+                  yzr.output %1 : !yz.struct<@Row>
+                }
+            "#]],
+        );
+    }
+
+    /// A sum with no representable answer declines to fold: what overflow
+    /// does is the engine's to say, and a wrong constant would not even fail.
+    #[test]
+    fn an_overflowing_sum_is_left_to_the_engine() {
+        check_simplified(
+            r#"
+struct Row { a: int64 }
+table t = Row
+
+from t
+|> where a > 9223372036854775807 + 1
+"#,
+            expect![[r#"
+                module {
+                  yz.struct @Row ["a"] : [!yz.int64]
+                  %0 = yzr.table @t : !yz.struct<@Row>
+                  %1 = yzr.filter %0 : !yz.struct<@Row> {
+                  ^bb0(%arg0: !yz.int64):
+                    %2 = yz.constant_int 9223372036854775807
+                    %3 = yz.constant_int 1
+                    %4 = yz.add %2, %3 : !yz.int64, !yz.int64 -> !yz.int64
+                    %5 = yz.cmp "gt", %arg0, %4 : !yz.int64, !yz.int64 -> !yz.bool
+                    yzr.yield %5 : !yz.bool
+                  }
+                  yzr.output %1 : !yz.struct<@Row>
+                }
+            "#]],
+        );
+    }
+
+    /// The range is asymmetric, so the least integer has no negation — and
+    /// declining there leaves the division downstream nothing to fold
+    /// either, which is the whole expression left to the engine.
+    #[test]
+    fn the_least_integer_is_left_to_the_engine() {
+        check_simplified(
+            r#"
+struct Row { a: int64 }
+table t = Row
+
+from t
+|> where a > -9223372036854775808 / -1
+"#,
+            expect![[r#"
+                module {
+                  yz.struct @Row ["a"] : [!yz.int64]
+                  %0 = yzr.table @t : !yz.struct<@Row>
+                  %1 = yzr.filter %0 : !yz.struct<@Row> {
+                  ^bb0(%arg0: !yz.int64):
+                    %2 = yz.constant_int -1
+                    %3 = yz.constant_int -9223372036854775808
+                    %4 = yz.neg %3 : !yz.int64 -> !yz.int64
+                    %5 = yz.div %4, %2 : !yz.int64, !yz.int64 -> !yz.int64
+                    %6 = yz.cmp "gt", %arg0, %5 : !yz.int64, !yz.int64 -> !yz.bool
+                    yzr.yield %6 : !yz.bool
+                  }
+                  yzr.output %1 : !yz.struct<@Row>
+                }
+            "#]],
+        );
+    }
+
+    /// Arithmetic that does fit still folds, so declining costs nothing that
+    /// was ever safe to take.
+    #[test]
+    fn arithmetic_that_fits_still_folds() {
+        check_simplified(
+            r#"
+struct Row { a: int64 }
+table t = Row
+
+from t
+|> where a > 9223372036854775806 + 1
+"#,
+            expect![[r#"
+                module {
+                  yz.struct @Row ["a"] : [!yz.int64]
+                  %0 = yzr.table @t : !yz.struct<@Row>
+                  %1 = yzr.filter %0 : !yz.struct<@Row> {
+                  ^bb0(%arg0: !yz.int64):
+                    %2 = yz.constant_int 9223372036854775807
+                    %3 = yz.cmp "gt", %arg0, %2 : !yz.int64, !yz.int64 -> !yz.bool
+                    yzr.yield %3 : !yz.bool
+                  }
+                  yzr.output %1 : !yz.struct<@Row>
+                }
+            "#]],
+        );
+    }
 }

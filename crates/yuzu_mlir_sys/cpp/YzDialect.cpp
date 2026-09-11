@@ -1,11 +1,14 @@
 #include "YzDialect.h"
 
 #include <cmath>
+#include <limits>
+#include <optional>
 
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/TypeSwitch.h"
+#include "llvm/Support/MathExtras.h"
 
 #include "YzDialect.cpp.inc"
 
@@ -66,14 +69,21 @@ mlir::OpFoldResult ConstantFloatOp::fold(FoldAdaptor) { return getValueAttr(); }
 mlir::OpFoldResult ConstantBoolOp::fold(FoldAdaptor) { return getValueAttr(); }
 mlir::OpFoldResult ConstantStrOp::fold(FoldAdaptor) { return getValueAttr(); }
 
-static mlir::OpFoldResult foldNumericBinary(mlir::Attribute lhs,
-                                            mlir::Attribute rhs,
-                                            int64_t (*ints)(int64_t, int64_t),
-                                            double (*floats)(double, double)) {
+// Folding answers at compile time what the engine would answer at run time,
+// so a fold that cannot be carried out exactly declines instead of guessing.
+// The engine owns overflow and division by zero; a constant that disagreed
+// with it would quietly change the query rather than fail.
+static mlir::OpFoldResult
+foldNumericBinary(mlir::Attribute lhs, mlir::Attribute rhs,
+                  std::optional<int64_t> (*ints)(int64_t, int64_t),
+                  double (*floats)(double, double)) {
   if (auto lhsInt = llvm::dyn_cast_if_present<mlir::IntegerAttr>(lhs))
-    if (auto rhsInt = llvm::dyn_cast_if_present<mlir::IntegerAttr>(rhs))
-      return mlir::IntegerAttr::get(lhsInt.getType(),
-                                    ints(lhsInt.getInt(), rhsInt.getInt()));
+    if (auto rhsInt = llvm::dyn_cast_if_present<mlir::IntegerAttr>(rhs)) {
+      std::optional<int64_t> folded = ints(lhsInt.getInt(), rhsInt.getInt());
+      if (!folded)
+        return {};
+      return mlir::IntegerAttr::get(lhsInt.getType(), *folded);
+    }
   if (auto lhsFloat = llvm::dyn_cast_if_present<mlir::FloatAttr>(lhs))
     if (auto rhsFloat = llvm::dyn_cast_if_present<mlir::FloatAttr>(rhs))
       return mlir::FloatAttr::get(
@@ -92,24 +102,45 @@ static bool isZero(mlir::Attribute value) {
   return false;
 }
 
+// The one division the two's complement range cannot answer: its result is
+// one past the largest representable integer.
+static bool isOverflowingDivision(int64_t lhs, int64_t rhs) {
+  return lhs == std::numeric_limits<int64_t>::min() && rhs == -1;
+}
+
 mlir::OpFoldResult AddOp::fold(FoldAdaptor adaptor) {
   return foldNumericBinary(
       adaptor.getLhs(), adaptor.getRhs(),
-      [](int64_t lhs, int64_t rhs) { return lhs + rhs; },
+      [](int64_t lhs, int64_t rhs) -> std::optional<int64_t> {
+        int64_t result;
+        if (llvm::AddOverflow(lhs, rhs, result))
+          return std::nullopt;
+        return result;
+      },
       [](double lhs, double rhs) { return lhs + rhs; });
 }
 
 mlir::OpFoldResult SubOp::fold(FoldAdaptor adaptor) {
   return foldNumericBinary(
       adaptor.getLhs(), adaptor.getRhs(),
-      [](int64_t lhs, int64_t rhs) { return lhs - rhs; },
+      [](int64_t lhs, int64_t rhs) -> std::optional<int64_t> {
+        int64_t result;
+        if (llvm::SubOverflow(lhs, rhs, result))
+          return std::nullopt;
+        return result;
+      },
       [](double lhs, double rhs) { return lhs - rhs; });
 }
 
 mlir::OpFoldResult MulOp::fold(FoldAdaptor adaptor) {
   return foldNumericBinary(
       adaptor.getLhs(), adaptor.getRhs(),
-      [](int64_t lhs, int64_t rhs) { return lhs * rhs; },
+      [](int64_t lhs, int64_t rhs) -> std::optional<int64_t> {
+        int64_t result;
+        if (llvm::MulOverflow(lhs, rhs, result))
+          return std::nullopt;
+        return result;
+      },
       [](double lhs, double rhs) { return lhs * rhs; });
 }
 
@@ -118,7 +149,11 @@ mlir::OpFoldResult DivOp::fold(FoldAdaptor adaptor) {
     return {};
   return foldNumericBinary(
       adaptor.getLhs(), adaptor.getRhs(),
-      [](int64_t lhs, int64_t rhs) { return lhs / rhs; },
+      [](int64_t lhs, int64_t rhs) -> std::optional<int64_t> {
+        if (isOverflowingDivision(lhs, rhs))
+          return std::nullopt;
+        return lhs / rhs;
+      },
       [](double lhs, double rhs) { return lhs / rhs; });
 }
 
@@ -127,48 +162,62 @@ mlir::OpFoldResult RemOp::fold(FoldAdaptor adaptor) {
     return {};
   return foldNumericBinary(
       adaptor.getLhs(), adaptor.getRhs(),
-      [](int64_t lhs, int64_t rhs) { return lhs % rhs; },
+      [](int64_t lhs, int64_t rhs) -> std::optional<int64_t> {
+        if (isOverflowingDivision(lhs, rhs))
+          return std::nullopt;
+        return lhs % rhs;
+      },
       [](double lhs, double rhs) { return std::fmod(lhs, rhs); });
 }
 
 mlir::OpFoldResult NegOp::fold(FoldAdaptor adaptor) {
   if (auto integer =
-          llvm::dyn_cast_if_present<mlir::IntegerAttr>(adaptor.getValue()))
+          llvm::dyn_cast_if_present<mlir::IntegerAttr>(adaptor.getValue())) {
+    // The range is asymmetric, so the least integer has no negation.
+    if (integer.getInt() == std::numeric_limits<int64_t>::min())
+      return {};
     return mlir::IntegerAttr::get(integer.getType(), -integer.getInt());
+  }
   if (auto real =
           llvm::dyn_cast_if_present<mlir::FloatAttr>(adaptor.getValue()))
     return mlir::FloatAttr::get(real.getType(), -real.getValueAsDouble());
   return {};
 }
 
+template <typename T>
+static std::optional<bool> comparePredicate(llvm::StringRef predicate, T lhs,
+                                            T rhs) {
+  return llvm::StringSwitch<std::optional<bool>>(predicate)
+      .Case("eq", lhs == rhs)
+      .Case("ne", lhs != rhs)
+      .Case("lt", lhs < rhs)
+      .Case("le", lhs <= rhs)
+      .Case("gt", lhs > rhs)
+      .Case("ge", lhs >= rhs)
+      .Default(std::nullopt);
+}
+
 mlir::OpFoldResult CmpOp::fold(FoldAdaptor adaptor) {
-  double left;
-  double right;
+  // Integers compare as integers. Above 2^53 a double stands for more than
+  // one of them, so comparing through one answers a different question than
+  // the engine will.
+  std::optional<bool> value;
   if (auto lhs =
           llvm::dyn_cast_if_present<mlir::IntegerAttr>(adaptor.getLhs())) {
     auto rhs = llvm::dyn_cast_if_present<mlir::IntegerAttr>(adaptor.getRhs());
     if (!rhs)
       return {};
-    left = static_cast<double>(lhs.getInt());
-    right = static_cast<double>(rhs.getInt());
-  } else if (auto lhs =
-                 llvm::dyn_cast_if_present<mlir::FloatAttr>(adaptor.getLhs())) {
+    value = comparePredicate(getPredicate(), lhs.getInt(), rhs.getInt());
+  } else if (auto lhs = llvm::dyn_cast_if_present<mlir::FloatAttr>(
+                 adaptor.getLhs())) {
     auto rhs = llvm::dyn_cast_if_present<mlir::FloatAttr>(adaptor.getRhs());
     if (!rhs)
       return {};
-    left = lhs.getValueAsDouble();
-    right = rhs.getValueAsDouble();
+    value = comparePredicate(getPredicate(), lhs.getValueAsDouble(),
+                             rhs.getValueAsDouble());
   } else {
     return {};
   }
-  auto value = llvm::StringSwitch<std::optional<bool>>(getPredicate())
-                   .Case("eq", left == right)
-                   .Case("ne", left != right)
-                   .Case("lt", left < right)
-                   .Case("le", left <= right)
-                   .Case("gt", left > right)
-                   .Case("ge", left >= right)
-                   .Default(std::nullopt);
   if (!value)
     return {};
   return mlir::BoolAttr::get(getContext(), *value);
