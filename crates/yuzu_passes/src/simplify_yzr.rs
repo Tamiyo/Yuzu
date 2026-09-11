@@ -247,4 +247,36 @@ from t
             "#]],
         );
     }
+
+    /// A relation nothing reads costs nothing: the stage ops are `Pure`, so
+    /// a binding the output never reaches is dropped whole. The struct the
+    /// dead stages declared outlives them — a symbol is not an operation,
+    /// and nothing yet collects the ones no type names.
+    #[test]
+    fn a_relation_the_output_never_reads_is_dropped() {
+        check_simplified(
+            r#"
+struct Row { a: int64, b: int64 }
+table t = Row
+
+let never_read = from t |> where a > 1 |> extend a * b as c
+
+from t
+|> select a as x
+"#,
+            expect![[r#"
+                module {
+                  yz.struct @Row ["a", "b"] : [!yz.int64, !yz.int64]
+                  yz.struct @row ["a", "b", "c"] : [!yz.int64, !yz.int64, !yz.int64]
+                  %0 = yzr.table @t : !yz.struct<@Row>
+                  yz.struct @row_0 ["x"] : [!yz.int64]
+                  %1 = yzr.project %0 {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.int64):
+                    yzr.yield %arg0 : !yz.int64
+                  } : !yz.struct<@Row> -> !yz.struct<@row_0>
+                  yzr.output %1 : !yz.struct<@row_0>
+                }
+            "#]],
+        );
+    }
 }

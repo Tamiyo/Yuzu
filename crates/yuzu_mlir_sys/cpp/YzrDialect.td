@@ -29,7 +29,7 @@ def Yzr_TableOp : Yzr_Op<"table", [Pure]> {
 }
 
 def Yzr_FilterOp
-    : Yzr_Op<"filter", [IsolatedFromAbove, SameOperandsAndResultType]> {
+    : Yzr_Op<"filter", [IsolatedFromAbove, Pure, SameOperandsAndResultType]> {
   let summary = "keep the rows whose predicate holds";
   let arguments = (ins Yzr_RowType:$input);
   let results = (outs Yzr_RowType:$result);

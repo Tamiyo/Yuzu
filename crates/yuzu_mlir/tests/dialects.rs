@@ -354,6 +354,7 @@ yzr.yield %r : !yz.bool
 %p = yz.cmp "eq", %z, %c1 : !yz.int64, !yz.int64 -> !yz.bool
 yzr.yield %p : !yz.bool
   }
+  yzr.output %d : !yz.struct<@row>
 }
 "#,
     )
@@ -384,6 +385,7 @@ yzr.yield %p : !yz.bool
             %6 = yz.cmp "eq", %5, %4 : !yz.int64, !yz.int64 -> !yz.bool
             yzr.yield %6 : !yz.bool
           }
+          yzr.output %2 : !yz.struct<@row>
         }
     "#]]
     .assert_eq(&module.as_operation().to_string());
