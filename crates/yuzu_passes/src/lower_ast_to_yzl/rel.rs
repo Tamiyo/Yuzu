@@ -187,6 +187,15 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                         continue;
                     };
 
+                    // `b.id as other` has to carry its qualifier through:
+                    // resolution matches the reference against qualified
+                    // columns, so dropping it renames whichever column
+                    // happened to come first.
+                    let old = match ident_text(item.qualifier()) {
+                        Some(qualifier) => format!("{qualifier}.{old}"),
+                        None => old,
+                    };
+
                     from.push(StringAttribute::new(self.context, &old).into());
                     to.push(StringAttribute::new(self.context, &new).into());
                 }
