@@ -20,7 +20,9 @@ use melior::ir::{
     Value, ValueLike,
 };
 use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationExt};
+use yuzu_mlir::ods::{yz, yzr};
 use yuzu_mlir::ops::yzl::YzlOperationRef;
+use yuzu_mlir::types;
 use yuzu_mlir::{StructType, SymbolTable, value_id};
 use yuzu_types::{BuiltinFunc, FunctionRegistry};
 
@@ -162,7 +164,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                 let (region, _) =
                     self.lower_region(stage.body(), &schema, op.location(), Yielded::Body);
                 let filtered = target.append_operation(
-                    yuzu_mlir::ods::yzr::filter(self.context, input, region, op.location()).into(),
+                    yzr::filter(self.context, input, region, op.location()).into(),
                 );
 
                 self.record_stage(op, filtered.first_result(), schema);
@@ -177,8 +179,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                 let produced = self.named_row(stage.names().strings(), yielded);
                 let row = self.row_type(&produced, symbols);
                 let projected = target.append_operation(
-                    yuzu_mlir::ods::yzr::project(self.context, row, input, region, op.location())
-                        .into(),
+                    yzr::project(self.context, row, input, region, op.location()).into(),
                 );
 
                 self.record_stage(op, projected.first_result(), produced);
@@ -193,8 +194,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                 schema.extend(self.named_row(stage.names().strings(), yielded));
                 let row = self.row_type(&schema, symbols);
                 let extended = target.append_operation(
-                    yuzu_mlir::ods::yzr::extend(self.context, row, input, region, op.location())
-                        .into(),
+                    yzr::extend(self.context, row, input, region, op.location()).into(),
                 );
 
                 self.record_stage(op, extended.first_result(), schema);
@@ -216,7 +216,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                 let row = self.row_type(&produced, symbols);
                 let indices: Vec<i64> = keys.iter().map(|&index| index as i64).collect();
                 let grouped = target.append_operation(
-                    yuzu_mlir::ods::yzr::aggregate(
+                    yzr::aggregate(
                         self.context,
                         row,
                         input,
@@ -260,7 +260,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
 
                 let row = self.row_type(&schema, symbols);
                 let joined = target.append_operation(
-                    yuzu_mlir::ods::yzr::join(
+                    yzr::join(
                         self.context,
                         row,
                         lhs,
@@ -280,8 +280,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                 };
 
                 let limited = target.append_operation(
-                    yuzu_mlir::ods::yzr::limit(self.context, input, stage.count(), op.location())
-                        .into(),
+                    yzr::limit(self.context, input, stage.count(), op.location()).into(),
                 );
 
                 self.record_stage(op, limited.first_result(), schema);
@@ -291,9 +290,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                     return;
                 };
 
-                target.append_operation(
-                    yuzu_mlir::ods::yzr::output(self.context, query, op.location()).into(),
-                );
+                target.append_operation(yzr::output(self.context, query, op.location()).into());
             }
             // A qualifier only ever chose a column, and resolution has spent
             // it by now: the row that arrives is the row that leaves.
@@ -315,7 +312,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                 let region = self.column_region(&schema, &[], op.location());
                 let row = self.row_type(&schema, symbols);
                 let grouped = target.append_operation(
-                    yuzu_mlir::ods::yzr::aggregate(
+                    yzr::aggregate(
                         self.context,
                         row,
                         input,
@@ -341,8 +338,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                 let produced: Schema<'c> = kept.iter().map(|&index| schema[index]).collect();
                 let row = self.row_type(&produced, symbols);
                 let projected = target.append_operation(
-                    yuzu_mlir::ods::yzr::project(self.context, row, input, region, op.location())
-                        .into(),
+                    yzr::project(self.context, row, input, region, op.location()).into(),
                 );
 
                 self.record_stage(op, projected.first_result(), produced);
@@ -364,8 +360,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
 
                 let row = self.row_type(&schema, symbols);
                 let projected = target.append_operation(
-                    yuzu_mlir::ods::yzr::project(self.context, row, input, region, op.location())
-                        .into(),
+                    yzr::project(self.context, row, input, region, op.location()).into(),
                 );
 
                 self.record_stage(op, projected.first_result(), schema);
@@ -420,7 +415,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
         };
 
         let types = row.iter().map(|value| value.r#type()).collect();
-        body.append_operation(yuzu_mlir::ods::yzr::r#yield(self.context, &row, location).into());
+        body.append_operation(yzr::r#yield(self.context, &row, location).into());
 
         (region, types)
     }
@@ -473,9 +468,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
             })
             .collect();
 
-        body.append_operation(
-            yuzu_mlir::ods::yzr::r#yield(self.context, &yielded, location).into(),
-        );
+        body.append_operation(yzr::r#yield(self.context, &yielded, location).into());
 
         region
     }
@@ -516,7 +509,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                 let lowered = if kind == "builtin" && self.is_aggregate(&callee) {
                     self.lower_measure(op, &callee, &operands, ty, body)
                 } else if kind == "external" {
-                    yuzu_mlir::ods::yz::extern_call(
+                    yz::extern_call(
                         self.context,
                         ty,
                         &operands,
@@ -525,7 +518,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                     )
                     .into()
                 } else {
-                    yuzu_mlir::ods::yz::call(
+                    yz::call(
                         self.context,
                         ty,
                         &operands,
@@ -633,7 +626,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
         _body: BlockRef<'c, '_>,
     ) -> melior::ir::Operation<'c> {
         match operands.first() {
-            Some(value) => yuzu_mlir::ods::yzr::agg(
+            Some(value) => yzr::agg(
                 self.context,
                 ty,
                 *value,
@@ -641,7 +634,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                 op.location(),
             )
             .into(),
-            None => yuzu_mlir::ods::yzr::count(self.context, ty, op.location()).into(),
+            None => yzr::count(self.context, ty, op.location()).into(),
         }
     }
 
@@ -693,9 +686,9 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
             };
 
             let equal = body.append_operation(
-                yuzu_mlir::ods::yz::cmp(
+                yz::cmp(
                     self.context,
-                    yuzu_mlir::types::boolean(self.context),
+                    types::boolean(self.context),
                     body.argument(left)
                         .expect("the left column is in range")
                         .into(),
@@ -711,9 +704,9 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
             condition = Some(match condition {
                 Some(previous) => body
                     .append_operation(
-                        yuzu_mlir::ods::yz::and(
+                        yz::and(
                             self.context,
-                            yuzu_mlir::types::boolean(self.context),
+                            types::boolean(self.context),
                             previous,
                             equal.first_result(),
                             location,
@@ -726,9 +719,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
         }
 
         let yielded: Vec<Value<'c, '_>> = condition.into_iter().collect();
-        body.append_operation(
-            yuzu_mlir::ods::yzr::r#yield(self.context, &yielded, location).into(),
-        );
+        body.append_operation(yzr::r#yield(self.context, &yielded, location).into());
 
         region
     }
@@ -787,7 +778,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
             .map(|(_, ty)| TypeAttribute::new(*ty).into())
             .collect();
 
-        let declaration = yuzu_mlir::ods::yz::r#struct(
+        let declaration = yz::r#struct(
             self.context,
             StringAttribute::new(self.context, name),
             melior::ir::attribute::ArrayAttribute::new(self.context, &names),
@@ -818,7 +809,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
         let schema = self.relation_schema(name, source)?;
         let row = self.row_type(&schema, symbols);
         let scanned = target.append_operation(
-            yuzu_mlir::ods::yzr::table(
+            yzr::table(
                 self.context,
                 row,
                 FlatSymbolRefAttribute::new(self.context, name),
