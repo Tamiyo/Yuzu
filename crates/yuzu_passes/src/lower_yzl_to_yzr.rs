@@ -19,7 +19,7 @@ use melior::ir::{
     Attribute, Block, BlockLike, BlockRef, Identifier, Location, Module, Region, RegionLike, Type,
     Value, ValueLike,
 };
-use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationExt, RegionExt};
+use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationExt};
 use yuzu_mlir::ops::yzl::YzlOperationRef;
 use yuzu_mlir::{StructType, SymbolTable, value_id};
 use yuzu_types::{BuiltinFunc, FunctionRegistry};
