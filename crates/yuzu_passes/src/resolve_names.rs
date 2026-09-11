@@ -43,7 +43,10 @@ struct Callable {
 
 /// The columns a region's names may refer to.
 enum Ambient<'c, 'a> {
-    Columns(&'a Schema<'c>),
+    /// The row the region sees, and the columns earlier stages stopped
+    /// carrying — remembered so a reference to one can say it was narrowed
+    /// away rather than that it never existed.
+    Columns(&'a Schema<'c>, &'a [&'c str]),
     Params(&'a [&'c str]),
     None,
 }
@@ -56,6 +59,7 @@ struct Resolver<'c, 'a> {
     callables: HashMap<&'c str, Callable>,
     traits: HashSet<&'c str>,
     schemas: HashMap<usize, Schema<'c>>,
+    shed: HashMap<usize, Vec<&'c str>>,
 }
 
 /// Expects a verified module: required ODS attributes are read through
@@ -74,6 +78,7 @@ pub fn resolve_names<'c>(
         callables: HashMap::new(),
         traits: HashSet::new(),
         schemas: HashMap::new(),
+        shed: HashMap::new(),
     };
 
     resolver.hoist(module.body());
@@ -223,19 +228,22 @@ impl<'c> Resolver<'c, '_> {
                 | YzlOperationRef::Limit(_),
             ) => {
                 let schema = self.input_schema(op);
-                self.resolve_regions(op, &Ambient::Columns(&schema));
+                let shed = self.input_shed(op);
+                self.resolve_regions(op, &Ambient::Columns(&schema, &shed));
                 self.record_schema(op, schema);
             }
             Some(YzlOperationRef::Select(stage)) => {
                 let names = stage.names().strings();
                 let input = self.input_schema(op);
-                self.resolve_regions(op, &Ambient::Columns(&input));
+                let shed = self.input_shed(op);
+                self.resolve_regions(op, &Ambient::Columns(&input, &shed));
                 self.record_schema(op, unqualified(names));
             }
             Some(YzlOperationRef::Extend(stage)) => {
                 let names = stage.names().strings();
                 let mut schema = self.input_schema(op);
-                self.resolve_regions(op, &Ambient::Columns(&schema));
+                let shed = self.input_shed(op);
+                self.resolve_regions(op, &Ambient::Columns(&schema, &shed));
                 schema.extend(unqualified(names));
                 self.record_schema(op, schema);
             }
@@ -251,7 +259,8 @@ impl<'c> Resolver<'c, '_> {
                 }
 
                 op.set_index_array_attribute(self.context, "set_cols", &columns);
-                self.resolve_regions(op, &Ambient::Columns(&schema));
+                let shed = self.input_shed(op);
+                self.resolve_regions(op, &Ambient::Columns(&schema, &shed));
                 self.record_schema(op, schema);
             }
             Some(YzlOperationRef::Drop(stage)) => {
@@ -284,10 +293,11 @@ impl<'c> Resolver<'c, '_> {
                 let group_by = stage.group_by().strings();
                 let names = stage.names().strings();
                 let input = self.input_schema(op);
+                let shed = self.input_shed(op);
                 let mut keys = Vec::new();
                 let mut schema = Schema::new();
                 for name in group_by {
-                    match self.find_column(op, &input, name) {
+                    match self.find_column(op, &input, &shed, name) {
                         Some(index) => {
                             keys.push(index);
                             schema.push(input[index].clone());
@@ -301,7 +311,8 @@ impl<'c> Resolver<'c, '_> {
 
                 op.set_index_array_attribute(self.context, "key_cols", &keys);
                 schema.extend(unqualified(names));
-                self.resolve_regions(op, &Ambient::Columns(&input));
+                let shed = self.input_shed(op);
+                self.resolve_regions(op, &Ambient::Columns(&input, &shed));
                 self.record_schema(op, schema);
             }
             Some(YzlOperationRef::Join(stage)) => {
@@ -335,7 +346,8 @@ impl<'c> Resolver<'c, '_> {
                 }
 
                 schema.extend(rhs);
-                self.resolve_regions(op, &Ambient::Columns(&schema));
+                let shed = self.input_shed(op);
+                self.resolve_regions(op, &Ambient::Columns(&schema, &shed));
                 self.record_schema(op, schema);
             }
             Some(
@@ -391,8 +403,8 @@ impl<'c> Resolver<'c, '_> {
         ambient: &Ambient<'c, '_>,
     ) {
         match ambient {
-            Ambient::Columns(schema) => {
-                if let Some(index) = self.find_column(op, schema, reference) {
+            Ambient::Columns(schema, shed) => {
+                if let Some(index) = self.find_column(op, schema, shed, reference) {
                     op.set_index_attribute(self.context, "col", index);
                 }
             }
@@ -452,6 +464,7 @@ impl<'c> Resolver<'c, '_> {
         &mut self,
         op: &impl OperationLike<'c, 'a>,
         schema: &Schema,
+        shed: &[&str],
         reference: &str,
     ) -> Option<usize>
     where
@@ -468,7 +481,20 @@ impl<'c> Resolver<'c, '_> {
                 None
             }
             (None, _) => {
-                self.error(op, format!("unknown column `{reference}`"));
+                // A name the pipeline used to carry is a different mistake
+                // from a name it never had: stages narrow the row, and the
+                // fix is to reach for the column before the row narrows.
+                let column = reference
+                    .split_once('.')
+                    .map_or(reference, |(_, name)| name);
+                let message = match shed.contains(&column) {
+                    true => format!(
+                        "`{reference}` is no longer in the row: an earlier stage narrowed it away"
+                    ),
+                    false => format!("unknown column `{reference}`"),
+                };
+
+                self.error(op, message);
                 None
             }
         }
@@ -509,11 +535,31 @@ impl<'c> Resolver<'c, '_> {
             .unwrap_or_default()
     }
 
+    /// The columns the pipeline stopped carrying on its way to this op.
+    fn input_shed<'a>(&mut self, op: &impl OperationLike<'c, 'a>) -> Vec<&'c str>
+    where
+        'c: 'a,
+    {
+        op.try_first_operand()
+            .and_then(|input| self.shed.get(&value_id(input)).cloned())
+            .unwrap_or_default()
+    }
+
     fn record_schema<'a>(&mut self, op: &impl OperationLike<'c, 'a>, schema: Schema<'c>)
     where
         'c: 'a,
     {
         if let Some(result) = op.try_first_result() {
+            let mut shed = self.input_shed(op);
+            for column in self.input_schema(op) {
+                if !schema.iter().any(|kept| kept.name == column.name)
+                    && !shed.contains(&column.name)
+                {
+                    shed.push(column.name);
+                }
+            }
+
+            self.shed.insert(value_id(result), shed);
             self.schemas.insert(value_id(result), schema);
         }
     }
@@ -781,6 +827,53 @@ fn other[T](x: T) -> T where T: Missing { return x }
                    |
                 16 | fn other[T](x: T) -> T where T: Missing { return x }
                    | ^
+            "#]],
+        );
+    }
+
+    /// A column an earlier stage narrowed away is a different mistake from
+    /// one that never existed, and the error says which.
+    #[test]
+    fn reports_a_column_an_earlier_stage_dropped() {
+        check(
+            r#"
+struct Row { id: int64, name: str }
+table t = Row
+
+from t
+|> as d
+|> drop id
+|> where d.id > 1
+"#,
+            expect![[r#"
+                error: `d.id` is no longer in the row: an earlier stage narrowed it away
+                 --> test.yz:8:10
+                  |
+                8 | |> where d.id > 1
+                  |          ^
+            "#]],
+        );
+    }
+
+    /// Narrowing by `select` sheds the columns it leaves out, the same way
+    /// `drop` sheds the ones it names.
+    #[test]
+    fn reports_a_column_select_left_behind() {
+        check(
+            r#"
+struct Row { id: int64, name: str }
+table t = Row
+
+from t
+|> select name as n
+|> where id > 1
+"#,
+            expect![[r#"
+                error: `id` is no longer in the row: an earlier stage narrowed it away
+                 --> test.yz:7:10
+                  |
+                7 | |> where id > 1
+                  |          ^
             "#]],
         );
     }
