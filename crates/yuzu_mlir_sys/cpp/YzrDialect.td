@@ -28,7 +28,8 @@ def Yzr_TableOp : Yzr_Op<"table", [Pure]> {
   let assemblyFormat = "$name attr-dict `:` type($result)";
 }
 
-def Yzr_FilterOp : Yzr_Op<"filter", [SameOperandsAndResultType]> {
+def Yzr_FilterOp
+    : Yzr_Op<"filter", [IsolatedFromAbove, SameOperandsAndResultType]> {
   let summary = "keep the rows whose predicate holds";
   let arguments = (ins Yzr_RowType:$input);
   let results = (outs Yzr_RowType:$result);
@@ -36,7 +37,7 @@ def Yzr_FilterOp : Yzr_Op<"filter", [SameOperandsAndResultType]> {
   let assemblyFormat = "$input `:` type($input) $body attr-dict";
 }
 
-def Yzr_ProjectOp : Yzr_Op<"project", [Pure]> {
+def Yzr_ProjectOp : Yzr_Op<"project", [IsolatedFromAbove, Pure]> {
   let summary = "replace the row with the yielded values";
   let arguments = (ins Yzr_RowType:$input);
   let results = (outs Yzr_RowType:$result);
@@ -44,7 +45,7 @@ def Yzr_ProjectOp : Yzr_Op<"project", [Pure]> {
   let assemblyFormat = "$input $body `:` type($input) `->` type($result) attr-dict";
 }
 
-def Yzr_ExtendOp : Yzr_Op<"extend", [Pure]> {
+def Yzr_ExtendOp : Yzr_Op<"extend", [IsolatedFromAbove, Pure]> {
   let summary = "append the yielded values as new columns";
   let arguments = (ins Yzr_RowType:$input);
   let results = (outs Yzr_RowType:$result);
@@ -59,7 +60,7 @@ def Yzr_LimitOp : Yzr_Op<"limit", [Pure, SameOperandsAndResultType]> {
   let assemblyFormat = "$input `,` $count `:` type($input) attr-dict";
 }
 
-def Yzr_AggregateOp : Yzr_Op<"aggregate", [Pure]> {
+def Yzr_AggregateOp : Yzr_Op<"aggregate", [IsolatedFromAbove, Pure]> {
   let summary = "group the input relation and compute measures";
   let description = [{
     The region's block arguments are the input row's columns. A block argument
@@ -72,7 +73,7 @@ def Yzr_AggregateOp : Yzr_Op<"aggregate", [Pure]> {
   let assemblyFormat = "$input `keys` $keys $body `:` type($input) `->` type($result) attr-dict";
 }
 
-def Yzr_JoinOp : Yzr_Op<"join", [Pure]> {
+def Yzr_JoinOp : Yzr_Op<"join", [IsolatedFromAbove, Pure]> {
   let summary = "join two relations; the on-region sees both rows' columns";
   let arguments = (ins StrAttr:$kind, Yzr_RowType:$lhs, Yzr_RowType:$rhs);
   let results = (outs Yzr_RowType:$result);

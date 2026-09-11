@@ -325,8 +325,12 @@ yzr.yield %n : !yz.int64
     .assert_eq(&module.as_operation().to_string());
 }
 
+/// A stage region is `IsolatedFromAbove` because it becomes a self-contained
+/// Substrait expression: the canonicalizer folds freely inside one, but every
+/// constant it leaves behind stays where the emitter can still see it.
+/// `1 / 0` stands, as a fold that would change the program's meaning.
 #[test]
-fn the_canonicalizer_folds_across_a_stage_region() {
+fn the_canonicalizer_keeps_its_folding_inside_the_region() {
     let context = yuzu_mlir::context();
     let mut module = parse(
         &context,
@@ -363,22 +367,22 @@ yzr.yield %p : !yz.bool
 
     expect![[r#"
         module {
-          %0 = yz.constant_bool true
-          %1 = yz.constant_int 1
-          %2 = yz.constant_int 0
-          %3 = yz.constant_int 3
-          %4 = yzr.table @t : !yz.struct<@row>
-          %5 = yzr.filter %4 : !yz.struct<@row> {
+          %0 = yzr.table @t : !yz.struct<@row>
+          %1 = yzr.filter %0 : !yz.struct<@row> {
           ^bb0(%arg0: !yz.int64):
-            %7 = yz.cmp "gt", %arg0, %3 : !yz.int64, !yz.int64 -> !yz.bool
-            %8 = yz.and %7, %0 : !yz.bool, !yz.bool -> !yz.bool
-            yzr.yield %8 : !yz.bool
+            %3 = yz.constant_int 3
+            %4 = yz.constant_bool true
+            %5 = yz.cmp "gt", %arg0, %3 : !yz.int64, !yz.int64 -> !yz.bool
+            %6 = yz.and %5, %4 : !yz.bool, !yz.bool -> !yz.bool
+            yzr.yield %6 : !yz.bool
           }
-          %6 = yzr.filter %5 : !yz.struct<@row> {
+          %2 = yzr.filter %1 : !yz.struct<@row> {
           ^bb0(%arg0: !yz.int64):
-            %7 = yz.div %1, %2 : !yz.int64, !yz.int64 -> !yz.int64
-            %8 = yz.cmp "eq", %7, %1 : !yz.int64, !yz.int64 -> !yz.bool
-            yzr.yield %8 : !yz.bool
+            %3 = yz.constant_int 0
+            %4 = yz.constant_int 1
+            %5 = yz.div %4, %3 : !yz.int64, !yz.int64 -> !yz.int64
+            %6 = yz.cmp "eq", %5, %4 : !yz.int64, !yz.int64 -> !yz.bool
+            yzr.yield %6 : !yz.bool
           }
         }
     "#]]
