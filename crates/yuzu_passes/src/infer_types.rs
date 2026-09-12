@@ -7,10 +7,10 @@
 use std::collections::{HashMap, HashSet};
 
 use melior::Context;
-use melior::ir::attribute::{IntegerAttribute, TypeAttribute};
-use melior::ir::operation::{OperationLike, OperationMutLike, OperationRef};
+use melior::ir::attribute::{ArrayAttribute, IntegerAttribute, TypeAttribute};
+use melior::ir::operation::{OperationLike, OperationMutLike, OperationRef, OperationRefMut};
 use melior::ir::r#type::FunctionType;
-use melior::ir::{BlockRef, Location, Module, RegionLike, Type, Value, ValueLike};
+use melior::ir::{Attribute, BlockRef, Location, Module, RegionLike, Type, Value, ValueLike};
 use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationExt, RegionExt};
 use yuzu_mlir::ops::yz::YzOperationRef;
 use yuzu_mlir::ops::yzl::YzlOperationRef;
@@ -61,6 +61,9 @@ struct TypeInferrer<'c> {
     /// A bound to check once the type variable standing for its parameter
     /// resolves — deferred, because the argument may resolve after the call.
     pending: Vec<PendingBound<'c>>,
+    /// The type variables a generic call minted, in the order its function
+    /// declared them — resolved and stamped once inference settles.
+    instances: HashMap<usize, Vec<usize>>,
     relations: HashMap<&'c str, Row<'c>>,
 }
 
@@ -76,6 +79,7 @@ pub fn infer_types<'c>(context: &'c Context, module: &Module<'c>) {
         signatures: HashMap::new(),
         impls: HashSet::new(),
         pending: Vec::new(),
+        instances: HashMap::new(),
         relations: HashMap::new(),
     };
 
@@ -388,10 +392,21 @@ impl<'c> TypeInferrer<'c> {
         signature: &Signature<'c>,
     ) -> HashMap<&'c str, usize> {
         let mut bindings = HashMap::new();
+        let mut ordered = Vec::new();
         for name in &signature.type_params {
             let var = self.filled.len();
             self.filled.push(None);
             bindings.insert(*name, var);
+            ordered.push(var);
+        }
+
+        // Which type the call chose for each parameter is inference's answer,
+        // and expansion needs it to pick an implementation. Recorded now,
+        // stamped once the variables resolve.
+        if !ordered.is_empty()
+            && let Some(result) = op.try_first_result()
+        {
+            self.instances.insert(yuzu_mlir::value_id(result), ordered);
         }
 
         for (subject, r#trait) in &signature.bounds {
@@ -585,7 +600,30 @@ impl<'c> TypeInferrer<'c> {
                 {
                     op.set_attribute("ty", TypeAttribute::new(ty).into());
                 }
+
+                self.stamp_type_args(&mut op, yuzu_mlir::value_id(result));
             }
+        }
+    }
+
+    /// The types a generic call settled on, in declaration order. A partial
+    /// answer is worse than none, so a call whose parameters did not all
+    /// resolve is left unstamped for expansion to report.
+    fn stamp_type_args(&mut self, op: &mut OperationRefMut<'c, '_>, result: usize) {
+        let Some(vars) = self.instances.get(&result).cloned() else {
+            return;
+        };
+
+        let resolved: Vec<Attribute<'c>> = vars
+            .iter()
+            .filter_map(|&var| self.resolve(Term::Var(var)))
+            .map(|ty| TypeAttribute::new(ty).into())
+            .collect();
+        if resolved.len() == vars.len() {
+            op.set_attribute(
+                "type_args",
+                ArrayAttribute::new(self.context, &resolved).into(),
+            );
         }
     }
 
@@ -717,7 +755,9 @@ from t
     }
 
     /// Each call to a generic function solves its own instance, so one
-    /// declaration serves both column types.
+    /// declaration serves both column types — and each call carries what it
+    /// settled on, which is how expansion later knows `@id` at `int64` wants
+    /// the `int64` implementation.
     #[test]
     fn instantiates_a_generic_call_per_site() {
         check(
@@ -769,9 +809,9 @@ from t
                   %0 = yzl.from @t
                   %1 = yzl.extend %0 as ["m", "n"] {
                     %2 = yzl.name "a" : !yzl.var {col = 0 : i64, ty = !yz.int64}
-                    %3 = yzl.call @id(%2) : (!yzl.var) -> !yzl.var {callee_kind = "fn", ty = !yz.int64}
+                    %3 = yzl.call @id(%2) : (!yzl.var) -> !yzl.var {callee_kind = "fn", ty = !yz.int64, type_args = [!yz.int64]}
                     %4 = yzl.name "r" : !yzl.var {col = 1 : i64, ty = !yz.float64}
-                    %5 = yzl.call @id(%4) : (!yzl.var) -> !yzl.var {callee_kind = "fn", ty = !yz.float64}
+                    %5 = yzl.call @id(%4) : (!yzl.var) -> !yzl.var {callee_kind = "fn", ty = !yz.float64, type_args = [!yz.float64]}
                     yzl.yield %3, %5 : !yzl.var, !yzl.var
                   }
                   yzl.output %1

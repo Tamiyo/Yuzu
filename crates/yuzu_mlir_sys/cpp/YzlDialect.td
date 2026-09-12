@@ -242,7 +242,8 @@ def Yzl_ListOp : Yzl_Op<"list", [Pure]> {
 def Yzl_CallOp : Yzl_Op<"call", [Pure]> {
   let summary = "a call by name; registry and shadowing unresolved";
   let arguments = (ins FlatSymbolRefAttr:$callee, Variadic<AnyType>:$operands,
-                       OptionalAttr<StrAttr>:$callee_kind);
+                       OptionalAttr<StrAttr>:$callee_kind,
+                       OptionalAttr<TypeArrayAttr>:$type_args);
   let results = (outs AnyType:$result);
   let assemblyFormat =
       "$callee `(` $operands `)` `:` functional-type($operands, $result) attr-dict";
