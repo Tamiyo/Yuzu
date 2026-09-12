@@ -9,7 +9,7 @@ use melior::ir::{Attribute, BlockLike, BlockRef, Identifier, Type, Value, ValueL
 use yuzu_mlir::ext::OperationExt;
 use yuzu_mlir::ods::{yz, yzr};
 use yuzu_mlir::ops::yzl::YzlOperationRef;
-use yuzu_mlir::value_id;
+use yuzu_mlir::{CalleeKind, value_id};
 use yuzu_types::BuiltinFunc;
 
 use crate::lower_yzl_to_yzr::{YzlToYzr, op_name};
@@ -44,13 +44,10 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                 let callee = call.callee().value().to_string();
                 let operands = self.mapped_operands(op, values);
                 let ty = self.stamped_type(op);
-                let kind = call
-                    .callee_kind()
-                    .map(|kind| kind.value())
-                    .unwrap_or_default();
-                let lowered = if kind == "builtin" && self.is_aggregate(&callee) {
+                let kind = CalleeKind::of(&call);
+                let lowered = if kind == Some(CalleeKind::Builtin) && self.is_aggregate(&callee) {
                     self.lower_measure(op, &callee, &operands, ty, body)
-                } else if kind == "external" {
+                } else if kind == Some(CalleeKind::External) {
                     yz::extern_call(
                         self.context,
                         ty,

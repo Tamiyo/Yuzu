@@ -12,7 +12,7 @@ use melior::ir::operation::{OperationLike, OperationMutLike, OperationRefMut};
 use melior::ir::{BlockRef, Module, RegionLike};
 use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationExt, OperationMutExt, RegionExt};
 use yuzu_mlir::ops::yzl::YzlOperationRef;
-use yuzu_mlir::value_id;
+use yuzu_mlir::{CalleeKind, value_id};
 use yuzu_types::FunctionRegistry;
 
 /// A column the query carries at some stage: its name, and the alias
@@ -36,7 +36,7 @@ type Schema<'c> = Vec<Column<'c>>;
 
 /// What a callable name resolved to, recorded as the op's `callee_kind`.
 struct Callable {
-    kind: &'static str,
+    kind: CalleeKind,
     min_args: usize,
     max_args: usize,
 }
@@ -116,11 +116,11 @@ impl<'c> Resolver<'c, '_> {
                     let name = function.sym_name().value();
                     let params = function.params().strings().len();
                     let kind = if function.external() {
-                        "external"
+                        CalleeKind::External
                     } else if function.agg() {
-                        "agg_fn"
+                        CalleeKind::AggFn
                     } else {
-                        "fn"
+                        CalleeKind::Fn
                     };
 
                     self.check_duplicate(&op, "function", name);
@@ -438,7 +438,7 @@ impl<'c> Resolver<'c, '_> {
                 .iter()
                 .find(|entry| entry.name == callee)
             {
-                Some(entry) => ("builtin", entry.min_args, entry.max_args),
+                Some(entry) => (CalleeKind::Builtin, entry.min_args, entry.max_args),
                 None => {
                     self.error(op, format!("unknown function `{callee}`"));
                     return;
@@ -461,7 +461,7 @@ impl<'c> Resolver<'c, '_> {
 
         op.set_attribute(
             "callee_kind",
-            StringAttribute::new(self.context, kind).into(),
+            StringAttribute::new(self.context, kind.as_str()).into(),
         );
     }
 

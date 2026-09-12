@@ -23,7 +23,7 @@ use melior::ir::{Attribute, BlockRef, Identifier, Module, RegionLike, Value};
 use melior::{IrRewriter, RewriterBase, ir::Location};
 use yuzu_mlir::ext::{BlockExt, OperationExt, RegionExt};
 use yuzu_mlir::ops::yzl::YzlOperationRef;
-use yuzu_mlir::{SymbolTable, value_id};
+use yuzu_mlir::{CalleeKind, SymbolTable, value_id};
 
 /// How many calls one program may expand. A program whose calls reduce needs
 /// far fewer than this; one that does not would never stop on its own.
@@ -71,8 +71,8 @@ fn collect_calls<'c, 'a>(block: BlockRef<'c, 'a>, out: &mut Vec<OperationRef<'c,
             }
             Some(YzlOperationRef::Call(call)) => {
                 if matches!(
-                    call.callee_kind().map(|kind| kind.value()),
-                    Some("fn") | Some("agg_fn")
+                    CalleeKind::of(&call),
+                    Some(CalleeKind::Fn | CalleeKind::AggFn)
                 ) {
                     out.push(op);
                 }

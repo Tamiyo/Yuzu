@@ -11,6 +11,7 @@ use melior::ir::attribute::{ArrayAttribute, IntegerAttribute, TypeAttribute};
 use melior::ir::operation::{OperationLike, OperationMutLike, OperationRef, OperationRefMut};
 use melior::ir::r#type::FunctionType;
 use melior::ir::{Attribute, BlockRef, Location, Module, RegionLike, Type, Value, ValueLike};
+use yuzu_mlir::CalleeKind;
 use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationExt, RegionExt};
 use yuzu_mlir::ops::yz::YzOperationRef;
 use yuzu_mlir::ops::yzl::YzlOperationRef;
@@ -237,9 +238,9 @@ impl<'c> TypeInferrer<'c> {
             }
             Some(YzlOperationRef::Call(call)) => {
                 let callee = call.callee().value();
-                match call.callee_kind().map(|kind| kind.value()) {
-                    Some("builtin") => self.resolve_builtin_ty(op, callee),
-                    Some("external") => {}
+                match CalleeKind::of(&call) {
+                    Some(CalleeKind::Builtin) => self.resolve_builtin_ty(op, callee),
+                    Some(CalleeKind::External) => {}
                     _ => {
                         let Some(signature) = self.signatures.get(callee).cloned() else {
                             return;

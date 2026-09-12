@@ -1,5 +1,6 @@
 use melior::Context;
 
+mod callee_kind;
 pub mod diagnostics;
 pub mod ext;
 pub mod ods;
@@ -10,6 +11,7 @@ mod symbol_table;
 pub mod types;
 mod value;
 
+pub use callee_kind::CalleeKind;
 pub use param_type::ParamType;
 pub use struct_type::StructType;
 pub use symbol_table::SymbolTable;
