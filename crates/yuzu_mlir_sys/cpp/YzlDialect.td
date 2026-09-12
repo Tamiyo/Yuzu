@@ -123,7 +123,7 @@ def Yzl_FromOp : Yzl_Op<"from", [Pure]> {
   let assemblyFormat = "$source attr-dict";
 }
 
-def Yzl_WhereOp : Yzl_Op<"where", [Pure]> {
+def Yzl_WhereOp : Yzl_Op<"where", [IsolatedFromAbove, Pure]> {
   let summary = "keep the rows whose predicate holds";
   let arguments = (ins Yzl_QueryType:$input);
   let results = (outs Yzl_QueryType:$result);
@@ -131,7 +131,7 @@ def Yzl_WhereOp : Yzl_Op<"where", [Pure]> {
   let assemblyFormat = "$input $body attr-dict";
 }
 
-def Yzl_SelectOp : Yzl_Op<"select", [Pure]> {
+def Yzl_SelectOp : Yzl_Op<"select", [IsolatedFromAbove, Pure]> {
   let summary = "replace the row with the yielded values, named by `as`";
   let arguments = (ins Yzl_QueryType:$input, StrArrayAttr:$names);
   let results = (outs Yzl_QueryType:$result);
@@ -139,7 +139,7 @@ def Yzl_SelectOp : Yzl_Op<"select", [Pure]> {
   let assemblyFormat = "$input `as` $names $body attr-dict";
 }
 
-def Yzl_ExtendOp : Yzl_Op<"extend", [Pure]> {
+def Yzl_ExtendOp : Yzl_Op<"extend", [IsolatedFromAbove, Pure]> {
   let summary = "append the yielded values as new columns, named by `as`";
   let arguments = (ins Yzl_QueryType:$input, StrArrayAttr:$names);
   let results = (outs Yzl_QueryType:$result);
@@ -147,7 +147,7 @@ def Yzl_ExtendOp : Yzl_Op<"extend", [Pure]> {
   let assemblyFormat = "$input `as` $names $body attr-dict";
 }
 
-def Yzl_AggregateOp : Yzl_Op<"aggregate", [Pure]> {
+def Yzl_AggregateOp : Yzl_Op<"aggregate", [IsolatedFromAbove, Pure]> {
   let summary = "group by named columns and compute the yielded measures";
   let arguments = (ins Yzl_QueryType:$input, StrArrayAttr:$group_by,
                        StrArrayAttr:$names,
@@ -182,7 +182,7 @@ def Yzl_AliasOp : Yzl_Op<"alias", [Pure]> {
 
 // Expressions.
 
-def Yzl_JoinOp : Yzl_Op<"join", [Pure]> {
+def Yzl_JoinOp : Yzl_Op<"join", [IsolatedFromAbove, Pure]> {
   let summary = "join a named relation onto the query";
   let arguments = (ins Yzl_QueryType:$lhs, StrAttr:$kind, FlatSymbolRefAttr:$rhs,
                        OptionalAttr<StrAttr>:$rhs_alias,
@@ -194,7 +194,7 @@ def Yzl_JoinOp : Yzl_Op<"join", [Pure]> {
       "$on attr-dict";
 }
 
-def Yzl_SetOp : Yzl_Op<"set", [Pure]> {
+def Yzl_SetOp : Yzl_Op<"set", [IsolatedFromAbove, Pure]> {
   let summary = "assign the yielded values to existing columns";
   let arguments = (ins Yzl_QueryType:$input, StrArrayAttr:$names,
                        OptionalAttr<I64ArrayAttr>:$set_cols);
