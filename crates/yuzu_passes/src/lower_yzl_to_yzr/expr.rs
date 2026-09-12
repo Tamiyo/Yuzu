@@ -44,7 +44,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                 let callee = call.callee().value().to_string();
                 let operands = self.mapped_operands(op, values);
                 let ty = self.stamped_type(op);
-                let kind = CalleeKind::of(&call);
+                let kind = call.callee_kind();
                 let lowered = if kind == Some(CalleeKind::Builtin) && self.is_aggregate(&callee) {
                     self.lower_measure(op, &callee, &operands, ty, body)
                 } else if kind == Some(CalleeKind::External) {

@@ -70,10 +70,7 @@ fn collect_calls<'c, 'a>(block: BlockRef<'c, 'a>, out: &mut Vec<OperationRef<'c,
                 continue;
             }
             Some(YzlOperationRef::Call(call)) => {
-                if matches!(
-                    CalleeKind::of(&call),
-                    Some(CalleeKind::Fn | CalleeKind::AggFn)
-                ) {
+                if matches!(call.callee_kind(), Some(CalleeKind::Fn | CalleeKind::AggFn)) {
                     out.push(op);
                 }
             }

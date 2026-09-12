@@ -238,7 +238,7 @@ impl<'c> TypeInferrer<'c> {
             }
             Some(YzlOperationRef::Call(call)) => {
                 let callee = call.callee().value();
-                match CalleeKind::of(&call) {
+                match call.callee_kind() {
                     Some(CalleeKind::Builtin) => self.resolve_builtin_ty(op, callee),
                     Some(CalleeKind::External) => {}
                     _ => {

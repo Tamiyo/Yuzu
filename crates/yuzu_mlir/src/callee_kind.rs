@@ -1,3 +1,6 @@
+use melior::ir::attribute::StringAttribute;
+use melior::ir::operation::OperationLike;
+
 use crate::ops::yzl::CallOperationRef;
 
 /// What a call's name turned out to mean. Resolution decides it and stamps it
@@ -30,15 +33,23 @@ impl CalleeKind {
             Self::External => "external",
         }
     }
+}
 
-    /// What a call resolved to, or `None` on one resolution has not reached.
-    pub fn of(call: &CallOperationRef<'_, '_>) -> Option<Self> {
-        match call.callee_kind()?.value() {
-            "fn" => Some(Self::Fn),
-            "agg_fn" => Some(Self::AggFn),
-            "builtin" => Some(Self::Builtin),
-            "external" => Some(Self::External),
-            _ => None,
+impl CallOperationRef<'_, '_> {
+    /// What this call resolved to, or `None` on one that resolution has not
+    /// reached. This stands in for the generated accessor — `build.rs` leaves
+    /// `callee_kind` out of the view so the attribute reads back as what it
+    /// means rather than as the string it is stored in.
+    pub fn callee_kind(&self) -> Option<CalleeKind> {
+        let attribute = self.operation().attribute("callee_kind").ok()?;
+        let text = StringAttribute::try_from(attribute)
+            .expect("`callee_kind` on `yzl.call` is a string attribute");
+        match text.value() {
+            "fn" => Some(CalleeKind::Fn),
+            "agg_fn" => Some(CalleeKind::AggFn),
+            "builtin" => Some(CalleeKind::Builtin),
+            "external" => Some(CalleeKind::External),
+            other => panic!("`{other}` is not a callee kind resolution writes"),
         }
     }
 }

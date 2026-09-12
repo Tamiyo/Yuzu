@@ -195,7 +195,7 @@ impl<'c> Checker<'_, 'c> {
         call: &yuzu_mlir::ops::yzl::CallOperationRef<'c, '_>,
         callee: &str,
     ) -> bool {
-        match CalleeKind::of(call) {
+        match call.callee_kind() {
             Some(CalleeKind::AggFn) => true,
             Some(CalleeKind::Builtin) => self.registry.entries().iter().any(|entry| {
                 entry.name == callee && matches!(entry.func, BuiltinFunc::Aggregate(_))
