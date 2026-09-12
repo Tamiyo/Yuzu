@@ -7,6 +7,7 @@ use yuzu_mlir::ods::{yz, yzl};
 
 use crate::lower_ast_to_yzl::{AstToYzl, Locals, ident_text};
 use melior::ir::r#type::IntegerType;
+use yuzu_mlir::attributes::CmpPredicate;
 use yuzu_mlir::ext::OperationExt;
 use yuzu_mlir::types;
 
@@ -224,13 +225,13 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         };
 
         let context = self.context;
-        let cmp = |predicate| {
+        let cmp = |predicate: CmpPredicate| {
             yz::cmp(
                 context,
                 types::var(self.context),
                 lhs,
                 rhs,
-                StringAttribute::new(context, predicate),
+                StringAttribute::new(context, predicate.as_str()),
                 loc,
             )
             .into()
@@ -256,12 +257,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             Some(BinOp::Div) => yz::div(context, types::var(self.context), lhs, rhs, loc).into(),
             Some(BinOp::And) => yz::and(context, types::var(self.context), lhs, rhs, loc).into(),
             Some(BinOp::Or) => yz::or(context, types::var(self.context), lhs, rhs, loc).into(),
-            Some(BinOp::Eq) => cmp("eq"),
-            Some(BinOp::Neq) => cmp("ne"),
-            Some(BinOp::Lt) => cmp("lt"),
-            Some(BinOp::Lte) => cmp("le"),
-            Some(BinOp::Gt) => cmp("gt"),
-            Some(BinOp::Gte) => cmp("ge"),
+            Some(BinOp::Eq) => cmp(CmpPredicate::Equal),
+            Some(BinOp::Neq) => cmp(CmpPredicate::NotEqual),
+            Some(BinOp::Lt) => cmp(CmpPredicate::Less),
+            Some(BinOp::Lte) => cmp(CmpPredicate::LessOrEqual),
+            Some(BinOp::Gt) => cmp(CmpPredicate::Greater),
+            Some(BinOp::Gte) => cmp(CmpPredicate::GreaterOrEqual),
             Some(BinOp::Pow) => call("pow"),
             Some(BinOp::ShiftLeft) => call("shift_left"),
             Some(BinOp::ShiftRight) => call("shift_right"),

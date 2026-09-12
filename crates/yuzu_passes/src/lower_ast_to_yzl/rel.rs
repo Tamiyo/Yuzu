@@ -7,6 +7,7 @@ use yuzu_mlir::ods::yzl;
 
 use crate::lower_ast_to_yzl::{AstToYzl, Locals, ident_text};
 use melior::ir::r#type::IntegerType;
+use yuzu_mlir::attributes::JoinKind;
 use yuzu_mlir::ext::OperationExt;
 use yuzu_mlir::types;
 
@@ -237,10 +238,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             ast::Rel::JoinExpr(stage) => {
                 let lhs = self.convert_input(block, stage, "`join`", stage.input());
                 let kind = match stage.kind() {
-                    Some(ast::JoinKind::Left) => "left",
-                    Some(ast::JoinKind::Right) => "right",
-                    Some(ast::JoinKind::Full) => "full",
-                    _ => "inner",
+                    Some(ast::JoinKind::Left) => JoinKind::Left,
+                    Some(ast::JoinKind::Right) => JoinKind::Right,
+                    Some(ast::JoinKind::Full) => JoinKind::Full,
+                    _ => JoinKind::Inner,
                 };
 
                 let Some(rhs) = ident_text(stage.relation()) else {
@@ -262,7 +263,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 let mut builder = yzl::JoinOperationBuilder::new(self.context, loc)
                     .result(types::query(self.context))
                     .lhs(lhs)
-                    .kind(StringAttribute::new(self.context, kind))
+                    .kind(StringAttribute::new(self.context, kind.as_str()))
                     .rhs(FlatSymbolRefAttribute::new(self.context, &rhs))
                     .on(on);
                 if let Some(alias) = ident_text(stage.alias()) {

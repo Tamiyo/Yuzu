@@ -6,10 +6,11 @@ use std::collections::HashMap;
 use melior::ir::attribute::{FlatSymbolRefAttribute, StringAttribute, TypeAttribute};
 use melior::ir::operation::{OperationBuilder, OperationLike, OperationRef};
 use melior::ir::{Attribute, BlockLike, BlockRef, Identifier, Type, Value, ValueLike};
+use yuzu_mlir::attributes::CalleeKind;
 use yuzu_mlir::ext::OperationExt;
 use yuzu_mlir::ods::{yz, yzr};
 use yuzu_mlir::ops::yzl::YzlOperationRef;
-use yuzu_mlir::{CalleeKind, value_id};
+use yuzu_mlir::value_id;
 use yuzu_types::BuiltinFunc;
 
 use crate::lower_yzl_to_yzr::{YzlToYzr, op_name};

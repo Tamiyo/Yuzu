@@ -10,9 +10,10 @@ use melior::Context;
 use melior::ir::attribute::StringAttribute;
 use melior::ir::operation::{OperationLike, OperationMutLike, OperationRefMut};
 use melior::ir::{BlockRef, Module, RegionLike};
+use yuzu_mlir::attributes::CalleeKind;
 use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationExt, OperationMutExt, RegionExt};
 use yuzu_mlir::ops::yzl::YzlOperationRef;
-use yuzu_mlir::{CalleeKind, value_id};
+use yuzu_mlir::value_id;
 use yuzu_types::FunctionRegistry;
 
 /// A column the query carries at some stage: its name, and the alias

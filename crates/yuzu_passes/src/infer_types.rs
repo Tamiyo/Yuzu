@@ -11,7 +11,7 @@ use melior::ir::attribute::{ArrayAttribute, IntegerAttribute, TypeAttribute};
 use melior::ir::operation::{OperationLike, OperationMutLike, OperationRef, OperationRefMut};
 use melior::ir::r#type::FunctionType;
 use melior::ir::{Attribute, BlockRef, Location, Module, RegionLike, Type, Value, ValueLike};
-use yuzu_mlir::CalleeKind;
+use yuzu_mlir::attributes::CalleeKind;
 use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationExt, RegionExt};
 use yuzu_mlir::ops::yz::YzOperationRef;
 use yuzu_mlir::ops::yzl::YzlOperationRef;

@@ -175,7 +175,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                         lhs,
                         rows,
                         region,
-                        stage.kind(),
+                        StringAttribute::new(self.context, stage.kind().as_str()),
                         op.location(),
                     )
                     .into(),

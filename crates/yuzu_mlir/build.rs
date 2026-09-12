@@ -110,7 +110,12 @@ impl Storage {
 /// reading the attribute back as what it means rather than what it stores.
 /// Every entry is checked against the dialect, so renaming one in TableGen
 /// fails the build rather than silently leaving two accessors or none.
-const TYPED_ACCESSORS: &[(&str, &str)] = &[("yzl.call", "callee_kind")];
+const TYPED_ACCESSORS: &[(&str, &str)] = &[
+    ("yzl.call", "callee_kind"),
+    ("yz.cmp", "predicate"),
+    ("yzl.join", "kind"),
+    ("yzr.join", "kind"),
+];
 
 struct Op {
     /// The MLIR name, e.g. `yzl.where`.
