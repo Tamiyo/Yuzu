@@ -392,12 +392,18 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
 
                 self.record_stage(op, projected.first_result(), schema);
             }
-            Some(
-                YzlOperationRef::Fn(_)
-                | YzlOperationRef::Trait(_)
-                | YzlOperationRef::Impl(_)
-                | YzlOperationRef::Missing(_),
-            ) => self.error(op, format!("`{}` is not lowered yet", op_name(op))),
+            // Expansion removes these once every call is gone, so one
+            // reaching here means expansion did not finish — the reason is
+            // already reported, and this says which declaration outlived it.
+            Some(YzlOperationRef::Fn(_) | YzlOperationRef::Trait(_) | YzlOperationRef::Impl(_)) => {
+                self.error(
+                    op,
+                    format!("`{}` was not expanded before lowering", op_name(op)),
+                )
+            }
+            Some(YzlOperationRef::Missing(_)) => {
+                self.error(op, "this part of the query is missing")
+            }
             // Declarations yzr does not need, and the terminators a region
             // owns rather than the module.
             Some(
@@ -566,9 +572,14 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                     values.insert(value_id(op.first_result()), rebuilt);
                 }
             }
+            // The parse error above it already said what went wrong; this says
+            // the query cannot be built from what is left, rather than
+            // implying some lowering is still to come.
+            Some(YzlOperationRef::Missing(_)) => {
+                self.error(op, "this part of the query is missing")
+            }
             Some(
-                YzlOperationRef::Missing(_)
-                | YzlOperationRef::List(_)
+                YzlOperationRef::List(_)
                 | YzlOperationRef::From(_)
                 | YzlOperationRef::Where(_)
                 | YzlOperationRef::Select(_)
@@ -1316,6 +1327,41 @@ from l
                   } : !yz.struct<@row> -> !yz.struct<@row_0>
                   yzr.output %3 : !yz.struct<@row_0>
                 }
+            "#]],
+        );
+    }
+
+    /// A hole the parser left behind reaches here as a `yzl.missing`. The
+    /// parse error above it says what went wrong; this says the query cannot
+    /// be built from it, rather than implying a lowering is missing.
+    #[test]
+    fn reports_a_missing_piece() {
+        check_lowered(
+            r#"
+struct Row { a: int64 }
+table t = Row
+
+from t
+|> where a >
+"#,
+            expect![[r#"
+                error: expected expression, found end of input
+                 --> test.yz:6:13
+                  |
+                6 | |> where a >
+                  | 
+
+                error: binary expression is missing its right operand
+                 --> test.yz:6:10
+                  |
+                6 | |> where a >
+                  |          ^^^
+
+                error: this part of the query is missing
+                 --> test.yz:6:10
+                  |
+                6 | |> where a >
+                  |          ^
             "#]],
         );
     }
