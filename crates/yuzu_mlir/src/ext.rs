@@ -3,11 +3,23 @@
 
 use melior::Context;
 use melior::ir::attribute::{
-    ArrayAttribute, FlatSymbolRefAttribute, IntegerAttribute, StringAttribute,
+    ArrayAttribute, FlatSymbolRefAttribute, IntegerAttribute, StringAttribute, TypeAttribute,
 };
 use melior::ir::operation::{OperationLike, OperationMutLike, OperationRef, OperationRefMut};
 use melior::ir::r#type::IntegerType;
-use melior::ir::{Attribute, BlockLike, BlockRef, RegionLike, Value};
+use melior::ir::{Attribute, BlockLike, BlockRef, RegionLike, Type, Value, ValueLike};
+
+/// Identity for the maps a pass keys by value.
+pub trait ValueExt<'c>: ValueLike<'c> {
+    /// A key identifying this value for the lifetime of its context. Values
+    /// wrap uniqued, arena-owned pointers, so the pointer is a stable
+    /// identity — MLIR values are not arena indices we could use instead.
+    fn id(&self) -> usize {
+        self.to_raw().ptr as usize
+    }
+}
+
+impl<'c, T: ValueLike<'c>> ValueExt<'c> for T {}
 
 /// Element access for array attributes.
 pub trait ArrayAttributeExt<'c> {
@@ -95,6 +107,17 @@ pub trait OperationExt<'c: 'a, 'a>: OperationLike<'c, 'a> {
     /// same reason as `try_first_result`.
     fn try_first_operand(&self) -> Option<Value<'c, 'a>> {
         (self.operand_count() > 0).then(|| self.operand(0).expect("the operand index is in range"))
+    }
+
+    /// The type this op produces. Inference stamps what it settled on rather
+    /// than rewriting the IR, so the stamp is the better answer wherever it
+    /// exists and the result's own type stands in where it does not.
+    fn ty(&self) -> Type<'c> {
+        self.attribute("ty")
+            .ok()
+            .and_then(|attribute| TypeAttribute::try_from(attribute).ok())
+            .map(|attribute| attribute.value())
+            .unwrap_or_else(|| self.first_result().r#type())
     }
 
     /// A string attribute, by name.

@@ -14,8 +14,8 @@ use melior::Context;
 use melior::ir::attribute::TypeAttribute;
 use melior::ir::operation::{OperationLike, OperationRef};
 use melior::ir::{BlockRef, Location, Module, Type, Value};
-use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationExt};
-use yuzu_mlir::{SymbolTable, value_id};
+use yuzu_mlir::SymbolTable;
+use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationExt, ValueExt};
 use yuzu_types::FunctionRegistry;
 
 /// A row: the columns flowing out of a stage, in order.
@@ -81,12 +81,12 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
 
     fn input_stage(&mut self, op: OperationRef<'c, '_>) -> Option<(Value<'c, 'a>, Schema<'c>)> {
         let input = op.try_first_operand()?;
-        self.stages.get(&value_id(input)).cloned()
+        self.stages.get(&input.id()).cloned()
     }
 
     fn record_stage(&mut self, op: OperationRef<'c, '_>, value: Value<'c, 'a>, schema: Schema<'c>) {
         if let Some(result) = op.try_first_result() {
-            self.stages.insert(value_id(result), (value, schema));
+            self.stages.insert(result.id(), (value, schema));
         }
     }
 
@@ -104,7 +104,7 @@ fn op_name<'c>(op: OperationRef<'c, '_>) -> String {
 }
 
 /// The fields a struct declaration carries, in order.
-fn struct_fields<'c>(item: &yuzu_mlir::ops::yzl::StructOperationRef<'c, '_>) -> Schema<'c> {
+fn struct_fields<'c>(item: &yuzu_mlir::ops::yzl::StructOp<'c, '_>) -> Schema<'c> {
     item.names()
         .strings()
         .into_iter()

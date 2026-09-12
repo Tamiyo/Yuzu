@@ -331,7 +331,7 @@ fn escape(name: &str) -> String {
 /// The typed views: one borrowing struct per op with accessors named after
 /// the ODS arguments, and an enum over them for match-based dispatch.
 fn generate_typed_module(out: &mut String, dialect: &Dialect, ops: &[Op]) {
-    let enum_name = format!("{}OperationRef", dialect.tblgen_prefix);
+    let enum_name = format!("{}Op", dialect.tblgen_prefix);
     writeln!(
         out,
         "\n/// Borrowed, typed views of `{}` operations.",
@@ -354,12 +354,7 @@ fn generate_typed_module(out: &mut String, dialect: &Dialect, ops: &[Op]) {
     writeln!(out, "    #[derive(Clone, Copy)]").unwrap();
     writeln!(out, "    pub enum {enum_name}<'c, 'a> {{").unwrap();
     for op in ops {
-        writeln!(
-            out,
-            "        {}({}OperationRef<'c, 'a>),",
-            op.variant, op.variant
-        )
-        .unwrap();
+        writeln!(out, "        {}({}Op<'c, 'a>),", op.variant, op.variant).unwrap();
     }
 
     writeln!(out, "    }}\n").unwrap();
@@ -378,7 +373,7 @@ fn generate_typed_module(out: &mut String, dialect: &Dialect, ops: &[Op]) {
     for op in ops {
         writeln!(
             out,
-            "                \"{}\" => Self::{}({}OperationRef {{ operation }}),",
+            "                \"{}\" => Self::{}({}Op {{ operation }}),",
             op.full_name, op.variant, op.variant
         )
         .unwrap();
@@ -465,7 +460,7 @@ fn write_imports(out: &mut String, ops: &[Op]) {
 }
 
 fn generate_struct(out: &mut String, op: &Op) {
-    let name = format!("{}OperationRef", op.variant);
+    let name = format!("{}Op", op.variant);
     writeln!(out, "\n    /// A borrowed `{}` operation.", op.full_name).unwrap();
     writeln!(out, "    #[derive(Clone, Copy)]").unwrap();
     writeln!(out, "    pub struct {name}<'c, 'a> {{").unwrap();

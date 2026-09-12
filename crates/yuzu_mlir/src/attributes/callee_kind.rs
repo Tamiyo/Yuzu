@@ -1,7 +1,7 @@
 use melior::ir::attribute::StringAttribute;
 use melior::ir::operation::OperationLike;
 
-use crate::ops::yzl::CallOperationRef;
+use crate::ops::yzl::CallOp;
 
 /// What a call's name turned out to mean. Resolution decides it and stamps it
 /// on `yzl.call`; every pass after reads it to know whether the call survives
@@ -35,7 +35,7 @@ impl CalleeKind {
     }
 }
 
-impl CallOperationRef<'_, '_> {
+impl CallOp<'_, '_> {
     /// What this call resolved to, or `None` on one that resolution has not
     /// reached. This stands in for the generated accessor — `build.rs` leaves
     /// `callee_kind` out of the view so the attribute reads back as what it

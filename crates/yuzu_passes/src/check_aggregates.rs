@@ -8,9 +8,8 @@ use std::collections::{HashMap, HashSet};
 use melior::ir::operation::{OperationLike, OperationRef, OperationResult};
 use melior::ir::{BlockRef, Location, Module, RegionLike};
 use yuzu_mlir::attributes::CalleeKind;
-use yuzu_mlir::ext::{BlockExt, OperationExt, RegionExt};
-use yuzu_mlir::ops::yzl::{CallOperationRef, YzlOperationRef};
-use yuzu_mlir::value_id;
+use yuzu_mlir::ext::{BlockExt, OperationExt, RegionExt, ValueExt};
+use yuzu_mlir::ops::yzl::{CallOp, YzlOp};
 use yuzu_types::{BuiltinFunc, FunctionRegistry};
 
 /// Where the walk currently is, aggregate-wise.
@@ -54,8 +53,8 @@ pub fn check_aggregates(module: &Module, registry: &dyn FunctionRegistry) {
 impl<'c> Checker<'_, 'c> {
     fn check_block<'m>(&mut self, block: BlockRef<'c, 'm>, grouping: Grouping<'m>) {
         for op in block.operations() {
-            match YzlOperationRef::of(&op) {
-                Some(YzlOperationRef::Call(call)) => {
+            match YzlOp::of(&op) {
+                Some(YzlOp::Call(call)) => {
                     let callee = call.callee().value();
                     if self.is_aggregate_call(&call, callee) {
                         self.check_aggregate_call(op, callee, grouping);
@@ -63,10 +62,10 @@ impl<'c> Checker<'_, 'c> {
                         self.propagate_group_values(op);
                     }
                 }
-                Some(YzlOperationRef::Aggregate(stage)) => {
+                Some(YzlOp::Aggregate(stage)) => {
                     self.check_regions(stage.operation(), Grouping::Item);
                 }
-                Some(YzlOperationRef::Fn(function)) => {
+                Some(YzlOp::Fn(function)) => {
                     // An `external agg fn` has no body to aggregate in.
                     if function.agg() && !function.external() {
                         let name = function.sym_name().value();
@@ -138,7 +137,7 @@ impl<'c> Checker<'_, 'c> {
         }
 
         if let Some(result) = op.try_first_result() {
-            let id = value_id(result);
+            let id = result.id();
             let mut calls = nested;
             calls.push(id);
             self.aggregate_calls
@@ -155,7 +154,7 @@ impl<'c> Checker<'_, 'c> {
         }
 
         if let Some(result) = op.try_first_result() {
-            self.group_values.insert(value_id(result), calls);
+            self.group_values.insert(result.id(), calls);
         }
     }
 
@@ -163,7 +162,7 @@ impl<'c> Checker<'_, 'c> {
     fn operand_aggregates(&self, op: OperationRef<'c, '_>) -> Vec<usize> {
         let mut calls = Vec::new();
         for operand in op.operands() {
-            if let Some(through) = self.group_values.get(&value_id(operand)) {
+            if let Some(through) = self.group_values.get(&operand.id()) {
                 for &call in through {
                     if !calls.contains(&call) {
                         calls.push(call);
@@ -191,7 +190,7 @@ impl<'c> Checker<'_, 'c> {
         Some(OperationResult::try_from(returned).ok()?.owner().location())
     }
 
-    fn is_aggregate_call(&self, call: &CallOperationRef<'c, '_>, callee: &str) -> bool {
+    fn is_aggregate_call(&self, call: &CallOp<'c, '_>, callee: &str) -> bool {
         match call.callee_kind() {
             Some(CalleeKind::AggFn) => true,
             Some(CalleeKind::Builtin) => self.registry.entries().iter().any(|entry| {

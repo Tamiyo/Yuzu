@@ -5,11 +5,10 @@ use melior::ir::attribute::{DenseI64ArrayAttribute, StringAttribute};
 use melior::ir::operation::{OperationLike, OperationRef};
 use melior::ir::{Block, BlockLike, BlockRef, Location, Region, RegionLike, Type, Value};
 use yuzu_mlir::SymbolTable;
-use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationExt};
+use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationExt, ValueExt};
 use yuzu_mlir::ods::{yz, yzr};
-use yuzu_mlir::ops::yzl::YzlOperationRef;
+use yuzu_mlir::ops::yzl::YzlOp;
 use yuzu_mlir::types;
-use yuzu_mlir::value_id;
 
 use crate::lower_yzl_to_yzr::{Schema, Yielded, YzlToYzr, op_name, struct_fields};
 
@@ -21,15 +20,15 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
         source: &SymbolTable<'c, '_>,
         symbols: &mut SymbolTable<'c, '_>,
     ) {
-        match YzlOperationRef::of(&op) {
-            Some(YzlOperationRef::Struct(item)) => {
+        match YzlOp::of(&op) {
+            Some(YzlOp::Struct(item)) => {
                 let fields = struct_fields(&item);
                 self.declare_struct(item.sym_name().value(), &fields, symbols);
             }
             // A table declaration says nothing yzr needs: `yzr.table` names
             // the relation and carries its row as the result type.
-            Some(YzlOperationRef::Table(_)) => {}
-            Some(YzlOperationRef::From(from)) => {
+            Some(YzlOp::Table(_)) => {}
+            Some(YzlOp::From(from)) => {
                 let relation = from.source().value();
                 let Some((rows, schema)) =
                     self.relation_input(relation, source, target, symbols, op.location())
@@ -43,7 +42,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
             // Queries are expressions, so a binding is a name for the value
             // its body yields: the stages inside lower into the module just
             // as they would outside it, and the name reaches the result.
-            Some(YzlOperationRef::Let(binding)) => {
+            Some(YzlOp::Let(binding)) => {
                 let Some(block) = binding.body().first_block() else {
                     self.error(op, "`let` has no body to bind");
                     return;
@@ -56,7 +55,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                 let bound = block
                     .last_operation()
                     .and_then(|yielded| yielded.try_first_operand())
-                    .and_then(|value| self.stages.get(&value_id(value)).cloned());
+                    .and_then(|value| self.stages.get(&value.id()).cloned());
 
                 match bound {
                     Some(rows) => {
@@ -65,7 +64,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                     None => self.error(op, "only a query can be bound by `let`"),
                 }
             }
-            Some(YzlOperationRef::Where(stage)) => {
+            Some(YzlOp::Where(stage)) => {
                 let Some((input, schema)) = self.input_stage(op) else {
                     return;
                 };
@@ -78,7 +77,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
 
                 self.record_stage(op, filtered.first_result(), schema);
             }
-            Some(YzlOperationRef::Select(stage)) => {
+            Some(YzlOp::Select(stage)) => {
                 let Some((input, schema)) = self.input_stage(op) else {
                     return;
                 };
@@ -93,7 +92,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
 
                 self.record_stage(op, projected.first_result(), produced);
             }
-            Some(YzlOperationRef::Extend(stage)) => {
+            Some(YzlOp::Extend(stage)) => {
                 let Some((input, mut schema)) = self.input_stage(op) else {
                     return;
                 };
@@ -108,7 +107,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
 
                 self.record_stage(op, extended.first_result(), schema);
             }
-            Some(YzlOperationRef::Aggregate(stage)) => {
+            Some(YzlOp::Aggregate(stage)) => {
                 let Some((input, schema)) = self.input_stage(op) else {
                     return;
                 };
@@ -138,7 +137,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
 
                 self.record_stage(op, grouped.first_result(), produced);
             }
-            Some(YzlOperationRef::Join(stage)) => {
+            Some(YzlOp::Join(stage)) => {
                 let Some((lhs, mut schema)) = self.input_stage(op) else {
                     return;
                 };
@@ -183,7 +182,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
 
                 self.record_stage(op, joined.first_result(), schema);
             }
-            Some(YzlOperationRef::Limit(stage)) => {
+            Some(YzlOp::Limit(stage)) => {
                 let Some((input, schema)) = self.input_stage(op) else {
                     return;
                 };
@@ -194,7 +193,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
 
                 self.record_stage(op, limited.first_result(), schema);
             }
-            Some(YzlOperationRef::Output(_)) => {
+            Some(YzlOp::Output(_)) => {
                 let Some((query, _)) = self.input_stage(op) else {
                     return;
                 };
@@ -203,7 +202,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
             }
             // A qualifier only ever chose a column, and resolution has spent
             // it by now: the row that arrives is the row that leaves.
-            Some(YzlOperationRef::Alias(_)) => {
+            Some(YzlOp::Alias(_)) => {
                 let Some((input, schema)) = self.input_stage(op) else {
                     return;
                 };
@@ -212,7 +211,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
             }
             // A group with no measures: every column is a key, so each
             // distinct row survives exactly once.
-            Some(YzlOperationRef::Distinct(_)) => {
+            Some(YzlOp::Distinct(_)) => {
                 let Some((input, schema)) = self.input_stage(op) else {
                     return;
                 };
@@ -234,7 +233,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
 
                 self.record_stage(op, grouped.first_result(), schema);
             }
-            Some(YzlOperationRef::Drop(stage)) => {
+            Some(YzlOp::Drop(stage)) => {
                 let Some((input, schema)) = self.input_stage(op) else {
                     return;
                 };
@@ -252,7 +251,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
 
                 self.record_stage(op, projected.first_result(), produced);
             }
-            Some(YzlOperationRef::Set(stage)) => {
+            Some(YzlOp::Set(stage)) => {
                 let Some((input, mut schema)) = self.input_stage(op) else {
                     return;
                 };
@@ -276,7 +275,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
             }
             // yzr has no op for a change of name alone, so a rename is the
             // projection of every column under the names the stage gave them.
-            Some(YzlOperationRef::Rename(stage)) => {
+            Some(YzlOp::Rename(stage)) => {
                 let Some((input, mut schema)) = self.input_stage(op) else {
                     return;
                 };
@@ -304,23 +303,19 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
             // Expansion removes these once every call is gone, so one
             // reaching here means expansion did not finish — the reason is
             // already reported, and this says which declaration outlived it.
-            Some(YzlOperationRef::Fn(_) | YzlOperationRef::Trait(_) | YzlOperationRef::Impl(_)) => {
-                self.error(
-                    op,
-                    format!("`{}` was not expanded before lowering", op_name(op)),
-                )
-            }
-            Some(YzlOperationRef::Missing(_)) => {
-                self.error(op, "this part of the query is missing")
-            }
+            Some(YzlOp::Fn(_) | YzlOp::Trait(_) | YzlOp::Impl(_)) => self.error(
+                op,
+                format!("`{}` was not expanded before lowering", op_name(op)),
+            ),
+            Some(YzlOp::Missing(_)) => self.error(op, "this part of the query is missing"),
             // Declarations yzr does not need, and the terminators a region
             // owns rather than the module.
             Some(
-                YzlOperationRef::Name(_)
-                | YzlOperationRef::Call(_)
-                | YzlOperationRef::List(_)
-                | YzlOperationRef::Yield(_)
-                | YzlOperationRef::Return(_),
+                YzlOp::Name(_)
+                | YzlOp::Call(_)
+                | YzlOp::List(_)
+                | YzlOp::Yield(_)
+                | YzlOp::Return(_),
             )
             | None => {}
         }

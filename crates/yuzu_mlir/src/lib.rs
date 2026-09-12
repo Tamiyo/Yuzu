@@ -9,12 +9,10 @@ mod param_type;
 mod struct_type;
 mod symbol_table;
 pub mod types;
-mod value;
 
 pub use param_type::ParamType;
 pub use struct_type::StructType;
 pub use symbol_table::SymbolTable;
-pub use value::value_id;
 
 pub fn context() -> Context {
     let context = Context::new();

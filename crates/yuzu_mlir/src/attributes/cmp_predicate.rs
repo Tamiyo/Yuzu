@@ -1,7 +1,7 @@
 use melior::ir::attribute::StringAttribute;
 use melior::ir::operation::OperationLike;
 
-use crate::ops::yz::CmpOperationRef;
+use crate::ops::yz::CmpOp;
 
 /// The comparison a `yz.cmp` asks for.
 ///
@@ -32,7 +32,7 @@ impl CmpPredicate {
     }
 }
 
-impl CmpOperationRef<'_, '_> {
+impl CmpOp<'_, '_> {
     /// Which comparison this asks for. Stands in for the generated accessor.
     pub fn predicate(&self) -> CmpPredicate {
         let attribute = self

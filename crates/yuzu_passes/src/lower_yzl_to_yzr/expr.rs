@@ -3,14 +3,13 @@
 //! call, or a plain one, depending on what resolution decided it names.
 use std::collections::HashMap;
 
-use melior::ir::attribute::{FlatSymbolRefAttribute, StringAttribute, TypeAttribute};
+use melior::ir::attribute::{FlatSymbolRefAttribute, StringAttribute};
 use melior::ir::operation::{OperationBuilder, OperationLike, OperationRef};
-use melior::ir::{Attribute, BlockLike, BlockRef, Identifier, Type, Value, ValueLike};
+use melior::ir::{Attribute, BlockLike, BlockRef, Identifier, Type, Value};
 use yuzu_mlir::attributes::CalleeKind;
-use yuzu_mlir::ext::OperationExt;
+use yuzu_mlir::ext::{OperationExt, ValueExt};
 use yuzu_mlir::ods::{yz, yzr};
-use yuzu_mlir::ops::yzl::YzlOperationRef;
-use yuzu_mlir::value_id;
+use yuzu_mlir::ops::yzl::YzlOp;
 use yuzu_types::BuiltinFunc;
 
 use crate::lower_yzl_to_yzr::{YzlToYzr, op_name};
@@ -24,8 +23,8 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
         values: &mut HashMap<usize, Value<'c, 'b>>,
         produced: &mut Vec<Value<'c, 'b>>,
     ) {
-        match YzlOperationRef::of(&op) {
-            Some(YzlOperationRef::Name(name)) => {
+        match YzlOp::of(&op) {
+            Some(YzlOp::Name(name)) => {
                 let Some(index) = name.col().map(|col| col.value() as usize) else {
                     self.error(op, "a name outside a column context is not lowered yet");
                     return;
@@ -36,15 +35,15 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                     return;
                 };
 
-                values.insert(value_id(op.first_result()), column.into());
+                values.insert(op.first_result().id(), column.into());
             }
-            Some(YzlOperationRef::Yield(_)) => {
-                produced.extend(self.mapped_operands(op, values));
+            Some(YzlOp::Yield(_)) => {
+                produced.extend(lowered_operands(op, values));
             }
-            Some(YzlOperationRef::Call(call)) => {
+            Some(YzlOp::Call(call)) => {
                 let callee = call.callee().value().to_string();
-                let operands = self.mapped_operands(op, values);
-                let ty = self.stamped_type(op);
+                let operands = lowered_operands(op, values);
+                let ty = op.ty();
                 let kind = call.callee_kind();
                 let lowered = if kind == Some(CalleeKind::Builtin) && self.is_aggregate(&callee) {
                     self.lower_measure(op, &callee, &operands, ty, body)
@@ -69,45 +68,43 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                 };
 
                 let appended = body.append_operation(lowered);
-                values.insert(value_id(op.first_result()), appended.first_result());
+                values.insert(op.first_result().id(), appended.first_result());
             }
             // Everything else is a `yz` op, structurally unchanged: the
             // operands it was given, and the type inference stamped on it.
             None => {
-                let operands = self.mapped_operands(op, values);
+                let operands = lowered_operands(op, values);
                 let rebuilt = self.rebuild(op, &operands, body);
                 if let Some(rebuilt) = rebuilt {
-                    values.insert(value_id(op.first_result()), rebuilt);
+                    values.insert(op.first_result().id(), rebuilt);
                 }
             }
             // The parse error above it already said what went wrong; this says
             // the query cannot be built from what is left, rather than
             // implying some lowering is still to come.
-            Some(YzlOperationRef::Missing(_)) => {
-                self.error(op, "this part of the query is missing")
-            }
+            Some(YzlOp::Missing(_)) => self.error(op, "this part of the query is missing"),
             Some(
-                YzlOperationRef::List(_)
-                | YzlOperationRef::From(_)
-                | YzlOperationRef::Where(_)
-                | YzlOperationRef::Select(_)
-                | YzlOperationRef::Extend(_)
-                | YzlOperationRef::Aggregate(_)
-                | YzlOperationRef::Limit(_)
-                | YzlOperationRef::Join(_)
-                | YzlOperationRef::Rename(_)
-                | YzlOperationRef::Alias(_)
-                | YzlOperationRef::Distinct(_)
-                | YzlOperationRef::Drop(_)
-                | YzlOperationRef::Set(_)
-                | YzlOperationRef::Output(_)
-                | YzlOperationRef::Struct(_)
-                | YzlOperationRef::Table(_)
-                | YzlOperationRef::Fn(_)
-                | YzlOperationRef::Trait(_)
-                | YzlOperationRef::Impl(_)
-                | YzlOperationRef::Let(_)
-                | YzlOperationRef::Return(_),
+                YzlOp::List(_)
+                | YzlOp::From(_)
+                | YzlOp::Where(_)
+                | YzlOp::Select(_)
+                | YzlOp::Extend(_)
+                | YzlOp::Aggregate(_)
+                | YzlOp::Limit(_)
+                | YzlOp::Join(_)
+                | YzlOp::Rename(_)
+                | YzlOp::Alias(_)
+                | YzlOp::Distinct(_)
+                | YzlOp::Drop(_)
+                | YzlOp::Set(_)
+                | YzlOp::Output(_)
+                | YzlOp::Struct(_)
+                | YzlOp::Table(_)
+                | YzlOp::Fn(_)
+                | YzlOp::Trait(_)
+                | YzlOp::Impl(_)
+                | YzlOp::Let(_)
+                | YzlOp::Return(_),
             ) => self.error(op, format!("`{}` is not lowered yet", op_name(op))),
         }
     }
@@ -121,15 +118,9 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
         body: BlockRef<'c, 'b>,
     ) -> Option<Value<'c, 'b>> {
         let name = op.name();
-        let existing = op.try_first_result()?;
+        op.try_first_result()?;
 
-        let ty = op
-            .attribute("ty")
-            .ok()
-            .and_then(|attribute| TypeAttribute::try_from(attribute).ok())
-            .map(|attribute| attribute.value())
-            .unwrap_or_else(|| existing.r#type());
-
+        let ty = op.ty();
         let attributes: Vec<(Identifier<'c>, Attribute<'c>)> = (0..op.attribute_count())
             .map(|index| {
                 op.attribute_at(index)
@@ -149,16 +140,6 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
         .expect("a stamped yz op rebuilds");
 
         Some(body.append_operation(rebuilt).first_result())
-    }
-
-    fn mapped_operands<'b>(
-        &mut self,
-        op: OperationRef<'c, '_>,
-        values: &HashMap<usize, Value<'c, 'b>>,
-    ) -> Vec<Value<'c, 'b>> {
-        op.operands()
-            .filter_map(|operand| values.get(&value_id(operand)).copied())
-            .collect()
     }
 
     /// A measure: `count` takes no value, every other aggregate does.
@@ -189,15 +170,17 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
             .iter()
             .any(|entry| entry.name == callee && matches!(entry.func, BuiltinFunc::Aggregate(_)))
     }
+}
 
-    /// The type inference stamped, or the one the op already carries.
-    fn stamped_type(&self, op: OperationRef<'c, '_>) -> Type<'c> {
-        op.attribute("ty")
-            .ok()
-            .and_then(|attribute| TypeAttribute::try_from(attribute).ok())
-            .map(|attribute| attribute.value())
-            .unwrap_or_else(|| op.first_result().r#type())
-    }
+/// What an op's operands became. The region is rebuilt from the top, so every
+/// operand has already been lowered by the time its user is reached.
+fn lowered_operands<'c, 'b>(
+    op: OperationRef<'c, '_>,
+    values: &HashMap<usize, Value<'c, 'b>>,
+) -> Vec<Value<'c, 'b>> {
+    op.operands()
+        .filter_map(|operand| values.get(&operand.id()).copied())
+        .collect()
 }
 
 #[cfg(test)]

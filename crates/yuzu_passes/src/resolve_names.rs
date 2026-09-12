@@ -11,9 +11,10 @@ use melior::ir::attribute::StringAttribute;
 use melior::ir::operation::{OperationLike, OperationMutLike, OperationRefMut};
 use melior::ir::{BlockRef, Module, RegionLike};
 use yuzu_mlir::attributes::CalleeKind;
-use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationExt, OperationMutExt, RegionExt};
-use yuzu_mlir::ops::yzl::YzlOperationRef;
-use yuzu_mlir::value_id;
+use yuzu_mlir::ext::{
+    ArrayAttributeExt, BlockExt, OperationExt, OperationMutExt, RegionExt, ValueExt,
+};
+use yuzu_mlir::ops::yzl::YzlOp;
 use yuzu_types::FunctionRegistry;
 
 /// A column the query carries at some stage: its name, and the alias
@@ -91,14 +92,14 @@ impl<'c> Resolver<'c, '_> {
     /// order between declarations does not matter.
     fn hoist(&mut self, block: BlockRef<'c, '_>) {
         for op in block.operations() {
-            match YzlOperationRef::of(&op) {
-                Some(YzlOperationRef::Struct(item)) => {
+            match YzlOp::of(&op) {
+                Some(YzlOp::Struct(item)) => {
                     let name = item.sym_name().value();
                     let schema = unqualified(item.names().strings());
                     self.check_duplicate(&op, "struct", name);
                     self.structs.insert(name, schema);
                 }
-                Some(YzlOperationRef::Table(table)) => {
+                Some(YzlOp::Table(table)) => {
                     let name = table.sym_name().value();
                     let row = table.row().value();
                     if let Some(schema) = self.structs.get(row).cloned() {
@@ -108,12 +109,12 @@ impl<'c> Resolver<'c, '_> {
                         self.error(&op, format!("unknown struct `{row}`"));
                     }
                 }
-                Some(YzlOperationRef::Trait(item)) => {
+                Some(YzlOp::Trait(item)) => {
                     let name = item.sym_name().value();
                     self.check_duplicate(&op, "trait", name);
                     self.traits.insert(name);
                 }
-                Some(YzlOperationRef::Fn(function)) => {
+                Some(YzlOp::Fn(function)) => {
                     let name = function.sym_name().value();
                     let params = function.params().strings().len();
                     let kind = if function.external() {
@@ -159,16 +160,16 @@ impl<'c> Resolver<'c, '_> {
     }
 
     fn resolve_op(&mut self, op: &mut OperationRefMut<'c, '_>, ambient: &Ambient<'c, '_>) {
-        match YzlOperationRef::of(op) {
-            Some(YzlOperationRef::Name(name)) => {
+        match YzlOp::of(op) {
+            Some(YzlOp::Name(name)) => {
                 let reference = name.name().value();
                 self.resolve_name(op, reference, ambient);
             }
-            Some(YzlOperationRef::Call(call)) => {
+            Some(YzlOp::Call(call)) => {
                 let callee = call.callee().value();
                 self.resolve_call(op, callee, ambient);
             }
-            Some(YzlOperationRef::Fn(function)) => {
+            Some(YzlOp::Fn(function)) => {
                 let params = function.params().strings();
                 let generics = function
                     .type_params()
@@ -177,10 +178,10 @@ impl<'c> Resolver<'c, '_> {
                 self.resolve_bounds(op, &function, &generics);
                 self.resolve_regions(op, &Ambient::Params(&params));
             }
-            Some(YzlOperationRef::Trait(_)) => {
+            Some(YzlOp::Trait(_)) => {
                 self.resolve_regions(op, &Ambient::None);
             }
-            Some(YzlOperationRef::Impl(item)) => {
+            Some(YzlOp::Impl(item)) => {
                 let (trait_name, target) = (item.r#trait().value(), item.target().value());
                 if !self.traits.contains(trait_name) {
                     self.error(op, format!("unknown trait `{trait_name}`"));
@@ -192,14 +193,14 @@ impl<'c> Resolver<'c, '_> {
 
                 self.resolve_regions(op, &Ambient::None);
             }
-            Some(YzlOperationRef::Let(binding)) => {
+            Some(YzlOp::Let(binding)) => {
                 self.resolve_regions(op, &Ambient::None);
                 let name = binding.sym_name().value();
                 let schema = self.yielded_schema(op);
                 self.check_duplicate(op, "binding", name);
                 self.relations.insert(name, schema);
             }
-            Some(YzlOperationRef::From(from)) => {
+            Some(YzlOp::From(from)) => {
                 let source = from.source().value();
                 let schema = match self.relations.get(source) {
                     Some(schema) => schema.clone(),
@@ -211,7 +212,7 @@ impl<'c> Resolver<'c, '_> {
 
                 self.record_schema(op, schema);
             }
-            Some(YzlOperationRef::Alias(stage)) => {
+            Some(YzlOp::Alias(stage)) => {
                 let alias = stage.alias().value();
                 let schema = self
                     .input_schema(op)
@@ -223,24 +224,20 @@ impl<'c> Resolver<'c, '_> {
                     .collect();
                 self.record_schema(op, schema);
             }
-            Some(
-                YzlOperationRef::Where(_)
-                | YzlOperationRef::Distinct(_)
-                | YzlOperationRef::Limit(_),
-            ) => {
+            Some(YzlOp::Where(_) | YzlOp::Distinct(_) | YzlOp::Limit(_)) => {
                 let schema = self.input_schema(op);
                 let shed = self.input_shed(op);
                 self.resolve_regions(op, &Ambient::Columns(&schema, &shed));
                 self.record_schema(op, schema);
             }
-            Some(YzlOperationRef::Select(stage)) => {
+            Some(YzlOp::Select(stage)) => {
                 let names = stage.names().strings();
                 let input = self.input_schema(op);
                 let shed = self.input_shed(op);
                 self.resolve_regions(op, &Ambient::Columns(&input, &shed));
                 self.record_schema(op, unqualified(names));
             }
-            Some(YzlOperationRef::Extend(stage)) => {
+            Some(YzlOp::Extend(stage)) => {
                 let names = stage.names().strings();
                 let mut schema = self.input_schema(op);
                 let shed = self.input_shed(op);
@@ -248,7 +245,7 @@ impl<'c> Resolver<'c, '_> {
                 schema.extend(unqualified(names));
                 self.record_schema(op, schema);
             }
-            Some(YzlOperationRef::Set(stage)) => {
+            Some(YzlOp::Set(stage)) => {
                 let names = stage.names().strings();
                 let schema = self.input_schema(op);
                 let mut columns = Vec::new();
@@ -264,7 +261,7 @@ impl<'c> Resolver<'c, '_> {
                 self.resolve_regions(op, &Ambient::Columns(&schema, &shed));
                 self.record_schema(op, schema);
             }
-            Some(YzlOperationRef::Drop(stage)) => {
+            Some(YzlOp::Drop(stage)) => {
                 let columns = stage.columns().strings();
                 let mut schema = self.input_schema(op);
                 for name in columns {
@@ -278,7 +275,7 @@ impl<'c> Resolver<'c, '_> {
 
                 self.record_schema(op, schema);
             }
-            Some(YzlOperationRef::Rename(stage)) => {
+            Some(YzlOp::Rename(stage)) => {
                 let (from, to) = (stage.from().strings(), stage.to().strings());
                 let mut schema = self.input_schema(op);
                 let mut renamed = Vec::new();
@@ -295,7 +292,7 @@ impl<'c> Resolver<'c, '_> {
                 op.set_index_array_attribute(self.context, "rename_cols", &renamed);
                 self.record_schema(op, schema);
             }
-            Some(YzlOperationRef::Aggregate(stage)) => {
+            Some(YzlOp::Aggregate(stage)) => {
                 let group_by = stage.group_by().strings();
                 let names = stage.names().strings();
                 let input = self.input_schema(op);
@@ -321,7 +318,7 @@ impl<'c> Resolver<'c, '_> {
                 self.resolve_regions(op, &Ambient::Columns(&input, &shed));
                 self.record_schema(op, schema);
             }
-            Some(YzlOperationRef::Join(stage)) => {
+            Some(YzlOp::Join(stage)) => {
                 let relation = stage.rhs().value();
                 let alias = stage.rhs_alias().map(|alias| alias.value());
                 let using_columns = stage
@@ -357,13 +354,13 @@ impl<'c> Resolver<'c, '_> {
                 self.record_schema(op, schema);
             }
             Some(
-                YzlOperationRef::Output(_)
-                | YzlOperationRef::Yield(_)
-                | YzlOperationRef::Return(_)
-                | YzlOperationRef::List(_)
-                | YzlOperationRef::Struct(_)
-                | YzlOperationRef::Table(_)
-                | YzlOperationRef::Missing(_),
+                YzlOp::Output(_)
+                | YzlOp::Yield(_)
+                | YzlOp::Return(_)
+                | YzlOp::List(_)
+                | YzlOp::Struct(_)
+                | YzlOp::Table(_)
+                | YzlOp::Missing(_),
             ) => {}
             None => self.resolve_regions(op, ambient),
         }
@@ -374,7 +371,7 @@ impl<'c> Resolver<'c, '_> {
     fn resolve_bounds(
         &mut self,
         op: &OperationRefMut<'c, '_>,
-        function: &yuzu_mlir::ops::yzl::FnOperationRef<'c, '_>,
+        function: &yuzu_mlir::ops::yzl::FnOp<'c, '_>,
         generics: &[&'c str],
     ) {
         let subjects = function
@@ -528,7 +525,7 @@ impl<'c> Resolver<'c, '_> {
             .and_then(|region| region.first_block())
             .and_then(|block| block.last_operation())
             .and_then(|last| last.try_first_operand())
-            .and_then(|value| self.schemas.get(&value_id(value)).cloned())
+            .and_then(|value| self.schemas.get(&value.id()).cloned())
             .unwrap_or_default()
     }
 
@@ -537,7 +534,7 @@ impl<'c> Resolver<'c, '_> {
         'c: 'a,
     {
         op.try_first_operand()
-            .and_then(|input| self.schemas.get(&value_id(input)).cloned())
+            .and_then(|input| self.schemas.get(&input.id()).cloned())
             .unwrap_or_default()
     }
 
@@ -547,7 +544,7 @@ impl<'c> Resolver<'c, '_> {
         'c: 'a,
     {
         op.try_first_operand()
-            .and_then(|input| self.shed.get(&value_id(input)).cloned())
+            .and_then(|input| self.shed.get(&input.id()).cloned())
             .unwrap_or_default()
     }
 
@@ -565,8 +562,8 @@ impl<'c> Resolver<'c, '_> {
                 }
             }
 
-            self.shed.insert(value_id(result), shed);
-            self.schemas.insert(value_id(result), schema);
+            self.shed.insert(result.id(), shed);
+            self.schemas.insert(result.id(), schema);
         }
     }
 

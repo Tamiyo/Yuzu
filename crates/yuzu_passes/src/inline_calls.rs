@@ -21,10 +21,10 @@ use melior::ir::ValueLike;
 use melior::ir::operation::{OperationBuilder, OperationLike, OperationRef};
 use melior::ir::{Attribute, BlockRef, Identifier, Module, RegionLike, Value};
 use melior::{IrRewriter, RewriterBase, ir::Location};
+use yuzu_mlir::SymbolTable;
 use yuzu_mlir::attributes::CalleeKind;
-use yuzu_mlir::ext::{BlockExt, OperationExt, RegionExt};
-use yuzu_mlir::ops::yzl::YzlOperationRef;
-use yuzu_mlir::{SymbolTable, value_id};
+use yuzu_mlir::ext::{BlockExt, OperationExt, RegionExt, ValueExt};
+use yuzu_mlir::ops::yzl::YzlOp;
 
 /// How many calls one program may expand. A program whose calls reduce needs
 /// far fewer than this; one that does not would never stop on its own.
@@ -66,11 +66,11 @@ pub fn inline_calls(context: &Context, module: &Module) {
 /// function that reaches itself without a call site ever asking.
 fn collect_calls<'c, 'a>(block: BlockRef<'c, 'a>, out: &mut Vec<OperationRef<'c, 'a>>) {
     for op in block.operations() {
-        match YzlOperationRef::of(&op) {
-            Some(YzlOperationRef::Fn(_) | YzlOperationRef::Trait(_) | YzlOperationRef::Impl(_)) => {
+        match YzlOp::of(&op) {
+            Some(YzlOp::Fn(_) | YzlOp::Trait(_) | YzlOp::Impl(_)) => {
                 continue;
             }
-            Some(YzlOperationRef::Call(call)) => {
+            Some(YzlOp::Call(call)) => {
                 if matches!(call.callee_kind(), Some(CalleeKind::Fn | CalleeKind::AggFn)) {
                     out.push(op);
                 }
@@ -92,7 +92,7 @@ fn expand<'c, 'a>(
     call: OperationRef<'c, '_>,
     symbols: &SymbolTable<'c, '_>,
 ) -> bool {
-    let Some(YzlOperationRef::Call(site)) = YzlOperationRef::of(&call) else {
+    let Some(YzlOp::Call(site)) = YzlOp::of(&call) else {
         return error(call.location(), "expected a call to expand");
     };
 
@@ -101,7 +101,7 @@ fn expand<'c, 'a>(
         return error(call.location(), &format!("unknown function `{callee}`"));
     };
 
-    let Some(YzlOperationRef::Fn(function)) = YzlOperationRef::of(&declaration) else {
+    let Some(YzlOp::Fn(function)) = YzlOp::of(&declaration) else {
         return error(call.location(), &format!("`{callee}` is not a function"));
     };
 
@@ -118,9 +118,9 @@ fn expand<'c, 'a>(
     let mut values: HashMap<usize, Value> = HashMap::new();
     let mut returned = None;
     for op in body.operations() {
-        match YzlOperationRef::of(&op) {
+        match YzlOp::of(&op) {
             // A parameter reference is the argument, not a copy of anything.
-            Some(YzlOperationRef::Name(name)) if name.param().is_some() => {
+            Some(YzlOp::Name(name)) if name.param().is_some() => {
                 let index = name
                     .param()
                     .expect("the parameter stamp is present")
@@ -132,12 +132,12 @@ fn expand<'c, 'a>(
                     );
                 };
 
-                values.insert(value_id(op.first_result()), argument);
+                values.insert(op.first_result().id(), argument);
             }
-            Some(YzlOperationRef::Return(_)) => {
+            Some(YzlOp::Return(_)) => {
                 returned = op
                     .try_first_operand()
-                    .and_then(|value| values.get(&value_id(value)).copied());
+                    .and_then(|value| values.get(&value.id()).copied());
             }
             _ => {
                 if op.regions().next().is_some() {
@@ -155,7 +155,7 @@ fn expand<'c, 'a>(
                 };
 
                 if let Some(result) = op.try_first_result() {
-                    values.insert(value_id(result), copied);
+                    values.insert(result.id(), copied);
                 }
             }
         }
@@ -181,7 +181,7 @@ fn copy<'c, 'a>(
 ) -> Option<Value<'c, 'a>> {
     let operands: Vec<Value> = op
         .operands()
-        .map(|operand| values.get(&value_id(operand)).copied().unwrap_or(operand))
+        .map(|operand| values.get(&operand.id()).copied().unwrap_or(operand))
         .collect();
     let results: Vec<_> = (0..op.result_count())
         .map(|index| {
@@ -220,8 +220,8 @@ fn discard_declarations(rewriter: &RewriterBase, block: BlockRef) {
     let mut declarations = Vec::new();
     for op in block.operations() {
         if matches!(
-            YzlOperationRef::of(&op),
-            Some(YzlOperationRef::Fn(_) | YzlOperationRef::Trait(_) | YzlOperationRef::Impl(_))
+            YzlOp::of(&op),
+            Some(YzlOp::Fn(_) | YzlOp::Trait(_) | YzlOp::Impl(_))
         ) {
             declarations.push(op);
         }
@@ -238,8 +238,8 @@ fn report_budget(calls: &[OperationRef]) {
     let call = calls
         .first()
         .expect("the budget is reported over some call");
-    let name = match YzlOperationRef::of(call) {
-        Some(YzlOperationRef::Call(site)) => site.callee().value(),
+    let name = match YzlOp::of(call) {
+        Some(YzlOp::Call(site)) => site.callee().value(),
         _ => "a function",
     };
 

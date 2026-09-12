@@ -475,8 +475,8 @@ fn struct_types_are_nominal() {
 #[test]
 fn borrowed_views_match_and_read_during_walks() {
     use melior::ir::RegionLike;
-    use yuzu_mlir::ext::BlockExt;
-    use yuzu_mlir::ops::yzl::YzlOperationRef;
+    use yuzu_mlir::ext::{BlockExt, ValueExt};
+    use yuzu_mlir::ops::yzl::YzlOp;
 
     let context = yuzu_mlir::context();
     let module = parse(
@@ -497,27 +497,27 @@ module {
     let mut seen = Vec::new();
     let mut source = None;
     for op in module.body().operations() {
-        match YzlOperationRef::of(&op) {
-            Some(YzlOperationRef::From(from)) => {
+        match YzlOp::of(&op) {
+            Some(YzlOp::From(from)) => {
                 assert_eq!(from.source().value(), "t");
-                source = Some(yuzu_mlir::value_id(from.result().into()));
+                source = Some(from.result().id());
                 seen.push("from");
             }
-            Some(YzlOperationRef::Where(filter)) => {
-                assert_eq!(Some(yuzu_mlir::value_id(filter.input())), source);
+            Some(YzlOp::Where(filter)) => {
+                assert_eq!(Some(filter.input().id()), source);
                 let predicate = filter
                     .body()
                     .first_block()
                     .and_then(|block| block.first_operation())
                     .expect("the where region holds the predicate");
-                match YzlOperationRef::of(&predicate) {
-                    Some(YzlOperationRef::Name(name)) => assert_eq!(name.name().value(), "a"),
+                match YzlOp::of(&predicate) {
+                    Some(YzlOp::Name(name)) => assert_eq!(name.name().value(), "a"),
                     _ => panic!("the predicate starts with a yzl.name"),
                 }
 
                 seen.push("where");
             }
-            Some(YzlOperationRef::Output(_)) => seen.push("output"),
+            Some(YzlOp::Output(_)) => seen.push("output"),
             _ => panic!("unclassified op in the fixture"),
         }
     }
@@ -531,7 +531,7 @@ module {
 fn views_read_optional_unit_and_variadic_arguments() {
     use melior::ir::attribute::{FlatSymbolRefAttribute, StringAttribute};
     use melior::ir::{Attribute, Identifier, Region, RegionLike};
-    use yuzu_mlir::ops::yzl::YzlOperationRef;
+    use yuzu_mlir::ops::yzl::YzlOp;
 
     let context = yuzu_mlir::context();
     let location = Location::unknown(&context);
@@ -553,7 +553,7 @@ module {
     .expect("the fixture parses");
 
     let function = module.body().first_operation().expect("the fn is present");
-    let Some(YzlOperationRef::Fn(function)) = YzlOperationRef::of(&function) else {
+    let Some(YzlOp::Fn(function)) = YzlOp::of(&function) else {
         panic!("the first op is the yzl.fn");
     };
 
@@ -565,8 +565,8 @@ module {
         .and_then(|block| {
             let mut op = block.first_operation()?;
             while let Some(next) = op.next_in_block() {
-                match YzlOperationRef::of(&op) {
-                    Some(YzlOperationRef::Call(_)) => break,
+                match YzlOp::of(&op) {
+                    Some(YzlOp::Call(_)) => break,
                     _ => op = next,
                 }
             }
@@ -574,7 +574,7 @@ module {
             Some(op)
         })
         .expect("the body holds the call");
-    let Some(YzlOperationRef::Call(call)) = YzlOperationRef::of(&call) else {
+    let Some(YzlOp::Call(call)) = YzlOp::of(&call) else {
         panic!("the op is the yzl.call");
     };
 
@@ -609,7 +609,7 @@ module {
     };
 
     let aliased = join(Some("t"));
-    let Some(YzlOperationRef::Join(view)) = YzlOperationRef::of(&aliased) else {
+    let Some(YzlOp::Join(view)) = YzlOp::of(&aliased) else {
         panic!("the op is the yzl.join");
     };
 
@@ -617,7 +617,7 @@ module {
     assert!(view.using_columns().is_none());
 
     let bare = join(None);
-    let Some(YzlOperationRef::Join(view)) = YzlOperationRef::of(&bare) else {
+    let Some(YzlOp::Join(view)) = YzlOp::of(&bare) else {
         panic!("the op is the yzl.join");
     };
 
@@ -629,7 +629,7 @@ module {
         .add_regions([Region::new()])
         .build()
         .expect("the fn builds");
-    let Some(YzlOperationRef::Fn(view)) = YzlOperationRef::of(&aggregate_fn) else {
+    let Some(YzlOp::Fn(view)) = YzlOp::of(&aggregate_fn) else {
         panic!("the op is the yzl.fn");
     };
 
@@ -642,8 +642,8 @@ module {
 fn borrowed_views_reject_foreign_operations() {
     use melior::ir::attribute::IntegerAttribute;
     use yuzu_mlir::ods::yz;
-    use yuzu_mlir::ops::yz::YzOperationRef;
-    use yuzu_mlir::ops::yzl::YzlOperationRef;
+    use yuzu_mlir::ops::yz::YzOp;
+    use yuzu_mlir::ops::yzl::YzlOp;
 
     let context = yuzu_mlir::context();
     let location = Location::unknown(&context);
@@ -655,9 +655,9 @@ fn borrowed_views_reject_foreign_operations() {
     )
     .into();
 
-    assert!(YzlOperationRef::of(&operation).is_none());
-    match YzOperationRef::of(&operation) {
-        Some(YzOperationRef::ConstantInt(constant)) => {
+    assert!(YzlOp::of(&operation).is_none());
+    match YzOp::of(&operation) {
+        Some(YzOp::ConstantInt(constant)) => {
             assert_eq!(constant.value().value(), 7);
         }
         _ => panic!("the constant classifies as yz.constant_int"),

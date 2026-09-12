@@ -12,9 +12,9 @@ use melior::ir::operation::{OperationLike, OperationMutLike, OperationRef, Opera
 use melior::ir::r#type::FunctionType;
 use melior::ir::{Attribute, BlockRef, Location, Module, RegionLike, Type, Value, ValueLike};
 use yuzu_mlir::attributes::CalleeKind;
-use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationExt, RegionExt};
-use yuzu_mlir::ops::yz::YzOperationRef;
-use yuzu_mlir::ops::yzl::YzlOperationRef;
+use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationExt, RegionExt, ValueExt};
+use yuzu_mlir::ops::yz::YzOp;
+use yuzu_mlir::ops::yzl::YzlOp;
 use yuzu_mlir::types;
 
 /// A type either known or still being solved for: a concrete MLIR type, or a
@@ -99,7 +99,7 @@ impl<'c> TypeInferrer<'c> {
             return Term::Concrete(ty);
         }
 
-        let key = yuzu_mlir::value_id(value);
+        let key = value.id();
         if let Some(&var) = self.vars.get(&key) {
             return Term::Var(var);
         }
@@ -187,22 +187,22 @@ impl<'c> TypeInferrer<'c> {
 
     fn hoist(&mut self, block: BlockRef<'c, '_>) {
         for op in block.operations() {
-            match YzlOperationRef::of(&op) {
-                Some(YzlOperationRef::Fn(function)) => {
+            match YzlOp::of(&op) {
+                Some(YzlOp::Fn(function)) => {
                     if let Some(signature) = parse_signature(&function) {
                         self.signatures
                             .insert(function.sym_name().value(), signature);
                     }
                 }
-                Some(YzlOperationRef::Impl(item)) => {
+                Some(YzlOp::Impl(item)) => {
                     self.impls
                         .insert((item.r#trait().value(), item.target().value()));
                 }
-                Some(YzlOperationRef::Struct(item)) => {
+                Some(YzlOp::Struct(item)) => {
                     let row = field_row(item.types());
                     self.relations.insert(item.sym_name().value(), row);
                 }
-                Some(YzlOperationRef::Table(table)) => {
+                Some(YzlOp::Table(table)) => {
                     let row = self
                         .relations
                         .get(table.row().value())
@@ -223,8 +223,8 @@ impl<'c> TypeInferrer<'c> {
     }
 
     fn infer_op(&mut self, op: OperationRef<'c, '_>, columns: &Row<'c>, params: &[Type<'c>]) {
-        match YzlOperationRef::of(&op) {
-            Some(YzlOperationRef::Name(name)) => {
+        match YzlOp::of(&op) {
+            Some(YzlOp::Name(name)) => {
                 let term = self.term_of(op.first_result());
                 if let Some(index) = name.col().map(|col| col.value() as usize) {
                     if let Some(&column) = columns.get(index) {
@@ -236,7 +236,7 @@ impl<'c> TypeInferrer<'c> {
                     self.unify(op, term, Term::Concrete(param));
                 }
             }
-            Some(YzlOperationRef::Call(call)) => {
+            Some(YzlOp::Call(call)) => {
                 let callee = call.callee().value();
                 match call.callee_kind() {
                     Some(CalleeKind::Builtin) => self.resolve_builtin_ty(op, callee),
@@ -259,7 +259,7 @@ impl<'c> TypeInferrer<'c> {
                     }
                 }
             }
-            Some(YzlOperationRef::Fn(function)) => {
+            Some(YzlOp::Fn(function)) => {
                 let Some(signature) = self.signatures.get(function.sym_name().value()) else {
                     return;
                 };
@@ -268,7 +268,7 @@ impl<'c> TypeInferrer<'c> {
                 self.infer_regions(op, &Row::new(), &parameters);
                 self.unify_returns(op, result);
             }
-            Some(YzlOperationRef::From(from)) => {
+            Some(YzlOp::From(from)) => {
                 let row = self
                     .relations
                     .get(from.source().value())
@@ -276,28 +276,28 @@ impl<'c> TypeInferrer<'c> {
                     .unwrap_or_default();
                 self.record_row(op, row);
             }
-            Some(YzlOperationRef::Let(binding)) => {
+            Some(YzlOp::Let(binding)) => {
                 self.infer_regions(op, &Row::new(), &[]);
                 let row = self.yield_terms(op);
                 self.relations.insert(binding.sym_name().value(), row);
             }
             Some(
-                stage @ (YzlOperationRef::Where(_)
-                | YzlOperationRef::Distinct(_)
-                | YzlOperationRef::Limit(_)
-                | YzlOperationRef::Alias(_)
-                | YzlOperationRef::Rename(_)
-                | YzlOperationRef::Drop(_)),
+                stage @ (YzlOp::Where(_)
+                | YzlOp::Distinct(_)
+                | YzlOp::Limit(_)
+                | YzlOp::Alias(_)
+                | YzlOp::Rename(_)
+                | YzlOp::Drop(_)),
             ) => {
                 let row = self.input_row(op);
                 self.infer_regions(op, &row, &[]);
-                if matches!(stage, YzlOperationRef::Where(_)) {
+                if matches!(stage, YzlOp::Where(_)) {
                     self.unify_yield(op, Term::Concrete(types::boolean(self.context)));
                 }
 
                 self.record_row(op, row);
             }
-            Some(YzlOperationRef::Set(stage)) => {
+            Some(YzlOp::Set(stage)) => {
                 let row = self.input_row(op);
                 self.infer_regions(op, &row, &[]);
                 let yields = self.yield_terms(op);
@@ -309,19 +309,19 @@ impl<'c> TypeInferrer<'c> {
 
                 self.record_row(op, row);
             }
-            Some(YzlOperationRef::Select(_)) => {
+            Some(YzlOp::Select(_)) => {
                 let input = self.input_row(op);
                 self.infer_regions(op, &input, &[]);
                 let row = self.yield_terms(op);
                 self.record_row(op, row);
             }
-            Some(YzlOperationRef::Extend(_)) => {
+            Some(YzlOp::Extend(_)) => {
                 let mut row = self.input_row(op);
                 self.infer_regions(op, &row, &[]);
                 row.extend(self.yield_terms(op));
                 self.record_row(op, row);
             }
-            Some(YzlOperationRef::Aggregate(stage)) => {
+            Some(YzlOp::Aggregate(stage)) => {
                 let input = self.input_row(op);
                 self.infer_regions(op, &input, &[]);
                 let mut row: Row = indices(stage.key_cols())
@@ -331,7 +331,7 @@ impl<'c> TypeInferrer<'c> {
                 row.extend(self.yield_terms(op));
                 self.record_row(op, row);
             }
-            Some(YzlOperationRef::Join(_)) => {
+            Some(YzlOp::Join(_)) => {
                 let row = self.input_row(op);
                 self.infer_regions(op, &row, &[]);
                 self.record_row(op, row);
@@ -342,38 +342,32 @@ impl<'c> TypeInferrer<'c> {
     }
 
     fn infer_yz_op(&mut self, op: OperationRef<'c, '_>, columns: &Row<'c>, params: &[Type<'c>]) {
-        match YzOperationRef::of(&op) {
-            Some(
-                YzOperationRef::Add(_)
-                | YzOperationRef::Sub(_)
-                | YzOperationRef::Mul(_)
-                | YzOperationRef::Div(_)
-                | YzOperationRef::Rem(_),
-            ) => {
+        match YzOp::of(&op) {
+            Some(YzOp::Add(_) | YzOp::Sub(_) | YzOp::Mul(_) | YzOp::Div(_) | YzOp::Rem(_)) => {
                 let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
                 let out = self.term_of(op.first_result());
                 self.unify(op, lhs, rhs);
                 self.unify(op, lhs, out);
             }
-            Some(YzOperationRef::Neg(_)) => {
+            Some(YzOp::Neg(_)) => {
                 let value = self.operand_term(op, 0);
                 let out = self.term_of(op.first_result());
                 self.unify(op, value, out);
             }
-            Some(YzOperationRef::Cmp(_)) => {
+            Some(YzOp::Cmp(_)) => {
                 let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
                 let out = self.term_of(op.first_result());
                 self.unify(op, lhs, rhs);
                 self.unify(op, out, Term::Concrete(types::boolean(self.context)));
             }
-            Some(YzOperationRef::And(_) | YzOperationRef::Or(_)) => {
+            Some(YzOp::And(_) | YzOp::Or(_)) => {
                 let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
                 let out = self.term_of(op.first_result());
                 self.unify(op, lhs, Term::Concrete(types::boolean(self.context)));
                 self.unify(op, rhs, Term::Concrete(types::boolean(self.context)));
                 self.unify(op, out, Term::Concrete(types::boolean(self.context)));
             }
-            Some(YzOperationRef::Not(_)) => {
+            Some(YzOp::Not(_)) => {
                 let value = self.operand_term(op, 0);
                 let out = self.term_of(op.first_result());
                 self.unify(op, value, Term::Concrete(types::boolean(self.context)));
@@ -407,7 +401,7 @@ impl<'c> TypeInferrer<'c> {
         if !ordered.is_empty()
             && let Some(result) = op.try_first_result()
         {
-            self.instances.insert(yuzu_mlir::value_id(result), ordered);
+            self.instances.insert(result.id(), ordered);
         }
 
         for (subject, r#trait) in &signature.bounds {
@@ -543,13 +537,13 @@ impl<'c> TypeInferrer<'c> {
 
     fn input_row(&mut self, op: OperationRef<'c, '_>) -> Row<'c> {
         op.try_first_operand()
-            .and_then(|input| self.rows.get(&yuzu_mlir::value_id(input)).cloned())
+            .and_then(|input| self.rows.get(&input.id()).cloned())
             .unwrap_or_default()
     }
 
     fn record_row(&mut self, op: OperationRef<'c, '_>, row: Row<'c>) {
         if let Some(result) = op.try_first_result() {
-            self.rows.insert(yuzu_mlir::value_id(result), row);
+            self.rows.insert(result.id(), row);
         }
     }
 
@@ -575,10 +569,7 @@ impl<'c> TypeInferrer<'c> {
 
     fn unify_returns(&mut self, op: OperationRef<'c, '_>, ret: Type<'c>) {
         if let Some(terminator) = last_region_op(op)
-            && matches!(
-                YzlOperationRef::of(&terminator),
-                Some(YzlOperationRef::Return(_))
-            )
+            && matches!(YzlOp::of(&terminator), Some(YzlOp::Return(_)))
             && let Some(value) = terminator.try_first_operand()
         {
             let term = self.term_of(value);
@@ -602,7 +593,7 @@ impl<'c> TypeInferrer<'c> {
                     op.set_attribute("ty", TypeAttribute::new(ty).into());
                 }
 
-                self.stamp_type_args(&mut op, yuzu_mlir::value_id(result));
+                self.stamp_type_args(&mut op, result.id());
             }
         }
     }
@@ -637,9 +628,7 @@ fn last_region_op<'c, 'a>(op: OperationRef<'c, 'a>) -> Option<OperationRef<'c, '
     op.regions().next()?.first_block()?.last_operation()
 }
 
-fn parse_signature<'c>(
-    function: &yuzu_mlir::ops::yzl::FnOperationRef<'c, '_>,
-) -> Option<Signature<'c>> {
+fn parse_signature<'c>(function: &yuzu_mlir::ops::yzl::FnOp<'c, '_>) -> Option<Signature<'c>> {
     let signature = FunctionType::try_from(function.signature().value()).ok()?;
     let params = (0..signature.input_count())
         .filter_map(|index| signature.input(index).ok())

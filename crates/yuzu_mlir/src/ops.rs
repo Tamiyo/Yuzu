@@ -4,8 +4,8 @@
 //! melior's generated dialect enums (`YzlDialectOperation` and friends)
 //! consume owned operations; a pass walks borrowed refs, so matching
 //! happens here instead. Per dialect, one view struct per op with an
-//! accessor per ODS argument (`yzl::WhereOperationRef`), and an enum over
-//! them for match-based dispatch (`yzl::YzlOperationRef`). Delete this
+//! accessor per ODS argument (`yzl::WhereOp`), and an enum over
+//! them for match-based dispatch (`yzl::YzlOp`). Delete this
 //! module and build.rs when melior grows borrowing conversions upstream.
 
 include!(concat!(env!("OUT_DIR"), "/ops.rs"));

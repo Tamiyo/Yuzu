@@ -41,14 +41,14 @@ impl JoinKind {
     }
 }
 
-impl yzl::JoinOperationRef<'_, '_> {
+impl yzl::JoinOp<'_, '_> {
     /// Which rows this join keeps. Stands in for the generated accessor.
     pub fn kind(&self) -> JoinKind {
         JoinKind::of(self.operation(), "yzl.join")
     }
 }
 
-impl yzr::JoinOperationRef<'_, '_> {
+impl yzr::JoinOp<'_, '_> {
     /// Which rows this join keeps. Stands in for the generated accessor.
     pub fn kind(&self) -> JoinKind {
         JoinKind::of(self.operation(), "yzr.join")
