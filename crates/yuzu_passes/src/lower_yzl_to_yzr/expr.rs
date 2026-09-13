@@ -38,11 +38,18 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                 values.insert(op.first_result().id(), column.into());
             }
             Some(YzlOp::Yield(_)) => {
-                produced.extend(lowered_operands(op, values));
+                let Some(operands) = lowered_operands(op, values) else {
+                    return;
+                };
+
+                produced.extend(operands);
             }
             Some(YzlOp::Call(call)) => {
                 let callee = call.callee().value().to_string();
-                let operands = lowered_operands(op, values);
+                let Some(operands) = lowered_operands(op, values) else {
+                    return;
+                };
+
                 let ty = op.ty();
                 let kind = call.callee_kind();
                 let lowered = if kind == Some(CalleeKind::Builtin) && self.is_aggregate(&callee) {
@@ -73,7 +80,10 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
             // Everything else is a `yz` op, structurally unchanged: the
             // operands it was given, and the type inference stamped on it.
             None => {
-                let operands = lowered_operands(op, values);
+                let Some(operands) = lowered_operands(op, values) else {
+                    return;
+                };
+
                 let rebuilt = self.rebuild(op, &operands, body);
                 if let Some(rebuilt) = rebuilt {
                     values.insert(op.first_result().id(), rebuilt);
@@ -173,13 +183,20 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
 }
 
 /// What an op's operands became. The region is rebuilt from the top, so every
-/// operand has already been lowered by the time its user is reached.
+/// operand has been lowered by the time its user is reached, and the stage
+/// regions are `IsolatedFromAbove` so none can come from outside.
+///
+/// An operand with nothing to stand for it therefore means its producer
+/// failed, and every path that fails to record a value reports first — so
+/// this says nothing, it just declines to build the op. Taking the operands
+/// that happen to be there would build one of the wrong shape and carry the
+/// mistake into the plan.
 fn lowered_operands<'c, 'b>(
     op: OperationRef<'c, '_>,
     values: &HashMap<usize, Value<'c, 'b>>,
-) -> Vec<Value<'c, 'b>> {
+) -> Option<Vec<Value<'c, 'b>>> {
     op.operands()
-        .filter_map(|operand| values.get(&operand.id()).copied())
+        .map(|operand| values.get(&operand.id()).copied())
         .collect()
 }
 
