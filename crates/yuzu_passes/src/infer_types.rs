@@ -242,8 +242,11 @@ impl<'c> TypeInferrer<'c> {
                 let callee = call.callee().value();
                 match call.callee_kind() {
                     Some(CalleeKind::Builtin) => self.resolve_builtin_ty(op, callee),
-                    Some(CalleeKind::External) => {}
-                    _ => {
+                    // An external declares its signature like any other
+                    // function; only the body is missing, and a call does not
+                    // need one. Skipping it left the call's type unresolved
+                    // and carried a `!yzl.var` all the way into yzr.
+                    Some(CalleeKind::Fn | CalleeKind::AggFn | CalleeKind::External) | None => {
                         let Some(signature) = self.signatures.get(callee).cloned() else {
                             return;
                         };
@@ -805,6 +808,38 @@ from t
                     %4 = yzl.name "r" : !yzl.var {col = 1 : i64, ty = !yz.float64}
                     %5 = yzl.call @id(%4) : (!yzl.var) -> !yzl.var {callee_kind = "fn", ty = !yz.float64, type_args = [!yz.float64]}
                     yzl.yield %3, %5 : !yzl.var, !yzl.var
+                  }
+                  yzl.output %1
+                }
+            "#]],
+        );
+    }
+
+    /// An external has no body, but it has a signature, and a call only ever
+    /// needed that. Skipping it left the call's own type unsolved.
+    #[test]
+    fn an_external_call_takes_its_declared_type() {
+        check(
+            r#"
+external fn median(x: float64) -> float64
+
+struct Row { rating: float64 }
+table t = Row
+
+from t
+|> extend median(rating) as m
+"#,
+            expect![[r#"
+                module {
+                  yzl.fn @median params ["x"] (!yz.float64) -> !yz.float64 external {
+                  }
+                  yzl.struct @Row ["rating"] : [!yz.float64]
+                  yzl.table @t of @Row
+                  %0 = yzl.from @t
+                  %1 = yzl.extend %0 as ["m"] {
+                    %2 = yzl.name "rating" : !yzl.var {col = 0 : i64, ty = !yz.float64}
+                    %3 = yzl.call @median(%2) : (!yzl.var) -> !yzl.var {callee_kind = "external", ty = !yz.float64}
+                    yzl.yield %3 : !yzl.var
                   }
                   yzl.output %1
                 }
