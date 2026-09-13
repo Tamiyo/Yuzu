@@ -79,6 +79,9 @@ pub enum TokenKind {
     #[token(":", priority = 1)]
     Colon,
 
+    #[token("agg", priority = 1)]
+    AggKw,
+
     #[token("aggregate", priority = 1)]
     AggregateKw,
 
@@ -99,6 +102,9 @@ pub enum TokenKind {
 
     #[token("extend", priority = 1)]
     ExtendKw,
+
+    #[token("external", priority = 1)]
+    ExternalKw,
 
     #[token("fn", priority = 1)]
     FnKw,
@@ -256,6 +262,7 @@ impl std::fmt::Display for TokenKind {
             TokenKind::RightSquare => "]",
             TokenKind::Comma => ",",
             TokenKind::Colon => ":",
+            TokenKind::AggKw => "agg",
             TokenKind::AggregateKw => "aggregate",
             TokenKind::AndKw => "and",
             TokenKind::AsKw => "as",
@@ -263,6 +270,7 @@ impl std::fmt::Display for TokenKind {
             TokenKind::DistinctKw => "distinct",
             TokenKind::DropKw => "drop",
             TokenKind::ExtendKw => "extend",
+            TokenKind::ExternalKw => "external",
             TokenKind::FnKw => "fn",
             TokenKind::ForKw => "for",
             TokenKind::FromKw => "from",
@@ -339,6 +347,7 @@ mod tests {
             (TokenKind::RightSquare, "]"),
             (TokenKind::Comma, ","),
             (TokenKind::Colon, ":"),
+            (TokenKind::AggKw, "agg"),
             (TokenKind::AggregateKw, "aggregate"),
             (TokenKind::AndKw, "and"),
             (TokenKind::AsKw, "as"),
@@ -346,6 +355,7 @@ mod tests {
             (TokenKind::DistinctKw, "distinct"),
             (TokenKind::DropKw, "drop"),
             (TokenKind::ExtendKw, "extend"),
+            (TokenKind::ExternalKw, "external"),
             (TokenKind::FnKw, "fn"),
             (TokenKind::ForKw, "for"),
             (TokenKind::FromKw, "from"),

@@ -300,23 +300,20 @@ impl ImplStmt {
 
 ast_node!(FuncStmt);
 impl FuncStmt {
-    /// The `agg`/`external` markers are bare tokens before `fn`; the
-    /// function's name sits inside an `Ident` node, so a direct identifier
-    /// token can only be a marker.
     pub fn is_agg(&self) -> bool {
-        self.syntax()
-            .children_with_tokens()
-            .filter_map(SyntaxElement::into_token)
-            .take_while(|token| token.kind() != SyntaxKind::FnKw)
-            .any(|token| token.kind() == SyntaxKind::Identifier && token.text() == "agg")
+        self.has_marker(SyntaxKind::AggKw)
     }
 
     pub fn is_external(&self) -> bool {
+        self.has_marker(SyntaxKind::ExternalKw)
+    }
+
+    fn has_marker(&self, marker: SyntaxKind) -> bool {
         self.syntax()
             .children_with_tokens()
             .filter_map(SyntaxElement::into_token)
             .take_while(|token| token.kind() != SyntaxKind::FnKw)
-            .any(|token| token.kind() == SyntaxKind::Identifier && token.text() == "external")
+            .any(|token| token.kind() == marker)
     }
 
     pub fn name(&self) -> Option<Ident> {
@@ -973,7 +970,7 @@ mod tests {
     #[test]
     fn func_stmt_reads_the_agg_marker() {
         let tokens: Vec<Token> =
-            Lexer::new("agg fn agg_of(agg: int64) -> int64 { return sum(agg) }").collect();
+            Lexer::new("agg fn agg_of(x: int64) -> int64 { return sum(x) }").collect();
         let mut diagnostics = DiagnosticsEngine::new();
         let mut sources = SourceMap::new();
         let source_id = sources.add("test".to_string(), "x".to_string());

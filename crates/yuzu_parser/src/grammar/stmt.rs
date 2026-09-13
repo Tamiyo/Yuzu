@@ -8,17 +8,9 @@ use crate::grammar::ty::parse_type;
 use crate::parser::{Parser, marker::CompletedMarker};
 
 pub(crate) fn parse_stmt(p: &mut Parser) -> CompletedMarker {
-    if p.at(TokenKind::FnKw) {
-        return parse_func_stmt(p);
-    }
-    if p.at_contextual("agg") && p.peek_nth_kind(1) == Some(TokenKind::FnKw) {
-        return parse_func_stmt(p);
-    }
-    if p.at_contextual("external")
-        && (p.peek_nth_kind(1) == Some(TokenKind::FnKw)
-            || (p.peek_nth_kind(1) == Some(TokenKind::Identifier)
-                && p.peek_nth_kind(2) == Some(TokenKind::FnKw)))
-    {
+    // Reserved words, so no lookahead is needed to tell a declaration from an
+    // expression that happens to start with the same identifier.
+    if p.at(TokenKind::FnKw) || p.at(TokenKind::AggKw) || p.at(TokenKind::ExternalKw) {
         return parse_func_stmt(p);
     }
     if p.at(TokenKind::ImplKw) {
@@ -59,10 +51,10 @@ fn parse_block_stmt(p: &mut Parser) -> CompletedMarker {
 fn parse_func_stmt(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
 
-    if p.at_contextual("external") {
+    if p.at(TokenKind::ExternalKw) {
         p.bump();
     }
-    if p.at_contextual("agg") {
+    if p.at(TokenKind::AggKw) {
         p.bump();
     }
     p.expect(TokenKind::FnKw);
@@ -319,7 +311,7 @@ mod tests {
             parse_stmt,
             expect![[r#"
                 FuncStmt@0..32
-                  Identifier@0..8 "external"
+                  ExternalKw@0..8 "external"
                   Space@8..9 " "
                   FnKw@9..11 "fn"
                   Space@11..12 " "
@@ -352,9 +344,9 @@ mod tests {
             parse_stmt,
             expect![[r#"
                 FuncStmt@0..43
-                  Identifier@0..8 "external"
+                  ExternalKw@0..8 "external"
                   Space@8..9 " "
-                  Identifier@9..12 "agg"
+                  AggKw@9..12 "agg"
                   Space@12..13 " "
                   FnKw@13..15 "fn"
                   Space@15..16 " "
@@ -387,7 +379,7 @@ mod tests {
             parse_stmt,
             expect![[r#"
                 FuncStmt@0..50
-                  Identifier@0..3 "agg"
+                  AggKw@0..3 "agg"
                   Space@3..4 " "
                   FnKw@4..6 "fn"
                   Space@6..7 " "
@@ -433,22 +425,23 @@ mod tests {
     }
 
     #[test]
-    fn agg_stays_an_identifier_elsewhere() {
+    fn agg_is_reserved_and_cannot_name_a_binding() {
         test_support::check(
             "let agg = 1",
             parse_stmt,
             expect![[r#"
-            LetStmt@0..11
-              LetKw@0..3 "let"
-              Space@3..4 " "
-              Ident@4..7
-                Identifier@4..7 "agg"
-              Space@7..8 " "
-              Eq@8..9 "="
-              Space@9..10 " "
-              IntLiteral@10..11
-                IntLit@10..11 "1"
-        "#]],
+                LetStmt@0..11
+                  LetKw@0..3 "let"
+                  Space@3..4 " "
+                  Ident@4..7
+                    Error@4..7
+                      AggKw@4..7 "agg"
+                  Space@7..8 " "
+                  Eq@8..9 "="
+                  Space@9..10 " "
+                  IntLiteral@10..11
+                    IntLit@10..11 "1"
+            "#]],
         );
     }
 

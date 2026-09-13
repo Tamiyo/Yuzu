@@ -30,6 +30,7 @@ pub enum SyntaxKind {
     RightSquare,
     Comma,
     Colon,
+    AggKw,
     AggregateKw,
     AndKw,
     AsKw,
@@ -37,6 +38,7 @@ pub enum SyntaxKind {
     DistinctKw,
     DropKw,
     ExtendKw,
+    ExternalKw,
     FnKw,
     ForKw,
     FromKw,
@@ -175,6 +177,7 @@ impl From<TokenKind> for SyntaxKind {
             TokenKind::RightSquare => Self::RightSquare,
             TokenKind::Comma => Self::Comma,
             TokenKind::Colon => Self::Colon,
+            TokenKind::AggKw => Self::AggKw,
             TokenKind::AggregateKw => Self::AggregateKw,
             TokenKind::AndKw => Self::AndKw,
             TokenKind::AsKw => Self::AsKw,
@@ -182,6 +185,7 @@ impl From<TokenKind> for SyntaxKind {
             TokenKind::DistinctKw => Self::DistinctKw,
             TokenKind::DropKw => Self::DropKw,
             TokenKind::ExtendKw => Self::ExtendKw,
+            TokenKind::ExternalKw => Self::ExternalKw,
             TokenKind::FnKw => Self::FnKw,
             TokenKind::ForKw => Self::ForKw,
             TokenKind::FromKw => Self::FromKw,
@@ -277,6 +281,8 @@ mod tests {
             TokenKind::AggregateKw,
             TokenKind::GroupKw,
             TokenKind::ByKw,
+            TokenKind::AggKw,
+            TokenKind::ExternalKw,
         ];
 
         let mut seen = Vec::new();

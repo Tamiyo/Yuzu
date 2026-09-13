@@ -85,16 +85,6 @@ impl<'t, 'input> Parser<'t, 'input> {
         self.peek_kind() == Some(kind)
     }
 
-    /// A contextual keyword: an identifier that means something only in one
-    /// position, and stays an ordinary name everywhere else.
-    pub(crate) fn at_contextual(&mut self, text: &str) -> bool {
-        self.peek_kind() == Some(TokenKind::Identifier)
-            && self
-                .source
-                .peek_token()
-                .is_some_and(|token| token.text == text)
-    }
-
     pub(crate) fn at_end(&mut self) -> bool {
         self.peek_kind().is_none()
     }
