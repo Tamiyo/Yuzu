@@ -362,7 +362,12 @@ fn generate_typed_module(out: &mut String, dialect: &Dialect, ops: &[Op]) {
     writeln!(out, "    impl<'c, 'a> {enum_name}<'c, 'a> {{").unwrap();
     writeln!(
         out,
-        "        pub fn of(operation: &'a Operation<'c>) -> Option<Self> {{"
+        "        /// Reached through `OperationCast`, which is how a pass asks."
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "        pub(crate) fn of(operation: &'a Operation<'c>) -> Option<Self> {{"
     )
     .unwrap();
     writeln!(

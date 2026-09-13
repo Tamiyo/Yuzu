@@ -7,7 +7,7 @@ use melior::ir::attribute::{FlatSymbolRefAttribute, StringAttribute};
 use melior::ir::operation::{OperationBuilder, OperationLike, OperationRef};
 use melior::ir::{Attribute, BlockLike, BlockRef, Identifier, Type, Value};
 use yuzu_mlir::attributes::CalleeKind;
-use yuzu_mlir::ext::{OperationExt, ValueExt};
+use yuzu_mlir::ext::{OperationCast, OperationExt, ValueExt};
 use yuzu_mlir::ods::{yz, yzr};
 use yuzu_mlir::ops::yzl::YzlOp;
 use yuzu_types::BuiltinFunc;
@@ -23,7 +23,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
         values: &mut HashMap<usize, Value<'c, 'b>>,
         produced: &mut Vec<Value<'c, 'b>>,
     ) {
-        match YzlOp::of(&op) {
+        match op.as_yzl() {
             Some(YzlOp::Name(name)) => {
                 let Some(index) = name.col().map(|col| col.value() as usize) else {
                     self.error(op, "a name outside a column context is not lowered yet");

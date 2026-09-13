@@ -23,7 +23,7 @@ use melior::ir::{Attribute, BlockRef, Identifier, Module, RegionLike, Value};
 use melior::{IrRewriter, RewriterBase, ir::Location};
 use yuzu_mlir::SymbolTable;
 use yuzu_mlir::attributes::CalleeKind;
-use yuzu_mlir::ext::{BlockExt, OperationExt, RegionExt, ValueExt};
+use yuzu_mlir::ext::{BlockExt, OperationCast, OperationExt, RegionExt, ValueExt};
 use yuzu_mlir::ops::yzl::YzlOp;
 
 /// How many calls one program may expand. A program whose calls reduce needs
@@ -66,7 +66,7 @@ pub fn inline_calls(context: &Context, module: &Module) {
 /// function that reaches itself without a call site ever asking.
 fn collect_calls<'c, 'a>(block: BlockRef<'c, 'a>, out: &mut Vec<OperationRef<'c, 'a>>) {
     for op in block.operations() {
-        match YzlOp::of(&op) {
+        match op.as_yzl() {
             Some(YzlOp::Fn(_) | YzlOp::Trait(_) | YzlOp::Impl(_)) => {
                 continue;
             }
@@ -92,7 +92,7 @@ fn expand<'c, 'a>(
     call: OperationRef<'c, '_>,
     symbols: &SymbolTable<'c, '_>,
 ) -> bool {
-    let Some(YzlOp::Call(site)) = YzlOp::of(&call) else {
+    let Some(YzlOp::Call(site)) = call.as_yzl() else {
         return error(call.location(), "expected a call to expand");
     };
 
@@ -101,7 +101,7 @@ fn expand<'c, 'a>(
         return error(call.location(), &format!("unknown function `{callee}`"));
     };
 
-    let Some(YzlOp::Fn(function)) = YzlOp::of(&declaration) else {
+    let Some(YzlOp::Fn(function)) = declaration.as_yzl() else {
         return error(call.location(), &format!("`{callee}` is not a function"));
     };
 
@@ -118,7 +118,7 @@ fn expand<'c, 'a>(
     let mut values: HashMap<usize, Value> = HashMap::new();
     let mut returned = None;
     for op in body.operations() {
-        match YzlOp::of(&op) {
+        match op.as_yzl() {
             // A parameter reference is the argument, not a copy of anything.
             Some(YzlOp::Name(name)) if name.param().is_some() => {
                 let index = name
@@ -220,7 +220,7 @@ fn discard_declarations(rewriter: &RewriterBase, block: BlockRef) {
     let mut declarations = Vec::new();
     for op in block.operations() {
         if matches!(
-            YzlOp::of(&op),
+            op.as_yzl(),
             Some(YzlOp::Fn(_) | YzlOp::Trait(_) | YzlOp::Impl(_))
         ) {
             declarations.push(op);
@@ -238,7 +238,7 @@ fn report_budget(calls: &[OperationRef]) {
     let call = calls
         .first()
         .expect("the budget is reported over some call");
-    let name = match YzlOp::of(call) {
+    let name = match call.as_yzl() {
         Some(YzlOp::Call(site)) => site.callee().value(),
         _ => "a function",
     };

@@ -12,7 +12,7 @@ use melior::ir::operation::{OperationLike, OperationMutLike, OperationRefMut};
 use melior::ir::{BlockRef, Module, RegionLike};
 use yuzu_mlir::attributes::CalleeKind;
 use yuzu_mlir::ext::{
-    ArrayAttributeExt, BlockExt, OperationExt, OperationMutExt, RegionExt, ValueExt,
+    ArrayAttributeExt, BlockExt, OperationCast, OperationExt, OperationMutExt, RegionExt, ValueExt,
 };
 use yuzu_mlir::ops::yzl::YzlOp;
 use yuzu_types::FunctionRegistry;
@@ -92,7 +92,7 @@ impl<'c> Resolver<'c, '_> {
     /// order between declarations does not matter.
     fn hoist(&mut self, block: BlockRef<'c, '_>) {
         for op in block.operations() {
-            match YzlOp::of(&op) {
+            match op.as_yzl() {
                 Some(YzlOp::Struct(item)) => {
                     let name = item.sym_name().value();
                     let schema = unqualified(item.names().strings());
@@ -160,7 +160,7 @@ impl<'c> Resolver<'c, '_> {
     }
 
     fn resolve_op(&mut self, op: &mut OperationRefMut<'c, '_>, ambient: &Ambient<'c, '_>) {
-        match YzlOp::of(op) {
+        match op.as_yzl() {
             Some(YzlOp::Name(name)) => {
                 let reference = name.name().value();
                 self.resolve_name(op, reference, ambient);

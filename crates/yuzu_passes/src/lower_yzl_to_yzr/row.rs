@@ -3,7 +3,7 @@
 //! table's renaming of a collision is what interns it.
 use melior::ir::attribute::{FlatSymbolRefAttribute, StringAttribute, TypeAttribute};
 use melior::ir::{Attribute, BlockLike, BlockRef, Location, Type, Value};
-use yuzu_mlir::ext::{BlockExt, OperationExt};
+use yuzu_mlir::ext::{BlockExt, OperationCast, OperationExt};
 use yuzu_mlir::ods::{yz, yzr};
 use yuzu_mlir::ops::yzl::YzlOp;
 use yuzu_mlir::{StructType, SymbolTable};
@@ -19,7 +19,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
     /// only shape-to-symbol needs an index of its own.
     pub(super) fn intern_declared_shapes(&mut self, block: BlockRef<'c, '_>) {
         for op in block.operations() {
-            if let Some(YzlOp::Struct(item)) = YzlOp::of(&op) {
+            if let Some(YzlOp::Struct(item)) = op.as_yzl() {
                 let fields = struct_fields(&item);
                 self.shapes
                     .entry(fields)
@@ -37,12 +37,12 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
     /// the table names its struct, and the struct carries its fields.
     fn relation_schema(&self, name: &str, source: &SymbolTable<'c, '_>) -> Option<Schema<'c>> {
         let table = source.lookup(name)?;
-        let YzlOp::Table(table) = YzlOp::of(&table)? else {
+        let YzlOp::Table(table) = table.as_yzl()? else {
             return None;
         };
 
         let declaration = source.lookup(table.row().value())?;
-        let YzlOp::Struct(item) = YzlOp::of(&declaration)? else {
+        let YzlOp::Struct(item) = declaration.as_yzl()? else {
             return None;
         };
 

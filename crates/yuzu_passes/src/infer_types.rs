@@ -12,7 +12,9 @@ use melior::ir::operation::{OperationLike, OperationMutLike, OperationRef, Opera
 use melior::ir::r#type::FunctionType;
 use melior::ir::{Attribute, BlockRef, Location, Module, RegionLike, Type, Value, ValueLike};
 use yuzu_mlir::attributes::CalleeKind;
-use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationExt, RegionExt, ValueExt};
+use yuzu_mlir::ext::{
+    ArrayAttributeExt, BlockExt, OperationCast, OperationExt, RegionExt, ValueExt,
+};
 use yuzu_mlir::ops::yz::YzOp;
 use yuzu_mlir::ops::yzl::YzlOp;
 use yuzu_mlir::types;
@@ -187,7 +189,7 @@ impl<'c> TypeInferrer<'c> {
 
     fn hoist(&mut self, block: BlockRef<'c, '_>) {
         for op in block.operations() {
-            match YzlOp::of(&op) {
+            match op.as_yzl() {
                 Some(YzlOp::Fn(function)) => {
                     if let Some(signature) = parse_signature(&function) {
                         self.signatures
@@ -223,7 +225,7 @@ impl<'c> TypeInferrer<'c> {
     }
 
     fn infer_op(&mut self, op: OperationRef<'c, '_>, columns: &Row<'c>, params: &[Type<'c>]) {
-        match YzlOp::of(&op) {
+        match op.as_yzl() {
             Some(YzlOp::Name(name)) => {
                 let term = self.term_of(op.first_result());
                 if let Some(index) = name.col().map(|col| col.value() as usize) {
@@ -342,7 +344,7 @@ impl<'c> TypeInferrer<'c> {
     }
 
     fn infer_yz_op(&mut self, op: OperationRef<'c, '_>, columns: &Row<'c>, params: &[Type<'c>]) {
-        match YzOp::of(&op) {
+        match op.as_yz() {
             Some(YzOp::Add(_) | YzOp::Sub(_) | YzOp::Mul(_) | YzOp::Div(_) | YzOp::Rem(_)) => {
                 let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
                 let out = self.term_of(op.first_result());
@@ -569,7 +571,7 @@ impl<'c> TypeInferrer<'c> {
 
     fn unify_returns(&mut self, op: OperationRef<'c, '_>, ret: Type<'c>) {
         if let Some(terminator) = last_region_op(op)
-            && matches!(YzlOp::of(&terminator), Some(YzlOp::Return(_)))
+            && matches!(terminator.as_yzl(), Some(YzlOp::Return(_)))
             && let Some(value) = terminator.try_first_operand()
         {
             let term = self.term_of(value);

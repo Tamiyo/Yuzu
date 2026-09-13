@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use melior::ir::operation::{OperationLike, OperationRef, OperationResult};
 use melior::ir::{BlockRef, Location, Module, RegionLike};
 use yuzu_mlir::attributes::CalleeKind;
-use yuzu_mlir::ext::{BlockExt, OperationExt, RegionExt, ValueExt};
+use yuzu_mlir::ext::{BlockExt, OperationCast, OperationExt, RegionExt, ValueExt};
 use yuzu_mlir::ops::yzl::{CallOp, YzlOp};
 use yuzu_types::{BuiltinFunc, FunctionRegistry};
 
@@ -53,7 +53,7 @@ pub fn check_aggregates(module: &Module, registry: &dyn FunctionRegistry) {
 impl<'c> Checker<'_, 'c> {
     fn check_block<'m>(&mut self, block: BlockRef<'c, 'm>, grouping: Grouping<'m>) {
         for op in block.operations() {
-            match YzlOp::of(&op) {
+            match op.as_yzl() {
                 Some(YzlOp::Call(call)) => {
                     let callee = call.callee().value();
                     if self.is_aggregate_call(&call, callee) {

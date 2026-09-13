@@ -5,7 +5,7 @@ use melior::ir::attribute::{DenseI64ArrayAttribute, StringAttribute};
 use melior::ir::operation::{OperationLike, OperationRef};
 use melior::ir::{Block, BlockLike, BlockRef, Location, Region, RegionLike, Type, Value};
 use yuzu_mlir::SymbolTable;
-use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationExt, ValueExt};
+use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationCast, OperationExt, ValueExt};
 use yuzu_mlir::ods::{yz, yzr};
 use yuzu_mlir::ops::yzl::YzlOp;
 use yuzu_mlir::types;
@@ -20,7 +20,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
         source: &SymbolTable<'c, '_>,
         symbols: &mut SymbolTable<'c, '_>,
     ) {
-        match YzlOp::of(&op) {
+        match op.as_yzl() {
             Some(YzlOp::Struct(item)) => {
                 let fields = struct_fields(&item);
                 self.declare_struct(item.sym_name().value(), &fields, symbols);
