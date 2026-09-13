@@ -18,13 +18,16 @@ use std::collections::HashMap;
 
 use melior::Context;
 use melior::ir::ValueLike;
+use melior::ir::attribute::TypeAttribute;
 use melior::ir::operation::{OperationBuilder, OperationLike, OperationRef};
-use melior::ir::{Attribute, BlockRef, Identifier, Module, RegionLike, Value};
+use melior::ir::{Attribute, BlockRef, Identifier, Module, RegionLike, Type, Value};
 use melior::{IrRewriter, RewriterBase, ir::Location};
-use yuzu_mlir::SymbolTable;
 use yuzu_mlir::attributes::CalleeKind;
-use yuzu_mlir::ext::{BlockExt, OperationCast, OperationExt, RegionExt, ValueExt};
+use yuzu_mlir::ext::{
+    ArrayAttributeExt, BlockExt, OperationCast, OperationExt, RegionExt, ValueExt,
+};
 use yuzu_mlir::ops::yzl::YzlOp;
+use yuzu_mlir::{ParamType, SymbolTable};
 
 /// How many calls one program may expand. A program whose calls reduce needs
 /// far fewer than this; one that does not would never stop on its own.
@@ -112,6 +115,10 @@ fn expand<'c, 'a>(
         );
     };
 
+    let Some(arguments_types) = type_arguments(&function, &site, call.location(), callee) else {
+        return false;
+    };
+
     let arguments: Vec<Value> = call.operands().collect();
     rewriter.set_insertion_point_before(call);
 
@@ -147,7 +154,7 @@ fn expand<'c, 'a>(
                     );
                 }
 
-                let Some(copied) = copy(rewriter, op, &values) else {
+                let Some(copied) = copy(rewriter, op, &values, &arguments_types) else {
                     return error(
                         op.location(),
                         &format!("`{callee}` has a body that did not copy"),
@@ -178,6 +185,7 @@ fn copy<'c, 'a>(
     rewriter: &'a RewriterBase<'c, 'a>,
     op: OperationRef<'c, '_>,
     values: &HashMap<usize, Value<'c, 'a>>,
+    types: &HashMap<&str, Type<'c>>,
 ) -> Option<Value<'c, 'a>> {
     let operands: Vec<Value> = op
         .operands()
@@ -185,15 +193,25 @@ fn copy<'c, 'a>(
         .collect();
     let results: Vec<_> = (0..op.result_count())
         .map(|index| {
-            op.result(index)
+            let ty = op
+                .result(index)
                 .expect("the result index is in range")
-                .r#type()
+                .r#type();
+            substitute(ty, types)
         })
         .collect();
     let attributes: Vec<(Identifier<'c>, Attribute<'c>)> = (0..op.attribute_count())
         .map(|index| {
-            op.attribute_at(index)
-                .expect("the attribute index is in range")
+            let (name, attribute) = op
+                .attribute_at(index)
+                .expect("the attribute index is in range");
+            match TypeAttribute::try_from(attribute) {
+                Ok(stamp) => (
+                    name,
+                    TypeAttribute::new(substitute(stamp.value(), types)).into(),
+                ),
+                Err(_) => (name, attribute),
+            }
         })
         .collect();
 
@@ -212,6 +230,52 @@ fn copy<'c, 'a>(
 
     let inserted = rewriter.insert(built);
     inserted.try_first_result()
+}
+
+/// What the call chose for each of the function's type parameters. A generic
+/// call inference never settled carries no stamp, and expansion is where that
+/// can be said usefully — the body would otherwise be copied with a parameter
+/// standing in for a type.
+fn type_arguments<'c>(
+    function: &yuzu_mlir::ops::yzl::FnOp<'c, '_>,
+    site: &yuzu_mlir::ops::yzl::CallOp<'c, '_>,
+    location: Location<'c>,
+    callee: &str,
+) -> Option<HashMap<&'c str, Type<'c>>> {
+    let Some(parameters) = function.type_params() else {
+        return Some(HashMap::new());
+    };
+
+    let parameters = parameters.strings();
+    let Some(arguments) = site.type_args() else {
+        return error(
+            location,
+            &format!("`{callee}` is generic and this call's types were never settled"),
+        )
+        .then(HashMap::new);
+    };
+
+    let arguments: Vec<Type<'c>> = arguments
+        .elements()
+        .filter_map(|element| TypeAttribute::try_from(element).ok())
+        .map(|attribute| attribute.value())
+        .collect();
+    if arguments.len() != parameters.len() {
+        return error(
+            location,
+            &format!("`{callee}` takes {} type parameters", parameters.len()),
+        )
+        .then(HashMap::new);
+    }
+
+    Some(parameters.into_iter().zip(arguments).collect())
+}
+
+/// A parameter in type position becomes the type the call chose for it.
+fn substitute<'c>(ty: Type<'c>, types: &HashMap<&str, Type<'c>>) -> Type<'c> {
+    ParamType::from_type(ty)
+        .and_then(|param| types.get(param.name()).copied())
+        .unwrap_or(ty)
 }
 
 /// Once every call is expanded the declarations describe nothing the module
@@ -382,6 +446,71 @@ from t
                   |
                 5 | fn forever(x: int64) -> int64 { return forever(x) }
                   | ^
+            "#]],
+        );
+    }
+
+    /// A generic body is copied per call site with the types that call
+    /// settled on, so one declaration serves both columns — monomorphizing
+    /// falls out of expanding rather than needing a pass of its own.
+    #[test]
+    fn a_generic_body_takes_the_types_of_its_call() {
+        check_simplified(
+            r#"
+struct Row { a: int64, r: float64 }
+table t = Row
+
+fn twice[T](x: T) -> T { return x + x }
+
+from t
+|> extend twice(a) as m, twice(r) as n
+"#,
+            expect![[r#"
+                module {
+                  yz.struct @Row ["a", "r"] : [!yz.int64, !yz.float64]
+                  %0 = yzr.table @t : !yz.struct<@Row>
+                  yz.struct @row ["a", "r", "m", "n"] : [!yz.int64, !yz.float64, !yz.int64, !yz.float64]
+                  %1 = yzr.extend %0 {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.float64):
+                    %2 = yz.add %arg0, %arg0 : !yz.int64, !yz.int64 -> !yz.int64
+                    %3 = yz.add %arg1, %arg1 : !yz.float64, !yz.float64 -> !yz.float64
+                    yzr.yield %2, %3 : !yz.int64, !yz.float64
+                  } : !yz.struct<@Row> -> !yz.struct<@row>
+                  yzr.output %1 : !yz.struct<@row>
+                }
+            "#]],
+        );
+    }
+
+    /// Dispatch is the piece that is not written: a trait's methods live in
+    /// its implementations, and choosing between them needs the concrete
+    /// `Self`. The gap says so rather than claiming the method is unknown.
+    #[test]
+    fn reports_a_trait_method_it_cannot_dispatch() {
+        check_simplified(
+            r#"
+trait Zero {
+    fn zero(x: Self) -> Self
+}
+
+impl Zero for int64 {
+    fn zero(x: int64) -> int64 { return 0 }
+}
+
+fn shift[T](x: T) -> T where T: Zero { return zero(x) }
+
+struct Row { a: int64 }
+table t = Row
+
+from t
+|> extend shift(a) as z
+"#,
+            expect![[r#"
+                error: `zero` is a trait method, and calling one is not supported yet
+                 --> test.yz:10:47
+                   |
+                10 | fn shift[T](x: T) -> T where T: Zero { return zero(x) }
+                   |                                               ^
             "#]],
         );
     }

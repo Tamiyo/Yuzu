@@ -60,6 +60,8 @@ struct Resolver<'c, 'a> {
     relations: HashMap<&'c str, Schema<'c>>,
     callables: HashMap<&'c str, Callable>,
     traits: HashSet<&'c str>,
+    /// The methods the module's traits declare, known but not callable.
+    methods: HashSet<&'c str>,
     schemas: HashMap<usize, Schema<'c>>,
     shed: HashMap<usize, Vec<&'c str>>,
 }
@@ -79,6 +81,7 @@ pub fn resolve_names<'c>(
         relations: HashMap::new(),
         callables: HashMap::new(),
         traits: HashSet::new(),
+        methods: HashSet::new(),
         schemas: HashMap::new(),
         shed: HashMap::new(),
     };
@@ -113,6 +116,13 @@ impl<'c> Resolver<'c, '_> {
                     let name = item.sym_name().value();
                     self.check_duplicate(&op, "trait", name);
                     self.traits.insert(name);
+                    if let Some(body) = item.body().first_block() {
+                        for method in body.operations() {
+                            if let Some(YzlOp::Fn(function)) = method.as_yzl() {
+                                self.methods.insert(function.sym_name().value());
+                            }
+                        }
+                    }
                 }
                 Some(YzlOp::Fn(function)) => {
                     let name = function.sym_name().value();
@@ -437,6 +447,19 @@ impl<'c> Resolver<'c, '_> {
                 .find(|entry| entry.name == callee)
             {
                 Some(entry) => (CalleeKind::Builtin, entry.min_args, entry.max_args),
+                // A trait's methods live in its implementations, so no
+                // module-level name reaches one. Choosing between them is
+                // dispatch, which nothing does yet — and "unknown" would
+                // send the reader looking for a declaration that is there.
+                None if self.methods.contains(callee) => {
+                    self.error(
+                        op,
+                        format!(
+                            "`{callee}` is a trait method, and calling one is not supported yet"
+                        ),
+                    );
+                    return;
+                }
                 None => {
                     self.error(op, format!("unknown function `{callee}`"));
                     return;
