@@ -191,10 +191,21 @@ pub fn compile_mlir(name: &str, source: &str) -> std::process::ExitCode {
             yuzu_passes::check_aggregates(&module, &yuzu_types::Builtins);
         });
     }
+    // Expansion runs after the aggregate rules, which read an `agg fn` body
+    // while it is still a body, and before the lowering, which has no way to
+    // carry a function across.
+    if verified && !has_errors(&diagnostics) {
+        yuzu_mlir::diagnostics::capture(&context, source_id, source, &mut diagnostics, || {
+            yuzu_passes::inline_calls(&context, &module);
+        });
+    }
     if verified && !has_errors(&diagnostics) {
         let lowered =
             yuzu_mlir::diagnostics::capture(&context, source_id, source, &mut diagnostics, || {
-                yuzu_passes::lower_yzl_to_yzr(&context, &module, &yuzu_types::Builtins)
+                let mut lowered =
+                    yuzu_passes::lower_yzl_to_yzr(&context, &module, &yuzu_types::Builtins);
+                yuzu_passes::simplify_yzr(&context, &mut lowered);
+                lowered
             });
 
         print_diagnostics(&diagnostics, &sources);
