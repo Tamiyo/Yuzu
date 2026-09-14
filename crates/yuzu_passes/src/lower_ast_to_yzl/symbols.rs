@@ -85,6 +85,14 @@ impl<'c> Row<'c> {
         self.columns.iter().map(|column| column.name)
     }
 
+    /// Every column as a reader could refer to it, qualifier and all.
+    pub(super) fn references(&self) -> impl Iterator<Item = Reference<'c>> + '_ {
+        self.columns.iter().map(|column| Reference {
+            qualifier: column.qualifier,
+            name: column.name,
+        })
+    }
+
     /// Which column a reference names.
     pub(super) fn column(&self, reference: Reference<'_>) -> ColumnLookup {
         let mut matches = self
@@ -363,11 +371,15 @@ impl<'c> SymbolTable<'c> {
 
     /// The row the enclosing relation carries, for building block arguments.
     pub(super) fn row(&self) -> &Row<'c> {
+        self.current_row()
+            .expect("a stage is being converted outside a relation")
+    }
+
+    /// The row in scope, when a relation is being converted at all.
+    pub(super) fn current_row(&self) -> Option<&Row<'c>> {
         match self.scopes.last() {
-            Some(Scope::Relation { row, .. }) => row,
-            Some(Scope::Module(_) | Scope::Function { .. } | Scope::Block { .. }) | None => {
-                panic!("a stage is being converted outside a relation")
-            }
+            Some(Scope::Relation { row, .. }) => Some(row),
+            Some(Scope::Module(_) | Scope::Function { .. } | Scope::Block { .. }) | None => None,
         }
     }
 

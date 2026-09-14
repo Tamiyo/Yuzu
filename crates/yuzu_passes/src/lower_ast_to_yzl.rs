@@ -88,18 +88,67 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .map(|text| self.intern(&text))
     }
 
+    fn span(&self, range: text_size::TextRange) -> Span {
+        Span {
+            source_id: self.source_id,
+            range,
+        }
+    }
+
     fn error(&mut self, node: &impl AstNode, message: &str) {
         self.error_at(node.syntax().text_range(), message);
     }
 
     fn error_at(&mut self, range: text_size::TextRange, message: &str) {
-        let span = Span {
-            source_id: self.source_id,
-            range,
-        };
-
+        let span = self.span(range);
         self.diagnostics
             .emit(DiagnosticBuilder::error(span, message));
+    }
+
+    /// Reports with a note under the snippet — for what the reader would
+    /// otherwise have to go and look up: the columns actually in the row,
+    /// the declaration a name already has.
+    fn error_noting(&mut self, node: &impl AstNode, message: &str, note: String) {
+        let span = self.span(node.syntax().text_range());
+        self.diagnostics
+            .emit(DiagnosticBuilder::error(span, message).note(note));
+    }
+
+    /// Reports a column reference the row could not answer, noting what the
+    /// row does carry.
+    fn unresolved_column(&mut self, node: &impl AstNode, message: &str) {
+        match self.row_note() {
+            Some(note) => self.error_noting(node, message, note),
+            None => self.error(node, message),
+        }
+    }
+
+    /// The columns a reader could have written here, as a note. `None` when
+    /// no relation is in scope, so there is no row to list.
+    fn row_note(&self) -> Option<String> {
+        const SHOWN: usize = 8;
+
+        let row = self.symbols.current_row()?;
+        if row.len() == 0 {
+            return Some("this relation carries no columns".to_string());
+        }
+
+        let mut names: Vec<String> = row
+            .references()
+            .take(SHOWN)
+            .map(|reference| format!("`{reference}`"))
+            .collect();
+        if row.len() > SHOWN {
+            names.push(format!("and {} more", row.len() - SHOWN));
+        }
+
+        Some(format!("the row carries {}", names.join(", ")))
+    }
+
+    /// Where a range starts, as the printer would show it.
+    fn position(&self, range: text_size::TextRange) -> String {
+        let (line, column) = self.line_col(range.start().into());
+        format!("{}:{line}:{column}", self.name)
     }
 
     /// Reports and stands a `yzl.missing` value in for the hole.
@@ -131,9 +180,13 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     }
 
     fn location_at(&self, offset: usize) -> Location<'c> {
-        let line = self.line_starts.partition_point(|&start| start <= offset);
-        let column = offset - self.line_starts[line - 1] + 1;
+        let (line, column) = self.line_col(offset);
         Location::new(self.context, &self.name, line, column)
+    }
+
+    fn line_col(&self, offset: usize) -> (usize, usize) {
+        let line = self.line_starts.partition_point(|&start| start <= offset);
+        (line, offset - self.line_starts[line - 1] + 1)
     }
 
     fn convert(&mut self, root: &ast::Root) -> Module<'c> {
@@ -197,6 +250,20 @@ pub(crate) mod test_support {
         .expect("the source converts");
 
         (module, sources, diagnostics)
+    }
+
+    /// Everything a conversion reported, rendered with its snippet.
+    pub(crate) fn reported(context: &melior::Context, source: &str) -> String {
+        use yuzu_diagnostics::diagnostics::printer::DiagnosticPrinter;
+
+        let (_, sources, diagnostics) = convert(context, "test.yz", source);
+        let printer = DiagnosticPrinter::new(&sources);
+        diagnostics
+            .diagnostics()
+            .iter()
+            .map(|diagnostic| printer.print(diagnostic))
+            .collect::<Vec<String>>()
+            .join("\n")
     }
 
     /// The module a clean conversion produces, as text.

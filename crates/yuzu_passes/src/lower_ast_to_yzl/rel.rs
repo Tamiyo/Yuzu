@@ -505,7 +505,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             },
         };
 
-        self.error(node, &message);
+        self.unresolved_column(node, &message);
         None
     }
 

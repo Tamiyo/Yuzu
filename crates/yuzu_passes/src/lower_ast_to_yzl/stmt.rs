@@ -102,9 +102,16 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     }
 
     fn check_duplicate(&mut self, node: &impl AstNode, what: &str, name: &str) {
-        if self.symbols.binding(name).is_some() {
-            self.error(node, &format!("the {what} `{name}` is already defined"));
-        }
+        let Some(declared) = self.symbols.binding(name).map(|binding| binding.declared) else {
+            return;
+        };
+
+        let first = self.position(declared);
+        self.error_noting(
+            node,
+            &format!("the {what} `{name}` is already defined"),
+            format!("first defined at {first}"),
+        );
     }
 
     pub(super) fn convert_stmt<'a>(&mut self, block: BlockRef<'c, 'a>, stmt: &ast::Stmt) {
@@ -733,6 +740,28 @@ external fn upper(s: str) -> str
             }
         "#]]
         .assert_eq(&converted("let ids: List[int64] = [1, 3]\n"));
+    }
+
+    /// A name can only be declared once, and the note says where it was —
+    /// the printer underlines one line, and the first declaration is rarely
+    /// on it.
+    #[test]
+    fn a_redeclaration_says_where_the_first_one_is() {
+        use crate::lower_ast_to_yzl::test_support::reported;
+
+        let context = yuzu_mlir::context();
+        expect![[r#"
+            error: the relation `Row` is already defined
+             --> test.yz:3:1
+              |
+            3 | table Row = Row
+              | ^^^^^^^^^^^^^^^
+              = note: first defined at test.yz:1:1
+        "#]]
+        .assert_eq(&reported(
+            &context,
+            "struct Row { a: int64 }\n\ntable Row = Row\n",
+        ));
     }
 
     #[test]

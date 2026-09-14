@@ -383,7 +383,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             Lookup::Unknown => format!("unresolved identifier `{reference}`"),
         };
 
-        self.missing(block, node, &message, types::var(self.context))
+        // Inside a relation every one of these is a column reference that
+        // did not land, so the row it was resolved against is the note.
+        self.unresolved_column(node, &message);
+        self.hole(block, node.syntax().text_range(), types::var(self.context))
     }
 
     fn call<'a>(
@@ -420,9 +423,62 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
 #[cfg(test)]
 mod tests {
-    use expect_test::expect;
+    use expect_test::{Expect, expect};
 
-    use crate::lower_ast_to_yzl::test_support::convert;
+    use crate::lower_ast_to_yzl::test_support::{convert, reported};
+
+    /// What a column reference that does not land reads like: the row it was
+    /// resolved against is the one thing the source does not show.
+    #[test]
+    fn a_column_reference_says_what_the_row_carries() {
+        check_reported(
+            r#"
+struct Employee { id: str, dept_id: int64 }
+table employees = Employee
+struct Department { id: str, name: str }
+table departments = Department
+
+from employees as e
+|> inner join departments as d on e.dept_id == d.id
+|> select id
+"#,
+            expect![[r#"
+                error: column `id` is ambiguous; qualify it with a relation alias
+                 --> test.yz:9:11
+                  |
+                9 | |> select id
+                  |           ^^
+                  = note: the row carries `e.id`, `e.dept_id`, `d.id`, `d.name`
+            "#]],
+        );
+    }
+
+    #[test]
+    fn a_narrowed_column_says_what_is_left() {
+        check_reported(
+            r#"
+struct Row { id: str, level: int64 }
+table t = Row
+
+from t
+|> select id
+|> where level > 1
+"#,
+            expect![[r#"
+                error: column `level` is no longer in the row: an earlier stage narrowed it away
+                 --> test.yz:7:10
+                  |
+                7 | |> where level > 1
+                  |          ^^^^^
+                  = note: the row carries `id`
+            "#]],
+        );
+    }
+
+    fn check_reported(source: &str, expected: Expect) {
+        let context = yuzu_mlir::context();
+        expected.assert_eq(&reported(&context, source));
+    }
 
     /// The HIR lowerer's missing-piece mechanics, ported: a hole in the
     /// parse converts to a reported diagnostic and a `yzl.missing` value.
