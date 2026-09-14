@@ -7,7 +7,7 @@ use yuzu_mlir::attributes::CalleeKind;
 use yuzu_mlir::ods::yzl;
 use yuzu_mlir::{ListType, ParamType, StructType};
 
-use crate::lower_ast_to_yzl::symbols::{Binding, Callable, unqualified};
+use crate::lower_ast_to_yzl::symbols::{Callable, Kind, Row};
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 use yuzu_mlir::types;
 
@@ -22,7 +22,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                         continue;
                     };
                     let fields = decl.fields().filter_map(|f| self.ident(f.name())).collect();
-                    self.declare(decl, name, Binding::Struct { fields });
+                    self.declare(decl, name, Kind::Struct { fields });
                 }
                 ast::Stmt::TableStmt(decl) => {
                     let Some(name) = self.ident(decl.name()) else {
@@ -32,18 +32,18 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     // An inline table declares its row shape in place; a
                     // named one names a struct the program declares.
                     let row = if decl.inline_fields().next().is_some() {
-                        unqualified(
+                        Row::from(
                             decl.inline_fields()
                                 .filter_map(|field| self.ident(field.name()))
-                                .collect(),
+                                .collect::<Vec<_>>(),
                         )
                     } else {
                         let Some(declared) = self.ident(decl.row_struct()) else {
                             continue;
                         };
 
-                        match self.symbols.binding(declared) {
-                            Some(Binding::Struct { fields }) => unqualified(fields.clone()),
+                        match self.symbols.kind(declared) {
+                            Some(Kind::Struct { fields }) => Row::from(fields.clone()),
                             Some(_) | None => {
                                 self.error(decl, &format!("`{declared}` is not a struct"));
                                 continue;
@@ -51,7 +51,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                         }
                     };
 
-                    self.declare(decl, name, Binding::Relation { row });
+                    self.declare(decl, name, Kind::Relation { row });
                 }
                 ast::Stmt::TraitStmt(decl) => {
                     let Some(name) = self.ident(decl.name()) else {
@@ -61,7 +61,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                         .methods()
                         .filter_map(|m| self.ident(m.name()))
                         .collect();
-                    self.declare(decl, name, Binding::Trait { methods });
+                    self.declare(decl, name, Kind::Trait { methods });
                 }
                 ast::Stmt::FuncStmt(decl) => {
                     let Some(name) = self.ident(decl.name()) else {
@@ -78,7 +78,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     self.declare(
                         decl,
                         name,
-                        Binding::Func(Callable {
+                        Kind::Func(Callable {
                             kind,
                             min_args: arity,
                             max_args: arity,
@@ -96,9 +96,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     }
 
     /// Binds a module-level name, reporting a second declaration of one.
-    fn declare(&mut self, node: &impl AstNode, name: &'c str, binding: Binding<'c>) {
-        self.check_duplicate(node, binding.what(), name);
-        self.symbols.bind(name, binding);
+    fn declare(&mut self, node: &impl AstNode, name: &'c str, kind: Kind<'c>) {
+        self.check_duplicate(node, kind.what(), name);
+        self.symbols.bind(name, kind, node.syntax().text_range());
     }
 
     fn check_duplicate(&mut self, node: &impl AstNode, what: &str, name: &str) {
@@ -251,10 +251,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
             for trait_ref in bound.traits() {
                 if let Some(trait_name) = self.ident(trait_ref.name())
-                    && !matches!(
-                        self.symbols.binding(trait_name),
-                        Some(Binding::Trait { .. })
-                    )
+                    && !matches!(self.symbols.kind(trait_name), Some(Kind::Trait { .. }))
                 {
                     self.error(&trait_ref, &format!("unknown trait `{trait_name}`"));
                 }
@@ -370,10 +367,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             return;
         };
 
-        if !matches!(
-            self.symbols.binding(trait_name),
-            Some(Binding::Trait { .. })
-        ) {
+        if !matches!(self.symbols.kind(trait_name), Some(Kind::Trait { .. })) {
             self.error(decl, &format!("unknown trait `{trait_name}`"));
         }
 
@@ -491,12 +485,14 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 let value = self.convert_rel(body, rel);
                 let row = self.symbols.row().clone();
                 self.symbols.leave();
-                self.symbols.bind(name, Binding::Relation { row });
+                self.symbols
+                    .bind(name, Kind::Relation { row }, decl.syntax().text_range());
                 value
             }
             _ => {
                 let value = self.convert_expr(body, &Locals::new(), &expr);
-                self.symbols.bind(name, Binding::Let);
+                self.symbols
+                    .bind(name, Kind::Let, decl.syntax().text_range());
                 value
             }
         };

@@ -9,7 +9,7 @@ use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 use melior::ir::r#type::IntegerType;
 use yuzu_mlir::attributes::{CalleeKind, CmpPredicate};
 
-use crate::lower_ast_to_yzl::symbols::Lookup;
+use crate::lower_ast_to_yzl::symbols::{Lookup, Reference};
 use yuzu_mlir::ext::OperationExt;
 use yuzu_mlir::types;
 
@@ -37,7 +37,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     return value;
                 }
 
-                self.name_ref(block, ident, name, loc)
+                self.name_ref(block, ident, Reference::bare(name), loc)
             }
             ast::Expr::FieldAccessExpr(access) => {
                 // `t.a` is a qualified column reference, not a load.
@@ -72,7 +72,11 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     );
                 };
 
-                self.name_ref(block, access, &format!("{base}.{field}"), loc)
+                let reference = Reference {
+                    qualifier: Some(base),
+                    name: field,
+                };
+                self.name_ref(block, access, reference, loc)
             }
             ast::Expr::BinaryExpr(binary) => self.convert_binary(block, locals, binary),
             ast::Expr::UnaryExpr(unary) => {
@@ -150,10 +154,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .map(|arg| self.convert_expr(block, locals, arg))
                     .collect();
                 let Some(callable) = self.symbols.callable(callee, self.registry) else {
-                    let message = match self.symbols.binding(callee) {
-                        Some(binding) => {
-                            format!("`{callee}` is a {}, not a function", binding.what())
-                        }
+                    let message = match self.symbols.kind(callee) {
+                        Some(kind) => format!("`{callee}` is a {}, not a function", kind.what()),
                         None if self.symbols.is_method(callee) => format!(
                             "`{callee}` is a trait method, and calling one is not supported yet"
                         ),
@@ -353,10 +355,11 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         node: &impl AstNode,
-        name: &str,
+        reference: Reference<'c>,
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
-        let message = match self.symbols.lookup(name) {
+        let name = reference.name;
+        let message = match self.symbols.lookup(reference) {
             Lookup::Column(index) | Lookup::Param(index) => {
                 return block
                     .argument(index)
@@ -372,8 +375,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     "column `{name}` is no longer in the row: an earlier stage narrowed it away"
                 )
             }
-            Lookup::NotAValue(what) => format!("`{name}` is a {what}, not a value"),
-            Lookup::Unknown => format!("unresolved identifier `{name}`"),
+            Lookup::NotAValue(what) => format!("`{reference}` is a {what}, not a value"),
+            Lookup::Unknown => format!("unresolved identifier `{reference}`"),
         };
 
         self.missing(block, node, &message, types::var(self.context))

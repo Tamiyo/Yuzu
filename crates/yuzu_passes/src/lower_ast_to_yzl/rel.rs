@@ -5,7 +5,7 @@ use melior::ir::{
 use yuzu_ast::{AstNode, ast};
 use yuzu_mlir::ods::yzl;
 
-use crate::lower_ast_to_yzl::symbols::{ColumnLookup, Row, has_column};
+use crate::lower_ast_to_yzl::symbols::{ColumnLookup, Reference, Row};
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 use melior::ir::r#type::IntegerType;
 use yuzu_mlir::attributes::JoinKind;
@@ -112,9 +112,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                         continue;
                     };
 
-                    let reference = match self.ident(item.qualifier()) {
-                        Some(qualifier) => self.intern(&format!("{qualifier}.{column}")),
-                        None => column,
+                    let reference = Reference {
+                        qualifier: self.ident(item.qualifier()),
+                        name: column,
                     };
                     match self.symbols.column(reference) {
                         ColumnLookup::Unique(index) => {
@@ -193,14 +193,14 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     };
 
                     let qualifier = self.ident(item.qualifier());
-                    let reference = match qualifier {
-                        Some(qualifier) => self.intern(&format!("{qualifier}.{old}")),
-                        None => old,
+                    let reference = Reference {
+                        qualifier,
+                        name: old,
                     };
                     match self.symbols.column(reference) {
                         ColumnLookup::Unique(index) => {
                             renames.push((index, new));
-                            from.push(reference);
+                            from.push(self.intern(&reference.to_string()));
                             to.push(new);
                         }
                         ColumnLookup::Ambiguous => self.error(
@@ -264,7 +264,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     Some(rhs) => rhs,
                     None => {
                         self.error(stage, &format!("`{relation}` is not a relation"));
-                        Vec::new()
+                        Row::new()
                     }
                 };
 
@@ -279,7 +279,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     }
 
                     for &column in &using {
-                        if !has_column(self.symbols.row(), column) || !has_column(&rhs, column) {
+                        let column = Reference::bare(column);
+                        if !self.symbols.row().has(column) || !rhs.has(column) {
                             self.error(
                                 &clause,
                                 &format!("column {column} not present in both relations"),
@@ -334,7 +335,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                         continue;
                     };
 
-                    match self.symbols.column(name) {
+                    match self.symbols.column(Reference::bare(name)) {
                         ColumnLookup::Unique(index) => columns.push(index),
                         ColumnLookup::Ambiguous => self.error(
                             &item,
@@ -381,7 +382,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                         continue;
                     };
 
-                    match self.symbols.column(name) {
+                    match self.symbols.column(Reference::bare(name)) {
                         ColumnLookup::Unique(index) => self.symbols.remove(index),
                         ColumnLookup::Ambiguous => self.error(
                             &column,
@@ -443,7 +444,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             }
         };
 
-        self.symbols.enter_query(row);
+        self.symbols.enter_relation(row);
         block
             .append_operation(
                 yzl::from(
