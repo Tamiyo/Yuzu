@@ -9,7 +9,7 @@ use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 use melior::ir::r#type::IntegerType;
 use yuzu_mlir::attributes::{CalleeKind, CmpPredicate};
 
-use crate::lower_ast_to_yzl::resolve::Lookup;
+use crate::lower_ast_to_yzl::symbols::Lookup;
 use yuzu_mlir::ext::OperationExt;
 use yuzu_mlir::types;
 
@@ -149,13 +149,15 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .iter()
                     .map(|arg| self.convert_expr(block, locals, arg))
                     .collect();
-                let Some(callable) = self.resolver.callable(callee, self.registry) else {
-                    let message = if self.resolver.is_method(callee) {
-                        format!(
+                let Some(callable) = self.symbols.callable(callee, self.registry) else {
+                    let message = match self.symbols.binding(callee) {
+                        Some(binding) => {
+                            format!("`{callee}` is a {}, not a function", binding.what())
+                        }
+                        None if self.symbols.is_method(callee) => format!(
                             "`{callee}` is a trait method, and calling one is not supported yet"
-                        )
-                    } else {
-                        format!("unresolved identifier `{callee}`")
+                        ),
+                        None => format!("unresolved identifier `{callee}`"),
                     };
                     return self.missing(block, call, &message, types::var(self.context));
                 };
@@ -354,11 +356,11 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         name: &str,
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
-        let message = match self.resolver.lookup(name) {
+        let message = match self.symbols.lookup(name) {
             Lookup::Column(index) | Lookup::Param(index) => {
                 return block
                     .argument(index)
-                    .expect("the resolver answered from the row this block was built for")
+                    .expect("the scope answered from the row this block was built for")
                     .into();
             }
             Lookup::Let(symbol) => return self.call(block, symbol, CalleeKind::Let, &[], loc),
@@ -370,6 +372,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     "column `{name}` is no longer in the row: an earlier stage narrowed it away"
                 )
             }
+            Lookup::NotAValue(what) => format!("`{name}` is a {what}, not a value"),
             Lookup::Unknown => format!("unresolved identifier `{name}`"),
         };
 

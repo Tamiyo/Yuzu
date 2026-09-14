@@ -19,7 +19,7 @@ use yuzu_mlir::ods::yzl;
 use yuzu_mlir::types;
 use yuzu_types::FunctionRegistry;
 
-use crate::lower_ast_to_yzl::resolve::Resolver;
+use crate::lower_ast_to_yzl::symbols::SymbolTable;
 
 /// Parses the source and converts it to a yzl module. Everything the
 /// conversion cannot carry — parse errors, missing pieces, unsupported
@@ -47,7 +47,7 @@ struct AstToYzl<'c, 'd> {
     source_id: SourceId,
     diagnostics: &'d mut DiagnosticsEngine,
     line_starts: Vec<usize>,
-    resolver: Resolver<'c>,
+    symbols: SymbolTable<'c>,
     registry: &'d dyn FunctionRegistry,
 }
 
@@ -70,7 +70,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             source_id,
             diagnostics,
             line_starts,
-            resolver: Resolver::new(),
+            symbols: SymbolTable::new(),
             registry,
         }
     }
@@ -165,8 +165,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
 mod expr;
 mod rel;
-mod resolve;
 mod stmt;
+mod symbols;
 
 #[cfg(test)]
 pub(crate) mod test_support {

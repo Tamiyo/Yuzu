@@ -5,7 +5,7 @@ use melior::ir::{
 use yuzu_ast::{AstNode, ast};
 use yuzu_mlir::ods::yzl;
 
-use crate::lower_ast_to_yzl::resolve::{ColumnLookup, has_column};
+use crate::lower_ast_to_yzl::symbols::{ColumnLookup, Row, has_column};
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 use melior::ir::r#type::IntegerType;
 use yuzu_mlir::attributes::JoinKind;
@@ -65,7 +65,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .map(|item| (item.alias(), item.expr(), item.syntax().text_range()))
                     .collect();
                 let (names, region) = self.convert_items(items, "select item", loc);
-                self.resolver.select(strings(&names));
+                self.symbols.select(strings(&names));
                 block
                     .append_operation(
                         yzl::select(
@@ -87,7 +87,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .map(|item| (item.alias(), item.expr(), item.syntax().text_range()))
                     .collect();
                 let (names, region) = self.convert_items(items, "extend item", loc);
-                self.resolver.extend(strings(&names));
+                self.symbols.extend(strings(&names));
                 block
                     .append_operation(
                         yzl::extend(
@@ -116,7 +116,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                         Some(qualifier) => self.intern(&format!("{qualifier}.{column}")),
                         None => column,
                     };
-                    match self.resolver.column(reference) {
+                    match self.symbols.column(reference) {
                         ColumnLookup::Unique(index) => {
                             keys.push(index);
                             key_names.push(self.ident(item.alias()).unwrap_or(column));
@@ -141,7 +141,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 let (names, region) = self.convert_items(items, "aggregate item", loc);
                 let mut produced = key_names.clone();
                 produced.extend(strings(&names));
-                self.resolver.select(produced);
+                self.symbols.select(produced);
 
                 let mut op: melior::ir::Operation<'c> = yzl::aggregate(
                     self.context,
@@ -197,7 +197,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                         Some(qualifier) => self.intern(&format!("{qualifier}.{old}")),
                         None => old,
                     };
-                    match self.resolver.column(reference) {
+                    match self.symbols.column(reference) {
                         ColumnLookup::Unique(index) => {
                             renames.push((index, new));
                             from.push(reference);
@@ -219,7 +219,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     }
                 }
 
-                self.resolver.rename(&renames);
+                self.symbols.rename(&renames);
                 let indices: Vec<usize> = renames.iter().map(|&(index, _)| index).collect();
                 let mut op: melior::ir::Operation<'c> = yzl::rename(
                     self.context,
@@ -260,7 +260,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 };
 
                 let alias = self.ident(stage.alias());
-                let rhs = match self.resolver.relation(relation, alias) {
+                let rhs = match self.symbols.relation(relation, alias) {
                     Some(rhs) => rhs,
                     None => {
                         self.error(stage, &format!("`{relation}` is not a relation"));
@@ -279,7 +279,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     }
 
                     for &column in &using {
-                        if !has_column(self.resolver.row(), column) || !has_column(&rhs, column) {
+                        if !has_column(self.symbols.row(), column) || !has_column(&rhs, column) {
                             self.error(
                                 &clause,
                                 &format!("column {column} not present in both relations"),
@@ -289,7 +289,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 }
 
                 // The condition sees both rows, so the row moves first.
-                self.resolver.concat(rhs);
+                self.symbols.concat(rhs);
                 let on = Region::new();
                 if stage.using().is_none() {
                     match stage.on() {
@@ -334,7 +334,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                         continue;
                     };
 
-                    match self.resolver.column(name) {
+                    match self.symbols.column(name) {
                         ColumnLookup::Unique(index) => columns.push(index),
                         ColumnLookup::Ambiguous => self.error(
                             &item,
@@ -381,8 +381,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                         continue;
                     };
 
-                    match self.resolver.column(name) {
-                        ColumnLookup::Unique(index) => self.resolver.remove(index),
+                    match self.symbols.column(name) {
+                        ColumnLookup::Unique(index) => self.symbols.remove(index),
                         ColumnLookup::Ambiguous => self.error(
                             &column,
                             &format!(
@@ -433,10 +433,17 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         source: &str,
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
-        if self.resolver.enter_query(source).is_none() {
-            self.error(node, &format!("`{source}` is not a relation"));
-        }
+        // A query nobody can name a row for is still converted, against an
+        // empty row, so the stages after it are checked too.
+        let row = match self.symbols.relation(source, None) {
+            Some(row) => row,
+            None => {
+                self.error(node, &format!("`{source}` is not a relation"));
+                Row::new()
+            }
+        };
 
+        self.symbols.enter_query(row);
         block
             .append_operation(
                 yzl::from(
@@ -457,7 +464,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         alias: &'c str,
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
-        self.resolver.alias(alias);
+        self.symbols.alias(alias);
         block
             .append_operation(
                 yzl::alias(
@@ -475,7 +482,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     /// A stage's region takes the row's columns as block arguments, typed by
     /// inference later.
     fn stage_block<'r>(&self, region: &'r Region<'c>, loc: Location<'c>) -> BlockRef<'c, 'r> {
-        let width = self.resolver.row().len();
+        let width = self.symbols.row().len();
         let arguments: Vec<(Type<'c>, Location<'c>)> = (0..width)
             .map(|_| (types::var(self.context), loc))
             .collect();

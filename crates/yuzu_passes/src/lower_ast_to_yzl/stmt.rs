@@ -7,6 +7,7 @@ use yuzu_mlir::attributes::CalleeKind;
 use yuzu_mlir::ods::yzl;
 use yuzu_mlir::{ListType, ParamType, StructType};
 
+use crate::lower_ast_to_yzl::symbols::{Binding, Callable, unqualified};
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 use yuzu_mlir::types;
 
@@ -20,43 +21,52 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     let Some(name) = self.ident(decl.name()) else {
                         continue;
                     };
-                    self.check_duplicate(decl, "struct", name);
                     let fields = decl.fields().filter_map(|f| self.ident(f.name())).collect();
-                    self.resolver.declare_struct(name, fields);
+                    self.declare(decl, name, Binding::Struct { fields });
                 }
                 ast::Stmt::TableStmt(decl) => {
                     let Some(name) = self.ident(decl.name()) else {
                         continue;
                     };
-                    self.check_duplicate(decl, "relation", name);
-                    if decl.inline_fields().next().is_some() {
-                        let fields = decl
-                            .inline_fields()
-                            .filter_map(|f| self.ident(f.name()))
-                            .collect();
-                        self.resolver.declare_inline_table(name, fields);
-                    } else if let Some(row) = self.ident(decl.row_struct())
-                        && self.resolver.declare_table(name, row).is_none()
-                    {
-                        self.error(decl, &format!("`{row}` is not a struct"));
-                    }
+
+                    // An inline table declares its row shape in place; a
+                    // named one names a struct the program declares.
+                    let row = if decl.inline_fields().next().is_some() {
+                        unqualified(
+                            decl.inline_fields()
+                                .filter_map(|field| self.ident(field.name()))
+                                .collect(),
+                        )
+                    } else {
+                        let Some(declared) = self.ident(decl.row_struct()) else {
+                            continue;
+                        };
+
+                        match self.symbols.binding(declared) {
+                            Some(Binding::Struct { fields }) => unqualified(fields.clone()),
+                            Some(_) | None => {
+                                self.error(decl, &format!("`{declared}` is not a struct"));
+                                continue;
+                            }
+                        }
+                    };
+
+                    self.declare(decl, name, Binding::Relation { row });
                 }
                 ast::Stmt::TraitStmt(decl) => {
                     let Some(name) = self.ident(decl.name()) else {
                         continue;
                     };
-                    self.check_duplicate(decl, "trait", name);
                     let methods = decl
                         .methods()
                         .filter_map(|m| self.ident(m.name()))
                         .collect();
-                    self.resolver.declare_trait(name, methods);
+                    self.declare(decl, name, Binding::Trait { methods });
                 }
                 ast::Stmt::FuncStmt(decl) => {
                     let Some(name) = self.ident(decl.name()) else {
                         continue;
                     };
-                    self.check_duplicate(decl, "function", name);
                     let kind = if decl.is_external() {
                         CalleeKind::External
                     } else if decl.is_agg() {
@@ -64,8 +74,16 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     } else {
                         CalleeKind::Fn
                     };
-                    self.resolver
-                        .declare_function(name, decl.params().count(), kind);
+                    let arity = decl.params().count();
+                    self.declare(
+                        decl,
+                        name,
+                        Binding::Func(Callable {
+                            kind,
+                            min_args: arity,
+                            max_args: arity,
+                        }),
+                    );
                 }
                 ast::Stmt::ImplStmt(_)
                 | ast::Stmt::LetStmt(_)
@@ -77,8 +95,14 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
     }
 
+    /// Binds a module-level name, reporting a second declaration of one.
+    fn declare(&mut self, node: &impl AstNode, name: &'c str, binding: Binding<'c>) {
+        self.check_duplicate(node, binding.what(), name);
+        self.symbols.bind(name, binding);
+    }
+
     fn check_duplicate(&mut self, node: &impl AstNode, what: &str, name: &str) {
-        if self.resolver.is_declared(name) {
+        if self.symbols.binding(name).is_some() {
             self.error(node, &format!("the {what} `{name}` is already defined"));
         }
     }
@@ -95,7 +119,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 if let Some(expr) = stmt.expr() {
                     self.convert_expr(block, &Locals::new(), &expr);
                     if matches!(expr, ast::Expr::Rel(_)) {
-                        self.resolver.leave();
+                        self.symbols.leave();
                     }
                 }
             }
@@ -227,7 +251,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
             for trait_ref in bound.traits() {
                 if let Some(trait_name) = self.ident(trait_ref.name())
-                    && !self.resolver.has_trait(trait_name)
+                    && !matches!(
+                        self.symbols.binding(trait_name),
+                        Some(Binding::Trait { .. })
+                    )
                 {
                     self.error(&trait_ref, &format!("unknown trait `{trait_name}`"));
                 }
@@ -243,13 +270,13 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 .collect();
             let entry = region.append_block(Block::new(&arguments));
             let names: Vec<&'c str> = decl.params().filter_map(|p| self.ident(p.name())).collect();
-            self.resolver.enter_function(names);
+            self.symbols.enter_function(names);
             let mut locals = Locals::new();
             for stmt in body.stmts() {
                 self.convert_body_stmt(entry, &mut locals, &stmt);
             }
 
-            self.resolver.leave();
+            self.symbols.leave();
         }
 
         let mut builder = yzl::FnOperationBuilder::new(self.context, self.location(decl))
@@ -343,11 +370,14 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             return;
         };
 
-        if !self.resolver.has_trait(trait_name) {
+        if !matches!(
+            self.symbols.binding(trait_name),
+            Some(Binding::Trait { .. })
+        ) {
             self.error(decl, &format!("unknown trait `{trait_name}`"));
         }
 
-        if !self.resolver.is_type_name(target) {
+        if !self.symbols.is_type_name(target) {
             self.error(decl, &format!("unknown type `{target}`"));
         }
 
@@ -459,14 +489,14 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let value = match &expr {
             ast::Expr::Rel(rel) => {
                 let value = self.convert_rel(body, rel);
-                let row = self.resolver.row().clone();
-                self.resolver.leave();
-                self.resolver.declare_query_let(name, row);
+                let row = self.symbols.row().clone();
+                self.symbols.leave();
+                self.symbols.bind(name, Binding::Relation { row });
                 value
             }
             _ => {
                 let value = self.convert_expr(body, &Locals::new(), &expr);
-                self.resolver.declare_scalar_let(name);
+                self.symbols.bind(name, Binding::Let);
                 value
             }
         };
@@ -542,7 +572,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             "float64" => types::float64(self.context),
             "bool" => types::boolean(self.context),
             "str" => types::str(self.context),
-            _ if self.resolver.is_type_name(name) => StructType::new(self.context, name).into(),
+            _ if self.symbols.is_type_name(name) => StructType::new(self.context, name).into(),
             _ => {
                 self.error(&named, &format!("unknown type `{name}`"));
                 types::var(self.context)
