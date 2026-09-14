@@ -33,11 +33,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     );
                 };
 
-                if let Some(&value) = locals.get(name) {
-                    return value;
-                }
-
-                self.name_ref(block, ident, Reference::bare(name), loc)
+                self.name_ref(block, locals, ident, Reference::bare(name), loc)
             }
             ast::Expr::FieldAccessExpr(access) => {
                 // `t.a` is a qualified column reference, not a load.
@@ -76,7 +72,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     qualifier: Some(base),
                     name: field,
                 };
-                self.name_ref(block, access, reference, loc)
+                self.name_ref(block, locals, access, reference, loc)
             }
             ast::Expr::BinaryExpr(binary) => self.convert_binary(block, locals, binary),
             ast::Expr::UnaryExpr(unary) => {
@@ -204,7 +200,13 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 ),
             },
 
-            ast::Expr::Rel(rel) => self.convert_rel(block, rel),
+            // A query is a scope, and it ends where the expression that is
+            // the query ends.
+            ast::Expr::Rel(rel) => {
+                let value = self.convert_rel(block, rel);
+                self.symbols.leave();
+                value
+            }
             ast::Expr::StructExpr(literal) => self.missing(
                 block,
                 literal,
@@ -354,6 +356,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn name_ref<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
+        locals: &Locals<'c, 'a>,
         node: &impl AstNode,
         reference: Reference<'c>,
         loc: Location<'c>,
@@ -366,6 +369,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .expect("the scope answered from the row this block was built for")
                     .into();
             }
+            Lookup::Local(slot) => return locals[slot],
             Lookup::Let(symbol) => return self.call(block, symbol, CalleeKind::Let, &[], loc),
             Lookup::Ambiguous => {
                 format!("column `{name}` is ambiguous; qualify it with a relation alias")

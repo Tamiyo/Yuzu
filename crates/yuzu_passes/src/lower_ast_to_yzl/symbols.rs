@@ -206,6 +206,9 @@ pub(super) enum Lookup<'c> {
     Column(usize),
     /// A parameter of the enclosing function, by position.
     Param(usize),
+    /// A `let` in the enclosing function body, by the slot the traversal
+    /// put its value in.
+    Local(usize),
     Let(&'c str),
     Ambiguous,
     /// The relation carried the column until a stage stopped carrying it.
@@ -227,6 +230,12 @@ enum Scope<'c> {
     Module(HashMap<&'c str, Binding<'c>>),
     Function {
         params: Vec<&'c str>,
+    },
+    /// A lexical block inside a function body, and the `let`s it binds. A
+    /// local stands for an SSA value, which only the traversal can hold, so
+    /// what is kept here is the slot the traversal put it in.
+    Block {
+        locals: Vec<(&'c str, usize)>,
     },
     /// A relation and the row it carries. Its stages replace that row as
     /// they run, and `narrowed` is the names they stopped carrying: a name
@@ -254,7 +263,7 @@ impl<'c> SymbolTable<'c> {
     pub(super) fn bind(&mut self, name: &'c str, kind: Kind<'c>, declared: TextRange) {
         match self.scopes.first_mut() {
             Some(Scope::Module(bindings)) => bindings.insert(name, Binding { kind, declared }),
-            Some(Scope::Function { .. } | Scope::Relation { .. }) | None => {
+            Some(Scope::Function { .. } | Scope::Block { .. } | Scope::Relation { .. }) | None => {
                 unreachable!("the module scope is the bottom of the stack")
             }
         };
@@ -267,7 +276,7 @@ impl<'c> SymbolTable<'c> {
     fn module(&self) -> &HashMap<&'c str, Binding<'c>> {
         match self.scopes.first() {
             Some(Scope::Module(bindings)) => bindings,
-            Some(Scope::Function { .. } | Scope::Relation { .. }) | None => {
+            Some(Scope::Function { .. } | Scope::Block { .. } | Scope::Relation { .. }) | None => {
                 unreachable!("the module scope is the bottom of the stack")
             }
         }
@@ -326,6 +335,21 @@ impl<'c> SymbolTable<'c> {
         self.scopes.push(Scope::Function { params });
     }
 
+    pub(super) fn enter_block(&mut self) {
+        self.scopes.push(Scope::Block { locals: Vec::new() });
+    }
+
+    /// Binds a `let` in the innermost block to the slot the traversal put
+    /// its value in. Binding a name twice shadows it, which is what a
+    /// second `let` and an assignment both do.
+    pub(super) fn bind_local(&mut self, name: &'c str, slot: usize) {
+        let Some(Scope::Block { locals }) = self.scopes.last_mut() else {
+            panic!("a local is being bound outside a block")
+        };
+
+        locals.push((name, slot));
+    }
+
     pub(super) fn enter_relation(&mut self, row: Row<'c>) {
         self.scopes.push(Scope::Relation {
             row,
@@ -341,7 +365,7 @@ impl<'c> SymbolTable<'c> {
     pub(super) fn row(&self) -> &Row<'c> {
         match self.scopes.last() {
             Some(Scope::Relation { row, .. }) => row,
-            Some(Scope::Module(_) | Scope::Function { .. }) | None => {
+            Some(Scope::Module(_) | Scope::Function { .. } | Scope::Block { .. }) | None => {
                 panic!("a stage is being converted outside a relation")
             }
         }
@@ -349,19 +373,37 @@ impl<'c> SymbolTable<'c> {
 
     // --- lookups ---
 
+    /// What a name means here. The walk stops at the first isolated scope:
+    /// a function body and a stage's region are both `IsolatedFromAbove`, so
+    /// no value bound outside one is in reach from inside it. The module's
+    /// declarations answer from anywhere — those are symbols, not values.
     pub(super) fn lookup(&self, reference: Reference<'_>) -> Lookup<'c> {
         for scope in self.scopes.iter().rev() {
             match scope {
-                Scope::Relation { row, narrowed } => match row.column(reference) {
-                    ColumnLookup::Unique(index) => return Lookup::Column(index),
-                    ColumnLookup::Ambiguous => return Lookup::Ambiguous,
-                    // A name the relation once carried is the column the
-                    // program meant, not whatever an outer scope calls it.
-                    ColumnLookup::Absent if narrowed.contains(&reference.name) => {
-                        return Lookup::NarrowedAway;
+                Scope::Relation { row, narrowed } => {
+                    match row.column(reference) {
+                        ColumnLookup::Unique(index) => return Lookup::Column(index),
+                        ColumnLookup::Ambiguous => return Lookup::Ambiguous,
+                        // A name the relation once carried is the column the
+                        // program meant, not what an outer scope calls it.
+                        ColumnLookup::Absent if narrowed.contains(&reference.name) => {
+                            return Lookup::NarrowedAway;
+                        }
+                        ColumnLookup::Absent => {}
                     }
-                    ColumnLookup::Absent => {}
-                },
+
+                    break;
+                }
+                Scope::Block { locals } => {
+                    if reference.qualifier.is_none()
+                        && let Some(&(_, slot)) = locals
+                            .iter()
+                            .rev()
+                            .find(|(name, _)| *name == reference.name)
+                    {
+                        return Lookup::Local(slot);
+                    }
+                }
                 Scope::Function { params } => {
                     if reference.qualifier.is_none()
                         && let Some(index) =
@@ -369,27 +411,31 @@ impl<'c> SymbolTable<'c> {
                     {
                         return Lookup::Param(index);
                     }
-                }
-                Scope::Module(bindings) => {
-                    if reference.qualifier.is_some() {
-                        return Lookup::Unknown;
-                    }
 
-                    return match bindings.get_key_value(reference.name) {
-                        Some((
-                            &name,
-                            Binding {
-                                kind: Kind::Let, ..
-                            },
-                        )) => Lookup::Let(name),
-                        Some((_, binding)) => Lookup::NotAValue(binding.kind.what()),
-                        None => Lookup::Unknown,
-                    };
+                    break;
                 }
+                Scope::Module(_) => break,
             }
         }
 
-        unreachable!("the module scope is the bottom of the stack")
+        self.module_lookup(reference)
+    }
+
+    fn module_lookup(&self, reference: Reference<'_>) -> Lookup<'c> {
+        if reference.qualifier.is_some() {
+            return Lookup::Unknown;
+        }
+
+        match self.module().get_key_value(reference.name) {
+            Some((
+                &name,
+                Binding {
+                    kind: Kind::Let, ..
+                },
+            )) => Lookup::Let(name),
+            Some((_, binding)) => Lookup::NotAValue(binding.kind.what()),
+            None => Lookup::Unknown,
+        }
     }
 
     /// The column of the current row a stage item names.
@@ -557,11 +603,32 @@ mod tests {
         assert_eq!(symbols.lookup(bare("cap")), Lookup::Let("cap"));
         symbols.enter_function(vec!["cap"]);
         assert_eq!(symbols.lookup(bare("cap")), Lookup::Param(0));
-        enter_relation(&mut symbols, "t");
-        assert_eq!(symbols.lookup(bare("id")), Lookup::Column(0));
+        symbols.enter_block();
+        symbols.bind_local("cap", 7);
+        assert_eq!(symbols.lookup(bare("cap")), Lookup::Local(7));
+        symbols.leave();
         assert_eq!(symbols.lookup(bare("cap")), Lookup::Param(0));
         symbols.leave();
-        symbols.leave();
+        assert_eq!(symbols.lookup(bare("cap")), Lookup::Let("cap"));
+        enter_relation(&mut symbols, "t");
+        assert_eq!(symbols.lookup(bare("id")), Lookup::Column(0));
+    }
+
+    /// A stage's region and a function body are both `IsolatedFromAbove`, so
+    /// a lookup inside one reaches the module's symbols and nothing in
+    /// between: no SSA value bound outside it is in reach.
+    #[test]
+    fn an_isolated_scope_reaches_the_module_and_nothing_between() {
+        let mut symbols = symbols();
+        symbols.bind("cap", Kind::Let, TextRange::default());
+        symbols.enter_function(vec!["x"]);
+        symbols.enter_block();
+        symbols.bind_local("local", 0);
+        enter_relation(&mut symbols, "t");
+
+        assert_eq!(symbols.lookup(bare("id")), Lookup::Column(0));
+        assert_eq!(symbols.lookup(bare("x")), Lookup::Unknown);
+        assert_eq!(symbols.lookup(bare("local")), Lookup::Unknown);
         assert_eq!(symbols.lookup(bare("cap")), Lookup::Let("cap"));
     }
 

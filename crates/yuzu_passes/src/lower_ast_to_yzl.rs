@@ -1,8 +1,6 @@
 //! LowerAst: the AST → yzl conversion. Names resolve as they are emitted;
 //! unresolved types come out as `!yzl.var` for inference, sugar intact.
 
-use std::collections::HashMap;
-
 use melior::Context;
 use melior::ir::attribute::StringAttribute;
 use melior::ir::operation::OperationLike;
@@ -51,7 +49,10 @@ struct AstToYzl<'c, 'd> {
     registry: &'d dyn FunctionRegistry,
 }
 
-type Locals<'c, 'a> = HashMap<&'c str, Value<'c, 'a>>;
+/// The values a function body's `let`s bound, in the order they bound them.
+/// The symbol table says which slot a name resolves to; the values can only
+/// live here, since each borrows the block being built.
+type Locals<'c, 'a> = Vec<Value<'c, 'a>>;
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
     fn new(

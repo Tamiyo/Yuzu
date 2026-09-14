@@ -118,9 +118,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             ast::Stmt::ExprStmt(stmt) => {
                 if let Some(expr) = stmt.expr() {
                     self.convert_expr(block, &Locals::new(), &expr);
-                    if matches!(expr, ast::Expr::Rel(_)) {
-                        self.symbols.leave();
-                    }
                 }
             }
             ast::Stmt::BlockStmt(stmt) => self.error(stmt, "a block is not a top-level statement"),
@@ -268,11 +265,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             let entry = region.append_block(Block::new(&arguments));
             let names: Vec<&'c str> = decl.params().filter_map(|p| self.ident(p.name())).collect();
             self.symbols.enter_function(names);
-            let mut locals = Locals::new();
-            for stmt in body.stmts() {
-                self.convert_body_stmt(entry, &mut locals, &stmt);
-            }
-
+            self.convert_block(entry, &mut Locals::new(), &body);
             self.symbols.leave();
         }
 
@@ -391,6 +384,23 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         );
     }
 
+    /// A lexical block: its `let`s bind for as long as it lasts, so it is a
+    /// scope of its own — which is what makes a nested block's bindings go
+    /// out of scope at its end.
+    fn convert_block<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        locals: &mut Locals<'c, 'a>,
+        body: &ast::BlockStmt,
+    ) {
+        self.symbols.enter_block();
+        for stmt in body.stmts() {
+            self.convert_body_stmt(block, locals, &stmt);
+        }
+
+        self.symbols.leave();
+    }
+
     fn convert_body_stmt<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
@@ -410,7 +420,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 };
 
                 let value = self.convert_expr(block, locals, &expr);
-                locals.insert(name, value);
+                self.bind_local(locals, name, value);
             }
             ast::Stmt::AssignStmt(assign) => {
                 let target = assign.target().and_then(|target| match target {
@@ -429,7 +439,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 };
 
                 let value = self.convert_expr(block, locals, &value);
-                locals.insert(name, value);
+                self.bind_local(locals, name, value);
             }
             ast::Stmt::ReturnStmt(ret) => {
                 let values: Vec<Value> = ret
@@ -446,12 +456,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     self.convert_expr(block, locals, &expr);
                 }
             }
-            ast::Stmt::BlockStmt(nested) => {
-                let mut scope = locals.clone();
-                for stmt in nested.stmts() {
-                    self.convert_body_stmt(block, &mut scope, &stmt);
-                }
-            }
+            ast::Stmt::BlockStmt(nested) => self.convert_block(block, locals, nested),
             ast::Stmt::StructStmt(_)
             | ast::Stmt::TraitStmt(_)
             | ast::Stmt::ImplStmt(_)
@@ -460,6 +465,13 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 self.error(stmt, "declarations inside functions are not supported yet");
             }
         }
+    }
+
+    /// The value goes in the traversal's stack, and the name goes in the
+    /// scope, pointing at the slot it landed in.
+    fn bind_local<'a>(&mut self, locals: &mut Locals<'c, 'a>, name: &'c str, value: Value<'c, 'a>) {
+        self.symbols.bind_local(name, locals.len());
+        locals.push(value);
     }
 
     fn convert_let<'a>(&mut self, block: BlockRef<'c, 'a>, decl: &ast::LetStmt) {
