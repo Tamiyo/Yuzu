@@ -65,7 +65,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .map(|item| (item.alias(), item.expr(), item.syntax().text_range()))
                     .collect();
                 let (names, region) = self.convert_items(items, "select item", loc);
-                self.symbols.select(strings(&names));
+                let columns = self.string_attrs(&names);
+                self.symbols.replace(names);
                 block
                     .append_operation(
                         yzl::select(
@@ -73,7 +74,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                             types::query(self.context),
                             input,
                             region,
-                            ArrayAttribute::new(self.context, &names),
+                            ArrayAttribute::new(self.context, &columns),
                             loc,
                         )
                         .into(),
@@ -87,7 +88,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .map(|item| (item.alias(), item.expr(), item.syntax().text_range()))
                     .collect();
                 let (names, region) = self.convert_items(items, "extend item", loc);
-                self.symbols.extend(strings(&names));
+                let columns = self.string_attrs(&names);
+                self.symbols.extend(names);
                 block
                     .append_operation(
                         yzl::extend(
@@ -95,7 +97,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                             types::query(self.context),
                             input,
                             region,
-                            ArrayAttribute::new(self.context, &names),
+                            ArrayAttribute::new(self.context, &columns),
                             loc,
                         )
                         .into(),
@@ -116,21 +118,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                         qualifier: self.ident(item.qualifier()),
                         name: column,
                     };
-                    match self.symbols.column(reference) {
-                        ColumnLookup::Unique(index) => {
-                            keys.push(index);
-                            key_names.push(self.ident(item.alias()).unwrap_or(column));
-                        }
-                        ColumnLookup::Ambiguous => self.error(
-                            &item,
-                            &format!(
-                                "group key `{column}` is ambiguous; qualify it with a relation alias"
-                            ),
-                        ),
-                        ColumnLookup::Absent => self.error(
-                            &item,
-                            &format!("group key `{column}` is not a column of this row"),
-                        ),
+                    if let Some(index) = self.column(&item, "group key", reference) {
+                        keys.push(index);
+                        key_names.push(self.ident(item.alias()).unwrap_or(column));
                     }
                 }
 
@@ -139,17 +129,19 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .map(|item| (item.alias(), item.expr(), item.syntax().text_range()))
                     .collect();
                 let (names, region) = self.convert_items(items, "aggregate item", loc);
-                let mut produced = key_names.clone();
-                produced.extend(strings(&names));
-                self.symbols.select(produced);
+                let group_by = self.string_attrs(&key_names);
+                let measures = self.string_attrs(&names);
+                // A grouping's row is its keys, in order, then its measures.
+                key_names.extend(names);
+                self.symbols.replace(key_names);
 
                 let mut op: melior::ir::Operation<'c> = yzl::aggregate(
                     self.context,
                     types::query(self.context),
                     input,
                     region,
-                    ArrayAttribute::new(self.context, &self.string_attrs(&key_names)),
-                    ArrayAttribute::new(self.context, &names),
+                    ArrayAttribute::new(self.context, &group_by),
+                    ArrayAttribute::new(self.context, &measures),
                     loc,
                 )
                 .into();
@@ -192,30 +184,14 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                         continue;
                     };
 
-                    let qualifier = self.ident(item.qualifier());
                     let reference = Reference {
-                        qualifier,
+                        qualifier: self.ident(item.qualifier()),
                         name: old,
                     };
-                    match self.symbols.column(reference) {
-                        ColumnLookup::Unique(index) => {
-                            renames.push((index, new));
-                            from.push(self.intern(&reference.to_string()));
-                            to.push(new);
-                        }
-                        ColumnLookup::Ambiguous => self.error(
-                            &item,
-                            &format!(
-                                "column `{old}` is ambiguous; qualify it with a relation alias"
-                            ),
-                        ),
-                        ColumnLookup::Absent => {
-                            let message = match qualifier {
-                                Some(qualifier) => format!("`{qualifier}` has no column `{old}`"),
-                                None => format!("column `{old}` is not in this row"),
-                            };
-                            self.error(&item, &message);
-                        }
+                    if let Some(index) = self.column(&item, "column", reference) {
+                        renames.push((index, new));
+                        from.push(self.intern(&reference.to_string()));
+                        to.push(new);
                     }
                 }
 
@@ -335,17 +311,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                         continue;
                     };
 
-                    match self.symbols.column(Reference::bare(name)) {
-                        ColumnLookup::Unique(index) => columns.push(index),
-                        ColumnLookup::Ambiguous => self.error(
-                            &item,
-                            &format!(
-                                "column `{name}` is ambiguous; qualify it with a relation alias"
-                            ),
-                        ),
-                        ColumnLookup::Absent => {
-                            self.error(&item, &format!("column `{name}` is not in this row"))
-                        }
+                    if let Some(index) = self.column(&item, "column", Reference::bare(name)) {
+                        columns.push(index);
                     }
                 }
 
@@ -354,6 +321,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .map(|item| (item.column(), item.value(), item.syntax().text_range()))
                     .collect();
                 let (names, region) = self.convert_items(items, "set item", loc);
+                let names = self.string_attrs(&names);
                 let mut op: melior::ir::Operation<'c> = yzl::set(
                     self.context,
                     types::query(self.context),
@@ -382,17 +350,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                         continue;
                     };
 
-                    match self.symbols.column(Reference::bare(name)) {
-                        ColumnLookup::Unique(index) => self.symbols.remove(index),
-                        ColumnLookup::Ambiguous => self.error(
-                            &column,
-                            &format!(
-                                "column `{name}` is ambiguous; qualify it with a relation alias"
-                            ),
-                        ),
-                        ColumnLookup::Absent => {
-                            self.error(&column, &format!("column `{name}` is not in this row"))
-                        }
+                    if let Some(index) = self.column(&column, "column", Reference::bare(name)) {
+                        self.symbols.remove(index);
                     }
 
                     names.push(name);
@@ -527,12 +486,35 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
     }
 
+    /// The column a stage item names, reported against the item when the row
+    /// does not have exactly one of them.
+    fn column(
+        &mut self,
+        node: &impl AstNode,
+        what: &str,
+        reference: Reference<'c>,
+    ) -> Option<usize> {
+        let message = match self.symbols.column(reference) {
+            ColumnLookup::Unique(index) => return Some(index),
+            ColumnLookup::Ambiguous => {
+                format!("{what} `{reference}` is ambiguous; qualify it with a relation alias")
+            }
+            ColumnLookup::Absent => match reference.qualifier {
+                Some(qualifier) => format!("`{qualifier}` has no column `{}`", reference.name),
+                None => format!("{what} `{reference}` is not in this row"),
+            },
+        };
+
+        self.error(node, &message);
+        None
+    }
+
     fn convert_items(
         &mut self,
         items: Vec<(Option<ast::Ident>, Option<ast::Expr>, text_size::TextRange)>,
         what: &str,
         loc: Location<'c>,
-    ) -> (Vec<Attribute<'c>>, Region<'c>) {
+    ) -> (Vec<&'c str>, Region<'c>) {
         let region = Region::new();
         let body = self.stage_block(&region, loc);
         let mut names = Vec::with_capacity(items.len());
@@ -545,7 +527,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     _ => None,
                 })
                 .unwrap_or_else(|| self.intern(&format!("column{index}")));
-            names.push(StringAttribute::new(self.context, name).into());
+            names.push(name);
             let value = match &expr {
                 Some(expr) => self.convert_expr(body, &Locals::new(), expr),
                 None => {
@@ -567,17 +549,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .map(|&name| StringAttribute::new(self.context, name).into())
             .collect()
     }
-}
-
-fn strings<'c>(names: &[Attribute<'c>]) -> Vec<&'c str> {
-    names
-        .iter()
-        .map(|&name| {
-            StringAttribute::try_from(name)
-                .expect("a name attribute is a string")
-                .value()
-        })
-        .collect()
 }
 
 #[cfg(test)]

@@ -101,7 +101,7 @@ impl<'c> Row<'c> {
 
     /// Whether any column answers to the reference, ambiguously or not.
     pub(super) fn has(&self, reference: Reference<'_>) -> bool {
-        self.columns.iter().any(|column| column.matches(reference))
+        !matches!(self.column(reference), ColumnLookup::Absent)
     }
 
     /// Names every column through one alias: what `as` does to the row, and
@@ -281,10 +281,8 @@ impl<'c> SymbolTable<'c> {
         })
     }
 
-    /// Whether a name denotes a type an `impl` or an annotation can name.
-    pub(super) fn is_type_name(&self, name: &str) -> bool {
-        matches!(name, "int64" | "float64" | "bool" | "str")
-            || matches!(self.kind(name), Some(Kind::Struct { .. }))
+    pub(super) fn is_struct(&self, name: &str) -> bool {
+        matches!(self.kind(name), Some(Kind::Struct { .. }))
     }
 
     pub(super) fn kind(&self, name: &str) -> Option<&Kind<'c>> {
@@ -423,7 +421,8 @@ impl<'c> SymbolTable<'c> {
         row.qualify(alias);
     }
 
-    pub(super) fn select(&mut self, names: Vec<&'c str>) {
+    /// What `select` and `aggregate` do: the row becomes what they name.
+    pub(super) fn replace(&mut self, names: Vec<&'c str>) {
         self.replace_row(Row::from(names));
     }
 
@@ -628,11 +627,11 @@ mod tests {
     }
 
     #[test]
-    fn select_replaces_the_row() {
+    fn replacing_the_row_narrows_the_names_it_drops() {
         let mut symbols = symbols();
         enter_relation(&mut symbols, "t");
         assert_eq!(symbols.column(bare("dept_id")), ColumnLookup::Unique(1));
-        symbols.select(vec!["dept_id", "n"]);
+        symbols.replace(vec!["dept_id", "n"]);
 
         assert_eq!(symbols.lookup(bare("dept_id")), Lookup::Column(0));
         assert_eq!(symbols.lookup(bare("n")), Lookup::Column(1));

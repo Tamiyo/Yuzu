@@ -371,7 +371,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             self.error(decl, &format!("unknown trait `{trait_name}`"));
         }
 
-        if !self.symbols.is_type_name(target) {
+        if self.scalar_type(target).is_none() && !self.symbols.is_struct(target) {
             self.error(decl, &format!("unknown type `{target}`"));
         }
 
@@ -563,17 +563,27 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             return ListType::new(self.context, inner).into();
         }
 
-        match name {
+        if let Some(scalar) = self.scalar_type(name) {
+            return scalar;
+        }
+
+        if self.symbols.is_struct(name) {
+            return StructType::new(self.context, name).into();
+        }
+
+        self.error(&named, &format!("unknown type `{name}`"));
+        types::var(self.context)
+    }
+
+    /// The type a primitive's name stands for — the one list of them.
+    fn scalar_type(&self, name: &str) -> Option<Type<'c>> {
+        Some(match name {
             "int64" => types::int64(self.context),
             "float64" => types::float64(self.context),
             "bool" => types::boolean(self.context),
             "str" => types::str(self.context),
-            _ if self.symbols.is_type_name(name) => StructType::new(self.context, name).into(),
-            _ => {
-                self.error(&named, &format!("unknown type `{name}`"));
-                types::var(self.context)
-            }
-        }
+            _ => return None,
+        })
     }
 }
 
