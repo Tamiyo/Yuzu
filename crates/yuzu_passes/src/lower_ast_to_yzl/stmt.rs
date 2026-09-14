@@ -13,7 +13,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     /// Registers every declaration before anything resolves, so order
     /// between declarations does not matter. A `let` is not a declaration
     /// in this sense: it binds in order, and only once its body is emitted.
-    pub(super) fn hoist(&self, root: &ast::Root) {
+    pub(super) fn hoist(&mut self, root: &ast::Root) {
         for stmt in root.stmts() {
             match &stmt {
                 ast::Stmt::StructStmt(decl) => {
@@ -22,7 +22,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     };
                     self.check_duplicate(decl, "struct", &name);
                     let fields = decl.fields().filter_map(|f| ident_text(f.name())).collect();
-                    self.resolver.borrow_mut().declare_struct(&name, fields);
+                    self.resolver.declare_struct(&name, fields);
                 }
                 ast::Stmt::TableStmt(decl) => {
                     let Some(name) = ident_text(decl.name()) else {
@@ -36,15 +36,11 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                             .inline_fields()
                             .filter_map(|f| ident_text(f.name()))
                             .collect();
-                        let mut resolver = self.resolver.borrow_mut();
+                        let resolver = &mut self.resolver;
                         resolver.declare_struct(&name, fields);
                         resolver.declare_table(&name, &name);
                     } else if let Some(row) = ident_text(decl.row_struct())
-                        && self
-                            .resolver
-                            .borrow_mut()
-                            .declare_table(&name, &row)
-                            .is_none()
+                        && self.resolver.declare_table(&name, &row).is_none()
                     {
                         self.error(decl, &format!("unknown struct `{row}`"));
                     }
@@ -55,7 +51,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     };
                     self.check_duplicate(decl, "trait", &name);
                     let methods = decl.methods().filter_map(|m| ident_text(m.name()));
-                    self.resolver.borrow_mut().declare_trait(&name, methods);
+                    self.resolver.declare_trait(&name, methods);
                 }
                 ast::Stmt::FuncStmt(decl) => {
                     let Some(name) = ident_text(decl.name()) else {
@@ -70,9 +66,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                         CalleeKind::Fn
                     };
                     let arity = decl.params().count();
-                    self.resolver
-                        .borrow_mut()
-                        .declare_function(&name, arity, kind);
+                    self.resolver.declare_function(&name, arity, kind);
                 }
                 ast::Stmt::ImplStmt(_)
                 | ast::Stmt::LetStmt(_)
@@ -84,13 +78,13 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
     }
 
-    fn check_duplicate(&self, node: &impl AstNode, what: &str, name: &str) {
-        if self.resolver.borrow().is_declared(name) {
+    fn check_duplicate(&mut self, node: &impl AstNode, what: &str, name: &str) {
+        if self.resolver.is_declared(name) {
             self.error(node, &format!("the {what} `{name}` is already defined"));
         }
     }
 
-    pub(super) fn convert_stmt<'a>(&self, block: BlockRef<'c, 'a>, stmt: &ast::Stmt) {
+    pub(super) fn convert_stmt<'a>(&mut self, block: BlockRef<'c, 'a>, stmt: &ast::Stmt) {
         match stmt {
             ast::Stmt::StructStmt(decl) => self.convert_struct(block, decl),
             ast::Stmt::TableStmt(decl) => self.convert_table(block, decl),
@@ -104,7 +98,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     // A query is a scope, and the top-level one ends with
                     // the statement that is the query.
                     if matches!(expr, ast::Expr::Rel(_)) {
-                        self.resolver.borrow_mut().leave();
+                        self.resolver.leave();
                     }
                 }
             }
@@ -118,7 +112,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
     }
 
-    fn convert_struct<'a>(&self, block: BlockRef<'c, 'a>, decl: &ast::StructStmt) {
+    fn convert_struct<'a>(&mut self, block: BlockRef<'c, 'a>, decl: &ast::StructStmt) {
         let Some(name) = ident_text(decl.name()) else {
             self.error(decl, "struct is missing its name");
             return;
@@ -137,7 +131,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         );
     }
 
-    fn convert_table<'a>(&self, block: BlockRef<'c, 'a>, decl: &ast::TableStmt) {
+    fn convert_table<'a>(&mut self, block: BlockRef<'c, 'a>, decl: &ast::TableStmt) {
         let Some(name) = ident_text(decl.name()) else {
             self.error(decl, "table is missing its name");
             return;
@@ -175,13 +169,18 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         );
     }
 
-    fn convert_fn<'a>(&self, block: BlockRef<'c, 'a>, decl: &ast::FuncStmt) {
+    fn convert_fn<'a>(&mut self, block: BlockRef<'c, 'a>, decl: &ast::FuncStmt) {
         self.convert_method(block, decl, &[]);
     }
 
     /// A function, with any type parameters its surroundings supply — a
     /// trait and its implementations declare `Self` implicitly.
-    fn convert_method<'a>(&self, block: BlockRef<'c, 'a>, decl: &ast::FuncStmt, implicit: &[&str]) {
+    fn convert_method<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        decl: &ast::FuncStmt,
+        implicit: &[&str],
+    ) {
         let Some(name) = ident_text(decl.name()) else {
             self.error(decl, "function is missing its name");
             return;
@@ -226,7 +225,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
             for trait_ref in bound.traits() {
                 if let Some(trait_name) = ident_text(trait_ref.name())
-                    && !self.resolver.borrow().has_trait(&trait_name)
+                    && !self.resolver.has_trait(&trait_name)
                 {
                     self.error(&trait_ref, &format!("unknown trait `{trait_name}`"));
                 }
@@ -244,13 +243,13 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 .collect();
             let entry = region.append_block(Block::new(&arguments));
             let names: Vec<String> = decl.params().filter_map(|p| ident_text(p.name())).collect();
-            self.resolver.borrow_mut().enter_function(names);
+            self.resolver.enter_function(names);
             let mut locals = Locals::new();
             for stmt in body.stmts() {
                 self.convert_body_stmt(entry, &mut locals, &stmt);
             }
 
-            self.resolver.borrow_mut().leave();
+            self.resolver.leave();
         }
 
         let mut builder = yzl::FnOperationBuilder::new(self.context, self.location(decl))
@@ -287,7 +286,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         block.append_operation(builder.build().into());
     }
 
-    fn bound_attrs(&self, decl: &ast::FuncStmt) -> (Vec<Attribute<'c>>, Vec<Attribute<'c>>) {
+    fn bound_attrs(&mut self, decl: &ast::FuncStmt) -> (Vec<Attribute<'c>>, Vec<Attribute<'c>>) {
         let mut subjects = Vec::new();
         let mut traits = Vec::new();
         for bound in decl.bounds() {
@@ -312,7 +311,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
     /// A trait's methods are body-less `yzl.fn`s typed against `Self`, the
     /// parameter every trait declares implicitly.
-    fn convert_trait<'a>(&self, block: BlockRef<'c, 'a>, decl: &ast::TraitStmt) {
+    fn convert_trait<'a>(&mut self, block: BlockRef<'c, 'a>, decl: &ast::TraitStmt) {
         let Some(name) = ident_text(decl.name()) else {
             self.error(decl, "trait is missing its name");
             return;
@@ -333,7 +332,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         );
     }
 
-    fn convert_impl<'a>(&self, block: BlockRef<'c, 'a>, decl: &ast::ImplStmt) {
+    fn convert_impl<'a>(&mut self, block: BlockRef<'c, 'a>, decl: &ast::ImplStmt) {
         let Some(trait_name) = decl
             .trait_()
             .and_then(|trait_ref| ident_text(trait_ref.name()))
@@ -347,15 +346,16 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             return;
         };
 
-        {
-            let resolver = self.resolver.borrow();
-            if !resolver.has_trait(&trait_name) {
-                self.error(decl, &format!("unknown trait `{trait_name}`"));
-            }
+        // Both answers come from the resolver before either is reported, so
+        // no borrow of it is alive while a diagnostic goes out.
+        let has_trait = self.resolver.has_trait(&trait_name);
+        let is_type = self.resolver.is_type_name(&target);
+        if !has_trait {
+            self.error(decl, &format!("unknown trait `{trait_name}`"));
+        }
 
-            if !resolver.is_type_name(&target) {
-                self.error(decl, &format!("unknown type `{target}`"));
-            }
+        if !is_type {
+            self.error(decl, &format!("unknown type `{target}`"));
         }
 
         let region = Region::new();
@@ -377,7 +377,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     /// A statement inside a function body: the full set the language
     /// takes there, except the declarations that do not nest yet.
     fn convert_body_stmt<'a>(
-        &self,
+        &mut self,
         block: BlockRef<'c, 'a>,
         locals: &mut Locals<'c, 'a>,
         stmt: &ast::Stmt,
@@ -447,7 +447,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
     }
 
-    fn convert_let<'a>(&self, block: BlockRef<'c, 'a>, decl: &ast::LetStmt) {
+    fn convert_let<'a>(&mut self, block: BlockRef<'c, 'a>, decl: &ast::LetStmt) {
         let Some(name) = ident_text(decl.name()) else {
             self.error(decl, "let binding is missing its name");
             return;
@@ -468,15 +468,15 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let value = match &expr {
             ast::Expr::Rel(rel) => {
                 let value = self.convert_rel(body, rel);
-                let row = self.resolver.borrow().row().clone();
-                let mut resolver = self.resolver.borrow_mut();
+                let row = self.resolver.row().clone();
+                let resolver = &mut self.resolver;
                 resolver.leave();
                 resolver.declare_query_let(&name, row);
                 value
             }
             _ => {
                 let value = self.convert_expr(body, &Locals::new(), &expr);
-                self.resolver.borrow_mut().declare_scalar_let(&name);
+                self.resolver.declare_scalar_let(&name);
                 value
             }
         };
@@ -494,7 +494,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     }
 
     fn field_attrs(
-        &self,
+        &mut self,
         fields: impl Iterator<Item = ast::StructField>,
     ) -> (ArrayAttribute<'c>, ArrayAttribute<'c>) {
         let mut names = Vec::new();

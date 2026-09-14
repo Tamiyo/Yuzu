@@ -36,7 +36,7 @@ pub fn lower_ast_to_yzl<'c>(
     let tokens: Vec<Token> = Lexer::new(source).collect();
     let syntax = yuzu_parser::parse(&tokens, diagnostics, source_id);
     let root = ast::Root::cast(syntax)?;
-    let converter = AstToYzl::new(context, name, source, source_id, diagnostics, registry);
+    let mut converter = AstToYzl::new(context, name, source, source_id, diagnostics, registry);
     Some(converter.convert(&root))
 }
 
@@ -44,12 +44,12 @@ struct AstToYzl<'c, 'd> {
     context: &'c Context,
     name: String,
     source_id: SourceId,
-    diagnostics: std::cell::RefCell<&'d mut DiagnosticsEngine>,
+    diagnostics: &'d mut DiagnosticsEngine,
     line_starts: Vec<usize>,
     /// Every name the program can use, and what it means where it is used.
-    /// Interior mutability because conversion threads `&self` everywhere and
-    /// the resolver's scopes move with the traversal.
-    resolver: std::cell::RefCell<Resolver>,
+    /// Its scopes move with the traversal, which is why conversion takes
+    /// `&mut self` throughout.
+    resolver: Resolver,
     registry: &'d dyn FunctionRegistry,
 }
 
@@ -70,32 +70,31 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             context,
             name: name.to_string(),
             source_id,
-            diagnostics: std::cell::RefCell::new(diagnostics),
+            diagnostics,
             line_starts,
-            resolver: std::cell::RefCell::new(Resolver::new()),
+            resolver: Resolver::new(),
             registry,
         }
     }
 
-    fn error(&self, node: &impl AstNode, message: &str) {
+    fn error(&mut self, node: &impl AstNode, message: &str) {
         self.error_at(node.syntax().text_range(), message);
     }
 
-    fn error_at(&self, range: text_size::TextRange, message: &str) {
+    fn error_at(&mut self, range: text_size::TextRange, message: &str) {
         let span = Span {
             source_id: self.source_id,
             range,
         };
 
         self.diagnostics
-            .borrow_mut()
             .emit(DiagnosticBuilder::error(span, message));
     }
 
     /// The `Expr::Missing` of this conversion: report the hole and stand a
     /// `yzl.missing` value in for it.
     fn missing<'a>(
-        &self,
+        &mut self,
         block: BlockRef<'c, 'a>,
         node: &impl AstNode,
         message: &str,
@@ -129,7 +128,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         Location::new(self.context, &self.name, line, column)
     }
 
-    fn convert(&self, root: &ast::Root) -> Module<'c> {
+    fn convert(&mut self, root: &ast::Root) -> Module<'c> {
         let module = Module::new(Location::new(self.context, &self.name, 1, 1));
         let top = module.body();
         self.hoist(root);
@@ -143,7 +142,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
     /// The program's result is its trailing query: the last top-level value
     /// of type `!yzl.query` anchors the module's `yzl.output`.
-    fn convert_output<'a>(&self, top: BlockRef<'c, 'a>) {
+    fn convert_output<'a>(&mut self, top: BlockRef<'c, 'a>) {
         let query = top
             .operations()
             .filter_map(|op| {

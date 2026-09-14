@@ -15,7 +15,7 @@ use yuzu_mlir::types;
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
     pub(super) fn convert_expr<'a>(
-        &self,
+        &mut self,
         block: BlockRef<'c, 'a>,
         locals: &Locals<'c, 'a>,
         expr: &ast::Expr,
@@ -150,7 +150,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .iter()
                     .map(|arg| self.convert_expr(block, locals, arg))
                     .collect();
-                let callable = self.resolver.borrow().callable(&callee, self.registry);
+                let callable = self.resolver.callable(&callee, self.registry);
                 let kind = match callable {
                     Ok(callable) => {
                         let (min, max) = (callable.min_args, callable.max_args);
@@ -230,7 +230,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     }
 
     fn convert_binary<'a>(
-        &self,
+        &mut self,
         block: BlockRef<'c, 'a>,
         locals: &Locals<'c, 'a>,
         binary: &ast::BinaryExpr,
@@ -313,7 +313,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     }
 
     fn convert_literal<'a>(
-        &self,
+        &mut self,
         block: BlockRef<'c, 'a>,
         literal: &ast::Literal,
     ) -> Value<'c, 'a> {
@@ -372,14 +372,14 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     /// `let` is a call for expansion to inline, since this block cannot reach
     /// a value outside itself.
     fn name_ref<'a>(
-        &self,
+        &mut self,
         block: BlockRef<'c, 'a>,
         node: &impl AstNode,
         name: &str,
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         let (lookup, in_query) = {
-            let resolver = self.resolver.borrow();
+            let resolver = &self.resolver;
             (resolver.lookup(name), resolver.in_query())
         };
         match lookup {

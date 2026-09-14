@@ -14,7 +14,11 @@ use crate::lower_ast_to_yzl::resolve::{JoinError, Lookup};
 use yuzu_mlir::types;
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
-    pub(super) fn convert_rel<'a>(&self, block: BlockRef<'c, 'a>, rel: &ast::Rel) -> Value<'c, 'a> {
+    pub(super) fn convert_rel<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        rel: &ast::Rel,
+    ) -> Value<'c, 'a> {
         let loc = self.location(rel);
         match rel {
             ast::Rel::FromExpr(from) => {
@@ -62,7 +66,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .map(|item| (item.alias(), item.expr(), item.syntax().text_range()))
                     .collect();
                 let (names, region) = self.convert_items(items, "select item", loc);
-                self.resolver.borrow_mut().select(strings(&names));
+                self.resolver.select(strings(&names));
                 block
                     .append_operation(
                         yzl::select(
@@ -84,7 +88,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .map(|item| (item.alias(), item.expr(), item.syntax().text_range()))
                     .collect();
                 let (names, region) = self.convert_items(items, "extend item", loc);
-                self.resolver.borrow_mut().extend(strings(&names));
+                self.resolver.extend(strings(&names));
                 block
                     .append_operation(
                         yzl::extend(
@@ -116,11 +120,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 let (names, region) = self.convert_items(items, "aggregate item", loc);
                 // The keys are the grouping's answer, decided against the row
                 // the measures were just resolved against.
-                let keys = match self
-                    .resolver
-                    .borrow_mut()
-                    .aggregate(&group_by, strings(&names))
-                {
+                let keys = match self.resolver.aggregate(&group_by, strings(&names)) {
                     Ok(keys) => keys,
                     Err(Lookup::Ambiguous) => {
                         self.error(stage, "a group by column is ambiguous");
@@ -199,7 +199,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     to.push(new);
                 }
 
-                let indices = match self.resolver.borrow_mut().rename(&from, &to) {
+                let indices = match self.resolver.rename(&from, &to) {
                     Ok(indices) => indices,
                     Err(name) => {
                         self.error(stage, &format!("unknown column `{name}`"));
@@ -260,11 +260,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 // Both sides carry through, and the `on` region sees exactly
                 // that concatenation — so the row moves before the condition
                 // is resolved against it.
-                match self
-                    .resolver
-                    .borrow_mut()
-                    .join(&rhs, alias.as_deref(), &using)
-                {
+                match self.resolver.join(&rhs, alias.as_deref(), &using) {
                     Ok(()) => {}
                     Err(JoinError::UnknownRelation) => {
                         self.error(stage, &format!("unknown relation `{rhs}`"));
@@ -309,7 +305,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .map(|item| (item.column(), item.value(), item.syntax().text_range()))
                     .collect();
                 let (names, region) = self.convert_items(items, "set item", loc);
-                let columns = match self.resolver.borrow_mut().set(&strings(&names)) {
+                let columns = match self.resolver.set(&strings(&names)) {
                     Ok(columns) => columns,
                     Err(name) => {
                         self.error(stage, &format!("unknown column `{name}`"));
@@ -340,7 +336,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 let input = self.convert_input(block, stage, "`drop`", stage.input());
                 let names: Vec<String> =
                     stage.columns().filter_map(|column| column.text()).collect();
-                if let Err(name) = self.resolver.borrow_mut().drop(&names) {
+                if let Err(name) = self.resolver.drop(&names) {
                     self.error(stage, &format!("unknown column `{name}`"));
                 }
 
@@ -369,15 +365,15 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     /// reported here and the query carries on against an empty row, so the
     /// rest of it is still checked.
     fn from<'a>(
-        &self,
+        &mut self,
         block: BlockRef<'c, 'a>,
         node: &impl AstNode,
         source: &str,
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
-        if self.resolver.borrow_mut().enter_query(source).is_none() {
+        if self.resolver.enter_query(source).is_none() {
             self.error(node, &format!("unknown relation `{source}`"));
-            self.resolver.borrow_mut().enter_unknown_query();
+            self.resolver.enter_unknown_query();
         }
 
         block
@@ -396,13 +392,13 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     /// `as` qualifies the row's columns: a pure name effect on the row the
     /// resolver carries, and an op so the lowering can see it happened.
     fn alias<'a>(
-        &self,
+        &mut self,
         block: BlockRef<'c, 'a>,
         input: Value<'c, 'a>,
         alias: &str,
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
-        self.resolver.borrow_mut().alias(alias);
+        self.resolver.alias(alias);
         block
             .append_operation(
                 yzl::alias(
@@ -421,7 +417,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     /// by inference later. Building the block from the resolver's row is
     /// what ties a column's position there to its position here.
     fn stage_block<'r>(&self, region: &'r Region<'c>, loc: Location<'c>) -> BlockRef<'c, 'r> {
-        let width = self.resolver.borrow().row().len();
+        let width = self.resolver.row().len();
         let arguments: Vec<(Type<'c>, Location<'c>)> = (0..width)
             .map(|_| (types::var(self.context), loc))
             .collect();
@@ -431,7 +427,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     /// A stage's input is another stage, or a bare name referring to a bound
     /// relation — which `from` covers until resolution decides what it was.
     fn convert_input<'a>(
-        &self,
+        &mut self,
         block: BlockRef<'c, 'a>,
         stage: &impl AstNode,
         what: &str,
@@ -468,7 +464,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     }
 
     fn convert_items(
-        &self,
+        &mut self,
         items: Vec<(Option<ast::Ident>, Option<ast::Expr>, text_size::TextRange)>,
         what: &str,
         loc: Location<'c>,

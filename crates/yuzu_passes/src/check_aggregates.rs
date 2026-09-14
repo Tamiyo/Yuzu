@@ -211,7 +211,7 @@ mod tests {
     fn check(source: &str, expected: Expect) {
         test_support::check_diagnostics(
             source,
-            |context, module| {
+            |_context, module| {
                 check_aggregates(module, &yuzu_types::Builtins);
             },
             expected,
