@@ -9,7 +9,7 @@ use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 use melior::ir::r#type::IntegerType;
 use yuzu_mlir::attributes::{CalleeKind, CmpPredicate};
 
-use crate::lower_ast_to_yzl::resolve::{CallError, Lookup};
+use crate::lower_ast_to_yzl::resolve::Lookup;
 use yuzu_mlir::ext::OperationExt;
 use yuzu_mlir::types;
 
@@ -40,8 +40,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 self.name_ref(block, ident, name, loc)
             }
             ast::Expr::FieldAccessExpr(access) => {
-                // `t.a` is one qualified reference, not a load: keep the
-                // dotted name whole for resolution.
+                // `t.a` is a qualified column reference, not a load.
                 let base = match access.base() {
                     Some(ast::Expr::IdentExpr(ident)) => self.ident(ident.name()),
                     Some(_) => {
@@ -150,52 +149,34 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .iter()
                     .map(|arg| self.convert_expr(block, locals, arg))
                     .collect();
-                let callable = self.resolver.callable(callee, self.registry);
-                let kind = match callable {
-                    Ok(callable) => {
-                        let (min, max) = (callable.min_args, callable.max_args);
-                        if operands.len() < min || operands.len() > max {
-                            let expected = if min == max {
-                                format!("{min}")
-                            } else {
-                                format!("{min} to {max}")
-                            };
-                            self.error(
-                                call,
-                                &format!(
-                                    "`{callee}` expects {expected} arguments, got {}",
-                                    operands.len()
-                                ),
-                            );
-                        }
-
-                        callable.kind
-                    }
-                    // A trait's methods live in its implementations, so no
-                    // module-level name reaches one. Choosing between them is
-                    // dispatch, which nothing does yet — and "unknown" would
-                    // send the reader looking for a declaration that is there.
-                    Err(CallError::TraitMethod) => {
-                        return self.missing(
-                            block,
-                            call,
-                            &format!(
-                                "`{callee}` is a trait method, and calling one is not supported yet"
-                            ),
-                            types::var(self.context),
-                        );
-                    }
-                    Err(CallError::Unknown) => {
-                        return self.missing(
-                            block,
-                            call,
-                            &format!("unknown function `{callee}`"),
-                            types::var(self.context),
-                        );
-                    }
+                let Some(callable) = self.resolver.callable(callee, self.registry) else {
+                    let message = if self.resolver.is_method(callee) {
+                        format!(
+                            "`{callee}` is a trait method, and calling one is not supported yet"
+                        )
+                    } else {
+                        format!("unresolved identifier `{callee}`")
+                    };
+                    return self.missing(block, call, &message, types::var(self.context));
                 };
 
-                self.call(block, callee, kind, &operands, loc)
+                let (min, max) = (callable.min_args, callable.max_args);
+                if operands.len() < min || operands.len() > max {
+                    let expected = if min == max {
+                        format!("{min}")
+                    } else {
+                        format!("{min} to {max}")
+                    };
+                    self.error(
+                        call,
+                        &format!(
+                            "`{callee}` expects {expected} argument(s), found {}",
+                            operands.len()
+                        ),
+                    );
+                }
+
+                self.call(block, callee, callable.kind, &operands, loc)
             }
             ast::Expr::ListExpr(list) => {
                 let elements: Vec<ast::Expr> = list.elements().collect();
@@ -272,9 +253,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             )
             .into()
         };
-
-        // Operators without a yz op yet lower as calls by name, which is what
-        // they are before the registry resolves them.
 
         let operation = match binary.op() {
             Some(BinOp::Add) => yz::add(context, types::var(self.context), lhs, rhs, loc).into(),
@@ -367,10 +345,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         block.append_operation(operation).first_result()
     }
 
-    /// A name in expression position, resolved where it stands. A column or
-    /// parameter is a block argument of the block being built; a module-level
-    /// `let` is a call for expansion to inline, since this block cannot reach
-    /// a value outside itself.
+    /// A column or parameter is a block argument; a module-level `let` is a
+    /// call for expansion to inline, since a stage region is isolated.
     fn name_ref<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
@@ -378,42 +354,28 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         name: &str,
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
-        let (lookup, in_query) = {
-            let resolver = &self.resolver;
-            (resolver.lookup(name), resolver.in_query())
-        };
-        match lookup {
-            Lookup::Column(index) | Lookup::Param(index) => block
-                .argument(index)
-                .expect("the resolver answered from the row this block was built for")
-                .into(),
-            Lookup::Let(symbol) => self.call(block, symbol, CalleeKind::Let, &[], loc),
-            Lookup::Ambiguous => self.missing(
-                block,
-                node,
-                &format!("`{name}` is ambiguous"),
-                types::var(self.context),
-            ),
-            Lookup::NarrowedAway => self.missing(
-                block,
-                node,
-                &format!("`{name}` is no longer in the row: an earlier stage narrowed it away"),
-                types::var(self.context),
-            ),
-            Lookup::Unknown => {
-                let what = if in_query { "column" } else { "name" };
-                self.missing(
-                    block,
-                    node,
-                    &format!("unknown {what} `{name}`"),
-                    types::var(self.context),
+        let message = match self.resolver.lookup(name) {
+            Lookup::Column(index) | Lookup::Param(index) => {
+                return block
+                    .argument(index)
+                    .expect("the resolver answered from the row this block was built for")
+                    .into();
+            }
+            Lookup::Let(symbol) => return self.call(block, symbol, CalleeKind::Let, &[], loc),
+            Lookup::Ambiguous => {
+                format!("column `{name}` is ambiguous; qualify it with a relation alias")
+            }
+            Lookup::NarrowedAway => {
+                format!(
+                    "column `{name}` is no longer in the row: an earlier stage narrowed it away"
                 )
             }
-        }
+            Lookup::Unknown => format!("unresolved identifier `{name}`"),
+        };
+
+        self.missing(block, node, &message, types::var(self.context))
     }
 
-    /// A call the emitter has already classified: the kind is decided here,
-    /// so every pass after reads it rather than looking the callee up again.
     fn call<'a>(
         &self,
         block: BlockRef<'c, 'a>,
@@ -435,7 +397,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .first_result()
     }
 
-    /// The operators the parser lowers to calls are registry builtins.
     fn builtin<'a>(
         &self,
         block: BlockRef<'c, 'a>,

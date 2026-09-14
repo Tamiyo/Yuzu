@@ -5,12 +5,11 @@ use melior::ir::{
 use yuzu_ast::{AstNode, ast};
 use yuzu_mlir::ods::yzl;
 
+use crate::lower_ast_to_yzl::resolve::{ColumnLookup, has_column};
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 use melior::ir::r#type::IntegerType;
 use yuzu_mlir::attributes::JoinKind;
 use yuzu_mlir::ext::{OperationExt, OperationMutExt};
-
-use crate::lower_ast_to_yzl::resolve::{JoinError, Lookup};
 use yuzu_mlir::types;
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
@@ -105,11 +104,33 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             }
             ast::Rel::AggregateExpr(stage) => {
                 let input = self.convert_input(block, stage, "`aggregate`", stage.input());
-                let mut group_by: Vec<&'c str> = Vec::new();
+                let mut keys = Vec::new();
+                let mut key_names: Vec<&'c str> = Vec::new();
                 for item in stage.group_by().into_iter().flat_map(|group| group.items()) {
-                    match self.ident(item.column()) {
-                        Some(name) => group_by.push(name),
-                        None => self.error(&item, "group by item is missing its column"),
+                    let Some(column) = self.ident(item.column()) else {
+                        self.error(&item, "group by key is missing its column");
+                        continue;
+                    };
+
+                    let reference = match self.ident(item.qualifier()) {
+                        Some(qualifier) => self.intern(&format!("{qualifier}.{column}")),
+                        None => column,
+                    };
+                    match self.resolver.column(reference) {
+                        ColumnLookup::Unique(index) => {
+                            keys.push(index);
+                            key_names.push(self.ident(item.alias()).unwrap_or(column));
+                        }
+                        ColumnLookup::Ambiguous => self.error(
+                            &item,
+                            &format!(
+                                "group key `{column}` is ambiguous; qualify it with a relation alias"
+                            ),
+                        ),
+                        ColumnLookup::Absent => self.error(
+                            &item,
+                            &format!("group key `{column}` is not a column of this row"),
+                        ),
                     }
                 }
 
@@ -118,26 +139,16 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .map(|item| (item.alias(), item.expr(), item.syntax().text_range()))
                     .collect();
                 let (names, region) = self.convert_items(items, "aggregate item", loc);
-                // The keys are the grouping's answer, decided against the row
-                // the measures were just resolved against.
-                let keys = match self.resolver.aggregate(&group_by, strings(&names)) {
-                    Ok(keys) => keys,
-                    Err(Lookup::Ambiguous) => {
-                        self.error(stage, "a group by column is ambiguous");
-                        Vec::new()
-                    }
-                    Err(_) => {
-                        self.error(stage, "unknown group by column");
-                        Vec::new()
-                    }
-                };
-                let group_attrs = self.string_attrs(&group_by);
+                let mut produced = key_names.clone();
+                produced.extend(strings(&names));
+                self.resolver.select(produced);
+
                 let mut op: melior::ir::Operation<'c> = yzl::aggregate(
                     self.context,
                     types::query(self.context),
                     input,
                     region,
-                    ArrayAttribute::new(self.context, &group_attrs),
+                    ArrayAttribute::new(self.context, &self.string_attrs(&key_names)),
                     ArrayAttribute::new(self.context, &names),
                     loc,
                 )
@@ -156,7 +167,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                         0
                     }
                     None => {
-                        self.error(stage, "`limit` is missing its count");
+                        self.error(stage, "`limit` is missing its row count");
                         0
                     }
                 };
@@ -178,6 +189,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 let input = self.convert_input(block, stage, "`rename`", stage.input());
                 let mut from: Vec<&'c str> = Vec::new();
                 let mut to: Vec<&'c str> = Vec::new();
+                let mut renames = Vec::new();
                 for item in stage.items() {
                     let (Some(old), Some(new)) = (self.ident(item.from()), self.ident(item.to()))
                     else {
@@ -185,24 +197,35 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                         continue;
                     };
 
-                    // `b.id as other` keeps its qualifier: the resolver matches
-                    // qualified columns, so dropping it would rename whichever
-                    // column happened to come first.
-                    let old = match self.ident(item.qualifier()) {
+                    let qualifier = self.ident(item.qualifier());
+                    let reference = match qualifier {
                         Some(qualifier) => self.intern(&format!("{qualifier}.{old}")),
                         None => old,
                     };
-                    from.push(old);
-                    to.push(new);
+                    match self.resolver.column(reference) {
+                        ColumnLookup::Unique(index) => {
+                            renames.push((index, new));
+                            from.push(reference);
+                            to.push(new);
+                        }
+                        ColumnLookup::Ambiguous => self.error(
+                            &item,
+                            &format!(
+                                "column `{old}` is ambiguous; qualify it with a relation alias"
+                            ),
+                        ),
+                        ColumnLookup::Absent => {
+                            let message = match qualifier {
+                                Some(qualifier) => format!("`{qualifier}` has no column `{old}`"),
+                                None => format!("column `{old}` is not in this row"),
+                            };
+                            self.error(&item, &message);
+                        }
+                    }
                 }
 
-                let indices = match self.resolver.rename(&from, &to) {
-                    Ok(indices) => indices,
-                    Err(name) => {
-                        self.error(stage, &format!("unknown column `{name}`"));
-                        Vec::new()
-                    }
-                };
+                self.resolver.rename(&renames);
+                let indices: Vec<usize> = renames.iter().map(|&(index, _)| index).collect();
                 let mut op: melior::ir::Operation<'c> = yzl::rename(
                     self.context,
                     types::query(self.context),
@@ -216,9 +239,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 block.append_operation(op).first_result()
             }
             ast::Rel::AliasExpr(stage) => {
-                let input = self.convert_input(block, stage, "`alias`", stage.input());
+                let input = self.convert_input(block, stage, "`as`", stage.input());
                 let Some(alias) = self.ident(stage.alias()) else {
-                    self.error(stage, "`alias` is missing its name");
+                    self.error(stage, "`as` is missing its alias");
                     return input;
                 };
 
@@ -230,9 +253,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     Some(ast::JoinKind::Left) => JoinKind::Left,
                     Some(ast::JoinKind::Right) => JoinKind::Right,
                     Some(ast::JoinKind::Full) => JoinKind::Full,
-                    _ => JoinKind::Inner,
+                    Some(ast::JoinKind::Inner) | None => JoinKind::Inner,
                 };
-                let Some(rhs) = self.ident(stage.relation()) else {
+                let Some(relation) = self.ident(stage.relation()) else {
                     return self.missing(
                         block,
                         stage,
@@ -242,37 +265,58 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 };
 
                 let alias = self.ident(stage.alias());
-                let using: Vec<&'c str> = stage
-                    .using()
-                    .into_iter()
-                    .flat_map(|using| using.columns())
-                    .filter_map(|column| self.ident(Some(column)))
-                    .collect();
-                // Both sides carry through, and the `on` region sees exactly
-                // that concatenation — so the row moves before the condition
-                // is resolved against it.
-                match self.resolver.join(rhs, alias, &using) {
-                    Ok(()) => {}
-                    Err(JoinError::UnknownRelation) => {
-                        self.error(stage, &format!("unknown relation `{rhs}`"));
+                let rhs = match self.resolver.relation(relation, alias) {
+                    Some(rhs) => rhs,
+                    None => {
+                        self.error(stage, &format!("`{relation}` is not a relation"));
+                        Vec::new()
                     }
-                    Err(JoinError::UsingColumn(name)) => {
-                        self.error(stage, &format!("unknown column `{name}`"));
+                };
+
+                let mut using: Vec<&'c str> = Vec::new();
+                if let Some(clause) = stage.using() {
+                    using = clause
+                        .columns()
+                        .filter_map(|column| self.ident(Some(column)))
+                        .collect();
+                    if using.is_empty() {
+                        self.error(&clause, "`using` needs at least one column");
+                    }
+
+                    for &column in &using {
+                        if !has_column(self.resolver.row(), column) || !has_column(&rhs, column) {
+                            self.error(
+                                &clause,
+                                &format!("column {column} not present in both relations"),
+                            );
+                        }
                     }
                 }
 
+                // The condition sees both rows, so the row moves first.
+                self.resolver.concat(rhs);
                 let on = Region::new();
-                if let Some(condition) = stage.on().and_then(|on| on.condition()) {
-                    let body = self.stage_block(&on, loc);
-                    let value = self.convert_expr(body, &Locals::new(), &condition);
-                    body.append_operation(yzl::r#yield(self.context, &[value], loc).into());
+                if stage.using().is_none() {
+                    match stage.on() {
+                        None => self.error(stage, "`join` is missing its `on` or `using` clause"),
+                        Some(clause) => match clause.condition() {
+                            None => self.error(&clause, "`on` is missing its condition"),
+                            Some(condition) => {
+                                let body = self.stage_block(&on, loc);
+                                let value = self.convert_expr(body, &Locals::new(), &condition);
+                                body.append_operation(
+                                    yzl::r#yield(self.context, &[value], loc).into(),
+                                );
+                            }
+                        },
+                    }
                 }
 
                 let mut builder = yzl::JoinOperationBuilder::new(self.context, loc)
                     .result(types::query(self.context))
                     .lhs(lhs)
                     .kind(StringAttribute::new(self.context, kind.as_str()))
-                    .rhs(FlatSymbolRefAttribute::new(self.context, rhs))
+                    .rhs(FlatSymbolRefAttribute::new(self.context, relation))
                     .on(on);
                 if let Some(alias) = alias {
                     builder = builder.rhs_alias(StringAttribute::new(self.context, alias));
@@ -288,18 +332,32 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             }
             ast::Rel::SetExpr(stage) => {
                 let input = self.convert_input(block, stage, "`set`", stage.input());
+                let mut columns = Vec::new();
+                for item in stage.items() {
+                    let Some(name) = self.ident(item.column()) else {
+                        self.error(&item, "set item is incomplete");
+                        continue;
+                    };
+
+                    match self.resolver.column(name) {
+                        ColumnLookup::Unique(index) => columns.push(index),
+                        ColumnLookup::Ambiguous => self.error(
+                            &item,
+                            &format!(
+                                "column `{name}` is ambiguous; qualify it with a relation alias"
+                            ),
+                        ),
+                        ColumnLookup::Absent => {
+                            self.error(&item, &format!("column `{name}` is not in this row"))
+                        }
+                    }
+                }
+
                 let items = stage
                     .items()
                     .map(|item| (item.column(), item.value(), item.syntax().text_range()))
                     .collect();
                 let (names, region) = self.convert_items(items, "set item", loc);
-                let columns = match self.resolver.set(&strings(&names)) {
-                    Ok(columns) => columns,
-                    Err(name) => {
-                        self.error(stage, &format!("unknown column `{name}`"));
-                        Vec::new()
-                    }
-                };
                 let mut op: melior::ir::Operation<'c> = yzl::set(
                     self.context,
                     types::query(self.context),
@@ -322,12 +380,26 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             }
             ast::Rel::DropExpr(stage) => {
                 let input = self.convert_input(block, stage, "`drop`", stage.input());
-                let names: Vec<&'c str> = stage
-                    .columns()
-                    .filter_map(|column| self.ident(Some(column)))
-                    .collect();
-                if let Err(name) = self.resolver.drop(&names) {
-                    self.error(stage, &format!("unknown column `{name}`"));
+                let mut names: Vec<&'c str> = Vec::new();
+                for column in stage.columns() {
+                    let Some(name) = column.text().map(|text| self.intern(&text)) else {
+                        continue;
+                    };
+
+                    match self.resolver.column(name) {
+                        ColumnLookup::Unique(index) => self.resolver.remove(index),
+                        ColumnLookup::Ambiguous => self.error(
+                            &column,
+                            &format!(
+                                "column `{name}` is ambiguous; qualify it with a relation alias"
+                            ),
+                        ),
+                        ColumnLookup::Absent => {
+                            self.error(&column, &format!("column `{name}` is not in this row"))
+                        }
+                    }
+
+                    names.push(name);
                 }
 
                 let columns = self.string_attrs(&names);
@@ -347,10 +419,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
     }
 
-    /// A query begins at its relation: the resolver takes the relation's row
-    /// as the one every stage after resolves against. An unknown relation is
-    /// reported here and the query carries on against an empty row, so the
-    /// rest of it is still checked.
     fn from<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
@@ -359,8 +427,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         if self.resolver.enter_query(source).is_none() {
-            self.error(node, &format!("unknown relation `{source}`"));
-            self.resolver.enter_unknown_query();
+            self.error(node, &format!("`{source}` is not a relation"));
         }
 
         block
@@ -376,8 +443,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .first_result()
     }
 
-    /// `as` qualifies the row's columns: a pure name effect on the row the
-    /// resolver carries, and an op so the lowering can see it happened.
     fn alias<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
@@ -400,9 +465,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .first_result()
     }
 
-    /// A stage's region takes the row's columns as block arguments, typed
-    /// by inference later. Building the block from the resolver's row is
-    /// what ties a column's position there to its position here.
+    /// A stage's region takes the row's columns as block arguments, typed by
+    /// inference later.
     fn stage_block<'r>(&self, region: &'r Region<'c>, loc: Location<'c>) -> BlockRef<'c, 'r> {
         let width = self.resolver.row().len();
         let arguments: Vec<(Type<'c>, Location<'c>)> = (0..width)
@@ -411,8 +475,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         region.append_block(Block::new(&arguments))
     }
 
-    /// A stage's input is another stage, or a bare name referring to a bound
-    /// relation — which `from` covers until resolution decides what it was.
     fn convert_input<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
@@ -438,7 +500,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             Some(other) => self.missing(
                 block,
                 &other,
-                "this stage input is not supported yet",
+                "expected a relation as the pipe input",
                 types::query(self.context),
             ),
             None => self.missing(
@@ -492,7 +554,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     }
 }
 
-/// The names an attribute list carries, for the resolver.
 fn strings<'c>(names: &[Attribute<'c>]) -> Vec<&'c str> {
     names
         .iter()

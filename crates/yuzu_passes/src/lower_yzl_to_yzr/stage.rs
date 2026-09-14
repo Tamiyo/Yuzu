@@ -117,7 +117,8 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                     self.lower_region(stage.body(), &schema, op.location(), Yielded::Body);
                 let mut produced: Schema<'c> = keys
                     .iter()
-                    .filter_map(|&index| schema.get(index).cloned())
+                    .zip(stage.group_by().strings())
+                    .filter_map(|(&index, name)| schema.get(index).map(|&(_, ty)| (name, ty)))
                     .collect();
                 produced.extend(self.named_row(stage.names().strings(), yielded));
 

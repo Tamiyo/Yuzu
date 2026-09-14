@@ -1,5 +1,5 @@
-//! LowerAst: the AST → yzl conversion. Names come out as `yzl.name`, unresolved
-//! types as `!yzl.var`, sugar intact — the checking passes resolve them.
+//! LowerAst: the AST → yzl conversion. Names resolve as they are emitted;
+//! unresolved types come out as `!yzl.var` for inference, sugar intact.
 
 use std::collections::HashMap;
 
@@ -47,9 +47,6 @@ struct AstToYzl<'c, 'd> {
     source_id: SourceId,
     diagnostics: &'d mut DiagnosticsEngine,
     line_starts: Vec<usize>,
-    /// Every name the program can use, and what it means where it is used.
-    /// Its scopes move with the traversal, which is why conversion takes
-    /// `&mut self` throughout.
     resolver: Resolver<'c>,
     registry: &'d dyn FunctionRegistry,
 }
@@ -78,15 +75,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
     }
 
-    /// A name, owned by the context. Every name ends up in an attribute
-    /// anyway, and the context uniques attribute strings for as long as it
-    /// lives — so this is the attribute the name would have become, and the
-    /// resolver and locals hold the `&'c str` it hands back.
+    /// The context uniques attribute strings for as long as it lives, so
+    /// every name is held as the `&'c str` its attribute hands back.
     fn intern(&self, name: &str) -> &'c str {
         StringAttribute::new(self.context, name).value()
     }
 
-    /// An identifier's text, interned; `None` when the parser left a hole.
     fn ident(&self, ident: Option<ast::Ident>) -> Option<&'c str> {
         ident
             .and_then(|ident| ident.text())
@@ -107,8 +101,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .emit(DiagnosticBuilder::error(span, message));
     }
 
-    /// The `Expr::Missing` of this conversion: report the hole and stand a
-    /// `yzl.missing` value in for it.
+    /// Reports and stands a `yzl.missing` value in for the hole.
     fn missing<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
@@ -120,8 +113,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         self.hole(block, node.syntax().text_range(), ty)
     }
 
-    /// A `yzl.missing` value without a report, for constructs the conversion
-    /// does not carry yet.
     fn hole<'a>(
         &self,
         block: BlockRef<'c, 'a>,
