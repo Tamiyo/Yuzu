@@ -6,7 +6,7 @@ use yuzu_ast::{AstNode, ast};
 use yuzu_mlir::attributes::CalleeKind;
 use yuzu_mlir::ods::yzl;
 
-use crate::lower_ast_to_yzl::{AstToYzl, Locals, ident_text};
+use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 use yuzu_mlir::types;
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
@@ -17,47 +17,50 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         for stmt in root.stmts() {
             match &stmt {
                 ast::Stmt::StructStmt(decl) => {
-                    let Some(name) = ident_text(decl.name()) else {
+                    let Some(name) = self.ident(decl.name()) else {
                         continue;
                     };
-                    self.check_duplicate(decl, "struct", &name);
-                    let fields = decl.fields().filter_map(|f| ident_text(f.name())).collect();
-                    self.resolver.declare_struct(&name, fields);
+                    self.check_duplicate(decl, "struct", name);
+                    let fields = decl.fields().filter_map(|f| self.ident(f.name())).collect();
+                    self.resolver.declare_struct(name, fields);
                 }
                 ast::Stmt::TableStmt(decl) => {
-                    let Some(name) = ident_text(decl.name()) else {
+                    let Some(name) = self.ident(decl.name()) else {
                         continue;
                     };
-                    self.check_duplicate(decl, "relation", &name);
+                    self.check_duplicate(decl, "relation", name);
                     // An inline table declares its own row under its own
                     // name; a named one must name a struct the program has.
                     if decl.inline_fields().next().is_some() {
                         let fields = decl
                             .inline_fields()
-                            .filter_map(|f| ident_text(f.name()))
+                            .filter_map(|f| self.ident(f.name()))
                             .collect();
                         let resolver = &mut self.resolver;
-                        resolver.declare_struct(&name, fields);
-                        resolver.declare_table(&name, &name);
-                    } else if let Some(row) = ident_text(decl.row_struct())
-                        && self.resolver.declare_table(&name, &row).is_none()
+                        resolver.declare_struct(name, fields);
+                        resolver.declare_table(name, name);
+                    } else if let Some(row) = self.ident(decl.row_struct())
+                        && self.resolver.declare_table(name, row).is_none()
                     {
                         self.error(decl, &format!("unknown struct `{row}`"));
                     }
                 }
                 ast::Stmt::TraitStmt(decl) => {
-                    let Some(name) = ident_text(decl.name()) else {
+                    let Some(name) = self.ident(decl.name()) else {
                         continue;
                     };
-                    self.check_duplicate(decl, "trait", &name);
-                    let methods = decl.methods().filter_map(|m| ident_text(m.name()));
-                    self.resolver.declare_trait(&name, methods);
+                    self.check_duplicate(decl, "trait", name);
+                    let methods: Vec<&'c str> = decl
+                        .methods()
+                        .filter_map(|m| self.ident(m.name()))
+                        .collect();
+                    self.resolver.declare_trait(name, methods);
                 }
                 ast::Stmt::FuncStmt(decl) => {
-                    let Some(name) = ident_text(decl.name()) else {
+                    let Some(name) = self.ident(decl.name()) else {
                         continue;
                     };
-                    self.check_duplicate(decl, "function", &name);
+                    self.check_duplicate(decl, "function", name);
                     let kind = if decl.is_external() {
                         CalleeKind::External
                     } else if decl.is_agg() {
@@ -66,7 +69,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                         CalleeKind::Fn
                     };
                     let arity = decl.params().count();
-                    self.resolver.declare_function(&name, arity, kind);
+                    self.resolver.declare_function(name, arity, kind);
                 }
                 ast::Stmt::ImplStmt(_)
                 | ast::Stmt::LetStmt(_)
@@ -113,7 +116,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     }
 
     fn convert_struct<'a>(&mut self, block: BlockRef<'c, 'a>, decl: &ast::StructStmt) {
-        let Some(name) = ident_text(decl.name()) else {
+        let Some(name) = self.ident(decl.name()) else {
             self.error(decl, "struct is missing its name");
             return;
         };
@@ -122,7 +125,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         block.append_operation(
             yzl::r#struct(
                 self.context,
-                StringAttribute::new(self.context, &name),
+                StringAttribute::new(self.context, name),
                 names,
                 types,
                 self.location(decl),
@@ -132,22 +135,22 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     }
 
     fn convert_table<'a>(&mut self, block: BlockRef<'c, 'a>, decl: &ast::TableStmt) {
-        let Some(name) = ident_text(decl.name()) else {
+        let Some(name) = self.ident(decl.name()) else {
             self.error(decl, "table is missing its name");
             return;
         };
 
-        let row = match ident_text(decl.row_struct()) {
+        let row = match self.ident(decl.row_struct()) {
             Some(row) => row,
             // An inline table declares its row shape in place; give the shape
             // a struct of its own so the table can point at it.
             None => {
-                let row = format!("{name}_row");
+                let row = self.intern(&format!("{name}_row"));
                 let (names, types) = self.field_attrs(decl.inline_fields());
                 block.append_operation(
                     yzl::r#struct(
                         self.context,
-                        StringAttribute::new(self.context, &row),
+                        StringAttribute::new(self.context, row),
                         names,
                         types,
                         self.location(decl),
@@ -161,8 +164,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         block.append_operation(
             yzl::table(
                 self.context,
-                StringAttribute::new(self.context, &name),
-                FlatSymbolRefAttribute::new(self.context, &row),
+                StringAttribute::new(self.context, name),
+                FlatSymbolRefAttribute::new(self.context, row),
                 self.location(decl),
             )
             .into(),
@@ -179,27 +182,27 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         decl: &ast::FuncStmt,
-        implicit: &[&str],
+        implicit: &[&'c str],
     ) {
-        let Some(name) = ident_text(decl.name()) else {
+        let Some(name) = self.ident(decl.name()) else {
             self.error(decl, "function is missing its name");
             return;
         };
 
         let mut params: Vec<Attribute> = Vec::new();
         for param in decl.params() {
-            match ident_text(param.name()) {
-                Some(name) => params.push(StringAttribute::new(self.context, &name).into()),
+            match self.ident(param.name()) {
+                Some(name) => params.push(StringAttribute::new(self.context, name).into()),
                 None => self.error(&param, "parameter is missing its name"),
             }
         }
 
-        let generics: Vec<String> = implicit
+        let generics: Vec<&'c str> = implicit
             .iter()
-            .map(|name| name.to_string())
+            .copied()
             .chain(
                 decl.type_params()
-                    .filter_map(|param| ident_text(param.name())),
+                    .filter_map(|param| self.ident(param.name())),
             )
             .collect();
 
@@ -217,15 +220,15 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         // the program declares; either missing is reported here, where the
         // declaration is.
         for bound in decl.bounds() {
-            if let Some(subject) = ident_text(bound.subject())
-                && !generics.iter().any(|param| param == &subject)
+            if let Some(subject) = self.ident(bound.subject())
+                && !generics.contains(&subject)
             {
                 self.error(&bound, &format!("unknown type parameter `{subject}`"));
             }
 
             for trait_ref in bound.traits() {
-                if let Some(trait_name) = ident_text(trait_ref.name())
-                    && !self.resolver.has_trait(&trait_name)
+                if let Some(trait_name) = self.ident(trait_ref.name())
+                    && !self.resolver.has_trait(trait_name)
                 {
                     self.error(&trait_ref, &format!("unknown trait `{trait_name}`"));
                 }
@@ -242,7 +245,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 .map(|_| (types::var(self.context), loc))
                 .collect();
             let entry = region.append_block(Block::new(&arguments));
-            let names: Vec<String> = decl.params().filter_map(|p| ident_text(p.name())).collect();
+            let names: Vec<&'c str> = decl.params().filter_map(|p| self.ident(p.name())).collect();
             self.resolver.enter_function(names);
             let mut locals = Locals::new();
             for stmt in body.stmts() {
@@ -253,7 +256,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
 
         let mut builder = yzl::FnOperationBuilder::new(self.context, self.location(decl))
-            .sym_name(StringAttribute::new(self.context, &name))
+            .sym_name(StringAttribute::new(self.context, name))
             .params(ArrayAttribute::new(self.context, &params))
             .signature(TypeAttribute::new(signature))
             .body(region);
@@ -290,19 +293,19 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let mut subjects = Vec::new();
         let mut traits = Vec::new();
         for bound in decl.bounds() {
-            let Some(subject) = ident_text(bound.subject()) else {
+            let Some(subject) = self.ident(bound.subject()) else {
                 self.error(&bound, "type bound is missing its subject");
                 continue;
             };
 
             for trait_ref in bound.traits() {
-                let Some(name) = ident_text(trait_ref.name()) else {
+                let Some(name) = self.ident(trait_ref.name()) else {
                     self.error(&trait_ref, "trait reference is missing its name");
                     continue;
                 };
 
-                subjects.push(StringAttribute::new(self.context, &subject).into());
-                traits.push(FlatSymbolRefAttribute::new(self.context, &name).into());
+                subjects.push(StringAttribute::new(self.context, subject).into());
+                traits.push(FlatSymbolRefAttribute::new(self.context, name).into());
             }
         }
 
@@ -312,7 +315,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     /// A trait's methods are body-less `yzl.fn`s typed against `Self`, the
     /// parameter every trait declares implicitly.
     fn convert_trait<'a>(&mut self, block: BlockRef<'c, 'a>, decl: &ast::TraitStmt) {
-        let Some(name) = ident_text(decl.name()) else {
+        let Some(name) = self.ident(decl.name()) else {
             self.error(decl, "trait is missing its name");
             return;
         };
@@ -325,7 +328,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
         block.append_operation(
             yzl::TraitOperationBuilder::new(self.context, self.location(decl))
-                .sym_name(StringAttribute::new(self.context, &name))
+                .sym_name(StringAttribute::new(self.context, name))
                 .body(region)
                 .build()
                 .into(),
@@ -335,21 +338,21 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn convert_impl<'a>(&mut self, block: BlockRef<'c, 'a>, decl: &ast::ImplStmt) {
         let Some(trait_name) = decl
             .trait_()
-            .and_then(|trait_ref| ident_text(trait_ref.name()))
+            .and_then(|trait_ref| self.ident(trait_ref.name()))
         else {
             self.error(decl, "`impl` is missing its trait");
             return;
         };
 
-        let Some(target) = ident_text(decl.ty()) else {
+        let Some(target) = self.ident(decl.ty()) else {
             self.error(decl, "`impl` is missing its type name");
             return;
         };
 
         // Both answers come from the resolver before either is reported, so
         // no borrow of it is alive while a diagnostic goes out.
-        let has_trait = self.resolver.has_trait(&trait_name);
-        let is_type = self.resolver.is_type_name(&target);
+        let has_trait = self.resolver.has_trait(trait_name);
+        let is_type = self.resolver.is_type_name(target);
         if !has_trait {
             self.error(decl, &format!("unknown trait `{trait_name}`"));
         }
@@ -366,8 +369,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
         block.append_operation(
             yzl::ImplOperationBuilder::new(self.context, self.location(decl))
-                .r#trait(FlatSymbolRefAttribute::new(self.context, &trait_name))
-                .target(FlatSymbolRefAttribute::new(self.context, &target))
+                .r#trait(FlatSymbolRefAttribute::new(self.context, trait_name))
+                .target(FlatSymbolRefAttribute::new(self.context, target))
                 .body(region)
                 .build()
                 .into(),
@@ -384,7 +387,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     ) {
         match stmt {
             ast::Stmt::LetStmt(binding) => {
-                let Some(name) = ident_text(binding.name()) else {
+                let Some(name) = self.ident(binding.name()) else {
                     self.error(binding, "let binding is missing its name");
                     return;
                 };
@@ -399,7 +402,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             }
             ast::Stmt::AssignStmt(assign) => {
                 let target = assign.target().and_then(|target| match target {
-                    ast::Expr::IdentExpr(ident) => ident_text(ident.name()),
+                    ast::Expr::IdentExpr(ident) => self.ident(ident.name()),
                     _ => None,
                 });
 
@@ -448,7 +451,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     }
 
     fn convert_let<'a>(&mut self, block: BlockRef<'c, 'a>, decl: &ast::LetStmt) {
-        let Some(name) = ident_text(decl.name()) else {
+        let Some(name) = self.ident(decl.name()) else {
             self.error(decl, "let binding is missing its name");
             return;
         };
@@ -458,7 +461,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             return;
         };
 
-        self.check_duplicate(decl, "binding", &name);
+        self.check_duplicate(decl, "binding", name);
         let region = Region::new();
         let body = region.append_block(Block::new(&[]));
         // Queries are expressions, but a query's row is what `from` needs
@@ -471,12 +474,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 let row = self.resolver.row().clone();
                 let resolver = &mut self.resolver;
                 resolver.leave();
-                resolver.declare_query_let(&name, row);
+                resolver.declare_query_let(name, row);
                 value
             }
             _ => {
                 let value = self.convert_expr(body, &Locals::new(), &expr);
-                self.resolver.declare_scalar_let(&name);
+                self.resolver.declare_scalar_let(name);
                 value
             }
         };
@@ -486,7 +489,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             yzl::r#let(
                 self.context,
                 region,
-                StringAttribute::new(self.context, &name),
+                StringAttribute::new(self.context, name),
                 self.location(decl),
             )
             .into(),
@@ -500,12 +503,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let mut names = Vec::new();
         let mut types = Vec::new();
         for field in fields {
-            let Some(name) = ident_text(field.name()) else {
+            let Some(name) = self.ident(field.name()) else {
                 self.error(&field, "struct field is missing its name");
                 continue;
             };
 
-            names.push(StringAttribute::new(self.context, &name).into());
+            names.push(StringAttribute::new(self.context, name).into());
             types.push(TypeAttribute::new(self.annotation_type(field.ty(), &[])).into());
         }
 
@@ -518,19 +521,19 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn annotation_type(
         &self,
         annotation: Option<ast::TypeAnnotation>,
-        generics: &[String],
+        generics: &[&'c str],
     ) -> Type<'c> {
         let name = annotation
             .and_then(|annotation| match annotation {
-                ast::TypeAnnotation::NamedTypeAnnotation(named) => ident_text(named.name()),
+                ast::TypeAnnotation::NamedTypeAnnotation(named) => self.ident(named.name()),
                 _ => None,
             })
             .unwrap_or_default();
-        if generics.iter().any(|param| param == &name) {
-            return yuzu_mlir::ParamType::new(self.context, &name).into();
+        if generics.contains(&name) {
+            return yuzu_mlir::ParamType::new(self.context, name).into();
         }
 
-        match name.as_str() {
+        match name {
             "int64" => types::int64(self.context),
             "float64" => types::float64(self.context),
             "bool" => types::boolean(self.context),

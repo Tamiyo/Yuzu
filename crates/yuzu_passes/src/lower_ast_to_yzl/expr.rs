@@ -5,7 +5,7 @@ use melior::ir::{
 use yuzu_ast::{AstNode, BinOp, UnaryOp, ast};
 use yuzu_mlir::ods::{yz, yzl};
 
-use crate::lower_ast_to_yzl::{AstToYzl, Locals, ident_text};
+use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 use melior::ir::r#type::IntegerType;
 use yuzu_mlir::attributes::{CalleeKind, CmpPredicate};
 
@@ -24,7 +24,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         match expr {
             ast::Expr::Literal(literal) => self.convert_literal(block, literal),
             ast::Expr::IdentExpr(ident) => {
-                let Some(name) = ident_text(ident.name()) else {
+                let Some(name) = self.ident(ident.name()) else {
                     return self.missing(
                         block,
                         ident,
@@ -33,17 +33,17 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     );
                 };
 
-                if let Some(&value) = locals.get(&name) {
+                if let Some(&value) = locals.get(name) {
                     return value;
                 }
 
-                self.name_ref(block, ident, &name, loc)
+                self.name_ref(block, ident, name, loc)
             }
             ast::Expr::FieldAccessExpr(access) => {
                 // `t.a` is one qualified reference, not a load: keep the
                 // dotted name whole for resolution.
                 let base = match access.base() {
-                    Some(ast::Expr::IdentExpr(ident)) => ident_text(ident.name()),
+                    Some(ast::Expr::IdentExpr(ident)) => self.ident(ident.name()),
                     Some(_) => {
                         return self.missing(
                             block,
@@ -64,7 +64,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     );
                 };
 
-                let Some(field) = ident_text(access.field()) else {
+                let Some(field) = self.ident(access.field()) else {
                     return self.missing(
                         block,
                         access,
@@ -111,7 +111,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             }
             ast::Expr::CallExpr(call) => {
                 let callee = match call.callee() {
-                    Some(ast::Expr::IdentExpr(ident)) => match ident_text(ident.name()) {
+                    Some(ast::Expr::IdentExpr(ident)) => match self.ident(ident.name()) {
                         Some(callee) => callee,
                         None => {
                             return self.missing(
@@ -150,7 +150,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .iter()
                     .map(|arg| self.convert_expr(block, locals, arg))
                     .collect();
-                let callable = self.resolver.callable(&callee, self.registry);
+                let callable = self.resolver.callable(callee, self.registry);
                 let kind = match callable {
                     Ok(callable) => {
                         let (min, max) = (callable.min_args, callable.max_args);
@@ -195,7 +195,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     }
                 };
 
-                self.call(block, &callee, kind, &operands, loc)
+                self.call(block, callee, kind, &operands, loc)
             }
             ast::Expr::ListExpr(list) => {
                 let elements: Vec<ast::Expr> = list.elements().collect();
@@ -387,7 +387,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 .argument(index)
                 .expect("the resolver answered from the row this block was built for")
                 .into(),
-            Lookup::Let(symbol) => self.call(block, &symbol, CalleeKind::Let, &[], loc),
+            Lookup::Let(symbol) => self.call(block, symbol, CalleeKind::Let, &[], loc),
             Lookup::Ambiguous => self.missing(
                 block,
                 node,

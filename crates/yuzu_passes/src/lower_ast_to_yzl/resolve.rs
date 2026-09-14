@@ -9,6 +9,10 @@
 //! and a resolver that stored them would depend on the builder; one that
 //! stores where a name lives depends on nothing.
 //!
+//! Names are `&'c str`: the emitter interns each into the MLIR context, which
+//! uniques strings for as long as it lives, so a name is a pointer here and
+//! a row is `Copy`.
+//!
 //! The row is the one piece of state a query threads from stage to stage.
 //! Each stage's transition — what `select` names, what `join` concatenates,
 //! what `drop` sheds — is resolution, so it is decided here and the traversal
@@ -20,35 +24,33 @@ use yuzu_mlir::attributes::CalleeKind;
 
 /// A column the query carries at some stage: its name, and the alias
 /// qualifying it once an `as` or a join has named its side.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub(super) struct Column {
-    pub(super) qualifier: Option<String>,
-    pub(super) name: String,
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) struct Column<'c> {
+    pub(super) qualifier: Option<&'c str>,
+    pub(super) name: &'c str,
 }
 
-impl Column {
+impl Column<'_> {
     fn matches(&self, reference: &str) -> bool {
         match reference.split_once('.') {
-            Some((qualifier, name)) => {
-                self.qualifier.as_deref() == Some(qualifier) && self.name == name
-            }
+            Some((qualifier, name)) => self.qualifier == Some(qualifier) && self.name == name,
             None => self.name == reference,
         }
     }
 }
 
-pub(super) type Row = Vec<Column>;
+pub(super) type Row<'c> = Vec<Column<'c>>;
 
 /// What a name in expression position resolved to.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub(super) enum Lookup {
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Lookup<'c> {
     /// A column of the row the enclosing stage sees, by position.
     Column(usize),
     /// A parameter of the enclosing function, by position.
     Param(usize),
     /// A module-level `let`: the value lives in its body, and a use is a
     /// call for expansion to inline.
-    Let(String),
+    Let(&'c str),
     /// Two columns answer to the name; a qualifier would pick one.
     Ambiguous,
     /// An earlier stage carried the column and narrowed it away — a
@@ -66,7 +68,7 @@ pub(super) struct Callable {
 }
 
 /// Why a callee did not resolve.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum CallError {
     /// A trait declares it, so no module-level name reaches one: choosing
     /// an implementation is dispatch, which nothing does yet.
@@ -74,27 +76,33 @@ pub(super) enum CallError {
     Unknown,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum JoinError<'c> {
+    UnknownRelation,
+    UsingColumn(&'c str),
+}
+
 /// A scope the traversal is inside. Only what can be named by position
 /// lives here; module declarations sit on the resolver itself.
-enum Scope {
-    Function { params: Vec<String> },
-    Stage { row: Row, shed: Vec<String> },
+enum Scope<'c> {
+    Function { params: Vec<&'c str> },
+    Stage { row: Row<'c>, shed: Vec<&'c str> },
 }
 
-pub(super) struct Resolver {
-    scopes: Vec<Scope>,
-    structs: HashMap<String, Vec<String>>,
+pub(super) struct Resolver<'c> {
+    scopes: Vec<Scope<'c>>,
+    structs: HashMap<&'c str, Vec<&'c str>>,
     /// Tables and query-valued lets: what `from` and `join` may name.
-    relations: HashMap<String, Row>,
-    callables: HashMap<String, Callable>,
-    traits: HashSet<String>,
+    relations: HashMap<&'c str, Row<'c>>,
+    callables: HashMap<&'c str, Callable>,
+    traits: HashSet<&'c str>,
     /// Methods the traits declare — known, so a call to one can say so.
-    methods: HashSet<String>,
+    methods: HashSet<&'c str>,
     /// Scalar-valued lets: what an expression may name.
-    lets: HashSet<String>,
+    lets: HashSet<&'c str>,
 }
 
-impl Resolver {
+impl<'c> Resolver<'c> {
     pub(super) fn new() -> Self {
         Self {
             scopes: Vec::new(),
@@ -119,25 +127,29 @@ impl Resolver {
             || self.lets.contains(name)
     }
 
-    pub(super) fn declare_struct(&mut self, name: &str, fields: Vec<String>) {
-        self.structs.insert(name.to_string(), fields);
+    pub(super) fn declare_struct(&mut self, name: &'c str, fields: Vec<&'c str>) {
+        self.structs.insert(name, fields);
     }
 
     /// A table over a declared struct; `None` when no such struct exists.
-    pub(super) fn declare_table(&mut self, name: &str, row: &str) -> Option<()> {
+    pub(super) fn declare_table(&mut self, name: &'c str, row: &str) -> Option<()> {
         let fields = self.structs.get(row)?.clone();
-        self.relations.insert(name.to_string(), unqualified(fields));
+        self.relations.insert(name, unqualified(fields));
         Some(())
     }
 
-    pub(super) fn declare_trait(&mut self, name: &str, methods: impl IntoIterator<Item = String>) {
-        self.traits.insert(name.to_string());
+    pub(super) fn declare_trait(
+        &mut self,
+        name: &'c str,
+        methods: impl IntoIterator<Item = &'c str>,
+    ) {
+        self.traits.insert(name);
         self.methods.extend(methods);
     }
 
-    pub(super) fn declare_function(&mut self, name: &str, arity: usize, kind: CalleeKind) {
+    pub(super) fn declare_function(&mut self, name: &'c str, arity: usize, kind: CalleeKind) {
         self.callables.insert(
-            name.to_string(),
+            name,
             Callable {
                 kind,
                 min_args: arity,
@@ -148,13 +160,13 @@ impl Resolver {
 
     /// A `let` whose body is a query: what `from` may name, once its row is
     /// known — which is after the body is emitted, so the row comes later.
-    pub(super) fn declare_query_let(&mut self, name: &str, row: Row) {
-        self.relations.insert(name.to_string(), row);
+    pub(super) fn declare_query_let(&mut self, name: &'c str, row: Row<'c>) {
+        self.relations.insert(name, row);
     }
 
     /// A `let` whose body is a value: what an expression may name.
-    pub(super) fn declare_scalar_let(&mut self, name: &str) {
-        self.lets.insert(name.to_string());
+    pub(super) fn declare_scalar_let(&mut self, name: &'c str) {
+        self.lets.insert(name);
     }
 
     pub(super) fn has_trait(&self, name: &str) -> bool {
@@ -168,7 +180,7 @@ impl Resolver {
 
     // --- scopes ---
 
-    pub(super) fn enter_function(&mut self, params: Vec<String>) {
+    pub(super) fn enter_function(&mut self, params: Vec<&'c str>) {
         self.scopes.push(Scope::Function { params });
     }
 
@@ -203,7 +215,7 @@ impl Resolver {
     }
 
     /// The row the enclosing stage sees, for building block arguments.
-    pub(super) fn row(&self) -> &Row {
+    pub(super) fn row(&self) -> &Row<'c> {
         match self.scopes.last() {
             Some(Scope::Stage { row, .. }) => row,
             Some(Scope::Function { .. }) | None => {
@@ -214,25 +226,27 @@ impl Resolver {
 
     // --- lookups ---
 
-    pub(super) fn lookup(&self, reference: &str) -> Lookup {
+    pub(super) fn lookup(&self, reference: &str) -> Lookup<'c> {
         match self.scopes.last() {
             Some(Scope::Stage { row, shed }) => self.lookup_column(row, shed, reference),
-            Some(Scope::Function { params }) => match params.iter().position(|p| p == reference) {
-                Some(index) => Lookup::Param(index),
-                None => self.lookup_module(reference),
-            },
+            Some(Scope::Function { params }) => {
+                match params.iter().position(|&param| param == reference) {
+                    Some(index) => Lookup::Param(index),
+                    None => self.lookup_module(reference),
+                }
+            }
             None => self.lookup_module(reference),
         }
     }
 
-    fn lookup_column(&self, row: &Row, shed: &[String], reference: &str) -> Lookup {
+    fn lookup_column(&self, row: &Row<'c>, shed: &[&'c str], reference: &str) -> Lookup<'c> {
         let mut matches = row.iter().enumerate().filter(|(_, c)| c.matches(reference));
         match (matches.next(), matches.next()) {
             (Some((index, _)), None) => Lookup::Column(index),
             (Some(_), Some(_)) => Lookup::Ambiguous,
             (None, _) => {
                 let column = reference.split_once('.').map_or(reference, |(_, n)| n);
-                if shed.iter().any(|s| s == column) {
+                if shed.contains(&column) {
                     return Lookup::NarrowedAway;
                 }
 
@@ -241,11 +255,10 @@ impl Resolver {
         }
     }
 
-    fn lookup_module(&self, reference: &str) -> Lookup {
-        if self.lets.contains(reference) {
-            Lookup::Let(reference.to_string())
-        } else {
-            Lookup::Unknown
+    fn lookup_module(&self, reference: &str) -> Lookup<'c> {
+        match self.lets.get(reference) {
+            Some(&name) => Lookup::Let(name),
+            None => Lookup::Unknown,
         }
     }
 
@@ -290,7 +303,7 @@ impl Resolver {
     // stage stops carrying join the shed list, so a later reference to one
     // can say so.
 
-    fn stage(&mut self) -> (&mut Row, &mut Vec<String>) {
+    fn stage(&mut self) -> (&mut Row<'c>, &mut Vec<&'c str>) {
         match self.scopes.last_mut() {
             Some(Scope::Stage { row, shed }) => (row, shed),
             Some(Scope::Function { .. }) | None => {
@@ -299,29 +312,29 @@ impl Resolver {
         }
     }
 
-    fn replace_row(&mut self, next: Row) {
+    fn replace_row(&mut self, next: Row<'c>) {
         let (row, shed) = self.stage();
         for column in row.iter() {
             if !next.iter().any(|kept| kept.name == column.name) && !shed.contains(&column.name) {
-                shed.push(column.name.clone());
+                shed.push(column.name);
             }
         }
 
         *row = next;
     }
 
-    pub(super) fn alias(&mut self, alias: &str) {
+    pub(super) fn alias(&mut self, alias: &'c str) {
         let (row, _) = self.stage();
         for column in row.iter_mut() {
-            column.qualifier = Some(alias.to_string());
+            column.qualifier = Some(alias);
         }
     }
 
-    pub(super) fn select(&mut self, names: Vec<String>) {
+    pub(super) fn select(&mut self, names: Vec<&'c str>) {
         self.replace_row(unqualified(names));
     }
 
-    pub(super) fn extend(&mut self, names: Vec<String>) {
+    pub(super) fn extend(&mut self, names: Vec<&'c str>) {
         let mut next = self.row().clone();
         next.extend(unqualified(names));
         self.replace_row(next);
@@ -329,28 +342,24 @@ impl Resolver {
 
     /// The indices the named columns occupy; `Err` names the first that is
     /// not in the row.
-    pub(super) fn set(&mut self, names: &[String]) -> Result<Vec<usize>, String> {
+    pub(super) fn set(&mut self, names: &[&'c str]) -> Result<Vec<usize>, &'c str> {
         let row = self.row();
         names
             .iter()
-            .map(|name| {
-                row.iter()
-                    .position(|c| c.matches(name))
-                    .ok_or_else(|| name.clone())
-            })
+            .map(|&name| row.iter().position(|c| c.matches(name)).ok_or(name))
             .collect()
     }
 
     /// Resolution removes the first column each name matches, so dropping
     /// one name twice drops two columns.
-    pub(super) fn drop(&mut self, names: &[String]) -> Result<(), String> {
+    pub(super) fn drop(&mut self, names: &[&'c str]) -> Result<(), &'c str> {
         let mut next = self.row().clone();
-        for name in names {
+        for &name in names {
             match next.iter().position(|c| c.matches(name)) {
                 Some(index) => {
                     next.remove(index);
                 }
-                None => return Err(name.clone()),
+                None => return Err(name),
             }
         }
 
@@ -360,16 +369,20 @@ impl Resolver {
 
     /// The index each renamed column occupies; `Err` names the first that is
     /// not in the row.
-    pub(super) fn rename(&mut self, from: &[String], to: &[String]) -> Result<Vec<usize>, String> {
+    pub(super) fn rename(
+        &mut self,
+        from: &[&'c str],
+        to: &[&'c str],
+    ) -> Result<Vec<usize>, &'c str> {
         let mut next = self.row().clone();
         let mut indices = Vec::with_capacity(from.len());
-        for (from, to) in from.iter().zip(to) {
+        for (&from, &to) in from.iter().zip(to) {
             match next.iter().position(|c| c.matches(from)) {
                 Some(index) => {
                     indices.push(index);
-                    next[index].name = to.clone();
+                    next[index].name = to;
                 }
-                None => return Err(from.clone()),
+                None => return Err(from),
             }
         }
 
@@ -381,18 +394,18 @@ impl Resolver {
     /// `Err` is the first key not in the row.
     pub(super) fn aggregate(
         &mut self,
-        group_by: &[String],
-        names: Vec<String>,
-    ) -> Result<Vec<usize>, Lookup> {
+        group_by: &[&'c str],
+        names: Vec<&'c str>,
+    ) -> Result<Vec<usize>, Lookup<'c>> {
         let row = self.row();
         let mut keys = Vec::with_capacity(group_by.len());
         let mut next = Row::with_capacity(group_by.len() + names.len());
-        for name in group_by {
+        for &name in group_by {
             let mut matches = row.iter().enumerate().filter(|(_, c)| c.matches(name));
             match (matches.next(), matches.next()) {
-                (Some((index, column)), None) => {
+                (Some((index, &column)), None) => {
                     keys.push(index);
-                    next.push(column.clone());
+                    next.push(column);
                 }
                 (Some(_), Some(_)) => return Err(Lookup::Ambiguous),
                 (None, _) => return Err(Lookup::Unknown),
@@ -409,26 +422,26 @@ impl Resolver {
     pub(super) fn join(
         &mut self,
         relation: &str,
-        alias: Option<&str>,
-        using: &[String],
-    ) -> Result<(), JoinError> {
-        let Some(rhs) = self.relations.get(relation).cloned() else {
+        alias: Option<&'c str>,
+        using: &[&'c str],
+    ) -> Result<(), JoinError<'c>> {
+        let Some(rhs) = self.relations.get(relation) else {
             return Err(JoinError::UnknownRelation);
         };
 
-        let rhs: Row = rhs
-            .into_iter()
-            .map(|column| Column {
-                qualifier: alias.map(str::to_string).or(column.qualifier),
+        let rhs: Row<'c> = rhs
+            .iter()
+            .map(|&column| Column {
+                qualifier: alias.or(column.qualifier),
                 name: column.name,
             })
             .collect();
 
         let lhs = self.row();
-        for name in using {
+        for &name in using {
             for side in [lhs, &rhs] {
                 if !side.iter().any(|c| c.matches(name)) {
-                    return Err(JoinError::UsingColumn(name.clone()));
+                    return Err(JoinError::UsingColumn(name));
                 }
             }
         }
@@ -440,13 +453,7 @@ impl Resolver {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub(super) enum JoinError {
-    UnknownRelation,
-    UsingColumn(String),
-}
-
-fn unqualified(names: Vec<String>) -> Row {
+fn unqualified<'c>(names: Vec<&'c str>) -> Row<'c> {
     names
         .into_iter()
         .map(|name| Column {
@@ -461,9 +468,9 @@ mod tests {
     use super::{CallError, Column, JoinError, Lookup, Resolver};
     use yuzu_mlir::attributes::CalleeKind;
 
-    fn resolver_with_table() -> Resolver {
+    fn resolver_with_table() -> Resolver<'static> {
         let mut resolver = Resolver::new();
-        resolver.declare_struct("Row", vec!["id".into(), "dept_id".into()]);
+        resolver.declare_struct("Row", vec!["id", "dept_id"]);
         resolver.declare_table("t", "Row").expect("Row is declared");
         resolver
     }
@@ -482,7 +489,7 @@ mod tests {
     #[test]
     fn a_qualifier_picks_between_same_named_columns() {
         let mut resolver = resolver_with_table();
-        resolver.declare_struct("Dept", vec!["id".into()]);
+        resolver.declare_struct("Dept", vec!["id"]);
         resolver
             .declare_table("depts", "Dept")
             .expect("Dept is declared");
@@ -501,7 +508,7 @@ mod tests {
     fn a_shed_column_is_narrowed_away_not_unknown() {
         let mut resolver = resolver_with_table();
         resolver.enter_query("t").expect("t is a relation");
-        resolver.drop(&["id".into()]).expect("id is in the row");
+        resolver.drop(&["id"]).expect("id is in the row");
 
         assert_eq!(resolver.lookup("id"), Lookup::NarrowedAway);
         assert_eq!(resolver.lookup("dept_id"), Lookup::Column(0));
@@ -514,13 +521,13 @@ mod tests {
         let mut resolver = resolver_with_table();
         resolver.declare_scalar_let("cap");
 
-        assert_eq!(resolver.lookup("cap"), Lookup::Let("cap".into()));
-        resolver.enter_function(vec!["x".into()]);
+        assert_eq!(resolver.lookup("cap"), Lookup::Let("cap"));
+        resolver.enter_function(vec!["x"]);
         assert_eq!(resolver.lookup("x"), Lookup::Param(0));
-        assert_eq!(resolver.lookup("cap"), Lookup::Let("cap".into()));
+        assert_eq!(resolver.lookup("cap"), Lookup::Let("cap"));
         resolver.leave();
         resolver.enter_query("t").expect("t is a relation");
-        assert_eq!(resolver.lookup("cap"), Lookup::Let("cap".into()));
+        assert_eq!(resolver.lookup("cap"), Lookup::Let("cap"));
     }
 
     /// Innermost wins: a column shadows a module-level let of the same name.
@@ -538,7 +545,7 @@ mod tests {
         let mut resolver = resolver_with_table();
         resolver.declare_scalar_let("cap");
         resolver.declare_function("f", 2, CalleeKind::Fn);
-        resolver.declare_trait("Zero", ["zero".into()]);
+        resolver.declare_trait("Zero", ["zero"]);
 
         let cap = resolver
             .callable("cap", &yuzu_types::Builtins)
@@ -566,7 +573,7 @@ mod tests {
         let mut resolver = resolver_with_table();
         resolver.enter_query("t").expect("t is a relation");
         let keys = resolver
-            .aggregate(&["dept_id".into()], vec!["n".into()])
+            .aggregate(&["dept_id"], vec!["n"])
             .expect("dept_id is in the row");
 
         assert_eq!(keys, vec![1]);
@@ -578,31 +585,31 @@ mod tests {
     #[test]
     fn using_needs_the_column_on_both_sides() {
         let mut resolver = resolver_with_table();
-        resolver.declare_struct("Dept", vec!["dept_id".into()]);
+        resolver.declare_struct("Dept", vec!["dept_id"]);
         resolver
             .declare_table("depts", "Dept")
             .expect("Dept is declared");
         resolver.enter_query("t").expect("t is a relation");
 
         assert_eq!(
-            resolver.join("depts", None, &["id".into()]),
-            Err(JoinError::UsingColumn("id".into()))
+            resolver.join("depts", None, &["id"]),
+            Err(JoinError::UsingColumn("id"))
         );
-        assert_eq!(resolver.join("depts", None, &["dept_id".into()]), Ok(()));
+        assert_eq!(resolver.join("depts", None, &["dept_id"]), Ok(()));
         assert_eq!(
             resolver.row(),
             &vec![
                 Column {
                     qualifier: None,
-                    name: "id".into()
+                    name: "id"
                 },
                 Column {
                     qualifier: None,
-                    name: "dept_id".into()
+                    name: "dept_id"
                 },
                 Column {
                     qualifier: None,
-                    name: "dept_id".into()
+                    name: "dept_id"
                 },
             ]
         );

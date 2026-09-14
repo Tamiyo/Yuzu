@@ -5,7 +5,7 @@ use melior::ir::{
 use yuzu_ast::{AstNode, ast};
 use yuzu_mlir::ods::yzl;
 
-use crate::lower_ast_to_yzl::{AstToYzl, Locals, ident_text};
+use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 use melior::ir::r#type::IntegerType;
 use yuzu_mlir::attributes::JoinKind;
 use yuzu_mlir::ext::{OperationExt, OperationMutExt};
@@ -22,7 +22,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let loc = self.location(rel);
         match rel {
             ast::Rel::FromExpr(from) => {
-                let Some(source) = ident_text(from.relation()) else {
+                let Some(source) = self.ident(from.relation()) else {
                     return self.missing(
                         block,
                         from,
@@ -31,9 +31,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     );
                 };
 
-                let value = self.from(block, from, &source, loc);
-                match ident_text(from.alias()) {
-                    Some(alias) => self.alias(block, value, &alias, loc),
+                let value = self.from(block, from, source, loc);
+                match self.ident(from.alias()) {
+                    Some(alias) => self.alias(block, value, alias, loc),
                     None => value,
                 }
             }
@@ -105,9 +105,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             }
             ast::Rel::AggregateExpr(stage) => {
                 let input = self.convert_input(block, stage, "`aggregate`", stage.input());
-                let mut group_by = Vec::new();
+                let mut group_by: Vec<&'c str> = Vec::new();
                 for item in stage.group_by().into_iter().flat_map(|group| group.items()) {
-                    match ident_text(item.column()) {
+                    match self.ident(item.column()) {
                         Some(name) => group_by.push(name),
                         None => self.error(&item, "group by item is missing its column"),
                     }
@@ -131,10 +131,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                         Vec::new()
                     }
                 };
-                let group_attrs: Vec<Attribute> = group_by
-                    .iter()
-                    .map(|name| StringAttribute::new(self.context, name).into())
-                    .collect();
+                let group_attrs = self.string_attrs(&group_by);
                 let mut op: melior::ir::Operation<'c> = yzl::aggregate(
                     self.context,
                     types::query(self.context),
@@ -179,10 +176,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             }
             ast::Rel::RenameExpr(stage) => {
                 let input = self.convert_input(block, stage, "`rename`", stage.input());
-                let mut from = Vec::new();
-                let mut to = Vec::new();
+                let mut from: Vec<&'c str> = Vec::new();
+                let mut to: Vec<&'c str> = Vec::new();
                 for item in stage.items() {
-                    let (Some(old), Some(new)) = (ident_text(item.from()), ident_text(item.to()))
+                    let (Some(old), Some(new)) = (self.ident(item.from()), self.ident(item.to()))
                     else {
                         self.error(&item, "rename item is missing a column name");
                         continue;
@@ -191,8 +188,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     // `b.id as other` keeps its qualifier: the resolver matches
                     // qualified columns, so dropping it would rename whichever
                     // column happened to come first.
-                    let old = match ident_text(item.qualifier()) {
-                        Some(qualifier) => format!("{qualifier}.{old}"),
+                    let old = match self.ident(item.qualifier()) {
+                        Some(qualifier) => self.intern(&format!("{qualifier}.{old}")),
                         None => old,
                     };
                     from.push(old);
@@ -206,18 +203,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                         Vec::new()
                     }
                 };
-                let attrs = |names: &[String]| -> Vec<Attribute<'c>> {
-                    names
-                        .iter()
-                        .map(|name| StringAttribute::new(self.context, name).into())
-                        .collect()
-                };
                 let mut op: melior::ir::Operation<'c> = yzl::rename(
                     self.context,
                     types::query(self.context),
                     input,
-                    ArrayAttribute::new(self.context, &attrs(&from)),
-                    ArrayAttribute::new(self.context, &attrs(&to)),
+                    ArrayAttribute::new(self.context, &self.string_attrs(&from)),
+                    ArrayAttribute::new(self.context, &self.string_attrs(&to)),
                     loc,
                 )
                 .into();
@@ -226,12 +217,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             }
             ast::Rel::AliasExpr(stage) => {
                 let input = self.convert_input(block, stage, "`alias`", stage.input());
-                let Some(alias) = ident_text(stage.alias()) else {
+                let Some(alias) = self.ident(stage.alias()) else {
                     self.error(stage, "`alias` is missing its name");
                     return input;
                 };
 
-                self.alias(block, input, &alias, loc)
+                self.alias(block, input, alias, loc)
             }
             ast::Rel::JoinExpr(stage) => {
                 let lhs = self.convert_input(block, stage, "`join`", stage.input());
@@ -241,7 +232,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     Some(ast::JoinKind::Full) => JoinKind::Full,
                     _ => JoinKind::Inner,
                 };
-                let Some(rhs) = ident_text(stage.relation()) else {
+                let Some(rhs) = self.ident(stage.relation()) else {
                     return self.missing(
                         block,
                         stage,
@@ -250,17 +241,17 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     );
                 };
 
-                let alias = ident_text(stage.alias());
-                let using: Vec<String> = stage
+                let alias = self.ident(stage.alias());
+                let using: Vec<&'c str> = stage
                     .using()
                     .into_iter()
                     .flat_map(|using| using.columns())
-                    .filter_map(|column| column.text())
+                    .filter_map(|column| self.ident(Some(column)))
                     .collect();
                 // Both sides carry through, and the `on` region sees exactly
                 // that concatenation — so the row moves before the condition
                 // is resolved against it.
-                match self.resolver.join(&rhs, alias.as_deref(), &using) {
+                match self.resolver.join(rhs, alias, &using) {
                     Ok(()) => {}
                     Err(JoinError::UnknownRelation) => {
                         self.error(stage, &format!("unknown relation `{rhs}`"));
@@ -281,16 +272,13 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .result(types::query(self.context))
                     .lhs(lhs)
                     .kind(StringAttribute::new(self.context, kind.as_str()))
-                    .rhs(FlatSymbolRefAttribute::new(self.context, &rhs))
+                    .rhs(FlatSymbolRefAttribute::new(self.context, rhs))
                     .on(on);
                 if let Some(alias) = alias {
-                    builder = builder.rhs_alias(StringAttribute::new(self.context, &alias));
+                    builder = builder.rhs_alias(StringAttribute::new(self.context, alias));
                 }
                 if !using.is_empty() {
-                    let columns: Vec<Attribute> = using
-                        .iter()
-                        .map(|name| StringAttribute::new(self.context, name).into())
-                        .collect();
+                    let columns = self.string_attrs(&using);
                     builder = builder.using_columns(ArrayAttribute::new(self.context, &columns));
                 }
 
@@ -334,16 +322,15 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             }
             ast::Rel::DropExpr(stage) => {
                 let input = self.convert_input(block, stage, "`drop`", stage.input());
-                let names: Vec<String> =
-                    stage.columns().filter_map(|column| column.text()).collect();
+                let names: Vec<&'c str> = stage
+                    .columns()
+                    .filter_map(|column| self.ident(Some(column)))
+                    .collect();
                 if let Err(name) = self.resolver.drop(&names) {
                     self.error(stage, &format!("unknown column `{name}`"));
                 }
 
-                let columns: Vec<Attribute> = names
-                    .iter()
-                    .map(|name| StringAttribute::new(self.context, name).into())
-                    .collect();
+                let columns = self.string_attrs(&names);
                 block
                     .append_operation(
                         yzl::drop(
@@ -395,7 +382,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         input: Value<'c, 'a>,
-        alias: &str,
+        alias: &'c str,
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         self.resolver.alias(alias);
@@ -436,7 +423,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         match input {
             Some(ast::Expr::Rel(rel)) => self.convert_rel(block, &rel),
             Some(ast::Expr::IdentExpr(ident)) => {
-                let Some(name) = ident_text(ident.name()) else {
+                let Some(name) = self.ident(ident.name()) else {
                     return self.missing(
                         block,
                         &ident,
@@ -446,7 +433,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 };
 
                 let loc = self.location(&ident);
-                self.from(block, &ident, &name, loc)
+                self.from(block, &ident, name, loc)
             }
             Some(other) => self.missing(
                 block,
@@ -474,13 +461,14 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let mut names = Vec::with_capacity(items.len());
         let mut values = Vec::with_capacity(items.len());
         for (index, (alias, expr, range)) in items.into_iter().enumerate() {
-            let name = ident_text(alias)
+            let name = self
+                .ident(alias)
                 .or_else(|| match &expr {
-                    Some(ast::Expr::IdentExpr(ident)) => ident_text(ident.name()),
+                    Some(ast::Expr::IdentExpr(ident)) => self.ident(ident.name()),
                     _ => None,
                 })
-                .unwrap_or_else(|| format!("column{index}"));
-            names.push(StringAttribute::new(self.context, &name).into());
+                .unwrap_or_else(|| self.intern(&format!("column{index}")));
+            names.push(StringAttribute::new(self.context, name).into());
             let value = match &expr {
                 Some(expr) => self.convert_expr(body, &Locals::new(), expr),
                 None => {
@@ -495,17 +483,23 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         body.append_operation(yzl::r#yield(self.context, &values, loc).into());
         (names, region)
     }
+
+    fn string_attrs(&self, names: &[&'c str]) -> Vec<Attribute<'c>> {
+        names
+            .iter()
+            .map(|&name| StringAttribute::new(self.context, name).into())
+            .collect()
+    }
 }
 
 /// The names an attribute list carries, for the resolver.
-fn strings(names: &[Attribute<'_>]) -> Vec<String> {
+fn strings<'c>(names: &[Attribute<'c>]) -> Vec<&'c str> {
     names
         .iter()
-        .map(|name| {
-            melior::ir::attribute::StringAttribute::try_from(*name)
+        .map(|&name| {
+            StringAttribute::try_from(name)
                 .expect("a name attribute is a string")
                 .value()
-                .to_string()
         })
         .collect()
 }

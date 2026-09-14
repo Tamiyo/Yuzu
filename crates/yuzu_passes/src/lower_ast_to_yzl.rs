@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 
 use melior::Context;
+use melior::ir::attribute::StringAttribute;
 use melior::ir::operation::OperationLike;
 use melior::ir::{BlockLike, BlockRef, Location, Module, Type, Value, ValueLike};
 use yuzu_ast::{AstNode, ast};
@@ -49,11 +50,11 @@ struct AstToYzl<'c, 'd> {
     /// Every name the program can use, and what it means where it is used.
     /// Its scopes move with the traversal, which is why conversion takes
     /// `&mut self` throughout.
-    resolver: Resolver,
+    resolver: Resolver<'c>,
     registry: &'d dyn FunctionRegistry,
 }
 
-type Locals<'c, 'a> = HashMap<String, Value<'c, 'a>>;
+type Locals<'c, 'a> = HashMap<&'c str, Value<'c, 'a>>;
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
     fn new(
@@ -75,6 +76,21 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             resolver: Resolver::new(),
             registry,
         }
+    }
+
+    /// A name, owned by the context. Every name ends up in an attribute
+    /// anyway, and the context uniques attribute strings for as long as it
+    /// lives — so this is the attribute the name would have become, and the
+    /// resolver and locals hold the `&'c str` it hands back.
+    fn intern(&self, name: &str) -> &'c str {
+        StringAttribute::new(self.context, name).value()
+    }
+
+    /// An identifier's text, interned; `None` when the parser left a hole.
+    fn ident(&self, ident: Option<ast::Ident>) -> Option<&'c str> {
+        ident
+            .and_then(|ident| ident.text())
+            .map(|text| self.intern(&text))
     }
 
     fn error(&mut self, node: &impl AstNode, message: &str) {
@@ -154,10 +170,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             top.append_operation(yzl::output(self.context, value, loc).into());
         }
     }
-}
-
-fn ident_text(ident: Option<ast::Ident>) -> Option<String> {
-    ident.and_then(|ident| ident.text())
 }
 
 mod expr;
