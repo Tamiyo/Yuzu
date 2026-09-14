@@ -1,14 +1,95 @@
 use melior::ir::{
-    Attribute, Block, BlockLike, BlockRef, Region, RegionLike, Type, Value,
+    Attribute, Block, BlockLike, BlockRef, Location, Region, RegionLike, Type, Value,
     attribute::{ArrayAttribute, FlatSymbolRefAttribute, StringAttribute, TypeAttribute},
 };
-use yuzu_ast::ast;
+use yuzu_ast::{AstNode, ast};
+use yuzu_mlir::attributes::CalleeKind;
 use yuzu_mlir::ods::yzl;
 
 use crate::lower_ast_to_yzl::{AstToYzl, Locals, ident_text};
 use yuzu_mlir::types;
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
+    /// Registers every declaration before anything resolves, so order
+    /// between declarations does not matter. A `let` is not a declaration
+    /// in this sense: it binds in order, and only once its body is emitted.
+    pub(super) fn hoist(&self, root: &ast::Root) {
+        for stmt in root.stmts() {
+            match &stmt {
+                ast::Stmt::StructStmt(decl) => {
+                    let Some(name) = ident_text(decl.name()) else {
+                        continue;
+                    };
+                    self.check_duplicate(decl, "struct", &name);
+                    let fields = decl.fields().filter_map(|f| ident_text(f.name())).collect();
+                    self.resolver.borrow_mut().declare_struct(&name, fields);
+                }
+                ast::Stmt::TableStmt(decl) => {
+                    let Some(name) = ident_text(decl.name()) else {
+                        continue;
+                    };
+                    self.check_duplicate(decl, "relation", &name);
+                    // An inline table declares its own row under its own
+                    // name; a named one must name a struct the program has.
+                    if decl.inline_fields().next().is_some() {
+                        let fields = decl
+                            .inline_fields()
+                            .filter_map(|f| ident_text(f.name()))
+                            .collect();
+                        let mut resolver = self.resolver.borrow_mut();
+                        resolver.declare_struct(&name, fields);
+                        resolver.declare_table(&name, &name);
+                    } else if let Some(row) = ident_text(decl.row_struct())
+                        && self
+                            .resolver
+                            .borrow_mut()
+                            .declare_table(&name, &row)
+                            .is_none()
+                    {
+                        self.error(decl, &format!("unknown struct `{row}`"));
+                    }
+                }
+                ast::Stmt::TraitStmt(decl) => {
+                    let Some(name) = ident_text(decl.name()) else {
+                        continue;
+                    };
+                    self.check_duplicate(decl, "trait", &name);
+                    let methods = decl.methods().filter_map(|m| ident_text(m.name()));
+                    self.resolver.borrow_mut().declare_trait(&name, methods);
+                }
+                ast::Stmt::FuncStmt(decl) => {
+                    let Some(name) = ident_text(decl.name()) else {
+                        continue;
+                    };
+                    self.check_duplicate(decl, "function", &name);
+                    let kind = if decl.is_external() {
+                        CalleeKind::External
+                    } else if decl.is_agg() {
+                        CalleeKind::AggFn
+                    } else {
+                        CalleeKind::Fn
+                    };
+                    let arity = decl.params().count();
+                    self.resolver
+                        .borrow_mut()
+                        .declare_function(&name, arity, kind);
+                }
+                ast::Stmt::ImplStmt(_)
+                | ast::Stmt::LetStmt(_)
+                | ast::Stmt::ExprStmt(_)
+                | ast::Stmt::BlockStmt(_)
+                | ast::Stmt::AssignStmt(_)
+                | ast::Stmt::ReturnStmt(_) => {}
+            }
+        }
+    }
+
+    fn check_duplicate(&self, node: &impl AstNode, what: &str, name: &str) {
+        if self.resolver.borrow().is_declared(name) {
+            self.error(node, &format!("the {what} `{name}` is already defined"));
+        }
+    }
+
     pub(super) fn convert_stmt<'a>(&self, block: BlockRef<'c, 'a>, stmt: &ast::Stmt) {
         match stmt {
             ast::Stmt::StructStmt(decl) => self.convert_struct(block, decl),
@@ -20,6 +101,11 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             ast::Stmt::ExprStmt(stmt) => {
                 if let Some(expr) = stmt.expr() {
                     self.convert_expr(block, &Locals::new(), &expr);
+                    // A query is a scope, and the top-level one ends with
+                    // the statement that is the query.
+                    if matches!(expr, ast::Expr::Rel(_)) {
+                        self.resolver.borrow_mut().leave();
+                    }
                 }
             }
             ast::Stmt::BlockStmt(stmt) => self.error(stmt, "a block is not a top-level statement"),
@@ -128,13 +214,43 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             melior::ir::r#type::FunctionType::new(self.context, &params, &[result]).into()
         };
 
+        // A bound names a type parameter the function declares and a trait
+        // the program declares; either missing is reported here, where the
+        // declaration is.
+        for bound in decl.bounds() {
+            if let Some(subject) = ident_text(bound.subject())
+                && !generics.iter().any(|param| param == &subject)
+            {
+                self.error(&bound, &format!("unknown type parameter `{subject}`"));
+            }
+
+            for trait_ref in bound.traits() {
+                if let Some(trait_name) = ident_text(trait_ref.name())
+                    && !self.resolver.borrow().has_trait(&trait_name)
+                {
+                    self.error(&trait_ref, &format!("unknown trait `{trait_name}`"));
+                }
+            }
+        }
+
         let region = Region::new();
         if let Some(body) = decl.body() {
-            let entry = region.append_block(Block::new(&[]));
+            // Parameters are the entry block's arguments in declaration
+            // order, so a reference to one is an SSA use resolved by position.
+            let loc = self.location(decl);
+            let arguments: Vec<(Type<'c>, Location<'c>)> = decl
+                .params()
+                .map(|_| (types::var(self.context), loc))
+                .collect();
+            let entry = region.append_block(Block::new(&arguments));
+            let names: Vec<String> = decl.params().filter_map(|p| ident_text(p.name())).collect();
+            self.resolver.borrow_mut().enter_function(names);
             let mut locals = Locals::new();
             for stmt in body.stmts() {
                 self.convert_body_stmt(entry, &mut locals, &stmt);
             }
+
+            self.resolver.borrow_mut().leave();
         }
 
         let mut builder = yzl::FnOperationBuilder::new(self.context, self.location(decl))
@@ -230,6 +346,17 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             self.error(decl, "`impl` is missing its type name");
             return;
         };
+
+        {
+            let resolver = self.resolver.borrow();
+            if !resolver.has_trait(&trait_name) {
+                self.error(decl, &format!("unknown trait `{trait_name}`"));
+            }
+
+            if !resolver.is_type_name(&target) {
+                self.error(decl, &format!("unknown type `{target}`"));
+            }
+        }
 
         let region = Region::new();
         let body = region.append_block(Block::new(&[]));
@@ -331,9 +458,29 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             return;
         };
 
+        self.check_duplicate(decl, "binding", &name);
         let region = Region::new();
         let body = region.append_block(Block::new(&[]));
-        let value = self.convert_expr(body, &Locals::new(), &expr);
+        // Queries are expressions, but a query's row is what `from` needs
+        // and a value's name is what an expression needs — so the two bind
+        // differently once the body is emitted, and a query's scope ends
+        // with the body that is the query.
+        let value = match &expr {
+            ast::Expr::Rel(rel) => {
+                let value = self.convert_rel(body, rel);
+                let row = self.resolver.borrow().row().clone();
+                let mut resolver = self.resolver.borrow_mut();
+                resolver.leave();
+                resolver.declare_query_let(&name, row);
+                value
+            }
+            _ => {
+                let value = self.convert_expr(body, &Locals::new(), &expr);
+                self.resolver.borrow_mut().declare_scalar_let(&name);
+                value
+            }
+        };
+
         body.append_operation(yzl::r#yield(self.context, &[value], self.location(decl)).into());
         block.append_operation(
             yzl::r#let(
@@ -404,20 +551,19 @@ mod tests {
         expect![[r#"
             module {
               yzl.fn @f params ["x"] (!yz.int64) -> !yz.int64 {
-                %0 = yzl.name "x" : !yzl.var
-                %1 = yz.constant_int 2
-                %2 = yz.mul %0, %1 : !yzl.var, !yz.int64 -> !yzl.var
-                %3 = yz.constant_int 1
-                %4 = yz.add %2, %3 : !yzl.var, !yz.int64 -> !yzl.var
-                yzl.return %4 : !yzl.var
+              ^bb0(%arg0: !yzl.var):
+                %0 = yz.constant_int 2
+                %1 = yz.mul %arg0, %0 : !yzl.var, !yz.int64 -> !yzl.var
+                %2 = yz.constant_int 1
+                %3 = yz.add %1, %2 : !yzl.var, !yz.int64 -> !yzl.var
+                yzl.return %3 : !yzl.var
               }
               yzl.fn @spread params ["x"] (!yz.int64) -> !yz.int64 agg {
-                %0 = yzl.name "x" : !yzl.var
-                %1 = yzl.call @max(%0) : (!yzl.var) -> !yzl.var
-                %2 = yzl.name "x" : !yzl.var
-                %3 = yzl.call @min(%2) : (!yzl.var) -> !yzl.var
-                %4 = yz.sub %1, %3 : !yzl.var, !yzl.var -> !yzl.var
-                yzl.return %4 : !yzl.var
+              ^bb0(%arg0: !yzl.var):
+                %0 = yzl.call @max(%arg0) : (!yzl.var) -> !yzl.var {callee_kind = "builtin"}
+                %1 = yzl.call @min(%arg0) : (!yzl.var) -> !yzl.var {callee_kind = "builtin"}
+                %2 = yz.sub %0, %1 : !yzl.var, !yzl.var -> !yzl.var
+                yzl.return %2 : !yzl.var
               }
               yzl.fn @upper params ["s"] (!yz.str) -> !yz.str external {
               }
@@ -444,22 +590,21 @@ external fn upper(s: str) -> str
     #[test]
     fn converts_expression_statements_in_bodies() {
         expect![[r#"
-        module {
-          yzl.struct @Row ["a"] : [!yz.int64]
-          yzl.table @t of @Row
-          yzl.fn @f params ["x"] (!yz.int64) -> !yz.int64 {
-            %1 = yzl.name "x" : !yzl.var
-            %2 = yz.constant_int 1
-            %3 = yz.add %1, %2 : !yzl.var, !yz.int64 -> !yzl.var
-            %4 = yzl.name "x" : !yzl.var
-            %5 = yz.constant_int 2
-            %6 = yz.mul %4, %5 : !yzl.var, !yz.int64 -> !yzl.var
-            yzl.return %6 : !yzl.var
-          }
-          %0 = yzl.from @t
-          yzl.output %0
-        }
-    "#]].assert_eq(&converted(
+            module {
+              yzl.struct @Row ["a"] : [!yz.int64]
+              yzl.table @t of @Row
+              yzl.fn @f params ["x"] (!yz.int64) -> !yz.int64 {
+              ^bb0(%arg0: !yzl.var):
+                %1 = yz.constant_int 1
+                %2 = yz.add %arg0, %1 : !yzl.var, !yz.int64 -> !yzl.var
+                %3 = yz.constant_int 2
+                %4 = yz.mul %arg0, %3 : !yzl.var, !yz.int64 -> !yzl.var
+                yzl.return %4 : !yzl.var
+              }
+              %0 = yzl.from @t
+              yzl.output %0
+            }
+        "#]].assert_eq(&converted(
             "struct Row { a: int64 }\ntable t = Row\n\nfn f(x: int64) -> int64 {\n    x + 1\n    let y = x * 2\n    return y\n}\n\nfrom t\n",
         ));
     }
@@ -477,15 +622,14 @@ external fn upper(s: str) -> str
               }
               yzl.impl @Add for @int64 {
                 yzl.fn @add generics ["Self"] params ["x", "y"] (!yz.int64, !yz.int64) -> !yz.int64 {
-                  %0 = yzl.name "x" : !yzl.var
-                  %1 = yzl.name "y" : !yzl.var
-                  %2 = yz.add %0, %1 : !yzl.var, !yzl.var -> !yzl.var
-                  yzl.return %2 : !yzl.var
+                ^bb0(%arg0: !yzl.var, %arg1: !yzl.var):
+                  %0 = yz.add %arg0, %arg1 : !yzl.var, !yzl.var -> !yzl.var
+                  yzl.return %0 : !yzl.var
                 }
               }
               yzl.fn @id generics ["T"] where ["T"] : [@Add] params ["x"] (!yzl.param<"T">) -> !yzl.param<"T"> {
-                %0 = yzl.name "x" : !yzl.var
-                yzl.return %0 : !yzl.var
+              ^bb0(%arg0: !yzl.var):
+                yzl.return %arg0 : !yzl.var
               }
             }
         "#]].assert_eq(&converted(

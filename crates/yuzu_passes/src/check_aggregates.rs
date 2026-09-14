@@ -196,7 +196,7 @@ impl<'c> Checker<'_, 'c> {
             Some(CalleeKind::Builtin) => self.registry.entries().iter().any(|entry| {
                 entry.name == callee && matches!(entry.func, BuiltinFunc::Aggregate(_))
             }),
-            Some(CalleeKind::Fn | CalleeKind::External) | None => false,
+            Some(CalleeKind::Fn | CalleeKind::External | CalleeKind::Let) | None => false,
         }
     }
 }
@@ -205,14 +205,13 @@ impl<'c> Checker<'_, 'c> {
 mod tests {
     use expect_test::{Expect, expect};
 
+    use crate::check_aggregates;
     use crate::test_support;
-    use crate::{check_aggregates, resolve_names};
 
     fn check(source: &str, expected: Expect) {
         test_support::check_diagnostics(
             source,
             |context, module| {
-                resolve_names(context, module, &yuzu_types::Builtins);
                 check_aggregates(module, &yuzu_types::Builtins);
             },
             expected,
@@ -362,10 +361,10 @@ from t
     "#,
             expect![[r#"
                 error: an `agg fn` must use an aggregate function
-                 --> test.yz:5:47
+                 --> test.yz:5:1
                   |
                 5 | agg fn spread(x: float64) -> float64 { return x }
-                  |                                               ^
+                  | ^
             "#]],
         );
     }

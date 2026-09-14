@@ -310,14 +310,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
             Some(YzlOp::Missing(_)) => self.error(op, "this part of the query is missing"),
             // Declarations yzr does not need, and the terminators a region
             // owns rather than the module.
-            Some(
-                YzlOp::Name(_)
-                | YzlOp::Call(_)
-                | YzlOp::List(_)
-                | YzlOp::Yield(_)
-                | YzlOp::Return(_),
-            )
-            | None => {}
+            Some(YzlOp::Call(_) | YzlOp::List(_) | YzlOp::Yield(_) | YzlOp::Return(_)) | None => {}
         }
     }
 

@@ -20,7 +20,7 @@ use melior::Context;
 use melior::ir::ValueLike;
 use melior::ir::attribute::TypeAttribute;
 use melior::ir::operation::{OperationBuilder, OperationLike, OperationRef};
-use melior::ir::{Attribute, BlockRef, Identifier, Module, RegionLike, Type, Value};
+use melior::ir::{Attribute, BlockLike, BlockRef, Identifier, Module, RegionLike, Type, Value};
 use melior::{IrRewriter, RewriterBase, ir::Location};
 use yuzu_mlir::attributes::CalleeKind;
 use yuzu_mlir::ext::{
@@ -74,7 +74,10 @@ fn collect_calls<'c, 'a>(block: BlockRef<'c, 'a>, out: &mut Vec<OperationRef<'c,
                 continue;
             }
             Some(YzlOp::Call(call)) => {
-                if matches!(call.callee_kind(), Some(CalleeKind::Fn | CalleeKind::AggFn)) {
+                if matches!(
+                    call.callee_kind(),
+                    Some(CalleeKind::Fn | CalleeKind::AggFn | CalleeKind::Let)
+                ) {
                     out.push(op);
                 }
             }
@@ -104,44 +107,64 @@ fn expand<'c, 'a>(
         return error(call.location(), &format!("unknown function `{callee}`"));
     };
 
-    let Some(YzlOp::Fn(function)) = declaration.as_yzl() else {
-        return error(call.location(), &format!("`{callee}` is not a function"));
-    };
+    // A `let` is a body with no parameters; it expands exactly as a
+    // function does, and yields where a function returns.
+    let (body, arguments_types) = match declaration.as_yzl() {
+        Some(YzlOp::Fn(function)) => {
+            let Some(body) = function.body().first_block() else {
+                return error(
+                    call.location(),
+                    &format!("`{callee}` has no body to expand here"),
+                );
+            };
 
-    let Some(body) = function.body().first_block() else {
-        return error(
-            call.location(),
-            &format!("`{callee}` has no body to expand here"),
-        );
-    };
+            let Some(types) = type_arguments(&function, &site, call.location(), callee) else {
+                return false;
+            };
 
-    let Some(arguments_types) = type_arguments(&function, &site, call.location(), callee) else {
-        return false;
+            (body, types)
+        }
+        Some(YzlOp::Let(binding)) => {
+            let Some(body) = binding.body().first_block() else {
+                return error(
+                    call.location(),
+                    &format!("`{callee}` has no body to expand here"),
+                );
+            };
+
+            (body, HashMap::new())
+        }
+        _ => return error(call.location(), &format!("`{callee}` is not a function")),
     };
 
     let arguments: Vec<Value> = call.operands().collect();
     rewriter.set_insertion_point_before(call);
 
+    // The body's block arguments are its parameters; each stands for the
+    // argument the call supplied, so a use of one copies as a use of that.
     let mut values: HashMap<usize, Value> = HashMap::new();
+    if body.argument_count() != arguments.len() {
+        return error(
+            call.location(),
+            &format!(
+                "`{callee}` takes {} arguments, got {}",
+                body.argument_count(),
+                arguments.len()
+            ),
+        );
+    }
+
+    for (index, &argument) in arguments.iter().enumerate() {
+        let parameter = body
+            .argument(index)
+            .expect("the argument index is in range");
+        values.insert(parameter.id(), argument);
+    }
+
     let mut returned = None;
     for op in body.operations() {
         match op.as_yzl() {
-            // A parameter reference is the argument, not a copy of anything.
-            Some(YzlOp::Name(name)) if name.param().is_some() => {
-                let index = name
-                    .param()
-                    .expect("the parameter stamp is present")
-                    .value() as usize;
-                let Some(&argument) = arguments.get(index) else {
-                    return error(
-                        call.location(),
-                        &format!("`{callee}` wants an argument this call did not supply"),
-                    );
-                };
-
-                values.insert(op.first_result().id(), argument);
-            }
-            Some(YzlOp::Return(_)) => {
+            Some(YzlOp::Return(_) | YzlOp::Yield(_)) => {
                 returned = op
                     .try_first_operand()
                     .and_then(|value| values.get(&value.id()).copied());
@@ -446,6 +469,12 @@ from t
                   |
                 5 | fn forever(x: int64) -> int64 { return forever(x) }
                   | ^
+
+                error: `forever` was not expanded before lowering
+                 --> test.yz:5:40
+                  |
+                5 | fn forever(x: int64) -> int64 { return forever(x) }
+                  |                                        ^
             "#]],
         );
     }
@@ -507,6 +536,12 @@ from t
 "#,
             expect![[r#"
                 error: `zero` is a trait method, and calling one is not supported yet
+                 --> test.yz:10:47
+                   |
+                10 | fn shift[T](x: T) -> T where T: Zero { return zero(x) }
+                   |                                               ^^^^^^^
+
+                error: this part of the query is missing
                  --> test.yz:10:47
                    |
                 10 | fn shift[T](x: T) -> T where T: Zero { return zero(x) }

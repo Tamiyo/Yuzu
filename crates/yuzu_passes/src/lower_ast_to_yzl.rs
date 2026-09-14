@@ -16,6 +16,9 @@ use yuzu_mlir::ext::BlockExt;
 use yuzu_mlir::ext::OperationExt;
 use yuzu_mlir::ods::yzl;
 use yuzu_mlir::types;
+use yuzu_types::FunctionRegistry;
+
+use crate::lower_ast_to_yzl::resolve::Resolver;
 
 /// Parses the source and converts it to a yzl module. Everything the
 /// conversion cannot carry — parse errors, missing pieces, unsupported
@@ -28,11 +31,12 @@ pub fn lower_ast_to_yzl<'c>(
     source: &str,
     source_id: SourceId,
     diagnostics: &mut DiagnosticsEngine,
+    registry: &dyn FunctionRegistry,
 ) -> Option<Module<'c>> {
     let tokens: Vec<Token> = Lexer::new(source).collect();
     let syntax = yuzu_parser::parse(&tokens, diagnostics, source_id);
     let root = ast::Root::cast(syntax)?;
-    let converter = AstToYzl::new(context, name, source, source_id, diagnostics);
+    let converter = AstToYzl::new(context, name, source, source_id, diagnostics, registry);
     Some(converter.convert(&root))
 }
 
@@ -42,6 +46,11 @@ struct AstToYzl<'c, 'd> {
     source_id: SourceId,
     diagnostics: std::cell::RefCell<&'d mut DiagnosticsEngine>,
     line_starts: Vec<usize>,
+    /// Every name the program can use, and what it means where it is used.
+    /// Interior mutability because conversion threads `&self` everywhere and
+    /// the resolver's scopes move with the traversal.
+    resolver: std::cell::RefCell<Resolver>,
+    registry: &'d dyn FunctionRegistry,
 }
 
 type Locals<'c, 'a> = HashMap<String, Value<'c, 'a>>;
@@ -53,6 +62,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         source: &str,
         source_id: SourceId,
         diagnostics: &'d mut DiagnosticsEngine,
+        registry: &'d dyn FunctionRegistry,
     ) -> Self {
         let mut line_starts = vec![0];
         line_starts.extend(source.match_indices('\n').map(|(at, _)| at + 1));
@@ -62,6 +72,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             source_id,
             diagnostics: std::cell::RefCell::new(diagnostics),
             line_starts,
+            resolver: std::cell::RefCell::new(Resolver::new()),
+            registry,
         }
     }
 
@@ -120,6 +132,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn convert(&self, root: &ast::Root) -> Module<'c> {
         let module = Module::new(Location::new(self.context, &self.name, 1, 1));
         let top = module.body();
+        self.hoist(root);
         for stmt in root.stmts() {
             self.convert_stmt(top, &stmt);
         }
@@ -150,6 +163,7 @@ fn ident_text(ident: Option<ast::Ident>) -> Option<String> {
 
 mod expr;
 mod rel;
+mod resolve;
 mod stmt;
 
 #[cfg(test)]
@@ -169,8 +183,15 @@ pub(crate) mod test_support {
         let mut sources = SourceMap::new();
         let source_id = sources.add(name.to_string(), source.to_string());
         let mut diagnostics = DiagnosticsEngine::new();
-        let module = super::lower_ast_to_yzl(context, name, source, source_id, &mut diagnostics)
-            .expect("the source converts");
+        let module = super::lower_ast_to_yzl(
+            context,
+            name,
+            source,
+            source_id,
+            &mut diagnostics,
+            &yuzu_types::Builtins,
+        )
+        .expect("the source converts");
 
         (module, sources, diagnostics)
     }
@@ -214,11 +235,20 @@ mod tests {
             }
         }
 
+        // The harness compiles `schema + query`; the schema is the one
+        // triple-quoted chunk of support.py that declares the tables.
+        let schema = sources[0]
+            .split(r#"""""#)
+            .find(|chunk| chunk.contains("struct Employee"))
+            .expect("support.py declares the schema")
+            .to_string();
+
         let context = yuzu_mlir::context();
         let mut queries = 0;
         let mut failures = Vec::new();
         for source in &sources {
-            for (index, chunk) in source.split(r#"""""#).enumerate() {
+            let parts: Vec<&str> = source.split(r#"""""#).collect();
+            for (index, &chunk) in parts.iter().enumerate() {
                 // Odd chunks are the contents of triple-quoted strings; the
                 // ones holding Yuzu source pipe from a relation or declare —
                 // prose docstrings mentioning `|>` do neither.
@@ -230,6 +260,20 @@ mod tests {
                 }
 
                 queries += 1;
+                // The harness wraps a query it expects to fail in
+                // `error_of(...)`, in the code that follows the string, and
+                // such a query converting cleanly would be the failure here —
+                // except when the rejection is the target's: that is decided
+                // at emission, and conversion is right to let it through.
+                let expects_error = parts.get(index + 1).is_some_and(|after| {
+                    after.contains("error_of(") && !after.contains("not supported by the")
+                });
+                let program = if chunk.contains("struct ") {
+                    chunk.to_string()
+                } else {
+                    format!("{schema}{chunk}")
+                };
+                let chunk = program.as_str();
                 let mut sources = yuzu_diagnostics::source_map::SourceMap::new();
                 let source_id = sources.add("corpus.yz".to_string(), chunk.to_string());
                 let mut diagnostics =
@@ -240,10 +284,16 @@ mod tests {
                     chunk,
                     source_id,
                     &mut diagnostics,
+                    &yuzu_types::Builtins,
                 ) {
                     Some(module)
                         if diagnostics.diagnostics().is_empty()
-                            && module.as_operation().verify() => {}
+                            && module.as_operation().verify()
+                            && !expects_error => {}
+                    Some(_) if expects_error && !diagnostics.diagnostics().is_empty() => {}
+                    Some(_) if expects_error => failures.push(format!(
+                        "{chunk}\n  -> converted, but the harness expects an error"
+                    )),
                     Some(_) => {
                         let messages: Vec<&str> = diagnostics
                             .diagnostics()

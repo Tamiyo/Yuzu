@@ -170,20 +170,21 @@ pub fn compile_mlir(name: &str, source: &str) -> std::process::ExitCode {
     let mut sources = SourceMap::new();
     let source_id = sources.add(name.to_string(), source.to_string());
     let mut diagnostics = DiagnosticsEngine::new();
-    let Some(module) =
-        yuzu_passes::lower_ast_to_yzl(&context, name, source, source_id, &mut diagnostics)
-    else {
+    let Some(module) = yuzu_passes::lower_ast_to_yzl(
+        &context,
+        name,
+        source,
+        source_id,
+        &mut diagnostics,
+        &yuzu_types::Builtins,
+    ) else {
         print_diagnostics(&diagnostics, &sources);
         return std::process::ExitCode::FAILURE;
     };
 
     let verified =
         yuzu_mlir::diagnostics::capture(&context, source_id, source, &mut diagnostics, || {
-            let verified = module.as_operation().verify();
-            if verified {
-                yuzu_passes::resolve_names(&context, &module, &yuzu_types::Builtins);
-            }
-            verified
+            module.as_operation().verify()
         });
     if verified && !has_errors(&diagnostics) {
         yuzu_mlir::diagnostics::capture(&context, source_id, source, &mut diagnostics, || {

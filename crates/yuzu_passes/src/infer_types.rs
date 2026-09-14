@@ -10,7 +10,9 @@ use melior::Context;
 use melior::ir::attribute::{ArrayAttribute, IntegerAttribute, TypeAttribute};
 use melior::ir::operation::{OperationLike, OperationMutLike, OperationRef, OperationRefMut};
 use melior::ir::r#type::FunctionType;
-use melior::ir::{Attribute, BlockRef, Location, Module, RegionLike, Type, Value, ValueLike};
+use melior::ir::{
+    Attribute, BlockLike, BlockRef, Location, Module, RegionLike, Type, Value, ValueLike,
+};
 use yuzu_mlir::attributes::CalleeKind;
 use yuzu_mlir::ext::{
     ArrayAttributeExt, BlockExt, OperationCast, OperationExt, RegionExt, ValueExt,
@@ -226,18 +228,6 @@ impl<'c> TypeInferrer<'c> {
 
     fn infer_op(&mut self, op: OperationRef<'c, '_>, columns: &Row<'c>, params: &[Type<'c>]) {
         match op.as_yzl() {
-            Some(YzlOp::Name(name)) => {
-                let term = self.term_of(op.first_result());
-                if let Some(index) = name.col().map(|col| col.value() as usize) {
-                    if let Some(&column) = columns.get(index) {
-                        self.unify(op, term, column);
-                    }
-                } else if let Some(index) = name.param().map(|param| param.value() as usize)
-                    && let Some(&param) = params.get(index)
-                {
-                    self.unify(op, term, Term::Concrete(param));
-                }
-            }
             Some(YzlOp::Call(call)) => {
                 let callee = call.callee().value();
                 match call.callee_kind() {
@@ -246,6 +236,16 @@ impl<'c> TypeInferrer<'c> {
                     // function; only the body is missing, and a call does not
                     // need one. Skipping it left the call's type unresolved
                     // and carried a `!yzl.var` all the way into yzr.
+                    Some(CalleeKind::Let) => {
+                        let yielded = self
+                            .relations
+                            .get(callee)
+                            .and_then(|row| row.first().copied());
+                        if let Some(yielded) = yielded {
+                            let term = self.term_of(op.first_result());
+                            self.unify(op, term, yielded);
+                        }
+                    }
                     Some(CalleeKind::Fn | CalleeKind::AggFn | CalleeKind::External) | None => {
                         let Some(signature) = self.signatures.get(callee).cloned() else {
                             return;
@@ -530,9 +530,24 @@ impl<'c> TypeInferrer<'c> {
         }
     }
 
+    /// A region's block arguments are the row's columns or the function's
+    /// parameters, by position; each takes that term before the body is
+    /// inferred against it.
     fn infer_regions(&mut self, op: OperationRef<'c, '_>, columns: &Row<'c>, params: &[Type<'c>]) {
         for region in op.regions() {
             for block in region.blocks() {
+                for index in 0..block.argument_count() {
+                    let argument = block
+                        .argument(index)
+                        .expect("the argument index is in range");
+                    let term = self.term_of(argument.into());
+                    if let Some(&column) = columns.get(index) {
+                        self.unify(op, term, column);
+                    } else if let Some(&param) = params.get(index) {
+                        self.unify(op, term, Term::Concrete(param));
+                    }
+                }
+
                 self.infer_block(block, columns, params);
             }
         }
@@ -684,14 +699,13 @@ fn field_row<'c>(types: melior::ir::attribute::ArrayAttribute<'c>) -> Row<'c> {
 mod tests {
     use expect_test::{Expect, expect};
 
+    use crate::infer_types;
     use crate::test_support;
-    use crate::{infer_types, resolve_names};
 
     fn check(source: &str, expected: Expect) {
         test_support::check(
             source,
             |context, module| {
-                resolve_names(context, module, &yuzu_types::Builtins);
                 infer_types(context, module);
             },
             expected,
@@ -713,38 +727,36 @@ from t
 |> aggregate sum(e) as s, avg(rating) as r group by b
     "#,
             expect![[r#"
-            module {
-              yzl.struct @Row ["a", "b", "rating"] : [!yz.int64, !yz.int64, !yz.float64]
-              yzl.table @t of @Row
-              yzl.fn @f params ["x"] (!yz.int64) -> !yz.int64 {
-                %4 = yzl.name "x" : !yzl.var {param = 0 : i64, ty = !yz.int64}
-                %5 = yz.constant_int 3
-                %6 = yz.mul %4, %5 : !yzl.var, !yz.int64 -> !yzl.var {ty = !yz.int64}
-                yzl.return %6 : !yzl.var
-              }
-              %0 = yzl.from @t
-              %1 = yzl.where %0 {
-                %4 = yzl.name "a" : !yzl.var {col = 0 : i64, ty = !yz.int64}
-                %5 = yz.constant_int 10
-                %6 = yz.cmp "gt", %4, %5 : !yzl.var, !yz.int64 -> !yzl.var {ty = !yz.bool}
-                yzl.yield %6 : !yzl.var
-              }
-              %2 = yzl.extend %1 as ["e"] {
-                %4 = yzl.name "a" : !yzl.var {col = 0 : i64, ty = !yz.int64}
-                %5 = yzl.call @f(%4) : (!yzl.var) -> !yzl.var {callee_kind = "fn", ty = !yz.int64}
-                %6 = yzl.name "b" : !yzl.var {col = 1 : i64, ty = !yz.int64}
-                %7 = yz.add %5, %6 : !yzl.var, !yzl.var -> !yzl.var {ty = !yz.int64}
-                yzl.yield %7 : !yzl.var
-              }
-              %3 = yzl.aggregate %2 group_by ["b"] as ["s", "r"] {
-                %4 = yzl.name "e" : !yzl.var {col = 3 : i64, ty = !yz.int64}
-                %5 = yzl.call @sum(%4) : (!yzl.var) -> !yzl.var {callee_kind = "builtin", ty = !yz.int64}
-                %6 = yzl.name "rating" : !yzl.var {col = 2 : i64, ty = !yz.float64}
-                %7 = yzl.call @avg(%6) : (!yzl.var) -> !yzl.var {callee_kind = "builtin", ty = !yz.float64}
-                yzl.yield %5, %7 : !yzl.var, !yzl.var
-              } {key_cols = [1]}
-              yzl.output %3
-            }
+                module {
+                  yzl.struct @Row ["a", "b", "rating"] : [!yz.int64, !yz.int64, !yz.float64]
+                  yzl.table @t of @Row
+                  yzl.fn @f params ["x"] (!yz.int64) -> !yz.int64 {
+                  ^bb0(%arg0: !yzl.var):
+                    %4 = yz.constant_int 3
+                    %5 = yz.mul %arg0, %4 : !yzl.var, !yz.int64 -> !yzl.var {ty = !yz.int64}
+                    yzl.return %5 : !yzl.var
+                  }
+                  %0 = yzl.from @t
+                  %1 = yzl.where %0 {
+                  ^bb0(%arg0: !yzl.var, %arg1: !yzl.var, %arg2: !yzl.var):
+                    %4 = yz.constant_int 10
+                    %5 = yz.cmp "gt", %arg0, %4 : !yzl.var, !yz.int64 -> !yzl.var {ty = !yz.bool}
+                    yzl.yield %5 : !yzl.var
+                  }
+                  %2 = yzl.extend %1 as ["e"] {
+                  ^bb0(%arg0: !yzl.var, %arg1: !yzl.var, %arg2: !yzl.var):
+                    %4 = yzl.call @f(%arg0) : (!yzl.var) -> !yzl.var {callee_kind = "fn", ty = !yz.int64}
+                    %5 = yz.add %4, %arg1 : !yzl.var, !yzl.var -> !yzl.var {ty = !yz.int64}
+                    yzl.yield %5 : !yzl.var
+                  }
+                  %3 = yzl.aggregate %2 group_by ["b"] as ["s", "r"] {
+                  ^bb0(%arg0: !yzl.var, %arg1: !yzl.var, %arg2: !yzl.var, %arg3: !yzl.var):
+                    %4 = yzl.call @sum(%arg3) : (!yzl.var) -> !yzl.var {callee_kind = "builtin", ty = !yz.int64}
+                    %5 = yzl.call @avg(%arg2) : (!yzl.var) -> !yzl.var {callee_kind = "builtin", ty = !yz.float64}
+                    yzl.yield %4, %5 : !yzl.var, !yzl.var
+                  } {key_cols = [1]}
+                  yzl.output %3
+                }
             "#]],
         );
     }
@@ -785,29 +797,30 @@ from t
                   }
                   yzl.impl @Numeric for @int64 {
                     yzl.fn @zero generics ["Self"] params ["x"] (!yz.int64) -> !yz.int64 {
+                    ^bb0(%arg0: !yzl.var):
                       %2 = yz.constant_int 0
                       yzl.return %2 : !yz.int64
                     }
                   }
                   yzl.impl @Numeric for @float64 {
                     yzl.fn @zero generics ["Self"] params ["x"] (!yz.float64) -> !yz.float64 {
+                    ^bb0(%arg0: !yzl.var):
                       %2 = yz.constant_float 0.000000e+00
                       yzl.return %2 : !yz.float64
                     }
                   }
                   yzl.fn @id generics ["T"] where ["T"] : [@Numeric] params ["x"] (!yzl.param<"T">) -> !yzl.param<"T"> {
-                    %2 = yzl.name "x" : !yzl.var {param = 0 : i64, ty = !yzl.param<"T">}
-                    yzl.return %2 : !yzl.var
+                  ^bb0(%arg0: !yzl.var):
+                    yzl.return %arg0 : !yzl.var
                   }
                   yzl.struct @Row ["a", "r"] : [!yz.int64, !yz.float64]
                   yzl.table @t of @Row
                   %0 = yzl.from @t
                   %1 = yzl.extend %0 as ["m", "n"] {
-                    %2 = yzl.name "a" : !yzl.var {col = 0 : i64, ty = !yz.int64}
-                    %3 = yzl.call @id(%2) : (!yzl.var) -> !yzl.var {callee_kind = "fn", ty = !yz.int64, type_args = [!yz.int64]}
-                    %4 = yzl.name "r" : !yzl.var {col = 1 : i64, ty = !yz.float64}
-                    %5 = yzl.call @id(%4) : (!yzl.var) -> !yzl.var {callee_kind = "fn", ty = !yz.float64, type_args = [!yz.float64]}
-                    yzl.yield %3, %5 : !yzl.var, !yzl.var
+                  ^bb0(%arg0: !yzl.var, %arg1: !yzl.var):
+                    %2 = yzl.call @id(%arg0) : (!yzl.var) -> !yzl.var {callee_kind = "fn", ty = !yz.int64, type_args = [!yz.int64]}
+                    %3 = yzl.call @id(%arg1) : (!yzl.var) -> !yzl.var {callee_kind = "fn", ty = !yz.float64, type_args = [!yz.float64]}
+                    yzl.yield %2, %3 : !yzl.var, !yzl.var
                   }
                   yzl.output %1
                 }
@@ -837,9 +850,9 @@ from t
                   yzl.table @t of @Row
                   %0 = yzl.from @t
                   %1 = yzl.extend %0 as ["m"] {
-                    %2 = yzl.name "rating" : !yzl.var {col = 0 : i64, ty = !yz.float64}
-                    %3 = yzl.call @median(%2) : (!yzl.var) -> !yzl.var {callee_kind = "external", ty = !yz.float64}
-                    yzl.yield %3 : !yzl.var
+                  ^bb0(%arg0: !yzl.var):
+                    %2 = yzl.call @median(%arg0) : (!yzl.var) -> !yzl.var {callee_kind = "external", ty = !yz.float64}
+                    yzl.yield %2 : !yzl.var
                   }
                   yzl.output %1
                 }

@@ -2,12 +2,14 @@ use melior::ir::{
     Attribute, BlockLike, BlockRef, Location, Type, Value,
     attribute::{FlatSymbolRefAttribute, FloatAttribute, IntegerAttribute, StringAttribute},
 };
-use yuzu_ast::{BinOp, UnaryOp, ast};
+use yuzu_ast::{AstNode, BinOp, UnaryOp, ast};
 use yuzu_mlir::ods::{yz, yzl};
 
 use crate::lower_ast_to_yzl::{AstToYzl, Locals, ident_text};
 use melior::ir::r#type::IntegerType;
-use yuzu_mlir::attributes::CmpPredicate;
+use yuzu_mlir::attributes::{CalleeKind, CmpPredicate};
+
+use crate::lower_ast_to_yzl::resolve::{CallError, Lookup};
 use yuzu_mlir::ext::OperationExt;
 use yuzu_mlir::types;
 
@@ -35,7 +37,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     return value;
                 }
 
-                self.name_ref(block, &name, loc)
+                self.name_ref(block, ident, &name, loc)
             }
             ast::Expr::FieldAccessExpr(access) => {
                 // `t.a` is one qualified reference, not a load: keep the
@@ -71,7 +73,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     );
                 };
 
-                self.name_ref(block, &format!("{base}.{field}"), loc)
+                self.name_ref(block, access, &format!("{base}.{field}"), loc)
             }
             ast::Expr::BinaryExpr(binary) => self.convert_binary(block, locals, binary),
             ast::Expr::UnaryExpr(unary) => {
@@ -148,18 +150,52 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .iter()
                     .map(|arg| self.convert_expr(block, locals, arg))
                     .collect();
-                block
-                    .append_operation(
-                        yzl::call(
-                            self.context,
+                let callable = self.resolver.borrow().callable(&callee, self.registry);
+                let kind = match callable {
+                    Ok(callable) => {
+                        let (min, max) = (callable.min_args, callable.max_args);
+                        if operands.len() < min || operands.len() > max {
+                            let expected = if min == max {
+                                format!("{min}")
+                            } else {
+                                format!("{min} to {max}")
+                            };
+                            self.error(
+                                call,
+                                &format!(
+                                    "`{callee}` expects {expected} arguments, got {}",
+                                    operands.len()
+                                ),
+                            );
+                        }
+
+                        callable.kind
+                    }
+                    // A trait's methods live in its implementations, so no
+                    // module-level name reaches one. Choosing between them is
+                    // dispatch, which nothing does yet — and "unknown" would
+                    // send the reader looking for a declaration that is there.
+                    Err(CallError::TraitMethod) => {
+                        return self.missing(
+                            block,
+                            call,
+                            &format!(
+                                "`{callee}` is a trait method, and calling one is not supported yet"
+                            ),
                             types::var(self.context),
-                            &operands,
-                            FlatSymbolRefAttribute::new(self.context, &callee),
-                            loc,
-                        )
-                        .into(),
-                    )
-                    .first_result()
+                        );
+                    }
+                    Err(CallError::Unknown) => {
+                        return self.missing(
+                            block,
+                            call,
+                            &format!("unknown function `{callee}`"),
+                            types::var(self.context),
+                        );
+                    }
+                };
+
+                self.call(block, &callee, kind, &operands, loc)
             }
             ast::Expr::ListExpr(list) => {
                 let elements: Vec<ast::Expr> = list.elements().collect();
@@ -239,16 +275,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
         // Operators without a yz op yet lower as calls by name, which is what
         // they are before the registry resolves them.
-        let call = |callee| {
-            yzl::call(
-                context,
-                types::var(self.context),
-                &[lhs, rhs],
-                FlatSymbolRefAttribute::new(context, callee),
-                loc,
-            )
-            .into()
-        };
 
         let operation = match binary.op() {
             Some(BinOp::Add) => yz::add(context, types::var(self.context), lhs, rhs, loc).into(),
@@ -263,12 +289,14 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             Some(BinOp::Lte) => cmp(CmpPredicate::LessOrEqual),
             Some(BinOp::Gt) => cmp(CmpPredicate::Greater),
             Some(BinOp::Gte) => cmp(CmpPredicate::GreaterOrEqual),
-            Some(BinOp::Pow) => call("pow"),
-            Some(BinOp::ShiftLeft) => call("shift_left"),
-            Some(BinOp::ShiftRight) => call("shift_right"),
-            Some(BinOp::In) => call("in"),
+            Some(BinOp::Pow) => return self.builtin(block, "pow", &[lhs, rhs], loc),
+            Some(BinOp::ShiftLeft) => return self.builtin(block, "shift_left", &[lhs, rhs], loc),
+            Some(BinOp::ShiftRight) => {
+                return self.builtin(block, "shift_right", &[lhs, rhs], loc);
+            }
+            Some(BinOp::In) => return self.builtin(block, "in", &[lhs, rhs], loc),
             Some(BinOp::NotIn) => {
-                let contains = block.append_operation(call("in")).first_result();
+                let contains = self.builtin(block, "in", &[lhs, rhs], loc);
                 yz::not(context, types::var(self.context), contains, loc).into()
             }
             None => {
@@ -339,23 +367,83 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         block.append_operation(operation).first_result()
     }
 
+    /// A name in expression position, resolved where it stands. A column or
+    /// parameter is a block argument of the block being built; a module-level
+    /// `let` is a call for expansion to inline, since this block cannot reach
+    /// a value outside itself.
     fn name_ref<'a>(
         &self,
         block: BlockRef<'c, 'a>,
+        node: &impl AstNode,
         name: &str,
+        loc: Location<'c>,
+    ) -> Value<'c, 'a> {
+        let (lookup, in_query) = {
+            let resolver = self.resolver.borrow();
+            (resolver.lookup(name), resolver.in_query())
+        };
+        match lookup {
+            Lookup::Column(index) | Lookup::Param(index) => block
+                .argument(index)
+                .expect("the resolver answered from the row this block was built for")
+                .into(),
+            Lookup::Let(symbol) => self.call(block, &symbol, CalleeKind::Let, &[], loc),
+            Lookup::Ambiguous => self.missing(
+                block,
+                node,
+                &format!("`{name}` is ambiguous"),
+                types::var(self.context),
+            ),
+            Lookup::NarrowedAway => self.missing(
+                block,
+                node,
+                &format!("`{name}` is no longer in the row: an earlier stage narrowed it away"),
+                types::var(self.context),
+            ),
+            Lookup::Unknown => {
+                let what = if in_query { "column" } else { "name" };
+                self.missing(
+                    block,
+                    node,
+                    &format!("unknown {what} `{name}`"),
+                    types::var(self.context),
+                )
+            }
+        }
+    }
+
+    /// A call the emitter has already classified: the kind is decided here,
+    /// so every pass after reads it rather than looking the callee up again.
+    fn call<'a>(
+        &self,
+        block: BlockRef<'c, 'a>,
+        callee: &str,
+        kind: CalleeKind,
+        operands: &[Value<'c, 'a>],
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         block
             .append_operation(
-                yzl::_name(
-                    self.context,
-                    types::var(self.context),
-                    StringAttribute::new(self.context, name),
-                    loc,
-                )
-                .into(),
+                yzl::CallOperationBuilder::new(self.context, loc)
+                    .result(types::var(self.context))
+                    .operands(operands)
+                    .callee(FlatSymbolRefAttribute::new(self.context, callee))
+                    .callee_kind(StringAttribute::new(self.context, kind.as_str()))
+                    .build()
+                    .into(),
             )
             .first_result()
+    }
+
+    /// The operators the parser lowers to calls are registry builtins.
+    fn builtin<'a>(
+        &self,
+        block: BlockRef<'c, 'a>,
+        callee: &str,
+        operands: &[Value<'c, 'a>],
+        loc: Location<'c>,
+    ) -> Value<'c, 'a> {
+        self.call(block, callee, CalleeKind::Builtin, operands, loc)
     }
 }
 

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use melior::ir::{
     Block, BlockLike, BlockRef, Location, Region, RegionLike, Type, Value, ValueLike,
 };
-use yuzu_mlir::ext::BlockExt;
+use yuzu_mlir::ext::{BlockExt, ValueExt};
 use yuzu_mlir::ods::yzr;
 
 use crate::lower_yzl_to_yzr::{Schema, Yielded, YzlToYzr};
@@ -29,7 +29,19 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
 
         let mut produced = Vec::new();
         if let Some(block) = source.first_block() {
+            // The source's block arguments are the row's columns; so are the
+            // ones just built, at the same positions.
             let mut values: HashMap<usize, Value<'c, '_>> = HashMap::new();
+            for index in 0..block.argument_count() {
+                let source = block
+                    .argument(index)
+                    .expect("the argument index is in range");
+                let target = body
+                    .argument(index)
+                    .expect("the row was built to the same width");
+                values.insert(source.id(), target.into());
+            }
+
             for op in block.operations() {
                 self.lower_expression(op, body, &mut values, &mut produced);
             }

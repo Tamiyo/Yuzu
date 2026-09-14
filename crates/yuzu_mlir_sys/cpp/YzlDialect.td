@@ -223,14 +223,6 @@ def Yzl_OutputOp : Yzl_Op<"output"> {
   let assemblyFormat = "$query attr-dict";
 }
 
-def Yzl_NameOp : Yzl_Op<"name", [Pure]> {
-  let summary = "an unresolved reference: column, binding, or parameter";
-  let arguments = (ins StrAttr:$name, OptionalAttr<I64Attr>:$col,
-                       OptionalAttr<I64Attr>:$param);
-  let results = (outs AnyType:$result);
-  let assemblyFormat = "$name `:` type($result) attr-dict";
-}
-
 def Yzl_ListOp : Yzl_Op<"list", [Pure]> {
   let summary = "a list literal";
   let arguments = (ins Variadic<AnyType>:$elements);

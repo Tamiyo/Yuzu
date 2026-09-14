@@ -21,6 +21,10 @@ pub enum CalleeKind {
     /// Declared without a body: the engine is promised to have it, and the
     /// call reaches the plan by name.
     External,
+    /// A module-level `let`: a body with no parameters, expanded at each use
+    /// exactly as a function is. A call is how a use refers to it, since a
+    /// stage region cannot reach a value outside itself.
+    Let,
 }
 
 impl CalleeKind {
@@ -31,6 +35,7 @@ impl CalleeKind {
             Self::AggFn => "agg_fn",
             Self::Builtin => "builtin",
             Self::External => "external",
+            Self::Let => "let",
         }
     }
 }
@@ -49,6 +54,7 @@ impl CallOp<'_, '_> {
             "agg_fn" => Some(CalleeKind::AggFn),
             "builtin" => Some(CalleeKind::Builtin),
             "external" => Some(CalleeKind::External),
+            "let" => Some(CalleeKind::Let),
             other => panic!("`{other}` is not a callee kind resolution writes"),
         }
     }
@@ -67,6 +73,7 @@ mod tests {
             CalleeKind::AggFn,
             CalleeKind::Builtin,
             CalleeKind::External,
+            CalleeKind::Let,
         ] {
             let spelled = kind.as_str();
             let read = match spelled {
@@ -74,6 +81,7 @@ mod tests {
                 "agg_fn" => CalleeKind::AggFn,
                 "builtin" => CalleeKind::Builtin,
                 "external" => CalleeKind::External,
+                "let" => CalleeKind::Let,
                 other => panic!("`{other}` is not a kind this reads back"),
             };
 

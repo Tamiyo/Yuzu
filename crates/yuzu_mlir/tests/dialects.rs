@@ -201,11 +201,10 @@ fn builds_a_stage_with_generated_constructors() {
         .into(),
     );
 
+    // The row's columns are the region's block arguments: `a` is the first.
     let region = Region::new();
-    let body = region.append_block(Block::new(&[]));
-    let a = body.append_operation(
-        yzl::_name(&context, int64, StringAttribute::new(&context, "a"), loc).into(),
-    );
+    let body = region.append_block(Block::new(&[(int64, loc)]));
+    let a = body.argument(0).unwrap();
     let ten = body.append_operation(
         yz::constant_int(&context, int64, IntegerAttribute::new(i64, 10), loc).into(),
     );
@@ -213,7 +212,7 @@ fn builds_a_stage_with_generated_constructors() {
         yz::cmp(
             &context,
             boolean,
-            a.result(0).unwrap().into(),
+            a.into(),
             ten.result(0).unwrap().into(),
             StringAttribute::new(&context, "gt"),
             loc,
@@ -231,10 +230,10 @@ fn builds_a_stage_with_generated_constructors() {
         module {
           %0 = yzl.from @t
           %1 = yzl.where %0 {
-            %2 = yzl.name "a" : !yz.int64
-            %3 = yz.constant_int 10
-            %4 = yz.cmp "gt", %2, %3 : !yz.int64, !yz.int64 -> !yz.bool
-            yzl.yield %4 : !yz.bool
+          ^bb0(%arg0: !yz.int64):
+            %2 = yz.constant_int 10
+            %3 = yz.cmp "gt", %arg0, %2 : !yz.int64, !yz.int64 -> !yz.bool
+            yzl.yield %3 : !yz.bool
           }
         }
     "#]]
@@ -392,28 +391,6 @@ yzr.yield %p : !yz.bool
 }
 
 #[test]
-fn yzl_names_and_vars_round_trip() {
-    let context = yuzu_mlir::context();
-    let module = parse(
-        &context,
-        r#"
-module {
-  %0 = yzl.name "a" : !yzl.var
-  %1 = yzl.name "employees" : !yzl.var
-}
-"#,
-    )
-    .expect("the yzl dialect parses its own syntax");
-    expect![[r#"
-        module {
-          %0 = yzl.name "a" : !yzl.var
-          %1 = yzl.name "employees" : !yzl.var
-        }
-    "#]]
-    .assert_eq(&module.as_operation().to_string());
-}
-
-#[test]
 fn the_verifier_rejects_a_mistyped_operand() {
     let context = yuzu_mlir::context();
     let module = parse(
@@ -485,8 +462,8 @@ fn borrowed_views_match_and_read_during_walks() {
 module {
   %0 = yzl.from @t
   %1 = yzl.where %0 {
-    %2 = yzl.name "a" : !yzl.var
-    yzl.yield %2 : !yzl.var
+  ^bb0(%a: !yzl.var):
+    yzl.yield %a : !yzl.var
   }
   yzl.output %1
 }
@@ -505,15 +482,13 @@ module {
             }
             Some(YzlOp::Where(filter)) => {
                 assert_eq!(Some(filter.input().id()), source);
-                let predicate = filter
+                // The row's columns are the region's block arguments, so
+                // the predicate reads its column as an SSA use, not an op.
+                let body = filter
                     .body()
                     .first_block()
-                    .and_then(|block| block.first_operation())
-                    .expect("the where region holds the predicate");
-                match predicate.as_yzl() {
-                    Some(YzlOp::Name(name)) => assert_eq!(name.name().value(), "a"),
-                    _ => panic!("the predicate starts with a yzl.name"),
-                }
+                    .expect("the where region has a block");
+                assert_eq!(body.argument_count(), 1);
 
                 seen.push("where");
             }
@@ -543,9 +518,8 @@ fn views_read_optional_unit_and_variadic_arguments() {
         r#"
 module {
   yzl.fn @f params ["x", "y"] (!yz.int64, !yz.int64) -> !yz.int64 {
-    %0 = yzl.name "x" : !yzl.var
-    %1 = yzl.name "y" : !yzl.var
-    %2 = yzl.call @g(%0, %1) : (!yzl.var, !yzl.var) -> !yzl.var
+  ^bb0(%x: !yzl.var, %y: !yzl.var):
+    %2 = yzl.call @g(%x, %y) : (!yzl.var, !yzl.var) -> !yzl.var
     yzl.return %2 : !yzl.var
   }
 }

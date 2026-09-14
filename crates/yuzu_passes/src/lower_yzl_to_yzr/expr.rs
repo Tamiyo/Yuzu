@@ -24,19 +24,6 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
         produced: &mut Vec<Value<'c, 'b>>,
     ) {
         match op.as_yzl() {
-            Some(YzlOp::Name(name)) => {
-                let Some(index) = name.col().map(|col| col.value() as usize) else {
-                    self.error(op, "a name outside a column context is not lowered yet");
-                    return;
-                };
-
-                let Ok(column) = body.argument(index) else {
-                    self.error(op, format!("column {index} is not in the row"));
-                    return;
-                };
-
-                values.insert(op.first_result().id(), column.into());
-            }
             Some(YzlOp::Yield(_)) => {
                 let Some(operands) = lowered_operands(op, values) else {
                     return;
@@ -52,6 +39,17 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
 
                 let ty = op.ty();
                 let kind = call.callee_kind();
+                // Expansion removes every call to a function or let; one
+                // reaching here means expansion did not finish, which it has
+                // already reported.
+                if matches!(
+                    kind,
+                    Some(CalleeKind::Fn | CalleeKind::AggFn | CalleeKind::Let)
+                ) {
+                    self.error(op, format!("`{callee}` was not expanded before lowering"));
+                    return;
+                }
+
                 let lowered = if kind == Some(CalleeKind::Builtin) && self.is_aggregate(&callee) {
                     self.lower_measure(op, &callee, &operands, ty, body)
                 } else if kind == Some(CalleeKind::External) {
