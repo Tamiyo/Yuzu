@@ -164,10 +164,11 @@ def Yzl_AggregateOp : Yzl_Op<"aggregate", [IsolatedFromAbove, Pure]> {
 }
 
 def Yzl_LimitOp : Yzl_Op<"limit", [Pure]> {
-  let summary = "keep at most the first count rows";
-  let arguments = (ins Yzl_QueryType:$input, I64Attr:$count);
+  let summary = "keep at most count rows, after skipping offset";
+  let arguments = (ins Yzl_QueryType:$input, I64Attr:$count,
+                       OptionalAttr<I64Attr>:$offset);
   let results = (outs Yzl_QueryType:$result);
-  let assemblyFormat = "$input `,` $count attr-dict";
+  let assemblyFormat = "$input `,` $count (`offset` $offset^)? attr-dict";
 }
 
 def Yzl_RenameOp : Yzl_Op<"rename", [Pure]> {

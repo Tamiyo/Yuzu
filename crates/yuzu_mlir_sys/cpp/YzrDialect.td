@@ -54,10 +54,12 @@ def Yzr_ExtendOp : Yzr_Op<"extend", [IsolatedFromAbove, Pure]> {
 }
 
 def Yzr_LimitOp : Yzr_Op<"limit", [Pure, SameOperandsAndResultType]> {
-  let summary = "keep at most the first count rows";
-  let arguments = (ins Yzr_RowType:$input, I64Attr:$count);
+  let summary = "keep at most count rows, after skipping offset";
+  let arguments = (ins Yzr_RowType:$input, I64Attr:$count,
+                       OptionalAttr<I64Attr>:$offset);
   let results = (outs Yzr_RowType:$result);
-  let assemblyFormat = "$input `,` $count `:` type($input) attr-dict";
+  let assemblyFormat =
+      "$input `,` $count (`offset` $offset^)? `:` type($input) attr-dict";
 }
 
 def Yzr_AggregateOp : Yzr_Op<"aggregate", [IsolatedFromAbove, Pure]> {

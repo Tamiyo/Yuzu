@@ -188,10 +188,14 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                     return;
                 };
 
-                let limited = target.append_operation(
-                    yzr::limit(self.context, input, stage.count(), op.location()).into(),
-                );
+                let mut builder = yzr::LimitOperationBuilder::new(self.context, op.location())
+                    .input(input)
+                    .count(stage.count());
+                if let Some(offset) = stage.offset() {
+                    builder = builder.offset(offset);
+                }
 
+                let limited = target.append_operation(builder.build().into());
                 self.record_stage(op, limited.first_result(), schema);
             }
             Some(YzlOp::Output(_)) => {
@@ -437,7 +441,7 @@ table t = Row
 from t
 |> extend a + b as e
 |> select a as x, e as y
-|> limit 5
+|> limit 5 offset 1
 "#,
             expect![[r#"
                 module {
@@ -454,7 +458,7 @@ from t
                   ^bb0(%arg0: !yz.int64, %arg1: !yz.int64, %arg2: !yz.int64):
                     yzr.yield %arg0, %arg2 : !yz.int64, !yz.int64
                   } : !yz.struct<@row> -> !yz.struct<@row_0>
-                  %3 = yzr.limit %2, 5 : !yz.struct<@row_0>
+                  %3 = yzr.limit %2, 5 offset 1 : !yz.struct<@row_0>
                   yzr.output %3 : !yz.struct<@row_0>
                 }
             "#]],

@@ -131,7 +131,7 @@ yzr.yield %1 : !yz.int64
 %m = yzr.agg "sum", %e0 : !yz.int64 -> !yz.int64
 yzr.yield %m : !yz.int64
   } : !yz.struct<@row_e> -> !yz.struct<@agg>
-  %l = yzr.limit %g, 10 : !yz.struct<@agg>
+  %l = yzr.limit %g, 10 offset 2 : !yz.struct<@agg>
 }
 "#,
     )
@@ -157,7 +157,7 @@ yzr.yield %m : !yz.int64
             %5 = yzr.agg "sum", %arg2 : !yz.int64 -> !yz.int64
             yzr.yield %5 : !yz.int64
           } : !yz.struct<@row_e> -> !yz.struct<@agg>
-          %4 = yzr.limit %3, 10 : !yz.struct<@agg>
+          %4 = yzr.limit %3, 10 offset 2 : !yz.struct<@agg>
         }
     "#]]
     .assert_eq(&module.as_operation().to_string());

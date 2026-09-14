@@ -159,30 +159,25 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             ast::Rel::LimitExpr(stage) => {
                 let input = self.convert_input(block, stage, "`limit`", stage.input());
                 let count = match stage.count() {
-                    Some(ast::Expr::Literal(ast::Literal::IntLiteral(int))) => {
-                        int.value().unwrap_or_default() as i64
-                    }
-                    Some(other) => {
-                        self.error(&other, "`limit` takes an integer literal");
-                        0
-                    }
+                    Some(count) => self.int_literal(&count),
                     None => {
                         self.error(stage, "`limit` is missing its row count");
                         0
                     }
                 };
+                let offset = stage.offset().map(|offset| self.int_literal(&offset));
+
+                let i64 = IntegerType::new(self.context, 64).into();
+                let mut builder = yzl::LimitOperationBuilder::new(self.context, loc)
+                    .result(types::query(self.context))
+                    .input(input)
+                    .count(IntegerAttribute::new(i64, count));
+                if let Some(offset) = offset {
+                    builder = builder.offset(IntegerAttribute::new(i64, offset));
+                }
 
                 block
-                    .append_operation(
-                        yzl::limit(
-                            self.context,
-                            types::query(self.context),
-                            input,
-                            IntegerAttribute::new(IntegerType::new(self.context, 64).into(), count),
-                            loc,
-                        )
-                        .into(),
-                    )
+                    .append_operation(builder.build().into())
                     .first_result()
             }
             ast::Rel::RenameExpr(stage) => {
@@ -419,6 +414,18 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
     }
 
+    fn int_literal(&mut self, expr: &ast::Expr) -> i64 {
+        match expr {
+            ast::Expr::Literal(ast::Literal::IntLiteral(int)) => {
+                int.value().unwrap_or_default() as i64
+            }
+            other => {
+                self.error(other, "`limit` takes an integer literal");
+                0
+            }
+        }
+    }
+
     fn from<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
@@ -599,7 +606,7 @@ mod tests {
                 %5 = yzl.call @sum(%arg2) : (!yzl.var) -> !yzl.var {callee_kind = "builtin"}
                 yzl.yield %5 : !yzl.var
               } {key_cols = [1]}
-              %4 = yzl.limit %3, 10
+              %4 = yzl.limit %3, 10 offset 2
               yzl.output %4
             }
         "#]]
@@ -613,7 +620,7 @@ from t
 |> where a > 10
 |> extend f(a) + b as e
 |> aggregate sum(e) as s group by b
-|> limit 10
+|> limit 10 offset 2
 "#,
         ));
     }
