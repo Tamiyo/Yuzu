@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use melior::ir::attribute::{FlatSymbolRefAttribute, StringAttribute};
 use melior::ir::operation::{OperationBuilder, OperationLike, OperationRef};
 use melior::ir::{Attribute, BlockLike, BlockRef, Identifier, Type, Value};
+use yuzu_mlir::ListType;
 use yuzu_mlir::attributes::CalleeKind;
 use yuzu_mlir::ext::{OperationCast, OperationExt, ValueExt};
 use yuzu_mlir::ods::{yz, yzr};
@@ -75,6 +76,21 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                 let appended = body.append_operation(lowered);
                 values.insert(op.first_result().id(), appended.first_result());
             }
+            Some(YzlOp::List(_)) => {
+                let Some(operands) = lowered_operands(op, values) else {
+                    return;
+                };
+
+                let ty = op.ty();
+                if ListType::from_type(ty).is_none() {
+                    self.error(op, "the type of this list could not be inferred");
+                    return;
+                }
+
+                let appended = body
+                    .append_operation(yz::list(self.context, ty, &operands, op.location()).into());
+                values.insert(op.first_result().id(), appended.first_result());
+            }
             // Everything else is a `yz` op, structurally unchanged: the
             // operands it was given, and the type inference stamped on it.
             None => {
@@ -92,8 +108,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
             // implying some lowering is still to come.
             Some(YzlOp::Missing(_)) => self.error(op, "this part of the query is missing"),
             Some(
-                YzlOp::List(_)
-                | YzlOp::From(_)
+                YzlOp::From(_)
                 | YzlOp::Where(_)
                 | YzlOp::Select(_)
                 | YzlOp::Extend(_)
@@ -264,6 +279,34 @@ from t
                   |
                 6 | |> where a >
                   |          ^
+            "#]],
+        );
+    }
+
+    #[test]
+    fn a_list_lowers_with_its_type() {
+        check_lowered(
+            r#"
+struct Row { a: int64 }
+table t = Row
+
+from t
+|> where a in [1, 3]
+"#,
+            expect![[r#"
+                module {
+                  yz.struct @Row ["a"] : [!yz.int64]
+                  %0 = yzr.table @t : !yz.struct<@Row>
+                  %1 = yzr.filter %0 : !yz.struct<@Row> {
+                  ^bb0(%arg0: !yz.int64):
+                    %2 = yz.constant_int 1
+                    %3 = yz.constant_int 3
+                    %4 = yz.list[%2, %3] : (!yz.int64, !yz.int64) -> !yz.list<!yz.int64>
+                    %5 = yz.call @in(%arg0, %4) : (!yz.int64, !yz.list<!yz.int64>) -> !yz.bool
+                    yzr.yield %5 : !yz.bool
+                  }
+                  yzr.output %1 : !yz.struct<@Row>
+                }
             "#]],
         );
     }

@@ -46,6 +46,12 @@ def Yz_StructType : Yz_Type<"Struct", "struct"> {
   let hasCustomAssemblyFormat = 1;
 }
 
+def Yz_ListType : Yz_Type<"List", "list"> {
+  let summary = "a list of one inner type";
+  let parameters = (ins "::mlir::Type":$inner);
+  let assemblyFormat = "`<` $inner `>`";
+}
+
 // Declarations. The dialect that owns `!yz.struct` owns what declares it.
 
 class Yz_Op<string mnemonic, list<Trait> traits = []>
@@ -91,6 +97,14 @@ def Yz_ConstantStrOp : Yz_Op<"constant_str", [ConstantLike, Pure]> {
   let results = (outs Yz_StrType:$result);
   let assemblyFormat = "$value attr-dict";
   let hasFolder = 1;
+}
+
+def Yz_ListOp : Yz_Op<"list", [Pure]> {
+  let summary = "a list of values; the operands are the elements";
+  let arguments = (ins Variadic<AnyType>:$elements);
+  let results = (outs Yz_ListType:$result);
+  let assemblyFormat =
+      "`[` $elements `]` attr-dict `:` functional-type($elements, $result)";
 }
 
 // Arithmetic. One op per surface operator, polymorphic over the numeric

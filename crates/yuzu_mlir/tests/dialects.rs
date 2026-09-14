@@ -660,3 +660,46 @@ fn melior_accepts_a_real_array_attribute() {
         "x"
     );
 }
+
+#[test]
+fn a_list_and_an_annotated_let_round_trip() {
+    let context = yuzu_mlir::context();
+    let module = parse(
+        &context,
+        r#"
+module {
+  %0 = yz.constant_int 1
+  %1 = yz.constant_int 3
+  %2 = yz.list[%0, %1] : (!yz.int64, !yz.int64) -> !yz.list<!yz.int64>
+  yzl.let @ids : !yz.list<!yz.int64> {
+    yzl.yield %2 : !yz.list<!yz.int64>
+  }
+}
+"#,
+    )
+    .expect("a list parses and verifies");
+    assert!(module.as_operation().verify());
+    expect![[r#"
+        module {
+          %0 = yz.constant_int 1
+          %1 = yz.constant_int 3
+          %2 = yz.list[%0, %1] : (!yz.int64, !yz.int64) -> !yz.list<!yz.int64>
+          yzl.let @ids : !yz.list<!yz.int64> {
+            yzl.yield %2 : !yz.list<!yz.int64>
+          }
+        }
+    "#]]
+    .assert_eq(&module.as_operation().to_string());
+}
+
+#[test]
+fn list_type_view() {
+    let context = yuzu_mlir::context();
+    let int64 = yuzu_mlir::types::int64(&context);
+    let list = yuzu_mlir::ListType::new(&context, int64);
+
+    assert_eq!(list.inner(), int64);
+    assert_eq!(Type::from(list).to_string(), "!yz.list<!yz.int64>");
+    assert!(yuzu_mlir::ListType::from_type(int64).is_none());
+    assert!(yuzu_mlir::ListType::from_type(list.into()).is_some());
+}

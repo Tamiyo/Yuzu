@@ -8,6 +8,9 @@ unsafe extern "C" {
     pub fn yzuStructTypeGet(ctx: MlirContext, name: MlirStringRef) -> MlirType;
     pub fn yzuTypeIsStructType(ty: MlirType) -> bool;
     pub fn yzuStructTypeName(ty: MlirType) -> MlirStringRef;
+    pub fn yzuListTypeGet(ctx: MlirContext, inner: MlirType) -> MlirType;
+    pub fn yzuTypeIsListType(ty: MlirType) -> bool;
+    pub fn yzuListTypeInner(ty: MlirType) -> MlirType;
     pub fn yzuInt64TypeGet(ctx: MlirContext) -> MlirType;
     pub fn yzuFloat64TypeGet(ctx: MlirContext) -> MlirType;
     pub fn yzuBoolTypeGet(ctx: MlirContext) -> MlirType;

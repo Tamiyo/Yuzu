@@ -103,9 +103,15 @@ def Yzl_FnOp : Yzl_Op<"fn", [Symbol, IsolatedFromAbove]> {
 
 def Yzl_LetOp : Yzl_Op<"let", [Symbol]> {
   let summary = "a named binding of the single value its body yields";
-  let arguments = (ins SymbolNameAttr:$sym_name);
+  let description = [{
+    The annotation, when the program wrote one, is the type the body must
+    yield — declared here the way a function's signature is, for inference
+    to hold the body to.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name,
+                       OptionalAttr<TypeAttr>:$annotation);
   let regions = (region SizedRegion<1>:$body);
-  let assemblyFormat = "$sym_name $body attr-dict";
+  let assemblyFormat = "$sym_name (`:` $annotation^)? $body attr-dict";
 }
 
 def Yzl_ReturnOp : Yzl_Op<"return", [Terminator, HasParent<"FnOp">]> {

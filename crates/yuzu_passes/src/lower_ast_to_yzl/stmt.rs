@@ -5,6 +5,7 @@ use melior::ir::{
 use yuzu_ast::{AstNode, ast};
 use yuzu_mlir::attributes::CalleeKind;
 use yuzu_mlir::ods::yzl;
+use yuzu_mlir::{ListType, ParamType, StructType};
 
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 use yuzu_mlir::types;
@@ -198,13 +199,23 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .collect();
 
         let signature = {
-            let params: Vec<Type> = decl
-                .params()
-                .map(|param| self.annotation_type(param.ty(), &generics))
-                .collect();
+            let mut param_types: Vec<Type> = Vec::new();
+            for param in decl.params() {
+                let ty = match param.ty() {
+                    Some(ty) => self.annotation_type(ty, &generics),
+                    None => {
+                        self.error(&param, "parameter is missing its type");
+                        types::var(self.context)
+                    }
+                };
+                param_types.push(ty);
+            }
 
-            let result = self.annotation_type(decl.result(), &generics);
-            melior::ir::r#type::FunctionType::new(self.context, &params, &[result]).into()
+            let result = match decl.result() {
+                Some(result) => self.annotation_type(result, &generics),
+                None => types::var(self.context),
+            };
+            melior::ir::r#type::FunctionType::new(self.context, &param_types, &[result]).into()
         };
 
         for bound in decl.bounds() {
@@ -439,6 +450,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         };
 
         self.check_duplicate(decl, "binding", name);
+        let annotation = decl
+            .type_annotation()
+            .map(|annotation| self.annotation_type(annotation, &[]));
         let region = Region::new();
         let body = region.append_block(Block::new(&[]));
         // A query binds its row, for `from`; a value binds its name.
@@ -458,15 +472,14 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         };
 
         body.append_operation(yzl::r#yield(self.context, &[value], self.location(decl)).into());
-        block.append_operation(
-            yzl::r#let(
-                self.context,
-                region,
-                StringAttribute::new(self.context, name),
-                self.location(decl),
-            )
-            .into(),
-        );
+        let mut builder = yzl::LetOperationBuilder::new(self.context, self.location(decl))
+            .sym_name(StringAttribute::new(self.context, name))
+            .body(region);
+        if let Some(annotation) = annotation {
+            builder = builder.annotation(TypeAttribute::new(annotation));
+        }
+
+        block.append_operation(builder.build().into());
     }
 
     fn field_attrs(
@@ -476,13 +489,13 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let mut names = Vec::new();
         let mut types = Vec::new();
         for field in fields {
-            let Some(name) = self.ident(field.name()) else {
-                self.error(&field, "struct field is missing its name");
+            let (Some(name), Some(ty)) = (self.ident(field.name()), field.ty()) else {
+                self.error(&field, "struct field is incomplete");
                 continue;
             };
 
             names.push(StringAttribute::new(self.context, name).into());
-            types.push(TypeAttribute::new(self.annotation_type(field.ty(), &[])).into());
+            types.push(TypeAttribute::new(self.annotation_type(ty, &[])).into());
         }
 
         (
@@ -492,18 +505,36 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     }
 
     fn annotation_type(
-        &self,
-        annotation: Option<ast::TypeAnnotation>,
+        &mut self,
+        annotation: ast::TypeAnnotation,
         generics: &[&'c str],
     ) -> Type<'c> {
-        let name = annotation
-            .and_then(|annotation| match annotation {
-                ast::TypeAnnotation::NamedTypeAnnotation(named) => self.ident(named.name()),
-                _ => None,
-            })
-            .unwrap_or_default();
+        let named = match annotation {
+            ast::TypeAnnotation::NamedTypeAnnotation(named) => named,
+            ast::TypeAnnotation::FuncTypeAnnotation(func) => {
+                self.error(&func, "function types are not supported yet");
+                return types::var(self.context);
+            }
+        };
+
+        let Some(name) = self.ident(named.name()) else {
+            self.error(&named, "type is missing its name");
+            return types::var(self.context);
+        };
+
         if generics.contains(&name) {
-            return yuzu_mlir::ParamType::new(self.context, name).into();
+            return ParamType::new(self.context, name).into();
+        }
+
+        if name == "List" {
+            let mut args = named.args();
+            let (Some(inner), None) = (args.next(), args.next()) else {
+                self.error(&named, "`List` takes exactly one type argument");
+                return types::var(self.context);
+            };
+
+            let inner = self.annotation_type(inner, generics);
+            return ListType::new(self.context, inner).into();
         }
 
         match name {
@@ -511,7 +542,11 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             "float64" => types::float64(self.context),
             "bool" => types::boolean(self.context),
             "str" => types::str(self.context),
-            _ => types::var(self.context),
+            _ if self.resolver.is_type_name(name) => StructType::new(self.context, name).into(),
+            _ => {
+                self.error(&named, &format!("unknown type `{name}`"));
+                types::var(self.context)
+            }
         }
     }
 }
@@ -633,6 +668,44 @@ external fn upper(s: str) -> str
           |
         2 |     struct S { a: int64 }
           |     ^^^^^^^^^^^^^^^^^^^^^
+    "#]]
+        .assert_eq(&rendered.join("\n"));
+    }
+
+    #[test]
+    fn converts_an_annotated_let() {
+        expect![[r#"
+            module {
+              yzl.let @ids : !yz.list<!yz.int64> {
+                %0 = yz.constant_int 1
+                %1 = yz.constant_int 3
+                %2 = yzl.list[%0, %1] : (!yz.int64, !yz.int64) -> !yzl.var
+                yzl.yield %2 : !yzl.var
+              }
+            }
+        "#]]
+        .assert_eq(&converted("let ids: List[int64] = [1, 3]\n"));
+    }
+
+    #[test]
+    fn reports_an_unknown_type() {
+        use yuzu_diagnostics::diagnostics::printer::DiagnosticPrinter;
+
+        let context = yuzu_mlir::context();
+        let source = "fn f(x: Nope) -> int64 { return 1 }\n";
+        let (_, sources, diagnostics) = convert(&context, "test.yz", source);
+        let printer = DiagnosticPrinter::new(&sources);
+        let rendered: Vec<String> = diagnostics
+            .diagnostics()
+            .iter()
+            .map(|diagnostic| printer.print(diagnostic))
+            .collect();
+        expect![[r#"
+        error: unknown type `Nope`
+         --> test.yz:1:9
+          |
+        1 | fn f(x: Nope) -> int64 { return 1 }
+          |         ^^^^
     "#]]
         .assert_eq(&rendered.join("\n"));
     }

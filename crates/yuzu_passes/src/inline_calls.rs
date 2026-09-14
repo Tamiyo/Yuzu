@@ -27,6 +27,7 @@ use yuzu_mlir::ext::{
     ArrayAttributeExt, BlockExt, OperationCast, OperationExt, RegionExt, ValueExt,
 };
 use yuzu_mlir::ops::yzl::YzlOp;
+use yuzu_mlir::types;
 use yuzu_mlir::{ParamType, SymbolTable};
 
 /// How many calls one program may expand. A program whose calls reduce needs
@@ -61,7 +62,7 @@ pub fn inline_calls(context: &Context, module: &Module) {
         }
     }
 
-    discard_declarations(&rewriter, module.body());
+    discard_declarations(context, &rewriter, module.body());
 }
 
 /// The calls that have to go, innermost first. Declarations are skipped: a
@@ -302,14 +303,17 @@ fn substitute<'c>(ty: Type<'c>, types: &HashMap<&str, Type<'c>>) -> Type<'c> {
 }
 
 /// Once every call is expanded the declarations describe nothing the module
-/// still contains. An external keeps its name on the call rather than here.
-fn discard_declarations(rewriter: &RewriterBase, block: BlockRef) {
+/// still contains. An external keeps its name on the call rather than here,
+/// and a `let` bound to a query stays: its stages are rows other queries name.
+fn discard_declarations(context: &Context, rewriter: &RewriterBase, block: BlockRef) {
     let mut declarations = Vec::new();
     for op in block.operations() {
-        if matches!(
-            op.as_yzl(),
-            Some(YzlOp::Fn(_) | YzlOp::Trait(_) | YzlOp::Impl(_))
-        ) {
+        let discard = match op.as_yzl() {
+            Some(YzlOp::Fn(_) | YzlOp::Trait(_) | YzlOp::Impl(_)) => true,
+            Some(YzlOp::Let(binding)) => !binds_query(context, &binding),
+            _ => false,
+        };
+        if discard {
             declarations.push(op);
         }
     }
@@ -317,6 +321,15 @@ fn discard_declarations(rewriter: &RewriterBase, block: BlockRef) {
     for declaration in declarations {
         rewriter.erase_op(declaration);
     }
+}
+
+fn binds_query(context: &Context, binding: &yuzu_mlir::ops::yzl::LetOp) -> bool {
+    binding
+        .body()
+        .first_block()
+        .and_then(|block| block.last_operation())
+        .and_then(|yielded| yielded.try_first_operand())
+        .is_some_and(|value| value.r#type() == types::query(context))
 }
 
 /// The budget is spent where the program stopped reducing, so the calls still
@@ -546,6 +559,38 @@ from t
                    |
                 10 | fn shift[T](x: T) -> T where T: Zero { return zero(x) }
                    |                                               ^
+            "#]],
+        );
+    }
+
+    /// A scalar `let` is a body with no parameters: its uses expand like
+    /// calls, and the binding goes with the functions.
+    #[test]
+    fn a_scalar_let_is_expanded_and_discarded() {
+        check_simplified(
+            r#"
+struct Row { a: int64 }
+table t = Row
+
+let ids: List[int64] = [1, 3]
+
+from t
+|> where a in ids
+"#,
+            expect![[r#"
+                module {
+                  yz.struct @Row ["a"] : [!yz.int64]
+                  %0 = yzr.table @t : !yz.struct<@Row>
+                  %1 = yzr.filter %0 : !yz.struct<@Row> {
+                  ^bb0(%arg0: !yz.int64):
+                    %2 = yz.constant_int 1
+                    %3 = yz.constant_int 3
+                    %4 = yz.list[%2, %3] : (!yz.int64, !yz.int64) -> !yz.list<!yz.int64>
+                    %5 = yz.call @in(%arg0, %4) : (!yz.int64, !yz.list<!yz.int64>) -> !yz.bool
+                    yzr.yield %5 : !yz.bool
+                  }
+                  yzr.output %1 : !yz.struct<@Row>
+                }
             "#]],
         );
     }

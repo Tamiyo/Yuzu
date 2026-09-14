@@ -13,6 +13,7 @@ use melior::ir::r#type::FunctionType;
 use melior::ir::{
     Attribute, BlockLike, BlockRef, Location, Module, RegionLike, Type, Value, ValueLike,
 };
+use yuzu_mlir::ListType;
 use yuzu_mlir::attributes::CalleeKind;
 use yuzu_mlir::ext::{
     ArrayAttributeExt, BlockExt, OperationCast, OperationExt, RegionExt, ValueExt,
@@ -21,12 +22,14 @@ use yuzu_mlir::ops::yz::YzOp;
 use yuzu_mlir::ops::yzl::YzlOp;
 use yuzu_mlir::types;
 
-/// A type either known or still being solved for: a concrete MLIR type, or a
-/// type variable whose substitution is still being filled.
+/// A type either known or still being solved for: a concrete MLIR type, a
+/// type variable whose substitution is still being filled, or a list whose
+/// inner type is the variable's.
 #[derive(Clone, Copy)]
 enum Term<'c> {
     Concrete(Type<'c>),
     Var(usize),
+    List(usize),
 }
 
 type Row<'c> = Vec<Term<'c>>;
@@ -108,10 +111,14 @@ impl<'c> TypeInferrer<'c> {
             return Term::Var(var);
         }
 
-        let var = self.filled.len();
-        self.filled.push(None);
+        let var = self.fresh();
         self.vars.insert(key, var);
         Term::Var(var)
+    }
+
+    fn fresh(&mut self) -> usize {
+        self.filled.push(None);
+        self.filled.len() - 1
     }
 
     /// Follows the substitution chain to a variable's root, compressing the
@@ -127,65 +134,64 @@ impl<'c> TypeInferrer<'c> {
         }
     }
 
+    /// The root of a variable's chain, or what the root is filled with.
+    fn shallow(&mut self, term: Term<'c>) -> Term<'c> {
+        match term {
+            Term::Var(var) => {
+                let root = self.find(var);
+                self.filled[root].unwrap_or(Term::Var(root))
+            }
+            term => term,
+        }
+    }
+
     fn unify(&mut self, op: OperationRef<'c, '_>, a: Term<'c>, b: Term<'c>) {
+        let a = self.shallow(a);
+        let b = self.shallow(b);
         match (a, b) {
+            (Term::Var(a), Term::Var(b)) if a == b => {}
+            (Term::Var(var), term) | (term, Term::Var(var)) => self.filled[var] = Some(term),
             (Term::Concrete(a), Term::Concrete(b)) => {
                 if a != b {
                     self.error(op, format!("expected `{a}`, found `{b}`"));
                 }
             }
-            (Term::Var(var), Term::Concrete(ty)) | (Term::Concrete(ty), Term::Var(var)) => {
-                self.fill(op, var, ty);
-            }
-            (Term::Var(a), Term::Var(b)) => self.merge(op, a, b),
-        }
-    }
-
-    /// Fills a type variable's substitution with a concrete type.
-    fn fill(&mut self, op: OperationRef<'c, '_>, var: usize, ty: Type<'c>) {
-        let root = self.find(var);
-        match self.filled[root] {
-            Some(Term::Concrete(filled)) if filled != ty => {
-                self.error(op, format!("expected `{filled}`, found `{ty}`"));
-            }
-            _ => self.filled[root] = Some(Term::Concrete(ty)),
-        }
-    }
-
-    /// Merges the substitutions of two type variables.
-    fn merge(&mut self, op: OperationRef<'c, '_>, a: usize, b: usize) {
-        let a = self.find(a);
-        let b = self.find(b);
-        if a == b {
-            return;
-        }
-
-        let merged = match (self.filled[a], self.filled[b]) {
-            (Some(Term::Concrete(left)), Some(Term::Concrete(right))) if left != right => {
-                self.error(op, format!("expected `{left}`, found `{right}`"));
-                Some(left)
-            }
-            (Some(Term::Concrete(ty)), _) | (_, Some(Term::Concrete(ty))) => Some(ty),
-            _ => None,
-        };
-
-        self.filled[b] = Some(Term::Var(a));
-        if let Some(ty) = merged {
-            self.filled[a] = Some(Term::Concrete(ty));
+            (Term::List(a), Term::List(b)) => self.unify(op, Term::Var(a), Term::Var(b)),
+            (Term::List(inner), Term::Concrete(ty)) => match ListType::from_type(ty) {
+                Some(list) => self.unify(op, Term::Var(inner), Term::Concrete(list.inner())),
+                None => {
+                    let expected = self.display(Term::List(inner));
+                    self.error(op, format!("expected `{expected}`, found `{ty}`"));
+                }
+            },
+            (Term::Concrete(ty), Term::List(inner)) => match ListType::from_type(ty) {
+                Some(list) => self.unify(op, Term::Concrete(list.inner()), Term::Var(inner)),
+                None => {
+                    let found = self.display(Term::List(inner));
+                    self.error(op, format!("expected `{ty}`, found `{found}`"));
+                }
+            },
         }
     }
 
     /// Resolves (collapses) a term to its final type, when it has one.
     fn resolve(&mut self, term: Term<'c>) -> Option<Type<'c>> {
-        match term {
+        match self.shallow(term) {
             Term::Concrete(ty) => Some(ty),
-            Term::Var(var) => {
-                let root = self.find(var);
-                match self.filled[root] {
-                    Some(Term::Concrete(ty)) => Some(ty),
-                    _ => None,
-                }
+            Term::Var(_) => None,
+            Term::List(inner) => {
+                let inner = self.resolve(Term::Var(inner))?;
+                Some(ListType::new(self.context, inner).into())
             }
+        }
+    }
+
+    /// A term for a diagnostic, with `_` where nothing is known yet.
+    fn display(&mut self, term: Term<'c>) -> String {
+        match self.shallow(term) {
+            Term::Concrete(ty) => ty.to_string(),
+            Term::Var(_) => "_".to_string(),
+            Term::List(inner) => format!("!yz.list<{}>", self.display(Term::Var(inner))),
         }
     }
 
@@ -284,7 +290,23 @@ impl<'c> TypeInferrer<'c> {
             Some(YzlOp::Let(binding)) => {
                 self.infer_regions(op, &Row::new(), &[]);
                 let row = self.yield_terms(op);
+                if let Some(annotation) = binding.annotation()
+                    && let Some(&yielded) = row.first()
+                {
+                    self.unify(op, Term::Concrete(annotation.value()), yielded);
+                }
+
                 self.relations.insert(binding.sym_name().value(), row);
+            }
+            Some(YzlOp::List(_)) => {
+                let inner = self.fresh();
+                for element in op.operands() {
+                    let term = self.term_of(element);
+                    self.unify(op, term, Term::Var(inner));
+                }
+
+                let out = self.term_of(op.first_result());
+                self.unify(op, out, Term::List(inner));
             }
             Some(
                 stage @ (YzlOp::Where(_)
@@ -394,8 +416,7 @@ impl<'c> TypeInferrer<'c> {
         let mut bindings = HashMap::new();
         let mut ordered = Vec::new();
         for name in &signature.type_params {
-            let var = self.filled.len();
-            self.filled.push(None);
+            let var = self.fresh();
             bindings.insert(*name, var);
             ordered.push(var);
         }
@@ -505,6 +526,10 @@ impl<'c> TypeInferrer<'c> {
                 }
             }
             "in" => {
+                let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
+                let inner = self.fresh();
+                self.unify(op, Term::List(inner), rhs);
+                self.unify(op, lhs, Term::Var(inner));
                 self.unify(op, out, Term::Concrete(types::boolean(self.context)));
             }
             "min" | "max" | "avg" => {
@@ -949,6 +974,77 @@ from t
               |
             5 | from t
               | ^
+            "#]],
+        );
+    }
+
+    #[test]
+    fn infers_a_list_and_membership() {
+        check(
+            r#"
+struct Row { a: int64 }
+table t = Row
+
+from t
+|> where a in [1, 3]
+"#,
+            expect![[r#"
+                module {
+                  yzl.struct @Row ["a"] : [!yz.int64]
+                  yzl.table @t of @Row
+                  %0 = yzl.from @t
+                  %1 = yzl.where %0 {
+                  ^bb0(%arg0: !yzl.var):
+                    %2 = yz.constant_int 1
+                    %3 = yz.constant_int 3
+                    %4 = yzl.list[%2, %3] {ty = !yz.list<!yz.int64>} : (!yz.int64, !yz.int64) -> !yzl.var
+                    %5 = yzl.call @in(%arg0, %4) : (!yzl.var, !yzl.var) -> !yzl.var {callee_kind = "builtin", ty = !yz.bool}
+                    yzl.yield %5 : !yzl.var
+                  }
+                  yzl.output %1
+                }
+            "#]],
+        );
+    }
+
+    #[test]
+    fn an_annotated_let_holds_its_body_to_the_annotation() {
+        check(
+            r#"
+struct Row { a: int64 }
+table t = Row
+
+let ids: List[str] = [1, 3]
+
+from t
+|> where a in ids
+"#,
+            expect![[r#"
+                error: expected `!yz.str`, found `!yz.int64`
+                 --> test.yz:5:1
+                  |
+                5 | let ids: List[str] = [1, 3]
+                  | ^
+            "#]],
+        );
+    }
+
+    #[test]
+    fn membership_needs_a_list() {
+        check(
+            r#"
+struct Row { a: int64 }
+table t = Row
+
+from t
+|> where a in 1
+"#,
+            expect![[r#"
+                error: expected `!yz.list<_>`, found `!yz.int64`
+                 --> test.yz:6:10
+                  |
+                6 | |> where a in 1
+                  |          ^
             "#]],
         );
     }

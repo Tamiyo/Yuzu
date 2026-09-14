@@ -51,6 +51,18 @@ extern "C" MlirStringRef yzuStructTypeName(MlirType type) {
       llvm::cast<yuzu::yz::StructType>(unwrap(type)).getName().getValue());
 }
 
+extern "C" MlirType yzuListTypeGet(MlirContext ctx, MlirType inner) {
+  return wrap(yuzu::yz::ListType::get(unwrap(ctx), unwrap(inner)));
+}
+
+extern "C" bool yzuTypeIsListType(MlirType type) {
+  return llvm::isa<yuzu::yz::ListType>(unwrap(type));
+}
+
+extern "C" MlirType yzuListTypeInner(MlirType type) {
+  return wrap(llvm::cast<yuzu::yz::ListType>(unwrap(type)).getInner());
+}
+
 // The types that carry no parameters. MLIR uniques types in the context, so
 // each of these is a lookup returning the same pointer every time.
 #define YZU_SINGLETON_TYPE(name, cls)                                          \
