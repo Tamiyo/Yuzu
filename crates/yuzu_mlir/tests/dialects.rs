@@ -619,7 +619,6 @@ fn borrowed_views_reject_foreign_operations() {
     use yuzu_mlir::ext::OperationCast;
     use yuzu_mlir::ods::yz;
     use yuzu_mlir::ops::yz::YzOp;
-    use yuzu_mlir::ops::yzl::YzlOp;
 
     let context = yuzu_mlir::context();
     let location = Location::unknown(&context);
