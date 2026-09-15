@@ -14,78 +14,18 @@ use yuzu_mlir::types;
 impl<'c, 'd> AstToYzl<'c, 'd> {
     /// Registers every declaration up front so references can be forward. A
     /// `let` binds in order instead, once its body is emitted.
+    ///
+    /// Structs go in before tables, because a table's row is the fields of
+    /// the struct it names — one pass in source order would only find a
+    /// struct declared above the table that reads it.
     pub(super) fn hoist(&mut self, root: &ast::Root) {
         for stmt in root.stmts() {
             match &stmt {
-                ast::Stmt::StructStmt(decl) => {
-                    let Some(name) = self.ident(decl.name()) else {
-                        continue;
-                    };
-                    let fields = decl.fields().filter_map(|f| self.ident(f.name())).collect();
-                    self.declare(decl, name, Kind::Struct { fields });
-                }
-                ast::Stmt::TableStmt(decl) => {
-                    let Some(name) = self.ident(decl.name()) else {
-                        continue;
-                    };
-
-                    // An inline table declares its row shape in place; a
-                    // named one names a struct the program declares.
-                    let row = if decl.inline_fields().next().is_some() {
-                        Row::from(
-                            decl.inline_fields()
-                                .filter_map(|field| self.ident(field.name()))
-                                .collect::<Vec<_>>(),
-                        )
-                    } else {
-                        let Some(declared) = self.ident(decl.row_struct()) else {
-                            continue;
-                        };
-
-                        match self.symbols.kind(declared) {
-                            Some(Kind::Struct { fields }) => Row::from(fields.clone()),
-                            Some(_) | None => {
-                                self.error(decl, &format!("`{declared}` is not a struct"));
-                                continue;
-                            }
-                        }
-                    };
-
-                    self.declare(decl, name, Kind::Relation { row });
-                }
-                ast::Stmt::TraitStmt(decl) => {
-                    let Some(name) = self.ident(decl.name()) else {
-                        continue;
-                    };
-                    let methods = decl
-                        .methods()
-                        .filter_map(|m| self.ident(m.name()))
-                        .collect();
-                    self.declare(decl, name, Kind::Trait { methods });
-                }
-                ast::Stmt::FuncStmt(decl) => {
-                    let Some(name) = self.ident(decl.name()) else {
-                        continue;
-                    };
-                    let kind = if decl.is_external() {
-                        CalleeKind::External
-                    } else if decl.is_agg() {
-                        CalleeKind::AggFn
-                    } else {
-                        CalleeKind::Fn
-                    };
-                    let arity = decl.params().count();
-                    self.declare(
-                        decl,
-                        name,
-                        Kind::Func(Callable {
-                            kind,
-                            min_args: arity,
-                            max_args: arity,
-                        }),
-                    );
-                }
-                ast::Stmt::ImplStmt(_)
+                ast::Stmt::StructStmt(decl) => self.hoist_struct(decl),
+                ast::Stmt::TraitStmt(decl) => self.hoist_trait(decl),
+                ast::Stmt::FuncStmt(decl) => self.hoist_fn(decl),
+                ast::Stmt::TableStmt(_)
+                | ast::Stmt::ImplStmt(_)
                 | ast::Stmt::LetStmt(_)
                 | ast::Stmt::ExprStmt(_)
                 | ast::Stmt::BlockStmt(_)
@@ -93,6 +33,88 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 | ast::Stmt::ReturnStmt(_) => {}
             }
         }
+
+        for stmt in root.stmts() {
+            if let ast::Stmt::TableStmt(decl) = &stmt {
+                self.hoist_table(decl);
+            }
+        }
+    }
+
+    fn hoist_struct(&mut self, decl: &ast::StructStmt) {
+        let Some(name) = self.ident(decl.name()) else {
+            return;
+        };
+
+        let fields = decl.fields().filter_map(|f| self.ident(f.name())).collect();
+        self.declare(decl, name, Kind::Struct { fields });
+    }
+
+    fn hoist_table(&mut self, decl: &ast::TableStmt) {
+        let Some(name) = self.ident(decl.name()) else {
+            return;
+        };
+
+        // An inline table declares its row shape in place; a named one
+        // names a struct the program declares.
+        let row = if decl.inline_fields().next().is_some() {
+            Row::from(
+                decl.inline_fields()
+                    .filter_map(|field| self.ident(field.name()))
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            let Some(declared) = self.ident(decl.row_struct()) else {
+                return;
+            };
+
+            match self.symbols.kind(declared) {
+                Some(Kind::Struct { fields }) => Row::from(fields.clone()),
+                Some(_) | None => {
+                    self.error(decl, &format!("`{declared}` is not a struct"));
+                    return;
+                }
+            }
+        };
+
+        self.declare(decl, name, Kind::Relation { row });
+    }
+
+    fn hoist_trait(&mut self, decl: &ast::TraitStmt) {
+        let Some(name) = self.ident(decl.name()) else {
+            return;
+        };
+
+        let methods = decl
+            .methods()
+            .filter_map(|m| self.ident(m.name()))
+            .collect();
+        self.declare(decl, name, Kind::Trait { methods });
+    }
+
+    fn hoist_fn(&mut self, decl: &ast::FuncStmt) {
+        let Some(name) = self.ident(decl.name()) else {
+            return;
+        };
+
+        let kind = if decl.is_external() {
+            CalleeKind::External
+        } else if decl.is_agg() {
+            CalleeKind::AggFn
+        } else {
+            CalleeKind::Fn
+        };
+
+        let arity = decl.params().count();
+        self.declare(
+            decl,
+            name,
+            Kind::Func(Callable {
+                kind,
+                min_args: arity,
+                max_args: arity,
+            }),
+        );
     }
 
     /// Binds a module-level name, reporting a second declaration of one.
@@ -101,16 +123,19 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         self.symbols.bind(name, kind, node.syntax().text_range());
     }
 
+    /// The note says where the other declaration is rather than which came
+    /// first: hoisting takes the declarations out of source order, so which
+    /// of the two is reported is not the order they were written in.
     fn check_duplicate(&mut self, node: &impl AstNode, what: &str, name: &str) {
         let Some(declared) = self.symbols.binding(name).map(|binding| binding.declared) else {
             return;
         };
 
-        let first = self.position(declared);
-        self.error_noting(
-            node,
+        let other = self.position(declared);
+        self.error_at_noting(
+            node.syntax().text_range(),
             &format!("the {what} `{name}` is already defined"),
-            format!("first defined at {first}"),
+            format!("also declared at {other}"),
         );
     }
 
@@ -746,7 +771,7 @@ external fn upper(s: str) -> str
     /// the printer underlines one line, and the first declaration is rarely
     /// on it.
     #[test]
-    fn a_redeclaration_says_where_the_first_one_is() {
+    fn a_redeclaration_says_where_the_other_one_is() {
         use crate::lower_ast_to_yzl::test_support::reported;
 
         let context = yuzu_mlir::context();
@@ -756,11 +781,32 @@ external fn upper(s: str) -> str
               |
             3 | table Row = Row
               | ^^^^^^^^^^^^^^^
-              = note: first defined at test.yz:1:1
+              = note: also declared at test.yz:1:1
         "#]]
         .assert_eq(&reported(
             &context,
             "struct Row { a: int64 }\n\ntable Row = Row\n",
+        ));
+    }
+
+    /// Declarations are hoisted, so a table may name a struct declared
+    /// below it — one pass in source order reported three errors for this.
+    #[test]
+    fn a_table_can_name_a_struct_declared_below_it() {
+        expect![[r#"
+            module {
+              yzl.table @t of @Row
+              yzl.struct @Row ["a"] : [!yz.int64]
+              %0 = yzl.from @t
+              %1 = yzl.select %0 as ["a"] {
+              ^bb0(%arg0: !yzl.var):
+                yzl.yield %arg0 : !yzl.var
+              }
+              yzl.output %1
+            }
+        "#]]
+        .assert_eq(&converted(
+            "table t = Row\nstruct Row { a: int64 }\n\nfrom t |> select a\n",
         ));
     }
 

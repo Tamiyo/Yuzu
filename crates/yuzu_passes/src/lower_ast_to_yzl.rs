@@ -108,8 +108,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     /// Reports with a note under the snippet — for what the reader would
     /// otherwise have to go and look up: the columns actually in the row,
     /// the declaration a name already has.
-    fn error_noting(&mut self, node: &impl AstNode, message: &str, note: String) {
-        let span = self.span(node.syntax().text_range());
+    fn error_at_noting(&mut self, range: text_size::TextRange, message: &str, note: String) {
+        let span = self.span(range);
         self.diagnostics
             .emit(DiagnosticBuilder::error(span, message).note(note));
     }
@@ -117,9 +117,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     /// Reports a column reference the row could not answer, noting what the
     /// row does carry.
     fn unresolved_column(&mut self, node: &impl AstNode, message: &str) {
+        let range = node.syntax().text_range();
         match self.row_note() {
-            Some(note) => self.error_noting(node, message, note),
-            None => self.error(node, message),
+            Some(note) => self.error_at_noting(range, message, note),
+            None => self.error_at(range, message),
         }
     }
 
