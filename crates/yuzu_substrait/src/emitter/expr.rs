@@ -10,9 +10,9 @@ use substrait::proto::{
 };
 use yuzu_plan::{Const, Expr, ExprId, Func};
 
-use crate::emitter::extensions::function_target;
 use crate::emitter::types::{emit_type, type_code};
 use crate::emitter::{GraphEmitter, Unsupported};
+use crate::extensions::function_target;
 
 pub(crate) fn selection(index: i32) -> Expression {
     Expression {
@@ -75,7 +75,7 @@ impl GraphEmitter<'_> {
     ) -> Result<Expression, Unsupported> {
         let (urn, base) = if let Func::External(symbol) = func {
             (
-                crate::emitter::extensions::EXTERNAL_URN,
+                crate::extensions::EXTERNAL_URN,
                 self.interner.text(symbol).to_string(),
             )
         } else {

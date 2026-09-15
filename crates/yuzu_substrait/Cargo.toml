@@ -4,12 +4,14 @@ version = "0.0.0"
 edition = "2024"
 
 [dependencies]
+melior = { version = "0.27.6", features = ["ods-dialects"] }
 prost = "0.14"
 serde_json = "1"
 substrait = { version = "0.63", features = ["serde"] }
 
 yuzu_core = { path = "../yuzu_core" }
 yuzu_diagnostics = { path = "../yuzu_diagnostics" }
+yuzu_mlir = { path = "../yuzu_mlir" }
 yuzu_plan = { path = "../yuzu_plan" }
 yuzu_types = { path = "../yuzu_types" }
 
@@ -20,3 +22,4 @@ yuzu_ast = { path = "../yuzu_ast" }
 yuzu_hir = { path = "../yuzu_hir" }
 yuzu_lexer = { path = "../yuzu_lexer" }
 yuzu_parser = { path = "../yuzu_parser" }
+yuzu_passes = { path = "../yuzu_passes" }

@@ -20,9 +20,9 @@ use yuzu_plan::{
 use yuzu_types::TypeId;
 
 use crate::emitter::expr::{literal, selection};
-use crate::emitter::extensions::{BOOLEAN_URN, COMPARISON_URN, aggregate_target};
 use crate::emitter::types::{emit_type, nullable, row_columns, type_code};
 use crate::emitter::{GraphEmitter, Unsupported};
+use crate::extensions::{BOOLEAN_URN, COMPARISON_URN, aggregate_target};
 
 impl GraphEmitter<'_> {
     pub(crate) fn emit_rel(&mut self, id: RelId) -> Result<Rel, Unsupported> {
@@ -239,7 +239,7 @@ impl GraphEmitter<'_> {
     fn emit_measure(&mut self, measure: &PlanMeasure) -> Result<Measure, Unsupported> {
         let (urn, base) = if let yuzu_types::AggFunc::External(symbol) = measure.func {
             (
-                crate::emitter::extensions::EXTERNAL_URN,
+                crate::extensions::EXTERNAL_URN,
                 self.interner.text(symbol).to_string(),
             )
         } else {

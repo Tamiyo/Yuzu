@@ -1,9 +1,12 @@
 use prost::Message;
 
 mod emitter;
+mod extensions;
+mod translate;
 
 pub use emitter::emit;
 pub use substrait::proto::Plan;
+pub use translate::translate;
 
 pub fn to_protobuf(plan: &Plan) -> Vec<u8> {
     plan.encode_to_vec()

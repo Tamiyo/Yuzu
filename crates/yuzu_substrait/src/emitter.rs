@@ -5,11 +5,10 @@ use yuzu_diagnostics::diagnostics::{Span, builder::DiagnosticBuilder, engine::Di
 use yuzu_plan::RelGraph;
 use yuzu_types::TypeCtx;
 
-use crate::emitter::extensions::Extensions;
 use crate::emitter::types::row_columns;
+use crate::extensions::Extensions;
 
 mod expr;
-mod extensions;
 mod rel;
 mod types;
 
