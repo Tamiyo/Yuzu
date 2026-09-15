@@ -191,7 +191,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
     ) -> Option<Expression> {
         let value = self.expression_of(op, op.operand(0).ok()?, values)?;
         let list = op.operand(1).ok()?;
-        let Some(producer) = self.producers.get(&list.id()).copied() else {
+        let Some(producer) = Self::producer(list) else {
             self.unsupported(op, "`in` takes a list of values on its right");
             return None;
         };

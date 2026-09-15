@@ -11,13 +11,13 @@ use std::collections::HashMap;
 
 use melior::Context;
 use melior::ir::attribute::{ArrayAttribute, TypeAttribute};
-use melior::ir::operation::{OperationLike, OperationRef};
+use melior::ir::operation::{OperationLike, OperationRef, OperationResult};
 use melior::ir::{Module, Type, Value, ValueLike};
 use substrait::proto::{Plan, PlanRel, Rel, RelRoot, plan_rel};
 use substrait::version;
 use yuzu_mlir::StructType;
 use yuzu_mlir::SymbolTable;
-use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationCast, OperationExt, ValueExt};
+use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationCast, OperationExt};
 use yuzu_mlir::ops::yz::YzOp;
 use yuzu_mlir::ops::yzr::YzrOp;
 
@@ -35,14 +35,6 @@ mod types;
 pub fn translate<'c>(context: &'c Context, module: &Module<'c>) -> Option<Plan> {
     let symbols = SymbolTable::new(module);
     let body = module.body();
-
-    let mut producers = HashMap::new();
-    for op in body.operations() {
-        if let Some(result) = op.try_first_result() {
-            producers.insert(result.id(), op);
-        }
-    }
-
     let query = body
         .operations()
         .find(|op| matches!(op.as_yzr(), Some(YzrOp::Output(_))))
@@ -51,7 +43,6 @@ pub fn translate<'c>(context: &'c Context, module: &Module<'c>) -> Option<Plan> 
     let mut translator = Translator {
         context,
         symbols: &symbols,
-        producers,
         translated: HashMap::new(),
         extensions: Extensions::default(),
     };
@@ -83,9 +74,6 @@ pub fn translate<'c>(context: &'c Context, module: &Module<'c>) -> Option<Plan> 
 struct Translator<'c, 'a, 's> {
     context: &'c Context,
     symbols: &'s SymbolTable<'c, 'a>,
-    /// The operation each relational value came out of, so a stage can be
-    /// reached from the value its successor reads.
-    producers: HashMap<usize, OperationRef<'c, 'a>>,
     /// What each relational value already translated to, so a relation two
     /// stages read is walked once.
     translated: HashMap<usize, Rel>,
@@ -93,8 +81,11 @@ struct Translator<'c, 'a, 's> {
 }
 
 impl<'c, 'a> Translator<'c, 'a, '_> {
-    fn producer(&self, value: Value<'c, 'a>) -> Option<OperationRef<'c, 'a>> {
-        self.producers.get(&value.id()).copied()
+    /// The operation a value came out of. A block argument came out of no
+    /// operation, which is how a column of the row is told from a computed
+    /// value.
+    fn producer<'v>(value: Value<'c, 'v>) -> Option<OperationRef<'c, 'v>> {
+        Some(OperationResult::try_from(value).ok()?.owner())
     }
 
     /// The names and types of a row, from the `yz.struct` that declares it.

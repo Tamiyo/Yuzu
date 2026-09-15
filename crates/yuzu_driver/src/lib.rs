@@ -160,66 +160,102 @@ pub fn compile(name: &str, source: &str, options: &CompileOptions) {
     print_diagnostics(&diagnostics, &sources);
 }
 
-/// Compiles through the MLIR pipeline — as far as it goes today: source to
-/// yzr, printed. Translation to Substrait extends this path until the old
-/// pipeline retires.
-pub fn compile_mlir(name: &str, source: &str) -> std::process::ExitCode {
+/// Compiles through the MLIR pipeline, printing what each stage asked for.
+pub fn compile_mlir(name: &str, source: &str, options: &CompileOptions) -> std::process::ExitCode {
+    let mut diagnostics = DiagnosticsEngine::new();
+    let mut sources = SourceMap::new();
+    let source_id = sources.add(name.to_string(), source.to_string());
+
+    let plan = plan_through_mlir(name, source, source_id, &mut diagnostics, options);
+    print_diagnostics(&diagnostics, &sources);
+    match plan {
+        Some(plan) => {
+            if options.debug_substrait {
+                println!("=== substrait ===");
+                println!("{}", yuzu_substrait::to_json(&plan));
+            }
+
+            std::process::ExitCode::SUCCESS
+        }
+        None => std::process::ExitCode::FAILURE,
+    }
+}
+
+/// Compiles through the MLIR pipeline to a plan, as protobuf bytes.
+pub fn compile_to_substrait_mlir(
+    name: &str,
+    source: &str,
+    options: &CompileOptions,
+) -> Result<Vec<u8>, String> {
+    let mut diagnostics = DiagnosticsEngine::new();
+    let mut sources = SourceMap::new();
+    let source_id = sources.add(name.to_string(), source.to_string());
+
+    match plan_through_mlir(name, source, source_id, &mut diagnostics, options) {
+        Some(plan) => Ok(yuzu_substrait::to_protobuf(&plan)),
+        None => Err(render_diagnostics(&diagnostics, &sources)),
+    }
+}
+
+/// Source to plan, through every MLIR pass in order. `None` once anything
+/// has reported: a pass reads what the one before it settled, so running on
+/// after an error would report the same mistake again in other words.
+fn plan_through_mlir(
+    name: &str,
+    source: &str,
+    source_id: yuzu_diagnostics::source_map::SourceId,
+    diagnostics: &mut DiagnosticsEngine,
+    options: &CompileOptions,
+) -> Option<yuzu_substrait::Plan> {
     use melior::ir::operation::OperationLike;
 
     let context = yuzu_mlir::context();
-    let mut sources = SourceMap::new();
-    let source_id = sources.add(name.to_string(), source.to_string());
-    let mut diagnostics = DiagnosticsEngine::new();
-    let Some(module) = yuzu_passes::lower_ast_to_yzl(
+    let module = yuzu_passes::lower_ast_to_yzl(
         &context,
         name,
         source,
         source_id,
-        &mut diagnostics,
+        diagnostics,
         &yuzu_types::Builtins,
-    ) else {
-        print_diagnostics(&diagnostics, &sources);
-        return std::process::ExitCode::FAILURE;
-    };
+    )?;
 
     let verified =
-        yuzu_mlir::diagnostics::capture(&context, source_id, source, &mut diagnostics, || {
+        yuzu_mlir::diagnostics::capture(&context, source_id, source, diagnostics, || {
             module.as_operation().verify()
         });
-    if verified && !has_errors(&diagnostics) {
-        yuzu_mlir::diagnostics::capture(&context, source_id, source, &mut diagnostics, || {
-            yuzu_passes::infer_types(&context, &module);
-            yuzu_passes::check_aggregates(&module, &yuzu_types::Builtins);
-        });
+    if !verified || has_errors(diagnostics) {
+        return None;
     }
+
+    yuzu_mlir::diagnostics::capture(&context, source_id, source, diagnostics, || {
+        yuzu_passes::infer_types(&context, &module);
+        yuzu_passes::check_aggregates(&module, &yuzu_types::Builtins);
+    });
+    if has_errors(diagnostics) {
+        return None;
+    }
+
     // Expansion runs after the aggregate rules, which read an `agg fn` body
     // while it is still a body, and before the lowering, which has no way to
     // carry a function across.
-    if verified && !has_errors(&diagnostics) {
-        yuzu_mlir::diagnostics::capture(&context, source_id, source, &mut diagnostics, || {
-            yuzu_passes::inline_calls(&context, &module);
-        });
+    yuzu_mlir::diagnostics::capture(&context, source_id, source, diagnostics, || {
+        yuzu_passes::inline_calls(&context, &module);
+    });
+    if has_errors(diagnostics) {
+        return None;
     }
-    if verified && !has_errors(&diagnostics) {
-        let lowered =
-            yuzu_mlir::diagnostics::capture(&context, source_id, source, &mut diagnostics, || {
-                let mut lowered =
-                    yuzu_passes::lower_yzl_to_yzr(&context, &module, &yuzu_types::Builtins);
-                yuzu_passes::simplify_yzr(&context, &mut lowered);
-                lowered
-            });
 
-        print_diagnostics(&diagnostics, &sources);
-        if has_errors(&diagnostics) {
-            return std::process::ExitCode::FAILURE;
+    yuzu_mlir::diagnostics::capture(&context, source_id, source, diagnostics, || {
+        let mut lowered = yuzu_passes::lower_yzl_to_yzr(&context, &module, &yuzu_types::Builtins);
+        yuzu_passes::simplify_yzr(&context, &mut lowered);
+        if options.debug_plan {
+            println!("=== yzr ===");
+            print!("{}", lowered.as_operation());
         }
 
-        print!("{}", lowered.as_operation());
-        return std::process::ExitCode::SUCCESS;
-    }
-
-    print_diagnostics(&diagnostics, &sources);
-    std::process::ExitCode::FAILURE
+        yuzu_substrait::translate(&context, &lowered)
+    })
+    .filter(|_| !has_errors(diagnostics))
 }
 
 /// Wall-clock time spent in each compile phase.

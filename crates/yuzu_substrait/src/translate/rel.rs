@@ -39,7 +39,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
             return Some(translated.clone());
         }
 
-        let op = self.producer(value)?;
+        let op = Self::producer(value)?;
         let rel_type = match op.as_yzr()? {
             YzrOp::Table(table) => self.translate_table(op, table.name().value())?,
             YzrOp::Filter(_) => self.translate_filter(op)?,
@@ -231,10 +231,12 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         arguments: &[Value<'c, '_>],
         values: &HashMap<usize, Expression>,
     ) -> Option<Measure> {
-        let (urn, base) = aggregate_target(func);
         let (urn, base) = match func {
             AggFunc::External(_) => (EXTERNAL_URN, String::new()),
-            _ => (urn, base.to_string()),
+            func => {
+                let (urn, base) = aggregate_target(func);
+                (urn, base.to_string())
+            }
         };
 
         let mut signature = Vec::new();

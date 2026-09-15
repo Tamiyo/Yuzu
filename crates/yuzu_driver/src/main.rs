@@ -47,17 +47,6 @@ struct Cli {
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
-    if cli.pipeline.as_deref() == Some("mlir") {
-        let source = match std::fs::read_to_string(&cli.file) {
-            Ok(source) => source,
-            Err(err) => {
-                eprintln!("yuzu: cannot read '{}': {err}", cli.file.display());
-                return ExitCode::FAILURE;
-            }
-        };
-        return yuzu_driver::compile_mlir(&cli.file.display().to_string(), &source);
-    }
-
     let options = CompileOptions {
         debug_tokens: cli.debug_tokens || cli.debug,
         debug_ast: cli.debug_ast || cli.debug,
@@ -78,6 +67,11 @@ fn main() -> ExitCode {
         }
     };
 
-    compile(&cli.file.display().to_string(), &source, &options);
+    let name = cli.file.display().to_string();
+    if cli.pipeline.as_deref() == Some("mlir") {
+        return yuzu_driver::compile_mlir(&name, &source, &options);
+    }
+
+    compile(&name, &source, &options);
     ExitCode::SUCCESS
 }
