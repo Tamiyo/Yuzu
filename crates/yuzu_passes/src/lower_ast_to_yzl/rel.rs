@@ -20,358 +20,438 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     ) -> Value<'c, 'a> {
         let loc = self.location(rel);
         match rel {
-            ast::Rel::FromExpr(from) => {
-                let Some(source) = self.ident(from.relation()) else {
-                    return self.missing(
-                        block,
-                        from,
-                        "`from` is missing its relation",
-                        types::query(self.context),
-                    );
-                };
+            ast::Rel::FromExpr(from) => self.convert_from(block, from, loc),
+            ast::Rel::WhereExpr(stage) => self.convert_where(block, stage, loc),
+            ast::Rel::SelectExpr(stage) => self.convert_select(block, stage, loc),
+            ast::Rel::ExtendExpr(stage) => self.convert_extend(block, stage, loc),
+            ast::Rel::AggregateExpr(stage) => self.convert_aggregate(block, stage, loc),
+            ast::Rel::LimitExpr(stage) => self.convert_limit(block, stage, loc),
+            ast::Rel::RenameExpr(stage) => self.convert_rename(block, stage, loc),
+            ast::Rel::AliasExpr(stage) => self.convert_alias(block, stage, loc),
+            ast::Rel::JoinExpr(stage) => self.convert_join(block, stage, loc),
+            ast::Rel::SetExpr(stage) => self.convert_set(block, stage, loc),
+            ast::Rel::DistinctExpr(stage) => self.convert_distinct(block, stage, loc),
+            ast::Rel::DropExpr(stage) => self.convert_drop(block, stage, loc),
+        }
+    }
 
-                let value = self.from(block, from, source, loc);
-                match self.ident(from.alias()) {
-                    Some(alias) => self.alias(block, value, alias, loc),
-                    None => value,
-                }
-            }
-            ast::Rel::WhereExpr(stage) => {
-                let input = self.convert_input(block, stage, "`where`", stage.input());
-                let region = Region::new();
-                let body = self.stage_block(&region, loc);
-                let predicate = match stage.predicate() {
-                    Some(expr) => self.convert_expr(body, &Locals::new(), &expr),
-                    None => self.missing(
-                        body,
-                        stage,
-                        "`where` is missing its predicate",
-                        types::var(self.context),
-                    ),
-                };
+    fn convert_from<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        from: &ast::FromExpr,
+        loc: Location<'c>,
+    ) -> Value<'c, 'a> {
+        let Some(source) = self.ident(from.relation()) else {
+            return self.missing(
+                block,
+                from,
+                "`from` is missing its relation",
+                types::query(self.context),
+            );
+        };
 
-                body.append_operation(yzl::r#yield(self.context, &[predicate], loc).into());
-                block
-                    .append_operation(
-                        yzl::r#where(self.context, types::query(self.context), input, region, loc)
-                            .into(),
-                    )
-                    .first_result()
-            }
-            ast::Rel::SelectExpr(stage) => {
-                let input = self.convert_input(block, stage, "`select`", stage.input());
-                let items = stage
-                    .items()
-                    .map(|item| (item.alias(), item.expr(), item.syntax().text_range()))
-                    .collect();
-                let (names, region) = self.convert_items(items, "select item", loc);
-                let columns = self.string_attrs(&names);
-                self.symbols.replace(names);
-                block
-                    .append_operation(
-                        yzl::select(
-                            self.context,
-                            types::query(self.context),
-                            input,
-                            region,
-                            ArrayAttribute::new(self.context, &columns),
-                            loc,
-                        )
-                        .into(),
-                    )
-                    .first_result()
-            }
-            ast::Rel::ExtendExpr(stage) => {
-                let input = self.convert_input(block, stage, "`extend`", stage.input());
-                let items = stage
-                    .items()
-                    .map(|item| (item.alias(), item.expr(), item.syntax().text_range()))
-                    .collect();
-                let (names, region) = self.convert_items(items, "extend item", loc);
-                let columns = self.string_attrs(&names);
-                self.symbols.extend(names);
-                block
-                    .append_operation(
-                        yzl::extend(
-                            self.context,
-                            types::query(self.context),
-                            input,
-                            region,
-                            ArrayAttribute::new(self.context, &columns),
-                            loc,
-                        )
-                        .into(),
-                    )
-                    .first_result()
-            }
-            ast::Rel::AggregateExpr(stage) => {
-                let input = self.convert_input(block, stage, "`aggregate`", stage.input());
-                let mut keys = Vec::new();
-                let mut key_names: Vec<&'c str> = Vec::new();
-                for item in stage.group_by().into_iter().flat_map(|group| group.items()) {
-                    let Some(column) = self.ident(item.column()) else {
-                        self.error(&item, "group by key is missing its column");
-                        continue;
-                    };
+        let value = self.scan(block, from, source, loc);
+        match self.ident(from.alias()) {
+            Some(alias) => self.qualify(block, value, alias, loc),
+            None => value,
+        }
+    }
 
-                    let reference = Reference {
-                        qualifier: self.ident(item.qualifier()),
-                        name: column,
-                    };
-                    if let Some(index) = self.column(&item, "group key", reference) {
-                        keys.push(index);
-                        key_names.push(self.ident(item.alias()).unwrap_or(column));
-                    }
-                }
+    fn convert_where<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        stage: &ast::WhereExpr,
+        loc: Location<'c>,
+    ) -> Value<'c, 'a> {
+        let input = self.convert_input(block, stage, "`where`", stage.input());
+        let region = Region::new();
+        let body = self.stage_block(&region, loc);
+        let predicate = match stage.predicate() {
+            Some(expr) => self.convert_expr(body, &Locals::new(), &expr),
+            None => self.missing(
+                body,
+                stage,
+                "`where` is missing its predicate",
+                types::var(self.context),
+            ),
+        };
 
-                let items = stage
-                    .items()
-                    .map(|item| (item.alias(), item.expr(), item.syntax().text_range()))
-                    .collect();
-                let (names, region) = self.convert_items(items, "aggregate item", loc);
-                let group_by = self.string_attrs(&key_names);
-                let measures = self.string_attrs(&names);
-                // A grouping's row is its keys, in order, then its measures.
-                key_names.extend(names);
-                self.symbols.replace(key_names);
+        body.append_operation(yzl::r#yield(self.context, &[predicate], loc).into());
+        block
+            .append_operation(
+                yzl::r#where(self.context, types::query(self.context), input, region, loc).into(),
+            )
+            .first_result()
+    }
 
-                let mut op: melior::ir::Operation<'c> = yzl::aggregate(
+    fn convert_select<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        stage: &ast::SelectExpr,
+        loc: Location<'c>,
+    ) -> Value<'c, 'a> {
+        let input = self.convert_input(block, stage, "`select`", stage.input());
+        let items = stage
+            .items()
+            .map(|item| (item.alias(), item.expr(), item.syntax().text_range()))
+            .collect();
+        let (names, region) = self.convert_items(items, "select item", loc);
+        let columns = self.string_attrs(&names);
+        self.symbols.replace(names);
+        block
+            .append_operation(
+                yzl::select(
                     self.context,
                     types::query(self.context),
                     input,
                     region,
-                    ArrayAttribute::new(self.context, &group_by),
-                    ArrayAttribute::new(self.context, &measures),
+                    ArrayAttribute::new(self.context, &columns),
                     loc,
                 )
-                .into();
-                op.set_index_array_attribute(self.context, "key_cols", &keys);
-                block.append_operation(op).first_result()
-            }
-            ast::Rel::LimitExpr(stage) => {
-                let input = self.convert_input(block, stage, "`limit`", stage.input());
-                let count = match stage.count() {
-                    Some(count) => self.int_literal(&count),
-                    None => {
-                        self.error(stage, "`limit` is missing its row count");
-                        0
-                    }
-                };
-                let offset = stage.offset().map(|offset| self.int_literal(&offset));
+                .into(),
+            )
+            .first_result()
+    }
 
-                let i64 = IntegerType::new(self.context, 64).into();
-                let mut builder = yzl::LimitOperationBuilder::new(self.context, loc)
-                    .result(types::query(self.context))
-                    .input(input)
-                    .count(IntegerAttribute::new(i64, count));
-                if let Some(offset) = offset {
-                    builder = builder.offset(IntegerAttribute::new(i64, offset));
-                }
-
-                block
-                    .append_operation(builder.build().into())
-                    .first_result()
-            }
-            ast::Rel::RenameExpr(stage) => {
-                let input = self.convert_input(block, stage, "`rename`", stage.input());
-                let mut from: Vec<&'c str> = Vec::new();
-                let mut to: Vec<&'c str> = Vec::new();
-                let mut renames = Vec::new();
-                for item in stage.items() {
-                    let (Some(old), Some(new)) = (self.ident(item.from()), self.ident(item.to()))
-                    else {
-                        self.error(&item, "rename item is missing a column name");
-                        continue;
-                    };
-
-                    let reference = Reference {
-                        qualifier: self.ident(item.qualifier()),
-                        name: old,
-                    };
-                    if let Some(index) = self.column(&item, "column", reference) {
-                        renames.push((index, new));
-                        from.push(self.intern(&reference.to_string()));
-                        to.push(new);
-                    }
-                }
-
-                self.symbols.rename(&renames);
-                let indices: Vec<usize> = renames.iter().map(|&(index, _)| index).collect();
-                let mut op: melior::ir::Operation<'c> = yzl::rename(
-                    self.context,
-                    types::query(self.context),
-                    input,
-                    ArrayAttribute::new(self.context, &self.string_attrs(&from)),
-                    ArrayAttribute::new(self.context, &self.string_attrs(&to)),
-                    loc,
-                )
-                .into();
-                op.set_index_array_attribute(self.context, "rename_cols", &indices);
-                block.append_operation(op).first_result()
-            }
-            ast::Rel::AliasExpr(stage) => {
-                let input = self.convert_input(block, stage, "`as`", stage.input());
-                let Some(alias) = self.ident(stage.alias()) else {
-                    self.error(stage, "`as` is missing its alias");
-                    return input;
-                };
-
-                self.alias(block, input, alias, loc)
-            }
-            ast::Rel::JoinExpr(stage) => {
-                let lhs = self.convert_input(block, stage, "`join`", stage.input());
-                let kind = match stage.kind() {
-                    Some(ast::JoinKind::Left) => JoinKind::Left,
-                    Some(ast::JoinKind::Right) => JoinKind::Right,
-                    Some(ast::JoinKind::Full) => JoinKind::Full,
-                    Some(ast::JoinKind::Inner) | None => JoinKind::Inner,
-                };
-                let Some(relation) = self.ident(stage.relation()) else {
-                    return self.missing(
-                        block,
-                        stage,
-                        "`join` is missing its relation",
-                        types::query(self.context),
-                    );
-                };
-
-                let alias = self.ident(stage.alias());
-                let rhs = match self.symbols.relation(relation, alias) {
-                    Some(rhs) => rhs,
-                    None => {
-                        self.error(stage, &format!("`{relation}` is not a relation"));
-                        Row::new()
-                    }
-                };
-
-                let mut using: Vec<&'c str> = Vec::new();
-                if let Some(clause) = stage.using() {
-                    using = clause
-                        .columns()
-                        .filter_map(|column| self.ident(Some(column)))
-                        .collect();
-                    if using.is_empty() {
-                        self.error(&clause, "`using` needs at least one column");
-                    }
-
-                    for &column in &using {
-                        let column = Reference::bare(column);
-                        if !self.symbols.row().has(column) || !rhs.has(column) {
-                            self.error(
-                                &clause,
-                                &format!("column {column} not present in both relations"),
-                            );
-                        }
-                    }
-                }
-
-                // The condition sees both rows, so the row moves first.
-                self.symbols.concat(rhs);
-                let on = Region::new();
-                if stage.using().is_none() {
-                    match stage.on() {
-                        None => self.error(stage, "`join` is missing its `on` or `using` clause"),
-                        Some(clause) => match clause.condition() {
-                            None => self.error(&clause, "`on` is missing its condition"),
-                            Some(condition) => {
-                                let body = self.stage_block(&on, loc);
-                                let value = self.convert_expr(body, &Locals::new(), &condition);
-                                body.append_operation(
-                                    yzl::r#yield(self.context, &[value], loc).into(),
-                                );
-                            }
-                        },
-                    }
-                }
-
-                let mut builder = yzl::JoinOperationBuilder::new(self.context, loc)
-                    .result(types::query(self.context))
-                    .lhs(lhs)
-                    .kind(StringAttribute::new(self.context, kind.as_str()))
-                    .rhs(FlatSymbolRefAttribute::new(self.context, relation))
-                    .on(on);
-                if let Some(alias) = alias {
-                    builder = builder.rhs_alias(StringAttribute::new(self.context, alias));
-                }
-                if !using.is_empty() {
-                    let columns = self.string_attrs(&using);
-                    builder = builder.using_columns(ArrayAttribute::new(self.context, &columns));
-                }
-
-                block
-                    .append_operation(builder.build().into())
-                    .first_result()
-            }
-            ast::Rel::SetExpr(stage) => {
-                let input = self.convert_input(block, stage, "`set`", stage.input());
-                let mut columns = Vec::new();
-                for item in stage.items() {
-                    let Some(name) = self.ident(item.column()) else {
-                        self.error(&item, "set item is incomplete");
-                        continue;
-                    };
-
-                    if let Some(index) = self.column(&item, "column", Reference::bare(name)) {
-                        columns.push(index);
-                    }
-                }
-
-                let items = stage
-                    .items()
-                    .map(|item| (item.column(), item.value(), item.syntax().text_range()))
-                    .collect();
-                let (names, region) = self.convert_items(items, "set item", loc);
-                let names = self.string_attrs(&names);
-                let mut op: melior::ir::Operation<'c> = yzl::set(
+    fn convert_extend<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        stage: &ast::ExtendExpr,
+        loc: Location<'c>,
+    ) -> Value<'c, 'a> {
+        let input = self.convert_input(block, stage, "`extend`", stage.input());
+        let items = stage
+            .items()
+            .map(|item| (item.alias(), item.expr(), item.syntax().text_range()))
+            .collect();
+        let (names, region) = self.convert_items(items, "extend item", loc);
+        let columns = self.string_attrs(&names);
+        self.symbols.extend(names);
+        block
+            .append_operation(
+                yzl::extend(
                     self.context,
                     types::query(self.context),
                     input,
                     region,
-                    ArrayAttribute::new(self.context, &names),
+                    ArrayAttribute::new(self.context, &columns),
                     loc,
                 )
-                .into();
-                op.set_index_array_attribute(self.context, "set_cols", &columns);
-                block.append_operation(op).first_result()
-            }
-            ast::Rel::DistinctExpr(stage) => {
-                let input = self.convert_input(block, stage, "`distinct`", stage.input());
-                block
-                    .append_operation(
-                        yzl::distinct(self.context, types::query(self.context), input, loc).into(),
-                    )
-                    .first_result()
-            }
-            ast::Rel::DropExpr(stage) => {
-                let input = self.convert_input(block, stage, "`drop`", stage.input());
-                let mut names: Vec<&'c str> = Vec::new();
-                for column in stage.columns() {
-                    let Some(name) = column.text().map(|text| self.intern(&text)) else {
-                        continue;
-                    };
+                .into(),
+            )
+            .first_result()
+    }
 
-                    if let Some(index) = self.column(&column, "column", Reference::bare(name)) {
-                        self.symbols.remove(index);
-                    }
+    fn convert_aggregate<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        stage: &ast::AggregateExpr,
+        loc: Location<'c>,
+    ) -> Value<'c, 'a> {
+        let input = self.convert_input(block, stage, "`aggregate`", stage.input());
+        let mut keys = Vec::new();
+        let mut key_names: Vec<&'c str> = Vec::new();
+        for item in stage.group_by().into_iter().flat_map(|group| group.items()) {
+            let Some(column) = self.ident(item.column()) else {
+                self.error(&item, "group by key is missing its column");
+                continue;
+            };
 
-                    names.push(name);
-                }
-
-                let columns = self.string_attrs(&names);
-                block
-                    .append_operation(
-                        yzl::drop(
-                            self.context,
-                            types::query(self.context),
-                            input,
-                            ArrayAttribute::new(self.context, &columns),
-                            loc,
-                        )
-                        .into(),
-                    )
-                    .first_result()
+            let reference = Reference {
+                qualifier: self.ident(item.qualifier()),
+                name: column,
+            };
+            if let Some(index) = self.column(&item, "group key", reference) {
+                keys.push(index);
+                key_names.push(self.ident(item.alias()).unwrap_or(column));
             }
         }
+
+        let items = stage
+            .items()
+            .map(|item| (item.alias(), item.expr(), item.syntax().text_range()))
+            .collect();
+        let (names, region) = self.convert_items(items, "aggregate item", loc);
+        let group_by = self.string_attrs(&key_names);
+        let measures = self.string_attrs(&names);
+        // A grouping's row is its keys, in order, then its measures.
+        key_names.extend(names);
+        self.symbols.replace(key_names);
+
+        let mut op: melior::ir::Operation<'c> = yzl::aggregate(
+            self.context,
+            types::query(self.context),
+            input,
+            region,
+            ArrayAttribute::new(self.context, &group_by),
+            ArrayAttribute::new(self.context, &measures),
+            loc,
+        )
+        .into();
+        op.set_index_array_attribute(self.context, "key_cols", &keys);
+        block.append_operation(op).first_result()
+    }
+
+    fn convert_limit<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        stage: &ast::LimitExpr,
+        loc: Location<'c>,
+    ) -> Value<'c, 'a> {
+        let input = self.convert_input(block, stage, "`limit`", stage.input());
+        let count = match stage.count() {
+            Some(count) => self.int_literal(&count),
+            None => {
+                self.error(stage, "`limit` is missing its row count");
+                0
+            }
+        };
+        let offset = stage.offset().map(|offset| self.int_literal(&offset));
+
+        let i64 = IntegerType::new(self.context, 64).into();
+        let mut builder = yzl::LimitOperationBuilder::new(self.context, loc)
+            .result(types::query(self.context))
+            .input(input)
+            .count(IntegerAttribute::new(i64, count));
+        if let Some(offset) = offset {
+            builder = builder.offset(IntegerAttribute::new(i64, offset));
+        }
+
+        block
+            .append_operation(builder.build().into())
+            .first_result()
+    }
+
+    fn convert_rename<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        stage: &ast::RenameExpr,
+        loc: Location<'c>,
+    ) -> Value<'c, 'a> {
+        let input = self.convert_input(block, stage, "`rename`", stage.input());
+        let mut from: Vec<&'c str> = Vec::new();
+        let mut to: Vec<&'c str> = Vec::new();
+        let mut renames = Vec::new();
+        for item in stage.items() {
+            let (Some(old), Some(new)) = (self.ident(item.from()), self.ident(item.to())) else {
+                self.error(&item, "rename item is missing a column name");
+                continue;
+            };
+
+            let reference = Reference {
+                qualifier: self.ident(item.qualifier()),
+                name: old,
+            };
+            if let Some(index) = self.column(&item, "column", reference) {
+                renames.push((index, new));
+                from.push(self.intern(&reference.to_string()));
+                to.push(new);
+            }
+        }
+
+        self.symbols.rename(&renames);
+        let indices: Vec<usize> = renames.iter().map(|&(index, _)| index).collect();
+        let mut op: melior::ir::Operation<'c> = yzl::rename(
+            self.context,
+            types::query(self.context),
+            input,
+            ArrayAttribute::new(self.context, &self.string_attrs(&from)),
+            ArrayAttribute::new(self.context, &self.string_attrs(&to)),
+            loc,
+        )
+        .into();
+        op.set_index_array_attribute(self.context, "rename_cols", &indices);
+        block.append_operation(op).first_result()
+    }
+
+    fn convert_alias<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        stage: &ast::AliasExpr,
+        loc: Location<'c>,
+    ) -> Value<'c, 'a> {
+        let input = self.convert_input(block, stage, "`as`", stage.input());
+        let Some(alias) = self.ident(stage.alias()) else {
+            self.error(stage, "`as` is missing its alias");
+            return input;
+        };
+
+        self.qualify(block, input, alias, loc)
+    }
+
+    fn convert_join<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        stage: &ast::JoinExpr,
+        loc: Location<'c>,
+    ) -> Value<'c, 'a> {
+        let lhs = self.convert_input(block, stage, "`join`", stage.input());
+        let kind = match stage.kind() {
+            Some(ast::JoinKind::Left) => JoinKind::Left,
+            Some(ast::JoinKind::Right) => JoinKind::Right,
+            Some(ast::JoinKind::Full) => JoinKind::Full,
+            Some(ast::JoinKind::Inner) | None => JoinKind::Inner,
+        };
+        let Some(relation) = self.ident(stage.relation()) else {
+            return self.missing(
+                block,
+                stage,
+                "`join` is missing its relation",
+                types::query(self.context),
+            );
+        };
+
+        let alias = self.ident(stage.alias());
+        let rhs = match self.symbols.relation(relation, alias) {
+            Some(rhs) => rhs,
+            None => {
+                self.error(stage, &format!("`{relation}` is not a relation"));
+                Row::new()
+            }
+        };
+
+        let mut using: Vec<&'c str> = Vec::new();
+        if let Some(clause) = stage.using() {
+            using = clause
+                .columns()
+                .filter_map(|column| self.ident(Some(column)))
+                .collect();
+            if using.is_empty() {
+                self.error(&clause, "`using` needs at least one column");
+            }
+
+            for &column in &using {
+                let column = Reference::bare(column);
+                if !self.symbols.row().has(column) || !rhs.has(column) {
+                    self.error(
+                        &clause,
+                        &format!("column {column} not present in both relations"),
+                    );
+                }
+            }
+        }
+
+        // The condition sees both rows, so the row moves first.
+        self.symbols.concat(rhs);
+        let on = Region::new();
+        if stage.using().is_none() {
+            match stage.on() {
+                None => self.error(stage, "`join` is missing its `on` or `using` clause"),
+                Some(clause) => match clause.condition() {
+                    None => self.error(&clause, "`on` is missing its condition"),
+                    Some(condition) => {
+                        let body = self.stage_block(&on, loc);
+                        let value = self.convert_expr(body, &Locals::new(), &condition);
+                        body.append_operation(yzl::r#yield(self.context, &[value], loc).into());
+                    }
+                },
+            }
+        }
+
+        let mut builder = yzl::JoinOperationBuilder::new(self.context, loc)
+            .result(types::query(self.context))
+            .lhs(lhs)
+            .kind(StringAttribute::new(self.context, kind.as_str()))
+            .rhs(FlatSymbolRefAttribute::new(self.context, relation))
+            .on(on);
+        if let Some(alias) = alias {
+            builder = builder.rhs_alias(StringAttribute::new(self.context, alias));
+        }
+        if !using.is_empty() {
+            let columns = self.string_attrs(&using);
+            builder = builder.using_columns(ArrayAttribute::new(self.context, &columns));
+        }
+
+        block
+            .append_operation(builder.build().into())
+            .first_result()
+    }
+
+    fn convert_set<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        stage: &ast::SetExpr,
+        loc: Location<'c>,
+    ) -> Value<'c, 'a> {
+        let input = self.convert_input(block, stage, "`set`", stage.input());
+        let mut columns = Vec::new();
+        for item in stage.items() {
+            let Some(name) = self.ident(item.column()) else {
+                self.error(&item, "set item is incomplete");
+                continue;
+            };
+
+            if let Some(index) = self.column(&item, "column", Reference::bare(name)) {
+                columns.push(index);
+            }
+        }
+
+        let items = stage
+            .items()
+            .map(|item| (item.column(), item.value(), item.syntax().text_range()))
+            .collect();
+        let (names, region) = self.convert_items(items, "set item", loc);
+        let names = self.string_attrs(&names);
+        let mut op: melior::ir::Operation<'c> = yzl::set(
+            self.context,
+            types::query(self.context),
+            input,
+            region,
+            ArrayAttribute::new(self.context, &names),
+            loc,
+        )
+        .into();
+        op.set_index_array_attribute(self.context, "set_cols", &columns);
+        block.append_operation(op).first_result()
+    }
+
+    fn convert_distinct<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        stage: &ast::DistinctExpr,
+        loc: Location<'c>,
+    ) -> Value<'c, 'a> {
+        let input = self.convert_input(block, stage, "`distinct`", stage.input());
+        block
+            .append_operation(
+                yzl::distinct(self.context, types::query(self.context), input, loc).into(),
+            )
+            .first_result()
+    }
+
+    fn convert_drop<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        stage: &ast::DropExpr,
+        loc: Location<'c>,
+    ) -> Value<'c, 'a> {
+        let input = self.convert_input(block, stage, "`drop`", stage.input());
+        let mut names: Vec<&'c str> = Vec::new();
+        for column in stage.columns() {
+            let Some(name) = column.text().map(|text| self.intern(&text)) else {
+                continue;
+            };
+
+            if let Some(index) = self.column(&column, "column", Reference::bare(name)) {
+                self.symbols.remove(index);
+            }
+
+            names.push(name);
+        }
+
+        let columns = self.string_attrs(&names);
+        block
+            .append_operation(
+                yzl::drop(
+                    self.context,
+                    types::query(self.context),
+                    input,
+                    ArrayAttribute::new(self.context, &columns),
+                    loc,
+                )
+                .into(),
+            )
+            .first_result()
     }
 
     fn int_literal(&mut self, expr: &ast::Expr) -> i64 {
@@ -386,7 +466,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
     }
 
-    fn from<'a>(
+    fn scan<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
         node: &impl AstNode,
@@ -417,7 +497,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .first_result()
     }
 
-    fn alias<'a>(
+    fn qualify<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
         input: Value<'c, 'a>,
@@ -469,7 +549,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 };
 
                 let loc = self.location(&ident);
-                self.from(block, &ident, name, loc)
+                self.scan(block, &ident, name, loc)
             }
             Some(other) => self.missing(
                 block,
