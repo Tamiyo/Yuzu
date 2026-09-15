@@ -9,7 +9,7 @@ use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 use melior::ir::r#type::IntegerType;
 use yuzu_mlir::attributes::{CalleeKind, CmpPredicate};
 
-use crate::lower_ast_to_yzl::symbols::{Lookup, Reference};
+use crate::lower_ast_to_yzl::symbols::{Callable, Lookup, Reference};
 use yuzu_mlir::ext::OperationExt;
 use yuzu_mlir::types;
 
@@ -23,173 +23,14 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let loc = self.location(expr);
         match expr {
             ast::Expr::Literal(literal) => self.convert_literal(block, literal),
-            ast::Expr::IdentExpr(ident) => {
-                let Some(name) = self.ident(ident.name()) else {
-                    return self.missing(
-                        block,
-                        ident,
-                        "identifier expression is missing its name",
-                        types::var(self.context),
-                    );
-                };
-
-                self.name_ref(block, locals, ident, Reference::bare(name), loc)
-            }
+            ast::Expr::IdentExpr(ident) => self.convert_ident(block, locals, ident, loc),
             ast::Expr::FieldAccessExpr(access) => {
-                // `t.a` is a qualified column reference, not a load.
-                let base = match access.base() {
-                    Some(ast::Expr::IdentExpr(ident)) => self.ident(ident.name()),
-                    Some(_) => {
-                        return self.missing(
-                            block,
-                            access,
-                            "field access on an expression is not supported yet",
-                            types::var(self.context),
-                        );
-                    }
-                    None => None,
-                };
-
-                let Some(base) = base else {
-                    return self.missing(
-                        block,
-                        access,
-                        "field access is missing its base",
-                        types::var(self.context),
-                    );
-                };
-
-                let Some(field) = self.ident(access.field()) else {
-                    return self.missing(
-                        block,
-                        access,
-                        "field access is missing its field",
-                        types::var(self.context),
-                    );
-                };
-
-                let reference = Reference {
-                    qualifier: Some(base),
-                    name: field,
-                };
-                self.name_ref(block, locals, access, reference, loc)
+                self.convert_field_access(block, locals, access, loc)
             }
             ast::Expr::BinaryExpr(binary) => self.convert_binary(block, locals, binary),
-            ast::Expr::UnaryExpr(unary) => {
-                let value = match unary.expr() {
-                    Some(expr) => self.convert_expr(block, locals, &expr),
-                    None => {
-                        return self.missing(
-                            block,
-                            unary,
-                            "unary expression is missing its operand",
-                            types::var(self.context),
-                        );
-                    }
-                };
-
-                let result = match unary.op() {
-                    Some(UnaryOp::Neg) => {
-                        yz::neg(self.context, types::var(self.context), value, loc).into()
-                    }
-                    Some(UnaryOp::Not) => {
-                        yz::not(self.context, types::var(self.context), value, loc).into()
-                    }
-                    Some(UnaryOp::Pos) => return value,
-                    None => {
-                        return self.missing(
-                            block,
-                            unary,
-                            "unary expression is missing its operator",
-                            types::var(self.context),
-                        );
-                    }
-                };
-
-                block.append_operation(result).first_result()
-            }
-            ast::Expr::CallExpr(call) => {
-                let callee = match call.callee() {
-                    Some(ast::Expr::IdentExpr(ident)) => match self.ident(ident.name()) {
-                        Some(callee) => callee,
-                        None => {
-                            return self.missing(
-                                block,
-                                call,
-                                "call is missing its callee",
-                                types::var(self.context),
-                            );
-                        }
-                    },
-
-                    Some(_) => {
-                        return self.missing(
-                            block,
-                            call,
-                            "calling an expression is not supported yet",
-                            types::var(self.context),
-                        );
-                    }
-                    None => {
-                        return self.missing(
-                            block,
-                            call,
-                            "call is missing its callee",
-                            types::var(self.context),
-                        );
-                    }
-                };
-
-                let args: Vec<ast::Expr> = call
-                    .args()
-                    .into_iter()
-                    .flat_map(|args| args.args())
-                    .collect();
-                let operands: Vec<Value> = args
-                    .iter()
-                    .map(|arg| self.convert_expr(block, locals, arg))
-                    .collect();
-                let Some(callable) = self.symbols.callable(callee, self.registry) else {
-                    let message = match self.symbols.kind(callee) {
-                        Some(kind) => format!("`{callee}` is a {}, not a function", kind.what()),
-                        None if self.symbols.is_method(callee) => format!(
-                            "`{callee}` is a trait method, and calling one is not supported yet"
-                        ),
-                        None => format!("unresolved identifier `{callee}`"),
-                    };
-                    return self.missing(block, call, &message, types::var(self.context));
-                };
-
-                let (min, max) = (callable.min_args, callable.max_args);
-                if operands.len() < min || operands.len() > max {
-                    let expected = if min == max {
-                        format!("{min}")
-                    } else {
-                        format!("{min} to {max}")
-                    };
-                    self.error(
-                        call,
-                        &format!(
-                            "`{callee}` expects {expected} argument(s), found {}",
-                            operands.len()
-                        ),
-                    );
-                }
-
-                self.call(block, callee, callable.kind, &operands, loc)
-            }
-            ast::Expr::ListExpr(list) => {
-                let elements: Vec<ast::Expr> = list.elements().collect();
-                let values: Vec<Value> = elements
-                    .iter()
-                    .map(|element| self.convert_expr(block, locals, element))
-                    .collect();
-                block
-                    .append_operation(
-                        yzl::list(self.context, types::var(self.context), &values, loc).into(),
-                    )
-                    .first_result()
-            }
+            ast::Expr::UnaryExpr(unary) => self.convert_unary(block, locals, unary, loc),
+            ast::Expr::CallExpr(call) => self.convert_call(block, locals, call, loc),
+            ast::Expr::ListExpr(list) => self.convert_list(block, locals, list, loc),
             ast::Expr::ParenExpr(paren) => match paren.expr() {
                 Some(inner) => self.convert_expr(block, locals, &inner),
                 None => self.missing(
@@ -199,7 +40,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     types::var(self.context),
                 ),
             },
-
             // A query is a scope, and it ends where the expression that is
             // the query ends.
             ast::Expr::Rel(rel) => {
@@ -214,6 +54,212 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 types::var(self.context),
             ),
         }
+    }
+
+    fn convert_ident<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        locals: &Locals<'c, 'a>,
+        ident: &ast::IdentExpr,
+        loc: Location<'c>,
+    ) -> Value<'c, 'a> {
+        let Some(name) = self.ident(ident.name()) else {
+            return self.missing(
+                block,
+                ident,
+                "identifier expression is missing its name",
+                types::var(self.context),
+            );
+        };
+
+        self.name_ref(block, locals, ident, Reference::bare(name), loc)
+    }
+
+    /// `t.a` is a qualified column reference, not a load.
+    fn convert_field_access<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        locals: &Locals<'c, 'a>,
+        access: &ast::FieldAccessExpr,
+        loc: Location<'c>,
+    ) -> Value<'c, 'a> {
+        let base = match access.base() {
+            Some(ast::Expr::IdentExpr(ident)) => self.ident(ident.name()),
+            Some(_) => {
+                return self.missing(
+                    block,
+                    access,
+                    "field access on an expression is not supported yet",
+                    types::var(self.context),
+                );
+            }
+            None => None,
+        };
+
+        let Some(base) = base else {
+            return self.missing(
+                block,
+                access,
+                "field access is missing its base",
+                types::var(self.context),
+            );
+        };
+
+        let Some(field) = self.ident(access.field()) else {
+            return self.missing(
+                block,
+                access,
+                "field access is missing its field",
+                types::var(self.context),
+            );
+        };
+
+        let reference = Reference {
+            qualifier: Some(base),
+            name: field,
+        };
+        self.name_ref(block, locals, access, reference, loc)
+    }
+
+    fn convert_unary<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        locals: &Locals<'c, 'a>,
+        unary: &ast::UnaryExpr,
+        loc: Location<'c>,
+    ) -> Value<'c, 'a> {
+        let value = match unary.expr() {
+            Some(expr) => self.convert_expr(block, locals, &expr),
+            None => {
+                return self.missing(
+                    block,
+                    unary,
+                    "unary expression is missing its operand",
+                    types::var(self.context),
+                );
+            }
+        };
+
+        let result = match unary.op() {
+            Some(UnaryOp::Neg) => {
+                yz::neg(self.context, types::var(self.context), value, loc).into()
+            }
+            Some(UnaryOp::Not) => {
+                yz::not(self.context, types::var(self.context), value, loc).into()
+            }
+            Some(UnaryOp::Pos) => return value,
+            None => {
+                return self.missing(
+                    block,
+                    unary,
+                    "unary expression is missing its operator",
+                    types::var(self.context),
+                );
+            }
+        };
+
+        block.append_operation(result).first_result()
+    }
+
+    fn convert_call<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        locals: &Locals<'c, 'a>,
+        call: &ast::CallExpr,
+        loc: Location<'c>,
+    ) -> Value<'c, 'a> {
+        let callee = match call.callee() {
+            Some(ast::Expr::IdentExpr(ident)) => match self.ident(ident.name()) {
+                Some(callee) => callee,
+                None => {
+                    return self.missing(
+                        block,
+                        call,
+                        "call is missing its callee",
+                        types::var(self.context),
+                    );
+                }
+            },
+            Some(_) => {
+                return self.missing(
+                    block,
+                    call,
+                    "calling an expression is not supported yet",
+                    types::var(self.context),
+                );
+            }
+            None => {
+                return self.missing(
+                    block,
+                    call,
+                    "call is missing its callee",
+                    types::var(self.context),
+                );
+            }
+        };
+
+        let args: Vec<ast::Expr> = call
+            .args()
+            .into_iter()
+            .flat_map(|args| args.args())
+            .collect();
+        let operands: Vec<Value> = args
+            .iter()
+            .map(|arg| self.convert_expr(block, locals, arg))
+            .collect();
+        let Some(callable) = self.symbols.callable(callee, self.registry) else {
+            let message = match self.symbols.kind(callee) {
+                Some(kind) => format!("`{callee}` is a {}, not a function", kind.what()),
+                None if self.symbols.is_method(callee) => {
+                    format!("`{callee}` is a trait method, and calling one is not supported yet")
+                }
+                None => format!("unresolved identifier `{callee}`"),
+            };
+            return self.missing(block, call, &message, types::var(self.context));
+        };
+
+        self.check_arity(call, callee, callable, operands.len());
+        self.call(block, callee, callable.kind, &operands, loc)
+    }
+
+    fn check_arity(
+        &mut self,
+        call: &ast::CallExpr,
+        callee: &str,
+        callable: Callable,
+        given: usize,
+    ) {
+        let (min, max) = (callable.min_args, callable.max_args);
+        if given < min || given > max {
+            let expected = if min == max {
+                format!("{min}")
+            } else {
+                format!("{min} to {max}")
+            };
+            self.error(
+                call,
+                &format!("`{callee}` expects {expected} argument(s), found {given}"),
+            );
+        }
+    }
+
+    fn convert_list<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        locals: &Locals<'c, 'a>,
+        list: &ast::ListExpr,
+        loc: Location<'c>,
+    ) -> Value<'c, 'a> {
+        let elements: Vec<ast::Expr> = list.elements().collect();
+        let values: Vec<Value> = elements
+            .iter()
+            .map(|element| self.convert_expr(block, locals, element))
+            .collect();
+        block
+            .append_operation(
+                yzl::list(self.context, types::var(self.context), &values, loc).into(),
+            )
+            .first_result()
     }
 
     fn convert_binary<'a>(

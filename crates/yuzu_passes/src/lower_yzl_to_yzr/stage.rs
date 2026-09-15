@@ -7,6 +7,7 @@ use melior::ir::{Block, BlockLike, BlockRef, Location, Region, RegionLike, Type,
 use yuzu_mlir::SymbolTable;
 use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationCast, OperationExt, ValueExt};
 use yuzu_mlir::ods::{yz, yzr};
+use yuzu_mlir::ops::yzl as yzl_ops;
 use yuzu_mlir::ops::yzl::YzlOp;
 use yuzu_mlir::types;
 
@@ -21,290 +22,24 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
         symbols: &mut SymbolTable<'c, '_>,
     ) {
         match op.as_yzl() {
-            Some(YzlOp::Struct(item)) => {
-                let fields = struct_fields(&item);
-                self.declare_struct(item.sym_name().value(), &fields, symbols);
-            }
+            Some(YzlOp::Struct(item)) => self.lower_struct(symbols, &item),
+            Some(YzlOp::From(from)) => self.lower_from(op, target, source, symbols, &from),
+            Some(YzlOp::Let(binding)) => self.lower_let(op, target, source, symbols, &binding),
+            Some(YzlOp::Where(stage)) => self.lower_where(op, target, &stage),
+            Some(YzlOp::Select(stage)) => self.lower_select(op, target, symbols, &stage),
+            Some(YzlOp::Extend(stage)) => self.lower_extend(op, target, symbols, &stage),
+            Some(YzlOp::Aggregate(stage)) => self.lower_aggregate(op, target, symbols, &stage),
+            Some(YzlOp::Join(stage)) => self.lower_join(op, target, source, symbols, &stage),
+            Some(YzlOp::Limit(stage)) => self.lower_limit(op, target, &stage),
+            Some(YzlOp::Alias(_)) => self.lower_alias(op),
+            Some(YzlOp::Distinct(_)) => self.lower_distinct(op, target, symbols),
+            Some(YzlOp::Drop(stage)) => self.lower_drop(op, target, symbols, &stage),
+            Some(YzlOp::Set(stage)) => self.lower_set(op, target, symbols, &stage),
+            Some(YzlOp::Rename(stage)) => self.lower_rename(op, target, symbols, &stage),
+            Some(YzlOp::Output(_)) => self.lower_output(op, target),
             // A table declaration says nothing yzr needs: `yzr.table` names
             // the relation and carries its row as the result type.
             Some(YzlOp::Table(_)) => {}
-            Some(YzlOp::From(from)) => {
-                let relation = from.source().value();
-                let Some((rows, schema)) =
-                    self.relation_input(relation, source, target, symbols, op.location())
-                else {
-                    self.error(op, format!("`{relation}` has no row shape to scan"));
-                    return;
-                };
-
-                self.record_stage(op, rows, schema);
-            }
-            // Queries are expressions, so a binding is a name for the value
-            // its body yields: the stages inside lower into the module just
-            // as they would outside it, and the name reaches the result.
-            Some(YzlOp::Let(binding)) => {
-                let Some(block) = binding.body().first_block() else {
-                    self.error(op, "`let` has no body to bind");
-                    return;
-                };
-
-                for inner in block.operations() {
-                    self.lower_op(inner, target, source, symbols);
-                }
-
-                let bound = block
-                    .last_operation()
-                    .and_then(|yielded| yielded.try_first_operand())
-                    .and_then(|value| self.stages.get(&value.id()).cloned());
-
-                match bound {
-                    Some(rows) => {
-                        self.bindings.insert(binding.sym_name().value(), rows);
-                    }
-                    None => self.error(op, "only a query can be bound by `let`"),
-                }
-            }
-            Some(YzlOp::Where(stage)) => {
-                let Some((input, schema)) = self.input_stage(op) else {
-                    return;
-                };
-
-                let (region, _) =
-                    self.lower_region(stage.body(), &schema, op.location(), Yielded::Body);
-                let filtered = target.append_operation(
-                    yzr::filter(self.context, input, region, op.location()).into(),
-                );
-
-                self.record_stage(op, filtered.first_result(), schema);
-            }
-            Some(YzlOp::Select(stage)) => {
-                let Some((input, schema)) = self.input_stage(op) else {
-                    return;
-                };
-
-                let (region, yielded) =
-                    self.lower_region(stage.body(), &schema, op.location(), Yielded::Body);
-                let produced = self.named_row(stage.names().strings(), yielded);
-                let row = self.row_type(&produced, symbols);
-                let projected = target.append_operation(
-                    yzr::project(self.context, row, input, region, op.location()).into(),
-                );
-
-                self.record_stage(op, projected.first_result(), produced);
-            }
-            Some(YzlOp::Extend(stage)) => {
-                let Some((input, mut schema)) = self.input_stage(op) else {
-                    return;
-                };
-
-                let (region, yielded) =
-                    self.lower_region(stage.body(), &schema, op.location(), Yielded::Body);
-                schema.extend(self.named_row(stage.names().strings(), yielded));
-                let row = self.row_type(&schema, symbols);
-                let extended = target.append_operation(
-                    yzr::extend(self.context, row, input, region, op.location()).into(),
-                );
-
-                self.record_stage(op, extended.first_result(), schema);
-            }
-            Some(YzlOp::Aggregate(stage)) => {
-                let Some((input, schema)) = self.input_stage(op) else {
-                    return;
-                };
-
-                let keys = crate::infer_types::indices(stage.key_cols());
-                let (region, yielded) =
-                    self.lower_region(stage.body(), &schema, op.location(), Yielded::Body);
-                let mut produced: Schema<'c> = keys
-                    .iter()
-                    .zip(stage.group_by().strings())
-                    .filter_map(|(&index, name)| schema.get(index).map(|&(_, ty)| (name, ty)))
-                    .collect();
-                produced.extend(self.named_row(stage.names().strings(), yielded));
-
-                let row = self.row_type(&produced, symbols);
-                let indices: Vec<i64> = keys.iter().map(|&index| index as i64).collect();
-                let grouped = target.append_operation(
-                    yzr::aggregate(
-                        self.context,
-                        row,
-                        input,
-                        region,
-                        DenseI64ArrayAttribute::new(self.context, &indices).into(),
-                        op.location(),
-                    )
-                    .into(),
-                );
-
-                self.record_stage(op, grouped.first_result(), produced);
-            }
-            Some(YzlOp::Join(stage)) => {
-                let Some((lhs, mut schema)) = self.input_stage(op) else {
-                    return;
-                };
-
-                // The one stage that has to conjure an input: yzl names the
-                // right side, yzr joins two relations.
-                let relation = stage.rhs().value();
-                let Some((rows, right)) =
-                    self.relation_input(relation, source, target, symbols, op.location())
-                else {
-                    self.error(op, format!("`{relation}` has no row shape to scan"));
-                    return;
-                };
-
-                // Both sides carry through, and the `on` region's names were
-                // resolved against exactly this concatenation — a qualifier
-                // only ever chose a column, so it is spent by now.
-                let left_width = schema.len();
-                schema.extend(right.iter().copied());
-
-                let region = match stage.using_columns() {
-                    Some(columns) => self.join_keys(op, &columns.strings(), left_width, &schema),
-                    None => {
-                        self.lower_region(stage.on(), &schema, op.location(), Yielded::Body)
-                            .0
-                    }
-                };
-
-                let row = self.row_type(&schema, symbols);
-                let joined = target.append_operation(
-                    yzr::join(
-                        self.context,
-                        row,
-                        lhs,
-                        rows,
-                        region,
-                        StringAttribute::new(self.context, stage.kind().as_str()),
-                        op.location(),
-                    )
-                    .into(),
-                );
-
-                self.record_stage(op, joined.first_result(), schema);
-            }
-            Some(YzlOp::Limit(stage)) => {
-                let Some((input, schema)) = self.input_stage(op) else {
-                    return;
-                };
-
-                let mut builder = yzr::LimitOperationBuilder::new(self.context, op.location())
-                    .input(input)
-                    .count(stage.count());
-                if let Some(offset) = stage.offset() {
-                    builder = builder.offset(offset);
-                }
-
-                let limited = target.append_operation(builder.build().into());
-                self.record_stage(op, limited.first_result(), schema);
-            }
-            Some(YzlOp::Output(_)) => {
-                let Some((query, _)) = self.input_stage(op) else {
-                    return;
-                };
-
-                target.append_operation(yzr::output(self.context, query, op.location()).into());
-            }
-            // A qualifier only ever chose a column, and resolution has spent
-            // it by now: the row that arrives is the row that leaves.
-            Some(YzlOp::Alias(_)) => {
-                let Some((input, schema)) = self.input_stage(op) else {
-                    return;
-                };
-
-                self.record_stage(op, input, schema);
-            }
-            // A group with no measures: every column is a key, so each
-            // distinct row survives exactly once.
-            Some(YzlOp::Distinct(_)) => {
-                let Some((input, schema)) = self.input_stage(op) else {
-                    return;
-                };
-
-                let keys: Vec<i64> = (0..schema.len() as i64).collect();
-                let region = self.column_region(&schema, &[], op.location());
-                let row = self.row_type(&schema, symbols);
-                let grouped = target.append_operation(
-                    yzr::aggregate(
-                        self.context,
-                        row,
-                        input,
-                        region,
-                        DenseI64ArrayAttribute::new(self.context, &keys).into(),
-                        op.location(),
-                    )
-                    .into(),
-                );
-
-                self.record_stage(op, grouped.first_result(), schema);
-            }
-            Some(YzlOp::Drop(stage)) => {
-                let Some((input, schema)) = self.input_stage(op) else {
-                    return;
-                };
-
-                let Some(kept) = self.kept_columns(op, &stage.columns().strings(), &schema) else {
-                    return;
-                };
-
-                let region = self.column_region(&schema, &kept, op.location());
-                let produced: Schema<'c> = kept.iter().map(|&index| schema[index]).collect();
-                let row = self.row_type(&produced, symbols);
-                let projected = target.append_operation(
-                    yzr::project(self.context, row, input, region, op.location()).into(),
-                );
-
-                self.record_stage(op, projected.first_result(), produced);
-            }
-            Some(YzlOp::Set(stage)) => {
-                let Some((input, mut schema)) = self.input_stage(op) else {
-                    return;
-                };
-
-                // The body computes replacements, not a new row: every column
-                // it does not name carries through in place.
-                let columns = crate::infer_types::indices(stage.set_cols());
-                let (region, yielded) =
-                    self.lower_region(stage.body(), &schema, op.location(), Yielded::Row(&columns));
-
-                for (column, ty) in schema.iter_mut().zip(&yielded) {
-                    column.1 = *ty;
-                }
-
-                let row = self.row_type(&schema, symbols);
-                let projected = target.append_operation(
-                    yzr::project(self.context, row, input, region, op.location()).into(),
-                );
-
-                self.record_stage(op, projected.first_result(), schema);
-            }
-            // yzr has no op for a change of name alone, so a rename is the
-            // projection of every column under the names the stage gave them.
-            Some(YzlOp::Rename(stage)) => {
-                let Some((input, mut schema)) = self.input_stage(op) else {
-                    return;
-                };
-
-                let columns = crate::infer_types::indices(stage.rename_cols());
-                for (&index, name) in columns.iter().zip(stage.to().strings()) {
-                    match schema.get_mut(index) {
-                        Some(column) => column.0 = name,
-                        None => {
-                            self.error(op, format!("column {index} is not in the row"));
-                            return;
-                        }
-                    }
-                }
-
-                let all: Vec<usize> = (0..schema.len()).collect();
-                let region = self.column_region(&schema, &all, op.location());
-                let row = self.row_type(&schema, symbols);
-                let projected = target.append_operation(
-                    yzr::project(self.context, row, input, region, op.location()).into(),
-                );
-
-                self.record_stage(op, projected.first_result(), schema);
-            }
             // Expansion removes these once every call is gone, so one
             // reaching here means expansion did not finish — the reason is
             // already reported, and this says which declaration outlived it.
@@ -317,6 +52,362 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
             // owns rather than the module.
             Some(YzlOp::Call(_) | YzlOp::List(_) | YzlOp::Yield(_) | YzlOp::Return(_)) | None => {}
         }
+    }
+
+    fn lower_output(&mut self, op: OperationRef<'c, '_>, target: BlockRef<'c, 'a>) {
+        let Some((query, _)) = self.input_stage(op) else {
+            return;
+        };
+
+        target.append_operation(yzr::output(self.context, query, op.location()).into());
+    }
+
+    fn lower_struct(
+        &mut self,
+        symbols: &mut SymbolTable<'c, '_>,
+        item: &yzl_ops::StructOp<'c, '_>,
+    ) {
+        let fields = struct_fields(item);
+        self.declare_struct(item.sym_name().value(), &fields, symbols);
+    }
+
+    fn lower_from(
+        &mut self,
+        op: OperationRef<'c, '_>,
+        target: BlockRef<'c, 'a>,
+        source: &SymbolTable<'c, '_>,
+        symbols: &mut SymbolTable<'c, '_>,
+        from: &yzl_ops::FromOp<'c, '_>,
+    ) {
+        let relation = from.source().value();
+        let Some((rows, schema)) =
+            self.relation_input(relation, source, target, symbols, op.location())
+        else {
+            self.error(op, format!("`{relation}` has no row shape to scan"));
+            return;
+        };
+
+        self.record_stage(op, rows, schema);
+    }
+
+    fn lower_let(
+        &mut self,
+        op: OperationRef<'c, '_>,
+        target: BlockRef<'c, 'a>,
+        source: &SymbolTable<'c, '_>,
+        symbols: &mut SymbolTable<'c, '_>,
+        binding: &yzl_ops::LetOp<'c, '_>,
+    ) {
+        let Some(block) = binding.body().first_block() else {
+            self.error(op, "`let` has no body to bind");
+            return;
+        };
+
+        for inner in block.operations() {
+            self.lower_op(inner, target, source, symbols);
+        }
+
+        let bound = block
+            .last_operation()
+            .and_then(|yielded| yielded.try_first_operand())
+            .and_then(|value| self.stages.get(&value.id()).cloned());
+
+        match bound {
+            Some(rows) => {
+                self.bindings.insert(binding.sym_name().value(), rows);
+            }
+            None => self.error(op, "only a query can be bound by `let`"),
+        }
+    }
+
+    fn lower_where(
+        &mut self,
+        op: OperationRef<'c, '_>,
+        target: BlockRef<'c, 'a>,
+        stage: &yzl_ops::WhereOp<'c, '_>,
+    ) {
+        let Some((input, schema)) = self.input_stage(op) else {
+            return;
+        };
+
+        let (region, _) = self.lower_region(stage.body(), &schema, op.location(), Yielded::Body);
+        let filtered =
+            target.append_operation(yzr::filter(self.context, input, region, op.location()).into());
+
+        self.record_stage(op, filtered.first_result(), schema);
+    }
+
+    fn lower_select(
+        &mut self,
+        op: OperationRef<'c, '_>,
+        target: BlockRef<'c, 'a>,
+        symbols: &mut SymbolTable<'c, '_>,
+        stage: &yzl_ops::SelectOp<'c, '_>,
+    ) {
+        let Some((input, schema)) = self.input_stage(op) else {
+            return;
+        };
+
+        let (region, yielded) =
+            self.lower_region(stage.body(), &schema, op.location(), Yielded::Body);
+        let produced = self.named_row(stage.names().strings(), yielded);
+        let row = self.row_type(&produced, symbols);
+        let projected = target
+            .append_operation(yzr::project(self.context, row, input, region, op.location()).into());
+
+        self.record_stage(op, projected.first_result(), produced);
+    }
+
+    fn lower_extend(
+        &mut self,
+        op: OperationRef<'c, '_>,
+        target: BlockRef<'c, 'a>,
+        symbols: &mut SymbolTable<'c, '_>,
+        stage: &yzl_ops::ExtendOp<'c, '_>,
+    ) {
+        let Some((input, mut schema)) = self.input_stage(op) else {
+            return;
+        };
+
+        let (region, yielded) =
+            self.lower_region(stage.body(), &schema, op.location(), Yielded::Body);
+        schema.extend(self.named_row(stage.names().strings(), yielded));
+        let row = self.row_type(&schema, symbols);
+        let extended = target
+            .append_operation(yzr::extend(self.context, row, input, region, op.location()).into());
+
+        self.record_stage(op, extended.first_result(), schema);
+    }
+
+    fn lower_aggregate(
+        &mut self,
+        op: OperationRef<'c, '_>,
+        target: BlockRef<'c, 'a>,
+        symbols: &mut SymbolTable<'c, '_>,
+        stage: &yzl_ops::AggregateOp<'c, '_>,
+    ) {
+        let Some((input, schema)) = self.input_stage(op) else {
+            return;
+        };
+
+        let keys = crate::infer_types::indices(stage.key_cols());
+        let (region, yielded) =
+            self.lower_region(stage.body(), &schema, op.location(), Yielded::Body);
+        let mut produced: Schema<'c> = keys
+            .iter()
+            .zip(stage.group_by().strings())
+            .filter_map(|(&index, name)| schema.get(index).map(|&(_, ty)| (name, ty)))
+            .collect();
+        produced.extend(self.named_row(stage.names().strings(), yielded));
+
+        let row = self.row_type(&produced, symbols);
+        let indices: Vec<i64> = keys.iter().map(|&index| index as i64).collect();
+        let grouped = target.append_operation(
+            yzr::aggregate(
+                self.context,
+                row,
+                input,
+                region,
+                DenseI64ArrayAttribute::new(self.context, &indices).into(),
+                op.location(),
+            )
+            .into(),
+        );
+
+        self.record_stage(op, grouped.first_result(), produced);
+    }
+
+    fn lower_join(
+        &mut self,
+        op: OperationRef<'c, '_>,
+        target: BlockRef<'c, 'a>,
+        source: &SymbolTable<'c, '_>,
+        symbols: &mut SymbolTable<'c, '_>,
+        stage: &yzl_ops::JoinOp<'c, '_>,
+    ) {
+        let Some((lhs, mut schema)) = self.input_stage(op) else {
+            return;
+        };
+
+        // The one stage that has to conjure an input: yzl names the
+        // right side, yzr joins two relations.
+        let relation = stage.rhs().value();
+        let Some((rows, right)) =
+            self.relation_input(relation, source, target, symbols, op.location())
+        else {
+            self.error(op, format!("`{relation}` has no row shape to scan"));
+            return;
+        };
+
+        // Both sides carry through, and the `on` region's names were
+        // resolved against exactly this concatenation — a qualifier
+        // only ever chose a column, so it is spent by now.
+        let left_width = schema.len();
+        schema.extend(right.iter().copied());
+
+        let region = match stage.using_columns() {
+            Some(columns) => self.join_keys(op, &columns.strings(), left_width, &schema),
+            None => {
+                self.lower_region(stage.on(), &schema, op.location(), Yielded::Body)
+                    .0
+            }
+        };
+
+        let row = self.row_type(&schema, symbols);
+        let joined = target.append_operation(
+            yzr::join(
+                self.context,
+                row,
+                lhs,
+                rows,
+                region,
+                StringAttribute::new(self.context, stage.kind().as_str()),
+                op.location(),
+            )
+            .into(),
+        );
+
+        self.record_stage(op, joined.first_result(), schema);
+    }
+
+    fn lower_limit(
+        &mut self,
+        op: OperationRef<'c, '_>,
+        target: BlockRef<'c, 'a>,
+        stage: &yzl_ops::LimitOp<'c, '_>,
+    ) {
+        let Some((input, schema)) = self.input_stage(op) else {
+            return;
+        };
+
+        let mut builder = yzr::LimitOperationBuilder::new(self.context, op.location())
+            .input(input)
+            .count(stage.count());
+        if let Some(offset) = stage.offset() {
+            builder = builder.offset(offset);
+        }
+
+        let limited = target.append_operation(builder.build().into());
+        self.record_stage(op, limited.first_result(), schema);
+    }
+
+    fn lower_alias(&mut self, op: OperationRef<'c, '_>) {
+        let Some((input, schema)) = self.input_stage(op) else {
+            return;
+        };
+
+        self.record_stage(op, input, schema);
+    }
+
+    fn lower_distinct(
+        &mut self,
+        op: OperationRef<'c, '_>,
+        target: BlockRef<'c, 'a>,
+        symbols: &mut SymbolTable<'c, '_>,
+    ) {
+        let Some((input, schema)) = self.input_stage(op) else {
+            return;
+        };
+
+        let keys: Vec<i64> = (0..schema.len() as i64).collect();
+        let region = self.column_region(&schema, &[], op.location());
+        let row = self.row_type(&schema, symbols);
+        let grouped = target.append_operation(
+            yzr::aggregate(
+                self.context,
+                row,
+                input,
+                region,
+                DenseI64ArrayAttribute::new(self.context, &keys).into(),
+                op.location(),
+            )
+            .into(),
+        );
+
+        self.record_stage(op, grouped.first_result(), schema);
+    }
+
+    fn lower_drop(
+        &mut self,
+        op: OperationRef<'c, '_>,
+        target: BlockRef<'c, 'a>,
+        symbols: &mut SymbolTable<'c, '_>,
+        stage: &yzl_ops::DropOp<'c, '_>,
+    ) {
+        let Some((input, schema)) = self.input_stage(op) else {
+            return;
+        };
+
+        let Some(kept) = self.kept_columns(op, &stage.columns().strings(), &schema) else {
+            return;
+        };
+
+        let region = self.column_region(&schema, &kept, op.location());
+        let produced: Schema<'c> = kept.iter().map(|&index| schema[index]).collect();
+        let row = self.row_type(&produced, symbols);
+        let projected = target
+            .append_operation(yzr::project(self.context, row, input, region, op.location()).into());
+
+        self.record_stage(op, projected.first_result(), produced);
+    }
+
+    fn lower_set(
+        &mut self,
+        op: OperationRef<'c, '_>,
+        target: BlockRef<'c, 'a>,
+        symbols: &mut SymbolTable<'c, '_>,
+        stage: &yzl_ops::SetOp<'c, '_>,
+    ) {
+        let Some((input, mut schema)) = self.input_stage(op) else {
+            return;
+        };
+
+        // The body computes replacements, not a new row: every column
+        // it does not name carries through in place.
+        let columns = crate::infer_types::indices(stage.set_cols());
+        let (region, yielded) =
+            self.lower_region(stage.body(), &schema, op.location(), Yielded::Row(&columns));
+
+        for (column, ty) in schema.iter_mut().zip(&yielded) {
+            column.1 = *ty;
+        }
+
+        let row = self.row_type(&schema, symbols);
+        let projected = target
+            .append_operation(yzr::project(self.context, row, input, region, op.location()).into());
+
+        self.record_stage(op, projected.first_result(), schema);
+    }
+
+    fn lower_rename(
+        &mut self,
+        op: OperationRef<'c, '_>,
+        target: BlockRef<'c, 'a>,
+        symbols: &mut SymbolTable<'c, '_>,
+        stage: &yzl_ops::RenameOp<'c, '_>,
+    ) {
+        let Some((input, mut schema)) = self.input_stage(op) else {
+            return;
+        };
+
+        let columns = crate::infer_types::indices(stage.rename_cols());
+        for (&index, name) in columns.iter().zip(stage.to().strings()) {
+            match schema.get_mut(index) {
+                Some(column) => column.0 = name,
+                None => {
+                    self.error(op, format!("column {index} is not in the row"));
+                    return;
+                }
+            }
+        }
+
+        let all: Vec<usize> = (0..schema.len()).collect();
+        let region = self.column_region(&schema, &all, op.location());
+        let row = self.row_type(&schema, symbols);
+        let projected = target
+            .append_operation(yzr::project(self.context, row, input, region, op.location()).into());
+
+        self.record_stage(op, projected.first_result(), schema);
     }
 
     /// `using [a, b]` is sugar: yzr has only an on-region, so the columns
