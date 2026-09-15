@@ -808,8 +808,8 @@ from t
                   }
                   %3 = yzl.aggregate %2 group_by ["b"] as ["s", "r"] {
                   ^bb0(%arg0: !yzl.var, %arg1: !yzl.var, %arg2: !yzl.var, %arg3: !yzl.var):
-                    %4 = yzl.call @sum(%arg3) : (!yzl.var) -> !yzl.var {callee_kind = "builtin", ty = !yz.int64}
-                    %5 = yzl.call @avg(%arg2) : (!yzl.var) -> !yzl.var {callee_kind = "builtin", ty = !yz.float64}
+                    %4 = yzl.call @sum(%arg3) : (!yzl.var) -> !yzl.var {agg, callee_kind = "builtin", ty = !yz.int64}
+                    %5 = yzl.call @avg(%arg2) : (!yzl.var) -> !yzl.var {agg, callee_kind = "builtin", ty = !yz.float64}
                     yzl.yield %4, %5 : !yzl.var, !yzl.var
                   } {key_cols = [1]}
                   yzl.output %3

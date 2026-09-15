@@ -16,7 +16,6 @@ use melior::ir::operation::{OperationLike, OperationRef};
 use melior::ir::{BlockRef, Location, Module, Type, Value};
 use yuzu_mlir::SymbolTable;
 use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationExt, ValueExt};
-use yuzu_types::FunctionRegistry;
 
 /// A row: the columns flowing out of a stage, in order.
 type Schema<'c> = Vec<(&'c str, Type<'c>)>;
@@ -28,9 +27,8 @@ enum Yielded<'k> {
     Row(&'k [usize]),
 }
 
-struct YzlToYzr<'c, 'a, 'r> {
+struct YzlToYzr<'c, 'a> {
     context: &'c Context,
-    registry: &'r dyn FunctionRegistry,
     /// What each yzl stage value became, and the row it carries.
     stages: HashMap<usize, (Value<'c, 'a>, Schema<'c>)>,
     /// The symbol declaring each distinct row shape, so a shape nobody
@@ -42,18 +40,13 @@ struct YzlToYzr<'c, 'a, 'r> {
 
 /// Expects a resolved, inferred module. Returns the `yz` + `yzr` module it
 /// lowers to; anything it cannot lower is reported and left out.
-pub fn lower_yzl_to_yzr<'c>(
-    context: &'c Context,
-    module: &Module<'c>,
-    registry: &dyn FunctionRegistry,
-) -> Module<'c> {
+pub fn lower_yzl_to_yzr<'c>(context: &'c Context, module: &Module<'c>) -> Module<'c> {
     let lowered = Module::new(Location::unknown(context));
     {
         let target = lowered.body();
         let mut symbols = SymbolTable::new(&lowered);
         let mut lowering = YzlToYzr {
             context,
-            registry,
             stages: HashMap::new(),
             shapes: HashMap::new(),
             bindings: HashMap::new(),
@@ -66,7 +59,7 @@ pub fn lower_yzl_to_yzr<'c>(
 
     lowered
 }
-impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
+impl<'c, 'a> YzlToYzr<'c, 'a> {
     fn lower_block(
         &mut self,
         block: BlockRef<'c, '_>,

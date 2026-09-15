@@ -3,8 +3,11 @@
 //! so a yz op maps onto one of those and the Substrait tables answer from
 //! there, rather than growing a second mapping of their own.
 
+use substrait::proto::aggregate_function::AggregationInvocation;
 use yuzu_mlir::attributes::CmpPredicate;
 use yuzu_types::{AggFunc, Func};
+
+use crate::extensions::{EXTERNAL_URN, aggregate_target};
 
 pub(crate) fn of_predicate(predicate: CmpPredicate) -> Func {
     match predicate {
@@ -30,14 +33,48 @@ pub(crate) fn of_builtin(callee: &str) -> Option<Func> {
     })
 }
 
-pub(crate) fn of_aggregate(callee: &str) -> Option<AggFunc> {
-    Some(match callee {
+/// What a measure calls: where Substrait declares the function, the name it
+/// is declared under, and whether it sees every value or only distinct ones.
+pub(crate) struct Aggregate {
+    pub(crate) urn: &'static str,
+    pub(crate) base: String,
+    pub(crate) invocation: AggregationInvocation,
+}
+
+/// A measure's function, by the name the lowering put on it. A name the
+/// registry does not have is one the target provides — an
+/// `external agg fn`, which is declared under the name as written.
+pub(crate) fn of_aggregate(name: &str) -> Aggregate {
+    let func = match name {
         "count" => AggFunc::Count,
         "count_distinct" => AggFunc::CountDistinct,
         "sum" => AggFunc::Sum,
         "min" => AggFunc::Min,
         "max" => AggFunc::Max,
         "avg" => AggFunc::Avg,
-        _ => return None,
-    })
+        external => {
+            return Aggregate {
+                urn: EXTERNAL_URN,
+                base: external.to_string(),
+                invocation: AggregationInvocation::All,
+            };
+        }
+    };
+
+    let (urn, base) = aggregate_target(func);
+    Aggregate {
+        urn,
+        base: base.to_string(),
+        // `count_distinct` counts the distinct values it is given; every
+        // other aggregate takes them all.
+        invocation: match func {
+            AggFunc::CountDistinct => AggregationInvocation::Distinct,
+            AggFunc::Count
+            | AggFunc::Sum
+            | AggFunc::Min
+            | AggFunc::Max
+            | AggFunc::Avg
+            | AggFunc::External(_) => AggregationInvocation::All,
+        },
+    }
 }

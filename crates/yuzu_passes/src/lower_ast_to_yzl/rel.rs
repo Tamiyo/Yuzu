@@ -662,7 +662,7 @@ mod tests {
               }
               %3 = yzl.aggregate %2 group_by ["b"] as ["s"] {
               ^bb0(%arg0: !yzl.var, %arg1: !yzl.var, %arg2: !yzl.var):
-                %5 = yzl.call @sum(%arg2) : (!yzl.var) -> !yzl.var {callee_kind = "builtin"}
+                %5 = yzl.call @sum(%arg2) : (!yzl.var) -> !yzl.var {agg, callee_kind = "builtin"}
                 yzl.yield %5 : !yzl.var
               } {key_cols = [1]}
               %4 = yzl.limit %3, 10 offset 2

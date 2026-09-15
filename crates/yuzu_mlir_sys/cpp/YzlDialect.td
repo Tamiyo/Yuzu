@@ -240,9 +240,14 @@ def Yzl_ListOp : Yzl_Op<"list", [Pure]> {
 
 def Yzl_CallOp : Yzl_Op<"call", [Pure]> {
   let summary = "a call by name; registry and shadowing unresolved";
+  let description = [{
+    `agg` says the callee aggregates, whichever kind of callee it is: a
+    builtin, an `agg fn`, or an `external agg fn`. Resolution knows which
+    at the point the call is built, so nothing downstream asks again.
+  }];
   let arguments = (ins FlatSymbolRefAttr:$callee, Variadic<AnyType>:$operands,
                        OptionalAttr<StrAttr>:$callee_kind,
-                       OptionalAttr<TypeArrayAttr>:$type_args);
+                       OptionalAttr<TypeArrayAttr>:$type_args, UnitAttr:$agg);
   let results = (outs AnyType:$result);
   let assemblyFormat =
       "$callee `(` $operands `)` `:` functional-type($operands, $result) attr-dict";

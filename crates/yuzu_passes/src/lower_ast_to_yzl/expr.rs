@@ -219,7 +219,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         };
 
         self.check_arity(call, callee, callable, operands.len());
-        self.call(block, callee, callable.kind, &operands, loc)
+        self.call(block, callee, callable, &operands, loc)
     }
 
     fn check_arity(
@@ -416,7 +416,15 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .into();
             }
             Lookup::Local(slot) => return locals[slot],
-            Lookup::Let(symbol) => return self.call(block, symbol, CalleeKind::Let, &[], loc),
+            Lookup::Let(symbol) => {
+                let callable = Callable {
+                    kind: CalleeKind::Let,
+                    min_args: 0,
+                    max_args: 0,
+                    agg: false,
+                };
+                return self.call(block, symbol, callable, &[], loc);
+            }
             Lookup::Ambiguous => {
                 format!("column `{name}` is ambiguous; qualify it with a relation alias")
             }
@@ -439,23 +447,26 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &self,
         block: BlockRef<'c, 'a>,
         callee: &str,
-        kind: CalleeKind,
+        callable: Callable,
         operands: &[Value<'c, 'a>],
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
+        let mut builder = yzl::CallOperationBuilder::new(self.context, loc)
+            .result(types::var(self.context))
+            .operands(operands)
+            .callee(FlatSymbolRefAttribute::new(self.context, callee))
+            .callee_kind(StringAttribute::new(self.context, callable.kind.as_str()));
+        if callable.agg {
+            builder = builder.agg(Attribute::unit(self.context));
+        }
+
         block
-            .append_operation(
-                yzl::CallOperationBuilder::new(self.context, loc)
-                    .result(types::var(self.context))
-                    .operands(operands)
-                    .callee(FlatSymbolRefAttribute::new(self.context, callee))
-                    .callee_kind(StringAttribute::new(self.context, kind.as_str()))
-                    .build()
-                    .into(),
-            )
+            .append_operation(builder.build().into())
             .first_result()
     }
 
+    /// The operators the parser lowers to calls: all scalar, none of them
+    /// aggregates.
     fn builtin<'a>(
         &self,
         block: BlockRef<'c, 'a>,
@@ -463,7 +474,13 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         operands: &[Value<'c, 'a>],
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
-        self.call(block, callee, CalleeKind::Builtin, operands, loc)
+        let callable = Callable {
+            kind: CalleeKind::Builtin,
+            min_args: operands.len(),
+            max_args: operands.len(),
+            agg: false,
+        };
+        self.call(block, callee, callable, operands, loc)
     }
 }
 

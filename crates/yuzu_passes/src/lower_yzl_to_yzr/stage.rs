@@ -13,7 +13,7 @@ use yuzu_mlir::types;
 
 use crate::lower_yzl_to_yzr::{Schema, Yielded, YzlToYzr, op_name, struct_fields};
 
-impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
+impl<'c, 'a> YzlToYzr<'c, 'a> {
     pub(super) fn lower_op(
         &mut self,
         op: OperationRef<'c, '_>,

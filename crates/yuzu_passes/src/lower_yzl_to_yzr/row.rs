@@ -10,7 +10,7 @@ use yuzu_mlir::{StructType, SymbolTable};
 
 use crate::lower_yzl_to_yzr::{Schema, YzlToYzr, struct_fields};
 
-impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
+impl<'c, 'a> YzlToYzr<'c, 'a> {
     /// Declarations first, so a stage can ask for a relation's row before
     /// the walk reaches the op that declared it.
     /// Seeds the shape index with what the program declared, so a stage

@@ -229,7 +229,7 @@ fn plan_through_mlir(
 
     yuzu_mlir::diagnostics::capture(&context, source_id, source, diagnostics, || {
         yuzu_passes::infer_types(&context, &module);
-        yuzu_passes::check_aggregates(&module, &yuzu_types::Builtins);
+        yuzu_passes::check_aggregates(&module);
     });
     if has_errors(diagnostics) {
         return None;
@@ -246,7 +246,7 @@ fn plan_through_mlir(
     }
 
     yuzu_mlir::diagnostics::capture(&context, source_id, source, diagnostics, || {
-        let mut lowered = yuzu_passes::lower_yzl_to_yzr(&context, &module, &yuzu_types::Builtins);
+        let mut lowered = yuzu_passes::lower_yzl_to_yzr(&context, &module);
         yuzu_passes::simplify_yzr(&context, &mut lowered);
         if options.debug_plan {
             println!("=== yzr ===");

@@ -132,6 +132,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 kind,
                 min_args: arity,
                 max_args: arity,
+                agg: decl.is_agg(),
             }),
         );
     }
@@ -683,8 +684,8 @@ mod tests {
               }
               yzl.fn @spread params ["x"] (!yz.int64) -> !yz.int64 agg {
               ^bb0(%arg0: !yzl.var):
-                %0 = yzl.call @max(%arg0) : (!yzl.var) -> !yzl.var {callee_kind = "builtin"}
-                %1 = yzl.call @min(%arg0) : (!yzl.var) -> !yzl.var {callee_kind = "builtin"}
+                %0 = yzl.call @max(%arg0) : (!yzl.var) -> !yzl.var {agg, callee_kind = "builtin"}
+                %1 = yzl.call @min(%arg0) : (!yzl.var) -> !yzl.var {agg, callee_kind = "builtin"}
                 %2 = yz.sub %0, %1 : !yzl.var, !yzl.var -> !yzl.var
                 yzl.return %2 : !yzl.var
               }

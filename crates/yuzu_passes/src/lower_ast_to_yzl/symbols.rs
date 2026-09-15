@@ -205,6 +205,10 @@ pub(super) struct Callable {
     pub(super) kind: CalleeKind,
     pub(super) min_args: usize,
     pub(super) max_args: usize,
+    /// Whether the callee aggregates, which is not the same question as
+    /// what kind of callee it is: a builtin, an `agg fn` and an
+    /// `external agg fn` are three kinds and all three aggregate.
+    pub(super) agg: bool,
 }
 
 /// What a name in expression position means.
@@ -324,6 +328,7 @@ impl<'c> SymbolTable<'c> {
                     kind: CalleeKind::Let,
                     min_args: 0,
                     max_args: 0,
+                    agg: false,
                 });
             }
             Some(Kind::Struct { .. } | Kind::Relation { .. } | Kind::Trait { .. }) | None => {}
@@ -334,6 +339,7 @@ impl<'c> SymbolTable<'c> {
             kind: CalleeKind::Builtin,
             min_args: entry.min_args,
             max_args: entry.max_args,
+            agg: matches!(entry.func, yuzu_types::BuiltinFunc::Aggregate(_)),
         })
     }
 
@@ -664,6 +670,7 @@ mod tests {
                 kind: CalleeKind::Fn,
                 min_args: 2,
                 max_args: 2,
+                agg: false,
             }),
             TextRange::default(),
         );
@@ -687,7 +694,8 @@ mod tests {
             Some(Callable {
                 kind: CalleeKind::Fn,
                 min_args: 2,
-                max_args: 2
+                max_args: 2,
+                agg: false
             })
         );
         assert_eq!(

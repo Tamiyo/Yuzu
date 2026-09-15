@@ -10,7 +10,7 @@ use yuzu_mlir::ods::yzr;
 
 use crate::lower_yzl_to_yzr::{Schema, Yielded, YzlToYzr};
 
-impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
+impl<'c, 'a> YzlToYzr<'c, 'a> {
     /// A stage's region, rebuilt with the input row's columns as block
     /// arguments — which is what makes column reference into SSA use-def.
     pub(super) fn lower_region(

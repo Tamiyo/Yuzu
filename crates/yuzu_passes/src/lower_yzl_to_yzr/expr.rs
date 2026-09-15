@@ -11,11 +11,10 @@ use yuzu_mlir::attributes::CalleeKind;
 use yuzu_mlir::ext::{OperationCast, OperationExt, ValueExt};
 use yuzu_mlir::ods::{yz, yzr};
 use yuzu_mlir::ops::yzl::YzlOp;
-use yuzu_types::BuiltinFunc;
 
 use crate::lower_yzl_to_yzr::{YzlToYzr, op_name};
 
-impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
+impl<'c, 'a> YzlToYzr<'c, 'a> {
     /// An expression op, rebuilt against the values its operands became.
     pub(super) fn lower_expression<'b>(
         &mut self,
@@ -51,7 +50,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
                     return;
                 }
 
-                let lowered = if kind == Some(CalleeKind::Builtin) && self.is_aggregate(&callee) {
+                let lowered = if call.agg() {
                     self.lower_measure(op, &callee, &operands, ty, body)
                 } else if kind == Some(CalleeKind::External) {
                     yz::extern_call(
@@ -185,13 +184,6 @@ impl<'c, 'a> YzlToYzr<'c, 'a, '_> {
             .into(),
             None => yzr::count(self.context, ty, op.location()).into(),
         }
-    }
-
-    fn is_aggregate(&self, callee: &str) -> bool {
-        self.registry
-            .entries()
-            .iter()
-            .any(|entry| entry.name == callee && matches!(entry.func, BuiltinFunc::Aggregate(_)))
     }
 }
 

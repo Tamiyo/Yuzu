@@ -7,10 +7,8 @@ use std::collections::{HashMap, HashSet};
 
 use melior::ir::operation::{OperationLike, OperationRef, OperationResult};
 use melior::ir::{BlockRef, Location, Module, RegionLike};
-use yuzu_mlir::attributes::CalleeKind;
 use yuzu_mlir::ext::{BlockExt, OperationCast, OperationExt, RegionExt, ValueExt};
 use yuzu_mlir::ops::yzl::{CallOp, YzlOp};
-use yuzu_types::{BuiltinFunc, FunctionRegistry};
 
 /// Where the walk currently is, aggregate-wise.
 #[derive(Clone, Copy, PartialEq)]
@@ -23,8 +21,7 @@ enum Grouping<'m> {
     FnBody(&'m str),
 }
 
-struct Checker<'a, 'c> {
-    registry: &'a dyn FunctionRegistry,
+struct Checker<'c> {
     /// Each group-level value, with the aggregate calls it came from.
     group_values: HashMap<usize, Vec<usize>>,
     /// The location and callee of each aggregate call, by its result.
@@ -38,9 +35,8 @@ struct Checker<'a, 'c> {
 /// Expects a resolved module: callees are classified by their stamped
 /// `callee_kind`. Diagnostics go through MLIR — run this inside
 /// `yuzu_mlir::diagnostics::capture` to collect them.
-pub fn check_aggregates(module: &Module, registry: &dyn FunctionRegistry) {
+pub fn check_aggregates(module: &Module) {
     let mut checker = Checker {
-        registry,
         group_values: HashMap::new(),
         aggregate_calls: HashMap::new(),
         nested: HashSet::new(),
@@ -50,13 +46,13 @@ pub fn check_aggregates(module: &Module, registry: &dyn FunctionRegistry) {
     checker.check_block(module.body(), Grouping::None);
 }
 
-impl<'c> Checker<'_, 'c> {
+impl<'c> Checker<'c> {
     fn check_block<'m>(&mut self, block: BlockRef<'c, 'm>, grouping: Grouping<'m>) {
         for op in block.operations() {
             match op.as_yzl() {
                 Some(YzlOp::Call(call)) => {
                     let callee = call.callee().value();
-                    if self.is_aggregate_call(&call, callee) {
+                    if self.is_aggregate_call(&call) {
                         self.check_aggregate_call(op, callee, grouping);
                     } else {
                         self.propagate_group_values(op);
@@ -190,14 +186,10 @@ impl<'c> Checker<'_, 'c> {
         Some(OperationResult::try_from(returned).ok()?.owner().location())
     }
 
-    fn is_aggregate_call(&self, call: &CallOp<'c, '_>, callee: &str) -> bool {
-        match call.callee_kind() {
-            Some(CalleeKind::AggFn) => true,
-            Some(CalleeKind::Builtin) => self.registry.entries().iter().any(|entry| {
-                entry.name == callee && matches!(entry.func, BuiltinFunc::Aggregate(_))
-            }),
-            Some(CalleeKind::Fn | CalleeKind::External | CalleeKind::Let) | None => false,
-        }
+    /// Resolution decided this when it built the call, whichever kind of
+    /// callee it is, so nothing here asks the registry again.
+    fn is_aggregate_call(&self, call: &CallOp<'c, '_>) -> bool {
+        call.agg()
     }
 }
 
@@ -212,7 +204,7 @@ mod tests {
         test_support::check_diagnostics(
             source,
             |_context, module| {
-                check_aggregates(module, &yuzu_types::Builtins);
+                check_aggregates(module);
             },
             expected,
         );

@@ -60,7 +60,7 @@ pub(crate) mod test_support {
         let lowered =
             yuzu_mlir::diagnostics::capture(&context, source_id, source, &mut diagnostics, || {
                 crate::infer_types(&context, &module);
-                crate::lower_yzl_to_yzr(&context, &module, &yuzu_types::Builtins)
+                crate::lower_yzl_to_yzr(&context, &module)
             });
 
         let printer = DiagnosticPrinter::new(&sources);
@@ -99,7 +99,7 @@ pub(crate) mod test_support {
             yuzu_mlir::diagnostics::capture(&context, source_id, source, &mut diagnostics, || {
                 crate::infer_types(&context, &module);
                 crate::inline_calls(&context, &module);
-                let mut lowered = crate::lower_yzl_to_yzr(&context, &module, &yuzu_types::Builtins);
+                let mut lowered = crate::lower_yzl_to_yzr(&context, &module);
                 crate::simplify_yzr(&context, &mut lowered);
                 lowered
             });

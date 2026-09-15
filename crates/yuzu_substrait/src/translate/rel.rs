@@ -9,7 +9,6 @@ use melior::ir::{RegionLike, Value, ValueLike};
 use substrait::proto::{
     AggregateFunction, AggregateRel, AggregationPhase, Expression, FetchRel, FilterRel,
     FunctionArgument, JoinRel, NamedStruct, ProjectRel, ReadRel, Rel, RelCommon,
-    aggregate_function::AggregationInvocation,
     aggregate_rel::{Grouping, Measure},
     expression::literal::LiteralType,
     fetch_rel::{CountMode, OffsetMode},
@@ -23,9 +22,7 @@ use substrait::proto::{
 use yuzu_mlir::attributes::JoinKind;
 use yuzu_mlir::ext::{BlockExt, OperationCast, OperationExt, ValueExt};
 use yuzu_mlir::ops::yzr::YzrOp;
-use yuzu_types::AggFunc;
 
-use crate::extensions::{EXTERNAL_URN, aggregate_target};
 use crate::translate::Translator;
 use crate::translate::expr::{literal, selection};
 use crate::translate::functions;
@@ -205,16 +202,11 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         let mut measures = Vec::new();
         for inner in block.operations() {
             let (func, arguments) = match inner.as_yzr() {
-                Some(YzrOp::Agg(measure)) => {
-                    let name = measure.r#fn().value();
-                    let Some(func) = functions::of_aggregate(name) else {
-                        self.unsupported(inner, format!("`{name}` is not an aggregate function"));
-                        return None;
-                    };
-
-                    (func, vec![measure.value()])
-                }
-                Some(YzrOp::Count(_)) => (AggFunc::Count, Vec::new()),
+                Some(YzrOp::Agg(measure)) => (
+                    functions::of_aggregate(measure.r#fn().value()),
+                    vec![measure.value()],
+                ),
+                Some(YzrOp::Count(_)) => (functions::of_aggregate("count"), Vec::new()),
                 _ => continue,
             };
 
@@ -227,18 +219,10 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
     fn translate_measure(
         &mut self,
         op: OperationRef<'c, '_>,
-        func: AggFunc,
+        func: functions::Aggregate,
         arguments: &[Value<'c, '_>],
         values: &HashMap<usize, Expression>,
     ) -> Option<Measure> {
-        let (urn, base) = match func {
-            AggFunc::External(_) => (EXTERNAL_URN, String::new()),
-            func => {
-                let (urn, base) = aggregate_target(func);
-                (urn, base.to_string())
-            }
-        };
-
         let mut signature = Vec::new();
         let mut emitted = Vec::new();
         for &argument in arguments {
@@ -260,14 +244,14 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
 
         let anchor = self
             .extensions
-            .register(urn, format!("{base}:{}", signature.join("_")));
+            .register(func.urn, format!("{}:{}", func.base, signature.join("_")));
         Some(Measure {
             measure: Some(AggregateFunction {
                 function_reference: anchor,
                 arguments: emitted,
                 output_type: Some(output),
                 phase: AggregationPhase::InitialToResult as i32,
-                invocation: quantifier(func) as i32,
+                invocation: func.invocation as i32,
                 ..Default::default()
             }),
             filter: None,
@@ -313,19 +297,5 @@ fn join_type(kind: JoinKind) -> JoinType {
         JoinKind::Left => JoinType::Left,
         JoinKind::Right => JoinType::Right,
         JoinKind::Full => JoinType::Outer,
-    }
-}
-
-/// `count_distinct` counts the distinct values it is given; every other
-/// aggregate takes them all.
-fn quantifier(func: AggFunc) -> AggregationInvocation {
-    match func {
-        AggFunc::CountDistinct => AggregationInvocation::Distinct,
-        AggFunc::Count
-        | AggFunc::Sum
-        | AggFunc::Min
-        | AggFunc::Max
-        | AggFunc::Avg
-        | AggFunc::External(_) => AggregationInvocation::All,
     }
 }
