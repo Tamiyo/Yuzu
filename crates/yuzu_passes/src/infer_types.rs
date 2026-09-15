@@ -153,6 +153,10 @@ impl<'c> TypeInferrer<'c> {
             (Term::Var(var), term) | (term, Term::Var(var)) => self.filled[var] = Some(term),
             (Term::Concrete(a), Term::Concrete(b)) => {
                 if a != b {
+                    let (a, b) = (
+                        self.display(Term::Concrete(a)),
+                        self.display(Term::Concrete(b)),
+                    );
                     self.error(op, format!("expected `{a}`, found `{b}`"));
                 }
             }
@@ -160,17 +164,49 @@ impl<'c> TypeInferrer<'c> {
             (Term::List(inner), Term::Concrete(ty)) => match ListType::from_type(ty) {
                 Some(list) => self.unify(op, Term::Var(inner), Term::Concrete(list.inner())),
                 None => {
-                    let expected = self.display(Term::List(inner));
-                    self.error(op, format!("expected `{expected}`, found `{ty}`"));
+                    let (expected, found) = (
+                        self.display(Term::List(inner)),
+                        self.display(Term::Concrete(ty)),
+                    );
+                    self.error(op, format!("expected `{expected}`, found `{found}`"));
                 }
             },
             (Term::Concrete(ty), Term::List(inner)) => match ListType::from_type(ty) {
                 Some(list) => self.unify(op, Term::Concrete(list.inner()), Term::Var(inner)),
                 None => {
-                    let found = self.display(Term::List(inner));
-                    self.error(op, format!("expected `{ty}`, found `{found}`"));
+                    let (expected, found) = (
+                        self.display(Term::Concrete(ty)),
+                        self.display(Term::List(inner)),
+                    );
+                    self.error(op, format!("expected `{expected}`, found `{found}`"));
                 }
             },
+        }
+    }
+
+    /// The value a stage's region yields, held to the type the stage needs.
+    /// Whatever it settled on is named for the reader, so the complaint is
+    /// about the predicate they wrote rather than about a type variable.
+    fn expect_yield(&mut self, op: OperationRef<'c, '_>, expected: Type<'c>, what: &str) {
+        let Some(value) = last_region_op(op).and_then(|end| end.try_first_operand()) else {
+            return;
+        };
+
+        let term = self.term_of(value);
+        match self.resolve(term) {
+            Some(found) if found != expected => {
+                let (expected, found) = (
+                    self.display(Term::Concrete(expected)),
+                    self.display(Term::Concrete(found)),
+                );
+                self.error(
+                    op,
+                    format!("expected the {what} to be `{expected}`, found `{found}`"),
+                );
+            }
+            // Nothing pinned it down, so the stage is what says what it is.
+            None => self.unify(op, term, Term::Concrete(expected)),
+            Some(_) => {}
         }
     }
 
@@ -186,12 +222,13 @@ impl<'c> TypeInferrer<'c> {
         }
     }
 
-    /// A term for a diagnostic, with `_` where nothing is known yet.
+    /// A term as the program would have written it, with `_` where nothing
+    /// is known yet.
     fn display(&mut self, term: Term<'c>) -> String {
         match self.shallow(term) {
-            Term::Concrete(ty) => ty.to_string(),
+            Term::Concrete(ty) => types::name(self.context, ty),
             Term::Var(_) => "_".to_string(),
-            Term::List(inner) => format!("!yz.list<{}>", self.display(Term::Var(inner))),
+            Term::List(inner) => format!("List[{}]", self.display(Term::Var(inner))),
         }
     }
 
@@ -319,7 +356,8 @@ impl<'c> TypeInferrer<'c> {
                 let row = self.input_row(op);
                 self.infer_regions(op, &row, &[]);
                 if matches!(stage, YzlOp::Where(_)) {
-                    self.unify_yield(op, Term::Concrete(types::boolean(self.context)));
+                    let boolean = types::boolean(self.context);
+                    self.expect_yield(op, boolean, "`where` predicate");
                 }
 
                 self.record_row(op, row);
@@ -361,6 +399,9 @@ impl<'c> TypeInferrer<'c> {
             Some(YzlOp::Join(_)) => {
                 let row = self.input_row(op);
                 self.infer_regions(op, &row, &[]);
+                // `using` names its columns instead, and leaves no region.
+                let boolean = types::boolean(self.context);
+                self.expect_yield(op, boolean, "`on` condition");
                 self.record_row(op, row);
             }
             Some(_) => self.infer_regions(op, columns, params),
@@ -601,15 +642,6 @@ impl<'c> TypeInferrer<'c> {
             .operands()
             .map(|value| self.term_of(value))
             .collect()
-    }
-
-    fn unify_yield(&mut self, op: OperationRef<'c, '_>, expected: Term<'c>) {
-        if let Some(terminator) = last_region_op(op)
-            && let Some(value) = terminator.try_first_operand()
-        {
-            let term = self.term_of(value);
-            self.unify(op, term, expected);
-        }
     }
 
     fn unify_returns(&mut self, op: OperationRef<'c, '_>, ret: Type<'c>) {
@@ -927,11 +959,11 @@ from t
 |> where name == 1
     "#,
             expect![[r#"
-            error: expected `!yz.str`, found `!yz.int64`
-             --> test.yz:6:10
-              |
-            6 | |> where name == 1
-              |          ^
+                error: expected `str`, found `int64`
+                 --> test.yz:6:10
+                  |
+                6 | |> where name == 1
+                  |          ^
             "#]],
         );
     }
@@ -949,11 +981,11 @@ from t
 |> extend f(a) as e
     "#,
             expect![[r#"
-            error: expected `!yz.int64`, found `!yz.bool`
-             --> test.yz:5:26
-              |
-            5 | fn f(x: int64) -> bool { return x }
-              |                          ^
+                error: expected `int64`, found `bool`
+                 --> test.yz:5:26
+                  |
+                5 | fn f(x: int64) -> bool { return x }
+                  |                          ^
             "#]],
         );
     }
@@ -969,11 +1001,11 @@ from t
 |> set level = "high"
     "#,
             expect![[r#"
-            error: expected `!yz.int64`, found `!yz.str`
-             --> test.yz:5:1
-              |
-            5 | from t
-              | ^
+                error: expected `int64`, found `str`
+                 --> test.yz:5:1
+                  |
+                5 | from t
+                  | ^
             "#]],
         );
     }
@@ -1020,10 +1052,56 @@ from t
 |> where a in ids
 "#,
             expect![[r#"
-                error: expected `!yz.str`, found `!yz.int64`
+                error: expected `str`, found `int64`
                  --> test.yz:5:1
                   |
                 5 | let ids: List[str] = [1, 3]
+                  | ^
+            "#]],
+        );
+    }
+
+    /// The stage a value is yielded to is what says what it must be, so the
+    /// complaint names the predicate rather than a type variable.
+    #[test]
+    fn a_stage_names_what_it_expected() {
+        check(
+            r#"
+struct Row { level: int64, name: str }
+table t = Row
+struct Dept { level: int64 }
+table depts = Dept
+
+from t
+|> where level
+"#,
+            expect![[r#"
+                error: expected the `where` predicate to be `bool`, found `int64`
+                 --> test.yz:7:1
+                  |
+                7 | from t
+                  | ^
+            "#]],
+        );
+    }
+
+    #[test]
+    fn a_join_condition_has_to_be_a_predicate() {
+        check(
+            r#"
+struct Row { level: int64 }
+table t = Row
+struct Dept { level: int64 }
+table depts = Dept
+
+from t as e
+|> inner join depts as d on e.level
+"#,
+            expect![[r#"
+                error: expected the `on` condition to be `bool`, found `int64`
+                 --> test.yz:7:1
+                  |
+                7 | from t as e
                   | ^
             "#]],
         );
@@ -1040,7 +1118,7 @@ from t
 |> where a in 1
 "#,
             expect![[r#"
-                error: expected `!yz.list<_>`, found `!yz.int64`
+                error: expected `List[_]`, found `int64`
                  --> test.yz:6:10
                   |
                 6 | |> where a in 1

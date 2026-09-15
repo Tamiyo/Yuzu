@@ -11,6 +11,25 @@ use crate::lower_ast_to_yzl::symbols::{Callable, Kind, Row};
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 use yuzu_mlir::types;
 
+/// Where a `fn` is written. A trait and its implementations declare `Self`
+/// implicitly, and a trait's methods are the one kind that stands as a
+/// signature with nothing to run.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Declared {
+    AtModule,
+    InTrait,
+    InImpl,
+}
+
+impl Declared {
+    fn generics(self) -> &'static [&'static str] {
+        match self {
+            Declared::AtModule => &[],
+            Declared::InTrait | Declared::InImpl => &["Self"],
+        }
+    }
+}
+
 impl<'c, 'd> AstToYzl<'c, 'd> {
     /// Registers every declaration up front so references can be forward. A
     /// `let` binds in order instead, once its body is emitted.
@@ -218,21 +237,33 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     }
 
     fn convert_fn<'a>(&mut self, block: BlockRef<'c, 'a>, decl: &ast::FuncStmt) {
-        self.convert_method(block, decl, &[]);
+        self.convert_method(block, decl, Declared::AtModule);
     }
 
-    /// A function, with any type parameters its surroundings supply — a
-    /// trait and its implementations declare `Self` implicitly.
+    /// A function, and where it is written: that decides the type parameters
+    /// its surroundings supply, and whether it needs a body.
     fn convert_method<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
         decl: &ast::FuncStmt,
-        implicit: &[&'c str],
+        declared: Declared,
     ) {
         let Some(name) = self.ident(decl.name()) else {
             self.error(decl, "function is missing its name");
             return;
         };
+
+        // `external` says the target has the function, so there is nothing
+        // to write; everything else is a definition, and the one place a
+        // signature stands alone is a trait, which declares what its
+        // implementations must supply.
+        match (decl.is_external(), decl.body().is_some()) {
+            (true, true) => self.error(decl, "an external function cannot have a body"),
+            (false, false) if declared != Declared::InTrait => {
+                self.error(decl, "function is missing its body");
+            }
+            (true, false) | (false, true) | (false, false) => {}
+        }
 
         let mut params: Vec<Attribute> = Vec::new();
         for param in decl.params() {
@@ -242,7 +273,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             }
         }
 
-        let generics: Vec<&'c str> = implicit
+        let generics: Vec<&'c str> = declared
+            .generics()
             .iter()
             .copied()
             .chain(
@@ -366,7 +398,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let region = Region::new();
         let body = region.append_block(Block::new(&[]));
         for method in decl.methods() {
-            self.convert_method(body, &method, &["Self"]);
+            self.convert_method(body, &method, Declared::InTrait);
         }
 
         block.append_operation(
@@ -403,7 +435,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let region = Region::new();
         let body = region.append_block(Block::new(&[]));
         for method in decl.methods() {
-            self.convert_method(body, &method, &["Self"]);
+            self.convert_method(body, &method, Declared::InImpl);
         }
 
         block.append_operation(
@@ -807,6 +839,47 @@ external fn upper(s: str) -> str
         "#]]
         .assert_eq(&converted(
             "table t = Row\nstruct Row { a: int64 }\n\nfrom t |> select a\n",
+        ));
+    }
+
+    /// `external` says the target has the function, and a signature with no
+    /// body is a declaration only a trait can make — so neither shape is
+    /// expressible anywhere else.
+    #[test]
+    fn a_body_is_required_unless_the_target_or_a_trait_supplies_it() {
+        use crate::lower_ast_to_yzl::test_support::reported;
+
+        let context = yuzu_mlir::context();
+        expect![[r#"
+            error: an external function cannot have a body
+             --> test.yz:1:1
+              |
+            1 | external fn upper(s: str) -> str { return s }
+              | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+            error: function is missing its body
+             --> test.yz:2:1
+              |
+            2 | fn lower(s: str) -> str
+              | ^^^^^^^^^^^^^^^^^^^^^^^
+        "#]]
+        .assert_eq(&reported(
+            &context,
+            "external fn upper(s: str) -> str { return s }\nfn lower(s: str) -> str\n",
+        ));
+
+        // A trait's methods are signatures, and an implementation of one is
+        // a definition like any other.
+        expect![[r#"
+            error: function is missing its body
+             --> test.yz:5:23
+              |
+            5 | impl Show for int64 { fn show(x: Self) -> str }
+              |                       ^^^^^^^^^^^^^^^^^^^^^^^
+        "#]]
+        .assert_eq(&reported(
+            &context,
+            "trait Show {\n    fn show(x: Self) -> str\n}\n\nimpl Show for int64 { fn show(x: Self) -> str }\n",
         ));
     }
 

@@ -25,3 +25,34 @@ singleton!(
     yzuQueryTypeGet,
     "`!yzl.query`, a relation before its schema is known"
 );
+
+/// How a type is written in source, for a diagnostic: a reader wrote
+/// `int64` and `List[int64]`, not `!yz.int64` and `!yz.list<!yz.int64>`.
+/// The MLIR spelling is the fallback, so a type with no source syntax still
+/// prints as something.
+pub fn name(context: &Context, ty: Type<'_>) -> String {
+    if let Some(list) = crate::ListType::from_type(ty) {
+        return format!("List[{}]", name(context, list.inner()));
+    }
+
+    if let Some(declaration) = crate::StructType::from_type(ty) {
+        return declaration.name().to_string();
+    }
+
+    if let Some(param) = crate::ParamType::from_type(ty) {
+        return param.name().to_string();
+    }
+
+    for (scalar, spelling) in [
+        (int64(context), "int64"),
+        (float64(context), "float64"),
+        (boolean(context), "bool"),
+        (str(context), "str"),
+    ] {
+        if ty == scalar {
+            return spelling.to_string();
+        }
+    }
+
+    ty.to_string()
+}
