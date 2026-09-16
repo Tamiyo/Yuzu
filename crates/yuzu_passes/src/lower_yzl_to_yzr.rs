@@ -83,6 +83,11 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         }
     }
 
+    /// A name owned by the context, for a row the source never named.
+    fn intern(&self, name: &str) -> &'c str {
+        melior::ir::attribute::StringAttribute::new(self.context, name).value()
+    }
+
     fn error(&self, op: OperationRef<'c, '_>, message: impl AsRef<str>) {
         yuzu_mlir::diagnostics::emit_error(op.location(), message.as_ref());
     }

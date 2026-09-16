@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 use melior::ir::operation::{OperationLike, OperationRef};
-use melior::ir::{RegionLike, Value, ValueLike};
+use melior::ir::{Value, ValueLike};
 use substrait::proto::{
     AggregateFunction, AggregateRel, AggregationPhase, Expression, FetchRel, FilterRel,
     FunctionArgument, JoinRel, NamedStruct, ProjectRel, ReadRel, Rel, RelCommon,
@@ -20,11 +20,11 @@ use substrait::proto::{
     r#type,
 };
 use yuzu_mlir::attributes::JoinKind;
-use yuzu_mlir::ext::{BlockExt, OperationCast, OperationExt, ValueExt};
+use yuzu_mlir::ext::{OperationCast, OperationExt, ValueExt};
 use yuzu_mlir::ops::yzr::YzrOp;
 
 use crate::translate::Translator;
-use crate::translate::expr::{literal, selection};
+use crate::translate::expr::{Region, literal, selection};
 use crate::translate::functions;
 use crate::translate::types::{emit_type, nullable, type_code};
 
@@ -176,7 +176,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
     fn translate_aggregate(&mut self, op: OperationRef<'c, 'a>, keys: &[i32]) -> Option<RelType> {
         let (input, _) = self.translate_input(op)?;
         let region = self.translate_region(op)?;
-        let measures = self.translate_measures(op, &region.values)?;
+        let measures = self.translate_measures(&region)?;
 
         Some(RelType::Aggregate(Box::new(AggregateRel {
             input: Some(Box::new(input)),
@@ -190,27 +190,27 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         })))
     }
 
-    fn translate_measures(
-        &mut self,
-        op: OperationRef<'c, 'a>,
-        values: &HashMap<usize, Expression>,
-    ) -> Option<Vec<Measure>> {
-        let Some(block) = op.regions().next().and_then(|region| region.first_block()) else {
-            return Some(Vec::new());
-        };
+    /// The measures are what the region yields, not which operations it
+    /// holds: two items may name the same measure, and common subexpression
+    /// elimination leaves one operation yielded twice.
+    fn translate_measures(&mut self, region: &Region<'c, 'a>) -> Option<Vec<Measure>> {
+        let mut measures = Vec::with_capacity(region.yielded.len());
+        for &value in &region.yielded {
+            let op = Self::producer(value)?;
 
-        let mut measures = Vec::new();
-        for inner in block.operations() {
-            let (func, arguments) = match inner.as_yzr() {
+            let (func, arguments) = match op.as_yzr() {
                 Some(YzrOp::Agg(measure)) => (
                     functions::of_aggregate(measure.r#fn().value()),
                     vec![measure.value()],
                 ),
                 Some(YzrOp::Count(_)) => (functions::of_aggregate("count"), Vec::new()),
-                _ => continue,
+                _ => {
+                    self.unsupported(op, "a grouping yields measures, and this is not one");
+                    return None;
+                }
             };
 
-            measures.push(self.translate_measure(inner, func, &arguments, values)?);
+            measures.push(self.translate_measure(op, func, &arguments, &region.values)?);
         }
 
         Some(measures)

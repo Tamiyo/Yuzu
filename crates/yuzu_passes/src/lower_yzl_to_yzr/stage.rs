@@ -191,30 +191,60 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         };
 
         let keys = crate::infer_types::indices(stage.key_cols());
-        let (region, yielded) =
-            self.lower_region(stage.body(), &schema, op.location(), Yielded::Body);
-        let mut produced: Schema<'c> = keys
+        let grouping = self.lower_grouping(stage.body(), &schema, &keys, op.location());
+
+        // The keys the grouping carries out, named as the stage named them.
+        let carried: Schema<'c> = keys
             .iter()
             .zip(stage.group_by().strings())
             .filter_map(|(&index, name)| schema.get(index).map(|&(_, ty)| (name, ty)))
             .collect();
-        produced.extend(self.named_row(stage.names().strings(), yielded));
 
-        let row = self.row_type(&produced, symbols);
+        // Without a projection the grouping's own output is the row; with
+        // one it is the keys and the raw measures, which the projection then
+        // computes the items from.
+        let names = stage.names().strings();
+        let mut grouped = carried.clone();
+        match &grouping.items {
+            // The raw measures are a row the source never named, and the
+            // projection reads them by position anyway.
+            Some(_) => {
+                for (index, &ty) in grouping.measure_types.iter().enumerate() {
+                    grouped.push((self.intern(&format!("measure{index}")), ty));
+                }
+            }
+            None => grouped.extend(self.named_row(names.clone(), grouping.measure_types.clone())),
+        }
+
+        let row = self.row_type(&grouped, symbols);
         let indices: Vec<i64> = keys.iter().map(|&index| index as i64).collect();
-        let grouped = target.append_operation(
-            yzr::aggregate(
-                self.context,
-                row,
-                input,
-                region,
-                DenseI64ArrayAttribute::new(self.context, &indices).into(),
-                op.location(),
+        let aggregated = target
+            .append_operation(
+                yzr::aggregate(
+                    self.context,
+                    row,
+                    input,
+                    grouping.measures,
+                    DenseI64ArrayAttribute::new(self.context, &indices).into(),
+                    op.location(),
+                )
+                .into(),
             )
-            .into(),
+            .first_result();
+
+        let Some((items, types)) = grouping.items else {
+            self.record_stage(op, aggregated, grouped);
+            return;
+        };
+
+        let mut produced = carried;
+        produced.extend(self.named_row(names, types[keys.len()..].to_vec()));
+        let row = self.row_type(&produced, symbols);
+        let projected = target.append_operation(
+            yzr::project(self.context, row, aggregated, items, op.location()).into(),
         );
 
-        self.record_stage(op, grouped.first_result(), produced);
+        self.record_stage(op, projected.first_result(), produced);
     }
 
     fn lower_join(
