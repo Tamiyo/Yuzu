@@ -3,11 +3,11 @@
 
 use melior::Context;
 use melior::ir::attribute::{
-    ArrayAttribute, FlatSymbolRefAttribute, IntegerAttribute, StringAttribute, TypeAttribute,
+    ArrayAttribute, FlatSymbolRefAttribute, IntegerAttribute, StringAttribute,
 };
 use melior::ir::operation::{OperationLike, OperationMutLike, OperationRef, OperationRefMut};
 use melior::ir::r#type::IntegerType;
-use melior::ir::{Attribute, BlockLike, BlockRef, RegionLike, Type, Value, ValueLike};
+use melior::ir::{Attribute, BlockLike, BlockRef, RegionLike, Value, ValueLike};
 
 /// Identity for the maps a pass keys by value.
 pub trait ValueExt<'c>: ValueLike<'c> {
@@ -107,17 +107,6 @@ pub trait OperationExt<'c: 'a, 'a>: OperationLike<'c, 'a> {
     /// same reason as `try_first_result`.
     fn try_first_operand(&self) -> Option<Value<'c, 'a>> {
         (self.operand_count() > 0).then(|| self.operand(0).expect("the operand index is in range"))
-    }
-
-    /// The type this op produces. Inference stamps what it settled on rather
-    /// than rewriting the IR, so the stamp is the better answer wherever it
-    /// exists and the result's own type stands in where it does not.
-    fn ty(&self) -> Type<'c> {
-        self.attribute("ty")
-            .ok()
-            .and_then(|attribute| TypeAttribute::try_from(attribute).ok())
-            .map(|attribute| attribute.value())
-            .unwrap_or_else(|| self.first_result().r#type())
     }
 
     /// A string attribute, by name.

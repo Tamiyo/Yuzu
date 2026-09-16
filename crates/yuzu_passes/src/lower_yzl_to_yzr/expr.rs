@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use melior::ir::attribute::{FlatSymbolRefAttribute, StringAttribute};
 use melior::ir::operation::{OperationBuilder, OperationLike, OperationRef};
-use melior::ir::{Attribute, BlockLike, BlockRef, Identifier, Type, Value};
+use melior::ir::{Attribute, BlockLike, BlockRef, Identifier, Type, Value, ValueLike};
 use yuzu_mlir::ListType;
 use yuzu_mlir::attributes::CalleeKind;
 use yuzu_mlir::ext::{OperationCast, OperationExt, ValueExt};
@@ -37,7 +37,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                     return;
                 };
 
-                let ty = op.ty();
+                let ty = op.first_result().r#type();
                 let kind = call.callee_kind();
                 // Expansion removes every call to a function or let; one
                 // reaching here means expansion did not finish, which it has
@@ -80,7 +80,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                     return;
                 };
 
-                let ty = op.ty();
+                let ty = op.first_result().r#type();
                 if ListType::from_type(ty).is_none() {
                     self.error(op, "the type of this list could not be inferred");
                     return;
@@ -140,15 +140,12 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         body: BlockRef<'c, 'b>,
     ) -> Option<Value<'c, 'b>> {
         let name = op.name();
-        op.try_first_result()?;
-
-        let ty = op.ty();
+        let ty = op.try_first_result()?.r#type();
         let attributes: Vec<(Identifier<'c>, Attribute<'c>)> = (0..op.attribute_count())
             .map(|index| {
                 op.attribute_at(index)
                     .expect("the attribute index is in range")
             })
-            .filter(|(name, _)| name.as_string_ref().as_str() != Ok("ty"))
             .collect();
 
         let rebuilt = OperationBuilder::new(

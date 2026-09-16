@@ -1,8 +1,8 @@
 //! InferTypes: unification over MLIR values. Every `!yzl.var`-typed value is
 //! a type variable; op semantics, function signatures, and the field types
-//! flowing through the stages fill the substitutions. Answers are stamped as
-//! `{ty = …}` attributes — LowerYZL applies them during its rebuild, so
-//! inference itself rewrites nothing.
+//! flowing through the stages fill the substitutions. The answers are written
+//! onto the values themselves, so `!yzl.var` is gone by the end and every
+//! later pass reads a type rather than a stamp beside one.
 
 use std::collections::{HashMap, HashSet};
 
@@ -654,7 +654,24 @@ impl<'c> TypeInferrer<'c> {
         }
     }
 
+    /// Inference's answers, written onto the values themselves. `!yzl.var` is
+    /// this pass's construct, so no later pass should meet one: a value that
+    /// resolved takes the type it resolved to, and one that did not is
+    /// reported here, where the expression that stayed open is still in hand.
     fn stamp_block(&mut self, block: BlockRef<'c, '_>) {
+        for index in 0..block.argument_count() {
+            let argument = block
+                .argument(index)
+                .expect("the argument index is in range");
+            let term = self.term_of(argument.into());
+            // A column or parameter is only ever as open as the expressions
+            // reading it, and those are what the program wrote — so an
+            // unresolved one is left for them to report.
+            if let Some(ty) = self.resolve(term) {
+                argument.set_type(ty);
+            }
+        }
+
         for mut op in block.operations_mut() {
             for region in op.regions() {
                 for inner in region.blocks() {
@@ -662,16 +679,23 @@ impl<'c> TypeInferrer<'c> {
                 }
             }
 
-            if let Some(result) = op.try_first_result() {
-                let term = self.term_of(result);
-                if let Term::Var(_) = term
-                    && let Some(ty) = self.resolve(term)
-                {
-                    op.set_attribute("ty", TypeAttribute::new(ty).into());
-                }
+            let Some(result) = op.try_first_result() else {
+                continue;
+            };
 
-                self.stamp_type_args(&mut op, result.id());
+            let term = self.term_of(result);
+            match self.resolve(term) {
+                Some(ty) => result.set_type(ty),
+                // A hole stands for an expression the program never got to
+                // write, and the parse error above it already said so.
+                None if matches!(op.as_yzl(), Some(YzlOp::Missing(_))) => {}
+                None => self.error_at(
+                    op.location(),
+                    "the type of this expression could not be inferred".to_string(),
+                ),
             }
+
+            self.stamp_type_args(&mut op, result.id());
         }
     }
 
@@ -697,7 +721,11 @@ impl<'c> TypeInferrer<'c> {
     }
 
     fn error(&mut self, op: OperationRef<'c, '_>, message: String) {
-        yuzu_mlir::diagnostics::emit_error(op.location(), &message);
+        self.error_at(op.location(), message);
+    }
+
+    fn error_at(&mut self, location: Location<'c>, message: String) {
+        yuzu_mlir::diagnostics::emit_error(location, &message);
     }
 }
 
@@ -788,29 +816,29 @@ from t
                   yzl.struct @Row ["a", "b", "rating"] : [!yz.int64, !yz.int64, !yz.float64]
                   yzl.table @t of @Row
                   yzl.fn @f params ["x"] (!yz.int64) -> !yz.int64 {
-                  ^bb0(%arg0: !yzl.var):
+                  ^bb0(%arg0: !yz.int64):
                     %4 = yz.constant_int 3
-                    %5 = yz.mul %arg0, %4 : !yzl.var, !yz.int64 -> !yzl.var {ty = !yz.int64}
-                    yzl.return %5 : !yzl.var
+                    %5 = yz.mul %arg0, %4 : !yz.int64, !yz.int64 -> !yz.int64
+                    yzl.return %5 : !yz.int64
                   }
                   %0 = yzl.from @t
                   %1 = yzl.where %0 {
-                  ^bb0(%arg0: !yzl.var, %arg1: !yzl.var, %arg2: !yzl.var):
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.int64, %arg2: !yz.float64):
                     %4 = yz.constant_int 10
-                    %5 = yz.cmp "gt", %arg0, %4 : !yzl.var, !yz.int64 -> !yzl.var {ty = !yz.bool}
-                    yzl.yield %5 : !yzl.var
+                    %5 = yz.cmp "gt", %arg0, %4 : !yz.int64, !yz.int64 -> !yz.bool
+                    yzl.yield %5 : !yz.bool
                   }
                   %2 = yzl.extend %1 as ["e"] {
-                  ^bb0(%arg0: !yzl.var, %arg1: !yzl.var, %arg2: !yzl.var):
-                    %4 = yzl.call @f(%arg0) : (!yzl.var) -> !yzl.var {callee_kind = "fn", ty = !yz.int64}
-                    %5 = yz.add %4, %arg1 : !yzl.var, !yzl.var -> !yzl.var {ty = !yz.int64}
-                    yzl.yield %5 : !yzl.var
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.int64, %arg2: !yz.float64):
+                    %4 = yzl.call @f(%arg0) : (!yz.int64) -> !yz.int64 {callee_kind = "fn"}
+                    %5 = yz.add %4, %arg1 : !yz.int64, !yz.int64 -> !yz.int64
+                    yzl.yield %5 : !yz.int64
                   }
                   %3 = yzl.aggregate %2 group_by ["b"] as ["s", "r"] {
-                  ^bb0(%arg0: !yzl.var, %arg1: !yzl.var, %arg2: !yzl.var, %arg3: !yzl.var):
-                    %4 = yzl.call @sum(%arg3) : (!yzl.var) -> !yzl.var {agg, callee_kind = "builtin", ty = !yz.int64}
-                    %5 = yzl.call @avg(%arg2) : (!yzl.var) -> !yzl.var {agg, callee_kind = "builtin", ty = !yz.float64}
-                    yzl.yield %4, %5 : !yzl.var, !yzl.var
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.int64, %arg2: !yz.float64, %arg3: !yz.int64):
+                    %4 = yzl.call @sum(%arg3) : (!yz.int64) -> !yz.int64 {agg, callee_kind = "builtin"}
+                    %5 = yzl.call @avg(%arg2) : (!yz.float64) -> !yz.float64 {agg, callee_kind = "builtin"}
+                    yzl.yield %4, %5 : !yz.int64, !yz.float64
                   } {key_cols = [1]}
                   yzl.output %3
                 }
@@ -867,17 +895,17 @@ from t
                     }
                   }
                   yzl.fn @id generics ["T"] where ["T"] : [@Numeric] params ["x"] (!yzl.param<"T">) -> !yzl.param<"T"> {
-                  ^bb0(%arg0: !yzl.var):
-                    yzl.return %arg0 : !yzl.var
+                  ^bb0(%arg0: !yzl.param<"T">):
+                    yzl.return %arg0 : !yzl.param<"T">
                   }
                   yzl.struct @Row ["a", "r"] : [!yz.int64, !yz.float64]
                   yzl.table @t of @Row
                   %0 = yzl.from @t
                   %1 = yzl.extend %0 as ["m", "n"] {
-                  ^bb0(%arg0: !yzl.var, %arg1: !yzl.var):
-                    %2 = yzl.call @id(%arg0) : (!yzl.var) -> !yzl.var {callee_kind = "fn", ty = !yz.int64, type_args = [!yz.int64]}
-                    %3 = yzl.call @id(%arg1) : (!yzl.var) -> !yzl.var {callee_kind = "fn", ty = !yz.float64, type_args = [!yz.float64]}
-                    yzl.yield %2, %3 : !yzl.var, !yzl.var
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.float64):
+                    %2 = yzl.call @id(%arg0) : (!yz.int64) -> !yz.int64 {callee_kind = "fn", type_args = [!yz.int64]}
+                    %3 = yzl.call @id(%arg1) : (!yz.float64) -> !yz.float64 {callee_kind = "fn", type_args = [!yz.float64]}
+                    yzl.yield %2, %3 : !yz.int64, !yz.float64
                   }
                   yzl.output %1
                 }
@@ -907,9 +935,9 @@ from t
                   yzl.table @t of @Row
                   %0 = yzl.from @t
                   %1 = yzl.extend %0 as ["m"] {
-                  ^bb0(%arg0: !yzl.var):
-                    %2 = yzl.call @median(%arg0) : (!yzl.var) -> !yzl.var {callee_kind = "external", ty = !yz.float64}
-                    yzl.yield %2 : !yzl.var
+                  ^bb0(%arg0: !yz.float64):
+                    %2 = yzl.call @median(%arg0) : (!yz.float64) -> !yz.float64 {callee_kind = "external"}
+                    yzl.yield %2 : !yz.float64
                   }
                   yzl.output %1
                 }
@@ -1026,12 +1054,12 @@ from t
                   yzl.table @t of @Row
                   %0 = yzl.from @t
                   %1 = yzl.where %0 {
-                  ^bb0(%arg0: !yzl.var):
+                  ^bb0(%arg0: !yz.int64):
                     %2 = yz.constant_int 1
                     %3 = yz.constant_int 3
-                    %4 = yzl.list[%2, %3] {ty = !yz.list<!yz.int64>} : (!yz.int64, !yz.int64) -> !yzl.var
-                    %5 = yzl.call @in(%arg0, %4) : (!yzl.var, !yzl.var) -> !yzl.var {callee_kind = "builtin", ty = !yz.bool}
-                    yzl.yield %5 : !yzl.var
+                    %4 = yzl.list[%2, %3] : (!yz.int64, !yz.int64) -> !yz.list<!yz.int64>
+                    %5 = yzl.call @in(%arg0, %4) : (!yz.int64, !yz.list<!yz.int64>) -> !yz.bool {callee_kind = "builtin"}
+                    yzl.yield %5 : !yz.bool
                   }
                   yzl.output %1
                 }
@@ -1123,6 +1151,68 @@ from t
                   |
                 6 | |> where a in 1
                   |          ^
+            "#]],
+        );
+    }
+
+    /// Nothing says what an empty list holds, and the language has no way to
+    /// write it down. Inference owns `!yzl.var`, so it says so here rather
+    /// than handing a later pass a type it cannot read.
+    #[test]
+    fn reports_an_expression_nothing_pinned_down() {
+        check(
+            r#"
+struct Row { a: int64 }
+table t = Row
+
+let xs = []
+
+from t
+|> where a > 1
+"#,
+            expect![[r#"
+                error: the type of this expression could not be inferred
+                 --> test.yz:5:10
+                  |
+                5 | let xs = []
+                  |          ^
+            "#]],
+        );
+    }
+
+    /// The same list, given an element to take its type from, resolves — and
+    /// the answer is on the value, not beside it.
+    #[test]
+    fn a_list_takes_the_type_of_its_elements() {
+        check(
+            r#"
+struct Row { a: int64 }
+table t = Row
+
+let xs = [1, 2]
+
+from t
+|> where a > 1
+"#,
+            expect![[r#"
+                module {
+                  yzl.struct @Row ["a"] : [!yz.int64]
+                  yzl.table @t of @Row
+                  yzl.let @xs {
+                    %2 = yz.constant_int 1
+                    %3 = yz.constant_int 2
+                    %4 = yzl.list[%2, %3] : (!yz.int64, !yz.int64) -> !yz.list<!yz.int64>
+                    yzl.yield %4 : !yz.list<!yz.int64>
+                  }
+                  %0 = yzl.from @t
+                  %1 = yzl.where %0 {
+                  ^bb0(%arg0: !yz.int64):
+                    %2 = yz.constant_int 1
+                    %3 = yz.cmp "gt", %arg0, %2 : !yz.int64, !yz.int64 -> !yz.bool
+                    yzl.yield %3 : !yz.bool
+                  }
+                  yzl.output %1
+                }
             "#]],
         );
     }
