@@ -2,6 +2,7 @@ use melior::ir::{
     Attribute, Block, BlockLike, BlockRef, Location, Region, RegionLike, Type, Value,
     attribute::{ArrayAttribute, FlatSymbolRefAttribute, IntegerAttribute, StringAttribute},
 };
+use text_size::TextRange;
 use yuzu_ast::{AstNode, ast};
 use yuzu_mlir::ods::yzl;
 
@@ -18,20 +19,20 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         block: BlockRef<'c, 'a>,
         rel: &ast::Rel,
     ) -> Value<'c, 'a> {
-        let loc = self.location(rel);
+        let at = stage_range(rel);
         match rel {
-            ast::Rel::FromExpr(from) => self.convert_from(block, from, loc),
-            ast::Rel::WhereExpr(stage) => self.convert_where(block, stage, loc),
-            ast::Rel::SelectExpr(stage) => self.convert_select(block, stage, loc),
-            ast::Rel::ExtendExpr(stage) => self.convert_extend(block, stage, loc),
-            ast::Rel::AggregateExpr(stage) => self.convert_aggregate(block, stage, loc),
-            ast::Rel::LimitExpr(stage) => self.convert_limit(block, stage, loc),
-            ast::Rel::RenameExpr(stage) => self.convert_rename(block, stage, loc),
-            ast::Rel::AliasExpr(stage) => self.convert_alias(block, stage, loc),
-            ast::Rel::JoinExpr(stage) => self.convert_join(block, stage, loc),
-            ast::Rel::SetExpr(stage) => self.convert_set(block, stage, loc),
-            ast::Rel::DistinctExpr(stage) => self.convert_distinct(block, stage, loc),
-            ast::Rel::DropExpr(stage) => self.convert_drop(block, stage, loc),
+            ast::Rel::FromExpr(from) => self.convert_from(block, from, at),
+            ast::Rel::WhereExpr(stage) => self.convert_where(block, stage, at),
+            ast::Rel::SelectExpr(stage) => self.convert_select(block, stage, at),
+            ast::Rel::ExtendExpr(stage) => self.convert_extend(block, stage, at),
+            ast::Rel::AggregateExpr(stage) => self.convert_aggregate(block, stage, at),
+            ast::Rel::LimitExpr(stage) => self.convert_limit(block, stage, at),
+            ast::Rel::RenameExpr(stage) => self.convert_rename(block, stage, at),
+            ast::Rel::AliasExpr(stage) => self.convert_alias(block, stage, at),
+            ast::Rel::JoinExpr(stage) => self.convert_join(block, stage, at),
+            ast::Rel::SetExpr(stage) => self.convert_set(block, stage, at),
+            ast::Rel::DistinctExpr(stage) => self.convert_distinct(block, stage, at),
+            ast::Rel::DropExpr(stage) => self.convert_drop(block, stage, at),
         }
     }
 
@@ -39,8 +40,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         from: &ast::FromExpr,
-        loc: Location<'c>,
+        at: TextRange,
     ) -> Value<'c, 'a> {
+        let loc = self.location_at(at.start().into());
         let Some(source) = self.ident(from.relation()) else {
             return self.missing(
                 block,
@@ -61,8 +63,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         stage: &ast::WhereExpr,
-        loc: Location<'c>,
+        at: TextRange,
     ) -> Value<'c, 'a> {
+        let loc = self.location_at(at.start().into());
         let input = self.convert_input(block, stage, "`where`", stage.input());
         let region = Region::new();
         let body = self.stage_block(&region, loc);
@@ -88,8 +91,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         stage: &ast::SelectExpr,
-        loc: Location<'c>,
+        at: TextRange,
     ) -> Value<'c, 'a> {
+        let loc = self.location_at(at.start().into());
         let input = self.convert_input(block, stage, "`select`", stage.input());
         let items = stage
             .items()
@@ -117,8 +121,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         stage: &ast::ExtendExpr,
-        loc: Location<'c>,
+        at: TextRange,
     ) -> Value<'c, 'a> {
+        let loc = self.location_at(at.start().into());
         let input = self.convert_input(block, stage, "`extend`", stage.input());
         let items = stage
             .items()
@@ -146,8 +151,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         stage: &ast::AggregateExpr,
-        loc: Location<'c>,
+        at: TextRange,
     ) -> Value<'c, 'a> {
+        let loc = self.location_at(at.start().into());
         let input = self.convert_input(block, stage, "`aggregate`", stage.input());
         let mut keys = Vec::new();
         let mut key_names: Vec<&'c str> = Vec::new();
@@ -196,13 +202,14 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         stage: &ast::LimitExpr,
-        loc: Location<'c>,
+        at: TextRange,
     ) -> Value<'c, 'a> {
+        let loc = self.location_at(at.start().into());
         let input = self.convert_input(block, stage, "`limit`", stage.input());
         let count = match stage.count() {
             Some(count) => self.int_literal(&count),
             None => {
-                self.error(stage, "`limit` is missing its row count");
+                self.error_at(at, "`limit` is missing its row count");
                 0
             }
         };
@@ -226,8 +233,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         stage: &ast::RenameExpr,
-        loc: Location<'c>,
+        at: TextRange,
     ) -> Value<'c, 'a> {
+        let loc = self.location_at(at.start().into());
         let input = self.convert_input(block, stage, "`rename`", stage.input());
         let mut from: Vec<&'c str> = Vec::new();
         let mut to: Vec<&'c str> = Vec::new();
@@ -268,11 +276,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         stage: &ast::AliasExpr,
-        loc: Location<'c>,
+        at: TextRange,
     ) -> Value<'c, 'a> {
+        let loc = self.location_at(at.start().into());
         let input = self.convert_input(block, stage, "`as`", stage.input());
         let Some(alias) = self.ident(stage.alias()) else {
-            self.error(stage, "`as` is missing its alias");
+            self.error_at(at, "`as` is missing its alias");
             return input;
         };
 
@@ -283,8 +292,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         stage: &ast::JoinExpr,
-        loc: Location<'c>,
+        at: TextRange,
     ) -> Value<'c, 'a> {
+        let loc = self.location_at(at.start().into());
         let lhs = self.convert_input(block, stage, "`join`", stage.input());
         let kind = match stage.kind() {
             Some(ast::JoinKind::Left) => JoinKind::Left,
@@ -305,7 +315,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let rhs = match self.symbols.relation(relation, alias) {
             Some(rhs) => rhs,
             None => {
-                self.error(stage, &format!("`{relation}` is not a relation"));
+                self.error_at(at, &format!("`{relation}` is not a relation"));
                 Row::new()
             }
         };
@@ -336,7 +346,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let on = Region::new();
         if stage.using().is_none() {
             match stage.on() {
-                None => self.error(stage, "`join` is missing its `on` or `using` clause"),
+                None => self.error_at(at, "`join` is missing its `on` or `using` clause"),
                 Some(clause) => match clause.condition() {
                     None => self.error(&clause, "`on` is missing its condition"),
                     Some(condition) => {
@@ -371,8 +381,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         stage: &ast::SetExpr,
-        loc: Location<'c>,
+        at: TextRange,
     ) -> Value<'c, 'a> {
+        let loc = self.location_at(at.start().into());
         let input = self.convert_input(block, stage, "`set`", stage.input());
         let mut columns = Vec::new();
         for item in stage.items() {
@@ -409,8 +420,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         stage: &ast::DistinctExpr,
-        loc: Location<'c>,
+        at: TextRange,
     ) -> Value<'c, 'a> {
+        let loc = self.location_at(at.start().into());
         let input = self.convert_input(block, stage, "`distinct`", stage.input());
         block
             .append_operation(
@@ -423,8 +435,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         stage: &ast::DropExpr,
-        loc: Location<'c>,
+        at: TextRange,
     ) -> Value<'c, 'a> {
+        let loc = self.location_at(at.start().into());
         let input = self.convert_input(block, stage, "`drop`", stage.input());
         let mut names: Vec<&'c str> = Vec::new();
         for column in stage.columns() {
@@ -629,6 +642,44 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .map(|&name| StringAttribute::new(self.context, name).into())
             .collect()
     }
+}
+
+/// The relation a stage reads. `from` reads none: it starts the pipeline.
+fn stage_input(rel: &ast::Rel) -> Option<ast::Expr> {
+    match rel {
+        ast::Rel::FromExpr(_) => None,
+        ast::Rel::WhereExpr(stage) => stage.input(),
+        ast::Rel::SelectExpr(stage) => stage.input(),
+        ast::Rel::ExtendExpr(stage) => stage.input(),
+        ast::Rel::AggregateExpr(stage) => stage.input(),
+        ast::Rel::LimitExpr(stage) => stage.input(),
+        ast::Rel::RenameExpr(stage) => stage.input(),
+        ast::Rel::AliasExpr(stage) => stage.input(),
+        ast::Rel::JoinExpr(stage) => stage.input(),
+        ast::Rel::SetExpr(stage) => stage.input(),
+        ast::Rel::DistinctExpr(stage) => stage.input(),
+        ast::Rel::DropExpr(stage) => stage.input(),
+    }
+}
+
+/// A stage's own range. Its node covers everything piped into it, so the
+/// node starts where the pipeline starts — which is not what a complaint
+/// about the stage should point at. The stage begins at the first token
+/// after the input it reads.
+fn stage_range(rel: &ast::Rel) -> TextRange {
+    let node = rel.syntax();
+    let Some(input) = stage_input(rel) else {
+        return node.text_range();
+    };
+
+    let after = input.syntax().text_range().end();
+    let start = node
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .find(|token| token.text_range().start() >= after && !token.kind().is_trivia())
+        .map_or(after, |token| token.text_range().start());
+
+    TextRange::new(start, node.text_range().end())
 }
 
 #[cfg(test)]

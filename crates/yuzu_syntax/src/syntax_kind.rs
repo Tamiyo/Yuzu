@@ -149,6 +149,18 @@ pub enum SyntaxKind {
     Error,
 }
 
+impl SyntaxKind {
+    /// Whether the kind is trivia: the tokens a reader sees and the grammar
+    /// does not. `TokenKind::is_trivia` answers the same question a layer
+    /// down, and the two must agree.
+    pub fn is_trivia(self) -> bool {
+        matches!(
+            self,
+            SyntaxKind::Comment | SyntaxKind::Space | SyntaxKind::Newline
+        )
+    }
+}
+
 impl From<TokenKind> for SyntaxKind {
     fn from(token_kind: TokenKind) -> Self {
         match token_kind {

@@ -1002,9 +1002,9 @@ from t
     "#,
             expect![[r#"
                 error: expected `int64`, found `str`
-                 --> test.yz:5:1
+                 --> test.yz:6:1
                   |
-                5 | from t
+                6 | |> set level = "high"
                   | ^
             "#]],
         );
@@ -1077,9 +1077,9 @@ from t
 "#,
             expect![[r#"
                 error: expected the `where` predicate to be `bool`, found `int64`
-                 --> test.yz:7:1
+                 --> test.yz:8:1
                   |
-                7 | from t
+                8 | |> where level
                   | ^
             "#]],
         );
@@ -1099,9 +1099,9 @@ from t as e
 "#,
             expect![[r#"
                 error: expected the `on` condition to be `bool`, found `int64`
-                 --> test.yz:7:1
+                 --> test.yz:8:1
                   |
-                7 | from t as e
+                8 | |> inner join depts as d on e.level
                   | ^
             "#]],
         );

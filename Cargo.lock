@@ -2236,6 +2236,7 @@ name = "yuzu_substrait"
 version = "0.0.0"
 dependencies = [
  "expect-test",
+ "melior",
  "prost",
  "serde_json",
  "substrait",
@@ -2245,7 +2246,9 @@ dependencies = [
  "yuzu_diagnostics",
  "yuzu_hir",
  "yuzu_lexer",
+ "yuzu_mlir",
  "yuzu_parser",
+ "yuzu_passes",
  "yuzu_plan",
  "yuzu_types",
 ]
