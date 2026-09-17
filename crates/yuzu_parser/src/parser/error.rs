@@ -60,8 +60,13 @@ impl From<ParseError> for Diagnostic {
                 source_id,
             } => {
                 let span = Span { source_id, range };
-                let description = if found.is_none() { "end of input" } else { "" };
-                let message = format!("expected expression, found {}", description);
+                // The token's own text, so the reader sees what is actually
+                // there. Every other path built this and then substituted an
+                // empty string, leaving the message hanging after `found`.
+                let message = match &found {
+                    Some(text) => format!("expected expression, found `{text}`"),
+                    None => "expected expression, found end of input".to_string(),
+                };
                 DiagnosticBuilder::error(span, message)
                     .primary_label(span, "")
                     .build()
@@ -133,5 +138,20 @@ mod tests {
             diagnostic.message,
             "expected expression, found end of input"
         );
+    }
+
+    /// The token is carried as its own text, so the reader sees what is
+    /// there. Nothing covered this, and the message had been substituting an
+    /// empty string and trailing off after `found`.
+    #[test]
+    fn expected_expression_names_the_token_it_found() {
+        let error = ParseError::ExpectedExpression {
+            found: Some("for".to_string()),
+            range: TextRange::default(),
+            source_id: source_id(),
+        };
+
+        let diagnostic: Diagnostic = error.into();
+        assert_eq!(diagnostic.message, "expected expression, found `for`");
     }
 }
