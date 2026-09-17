@@ -137,10 +137,26 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         );
     }
 
-    /// Binds a module-level name, reporting a second declaration of one.
+    /// Binds a module-level name. A second declaration of one is reported
+    /// and then left alone: the name goes on meaning the declaration that
+    /// took it, so everything written against that one still resolves.
     fn declare(&mut self, node: &impl AstNode, name: &'c str, kind: Kind<'c>) {
-        self.check_duplicate(node, kind.what(), name);
+        if self.symbols.binding(name).is_some() {
+            self.check_duplicate(node, kind.what(), name);
+            return;
+        }
+
         self.symbols.bind(name, kind, node.syntax().text_range());
+    }
+
+    /// Whether this node is the declaration holding the name. The second
+    /// declaration of a name is reported by the hoist and then left out of
+    /// the module, so one name stays one symbol and MLIR has nothing to
+    /// complain about in its own words on top of what was already said.
+    fn declares(&self, node: &impl AstNode, name: &str) -> bool {
+        self.symbols
+            .binding(name)
+            .is_some_and(|binding| binding.declared == node.syntax().text_range())
     }
 
     /// The note says where the other declaration is rather than which came
@@ -188,6 +204,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             return;
         };
 
+        if !self.declares(decl, name) {
+            return;
+        }
+
         let (names, types) = self.field_attrs(decl.fields());
         block.append_operation(
             yzl::r#struct(
@@ -206,6 +226,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             self.error(decl, "table is missing its name");
             return;
         };
+
+        if !self.declares(decl, name) {
+            return;
+        }
 
         let row = match self.ident(decl.row_struct()) {
             Some(row) => row,
@@ -238,6 +262,14 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     }
 
     fn convert_fn<'a>(&mut self, block: BlockRef<'c, 'a>, decl: &ast::FuncStmt) {
+        // A nameless one still converts, so that the missing name is what
+        // gets reported rather than this.
+        if let Some(name) = self.ident(decl.name())
+            && !self.declares(decl, name)
+        {
+            return;
+        }
+
         self.convert_method(block, decl, Declared::AtModule);
     }
 
@@ -395,6 +427,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             self.error(decl, "trait is missing its name");
             return;
         };
+
+        if !self.declares(decl, name) {
+            return;
+        }
 
         let region = Region::new();
         let body = region.append_block(Block::new(&[]));
@@ -820,6 +856,53 @@ external fn upper(s: str) -> str
             &context,
             "struct Row { a: int64 }\n\ntable Row = Row\n",
         ));
+    }
+
+    /// The name goes on meaning the declaration that took it, so a column of
+    /// the first struct still resolves and one mistake reads as one error.
+    /// Replacing the binding gave three: the report, a reference that no
+    /// longer landed, and MLIR's own word for the same duplicate symbol.
+    #[test]
+    fn a_redeclaration_leaves_the_first_one_standing() {
+        use crate::lower_ast_to_yzl::test_support::reported;
+
+        let context = yuzu_mlir::context();
+        expect![[r#"
+            error: the struct `Row` is already defined
+             --> test.yz:2:1
+              |
+            2 | struct Row { b: int64 }
+              | ^^^^^^^^^^^^^^^^^^^^^^^
+              = note: also declared at test.yz:1:1
+        "#]]
+        .assert_eq(&reported(
+            &context,
+            "struct Row { a: int64 }\nstruct Row { b: int64 }\ntable t = Row\n\nfrom t\n|> select a as x\n",
+        ));
+    }
+
+    /// One name is one symbol in the module, so the duplicate contributes no
+    /// operation and the module verifies.
+    #[test]
+    fn a_redeclared_name_contributes_one_declaration() {
+        use crate::lower_ast_to_yzl::test_support::convert;
+
+        let context = yuzu_mlir::context();
+        let (module, _, _) = convert(
+            &context,
+            "test.yz",
+            "struct Row { a: int64 }\nstruct Row { b: int64 }\n",
+        );
+        let module = module.as_operation().to_string();
+        assert_eq!(
+            module.matches("yzl.struct @Row").count(),
+            1,
+            "the duplicate is left out:\n{module}"
+        );
+        assert!(
+            module.as_str().contains(r#"["a"]"#),
+            "the first declaration is the one that stands:\n{module}"
+        );
     }
 
     /// Declarations are hoisted, so a table may name a struct declared
