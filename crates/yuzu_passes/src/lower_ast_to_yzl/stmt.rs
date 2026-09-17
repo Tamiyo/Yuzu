@@ -96,7 +96,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             }
         };
 
-        self.declare(decl, name, Kind::Relation { row });
+        self.declare(decl, name, Kind::Relation { row, symbol: name });
     }
 
     fn hoist_trait(&mut self, decl: &ast::TraitStmt) {
@@ -147,6 +147,19 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
 
         self.symbols.bind(name, kind, node.syntax().text_range());
+    }
+
+    /// The symbol a `let` declares under. It is the written name while that
+    /// name is free. A `let` taking a name something else already holds gets
+    /// one of its own, because the code between the two declarations reads
+    /// the earlier one and both have to stay in the module.
+    fn rebound_symbol(&mut self, name: &'c str) -> &'c str {
+        if self.symbols.binding(name).is_none() {
+            return name;
+        }
+
+        self.rebound += 1;
+        self.intern(&format!("{name}.{}", self.rebound))
     }
 
     /// Whether this node is the declaration holding the name. The second
@@ -586,7 +599,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             return;
         };
 
-        self.check_duplicate(decl, "binding", name);
+        // A `let` may take a name something else already holds: rebinding
+        // is what a second one means. The module still holds one symbol per
+        // name, so the rebinding declares its own and the scope points at it.
+        let symbol = self.rebound_symbol(name);
         let annotation = decl
             .type_annotation()
             .map(|annotation| self.annotation_type(annotation, &[]));
@@ -598,21 +614,24 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 let value = self.convert_rel(body, rel);
                 let row = self.symbols.row().clone();
                 self.symbols.leave();
-                self.symbols
-                    .bind(name, Kind::Relation { row }, decl.syntax().text_range());
+                self.symbols.bind(
+                    name,
+                    Kind::Relation { row, symbol },
+                    decl.syntax().text_range(),
+                );
                 value
             }
             _ => {
                 let value = self.convert_expr(body, &Locals::new(), &expr);
                 self.symbols
-                    .bind(name, Kind::Let, decl.syntax().text_range());
+                    .bind(name, Kind::Let { symbol }, decl.syntax().text_range());
                 value
             }
         };
 
         body.append_operation(yzl::r#yield(self.context, &[value], self.location(decl)).into());
         let mut builder = yzl::LetOperationBuilder::new(self.context, self.location(decl))
-            .sym_name(StringAttribute::new(self.context, name))
+            .sym_name(StringAttribute::new(self.context, symbol))
             .body(region);
         if let Some(annotation) = annotation {
             builder = builder.annotation(TypeAttribute::new(annotation));
@@ -879,6 +898,58 @@ external fn upper(s: str) -> str
             &context,
             "struct Row { a: int64 }\nstruct Row { b: int64 }\ntable t = Row\n\nfrom t\n|> select a as x\n",
         ));
+    }
+
+    /// A `let` may take a name an earlier one holds. Both declarations stay,
+    /// under symbols of their own, because the code between them reads the
+    /// earlier one: `step` is bound against `cap` as it was, and the query
+    /// below reads `cap` as it became.
+    #[test]
+    fn a_let_may_take_a_name_an_earlier_one_holds() {
+        expect![[r#"
+            module {
+              yzl.struct @Row ["a"] : [!yz.int64]
+              yzl.table @t of @Row
+              yzl.let @cap {
+                %2 = yz.constant_int 1
+                yzl.yield %2 : !yz.int64
+              }
+              yzl.let @step {
+                %2 = yzl.call @cap() : () -> !yzl.var {callee_kind = "let"}
+                %3 = yz.constant_int 10
+                %4 = yz.add %2, %3 : !yzl.var, !yz.int64 -> !yzl.var
+                yzl.yield %4 : !yzl.var
+              }
+              yzl.let @cap.1 {
+                %2 = yz.constant_int 2
+                yzl.yield %2 : !yz.int64
+              }
+              %0 = yzl.from @t
+              %1 = yzl.where %0 {
+              ^bb0(%arg0: !yzl.var):
+                %2 = yzl.call @cap.1() : () -> !yzl.var {callee_kind = "let"}
+                %3 = yz.cmp "gt", %arg0, %2 : !yzl.var, !yzl.var -> !yzl.var
+                yzl.yield %3 : !yzl.var
+              }
+              yzl.output %1
+            }
+        "#]]
+        .assert_eq(&converted(
+            "struct Row { a: int64 }\ntable t = Row\n\nlet cap = 1\nlet step = cap + 10\nlet cap = 2\n\nfrom t\n|> where a > cap\n",
+        ));
+    }
+
+    /// A `let` bound to a query is a relation, and rebinding one moves what
+    /// `from` names with it.
+    #[test]
+    fn a_rebound_query_is_the_one_from_names() {
+        let module = converted(
+            "struct Row { a: int64 }\ntable t = Row\n\nlet base = from t\nlet base = from t |> where a > 1\n\nfrom base\n|> select a as out\n",
+        );
+        assert!(
+            module.contains("yzl.let @base.1") && module.contains("yzl.from @base.1"),
+            "`from` names the rebinding:\n{module}"
+        );
     }
 
     /// One name is one symbol in the module, so the duplicate contributes no

@@ -47,6 +47,9 @@ struct AstToYzl<'c, 'd> {
     line_starts: Vec<usize>,
     symbols: SymbolTable<'c>,
     registry: &'d dyn FunctionRegistry,
+    /// How many `let`s have taken a name something else already held. One
+    /// name is one symbol in the module, so a rebinding needs its own.
+    rebound: usize,
 }
 
 /// The values a function body's `let`s bound, in the order they bound them.
@@ -73,6 +76,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             line_starts,
             symbols: SymbolTable::new(),
             registry,
+            rebound: 0,
         }
     }
 

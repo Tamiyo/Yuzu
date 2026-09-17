@@ -171,8 +171,11 @@ pub(super) enum Kind<'c> {
         fields: Vec<&'c str>,
     },
     /// A table, or a `let` bound to a query: what `from` and `join` name.
+    /// The symbol is what the module holds it under, which is the written
+    /// name unless a later `let` took that name for something else.
     Relation {
         row: Row<'c>,
+        symbol: &'c str,
     },
     Func(Callable),
     /// A trait, and the methods it declares. The methods are not names of
@@ -182,8 +185,12 @@ pub(super) enum Kind<'c> {
         methods: Vec<&'c str>,
     },
     /// A `let` bound to a value: a callable of no arguments, which the
-    /// inliner expands wherever the name is used.
-    Let,
+    /// inliner expands wherever the name is used. The symbol is what the
+    /// module holds it under, which is the written name unless a later
+    /// `let` took that name for something else.
+    Let {
+        symbol: &'c str,
+    },
 }
 
 impl Kind<'_> {
@@ -194,7 +201,7 @@ impl Kind<'_> {
             Kind::Relation { .. } => "relation",
             Kind::Func(_) => "function",
             Kind::Trait { .. } => "trait",
-            Kind::Let => "binding",
+            Kind::Let { .. } => "binding",
         }
     }
 }
@@ -298,7 +305,7 @@ impl<'c> SymbolTable<'c> {
     pub(super) fn is_method(&self, name: &str) -> bool {
         self.module().values().any(|binding| match &binding.kind {
             Kind::Trait { methods } => methods.contains(&name),
-            Kind::Struct { .. } | Kind::Relation { .. } | Kind::Func(_) | Kind::Let => false,
+            Kind::Struct { .. } | Kind::Relation { .. } | Kind::Func(_) | Kind::Let { .. } => false,
         })
     }
 
@@ -310,20 +317,26 @@ impl<'c> SymbolTable<'c> {
         self.binding(name).map(|binding| &binding.kind)
     }
 
-    /// A relation's row, seen through the alias it is named by.
-    pub(super) fn relation(&self, name: &str, alias: Option<&'c str>) -> Option<Row<'c>> {
-        let Some(Kind::Relation { row }) = self.kind(name) else {
+    /// A relation's symbol and its row, seen through the alias it is named
+    /// by. The symbol is what a `yzl.from` names, which is not the written
+    /// name once a `let` has been rebound.
+    pub(super) fn relation(
+        &self,
+        name: &str,
+        alias: Option<&'c str>,
+    ) -> Option<(&'c str, Row<'c>)> {
+        let Some(Kind::Relation { row, symbol }) = self.kind(name) else {
             return None;
         };
 
-        Some(row.clone().qualified(alias))
+        Some((symbol, row.clone().qualified(alias)))
     }
 
     /// A callee by name, from the module's declarations or the registry.
     pub(super) fn callable(&self, name: &str, registry: &dyn FunctionRegistry) -> Option<Callable> {
         match self.kind(name) {
             Some(Kind::Func(callable)) => return Some(*callable),
-            Some(Kind::Let) => {
+            Some(Kind::Let { .. }) => {
                 return Some(Callable {
                     kind: CalleeKind::Let,
                     min_args: 0,
@@ -345,7 +358,9 @@ impl<'c> SymbolTable<'c> {
     pub(super) fn operator(&self, name: &str, registry: &dyn FunctionRegistry) -> Option<Callable> {
         match self.kind(name) {
             Some(Kind::Func(callable)) => Some(*callable),
-            Some(Kind::Let | Kind::Struct { .. } | Kind::Relation { .. } | Kind::Trait { .. })
+            Some(
+                Kind::Let { .. } | Kind::Struct { .. } | Kind::Relation { .. } | Kind::Trait { .. },
+            )
             | None => self.builtin(name, registry),
         }
     }
@@ -461,14 +476,12 @@ impl<'c> SymbolTable<'c> {
             return Lookup::Unknown;
         }
 
-        match self.module().get_key_value(reference.name) {
-            Some((
-                &name,
-                Binding {
-                    kind: Kind::Let, ..
-                },
-            )) => Lookup::Let(name),
-            Some((_, binding)) => Lookup::NotAValue(binding.kind.what()),
+        match self.binding(reference.name) {
+            Some(Binding {
+                kind: Kind::Let { symbol },
+                ..
+            }) => Lookup::Let(symbol),
+            Some(binding) => Lookup::NotAValue(binding.kind.what()),
             None => Lookup::Unknown,
         }
     }
@@ -565,13 +578,14 @@ mod tests {
             name,
             Kind::Relation {
                 row: Row::from(row),
+                symbol: name,
             },
             TextRange::default(),
         );
     }
 
     fn enter_relation(symbols: &mut SymbolTable<'static>, relation: &str) {
-        let row = symbols
+        let (_, row) = symbols
             .relation(relation, None)
             .expect("the relation is declared");
         symbols.enter_relation(row);
@@ -605,7 +619,7 @@ mod tests {
         bind_relation(&mut symbols, "depts", vec!["id"]);
         enter_relation(&mut symbols, "t");
         symbols.alias("a");
-        let rhs = symbols
+        let (_, rhs) = symbols
             .relation("depts", Some("d"))
             .expect("depts is bound");
         symbols.concat(rhs);
@@ -632,8 +646,8 @@ mod tests {
     #[test]
     fn the_innermost_scope_holding_a_name_decides_it() {
         let mut symbols = symbols();
-        symbols.bind("cap", Kind::Let, TextRange::default());
-        symbols.bind("id", Kind::Let, TextRange::default());
+        symbols.bind("cap", Kind::Let { symbol: "cap" }, TextRange::default());
+        symbols.bind("id", Kind::Let { symbol: "id" }, TextRange::default());
 
         assert_eq!(symbols.lookup(bare("cap")), Lookup::Let("cap"));
         symbols.enter_function(vec!["cap"]);
@@ -655,7 +669,7 @@ mod tests {
     #[test]
     fn an_isolated_scope_reaches_the_module_and_nothing_between() {
         let mut symbols = symbols();
-        symbols.bind("cap", Kind::Let, TextRange::default());
+        symbols.bind("cap", Kind::Let { symbol: "cap" }, TextRange::default());
         symbols.enter_function(vec!["x"]);
         symbols.enter_block();
         symbols.bind_local("local", 0);
@@ -680,7 +694,7 @@ mod tests {
     #[test]
     fn callables() {
         let mut symbols = symbols();
-        symbols.bind("cap", Kind::Let, TextRange::default());
+        symbols.bind("cap", Kind::Let { symbol: "cap" }, TextRange::default());
         symbols.bind(
             "f",
             Kind::Func(Callable {
@@ -747,7 +761,7 @@ mod tests {
         let mut symbols = symbols();
         bind_relation(&mut symbols, "depts", vec!["dept_id"]);
         enter_relation(&mut symbols, "t");
-        let rhs = symbols.relation("depts", None).expect("depts is bound");
+        let (_, rhs) = symbols.relation("depts", None).expect("depts is bound");
         symbols.concat(rhs);
 
         assert_eq!(

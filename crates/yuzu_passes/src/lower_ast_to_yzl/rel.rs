@@ -312,11 +312,11 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         };
 
         let alias = self.ident(stage.alias());
-        let rhs = match self.symbols.relation(relation, alias) {
-            Some(rhs) => rhs,
+        let (rhs_symbol, rhs) = match self.symbols.relation(relation, alias) {
+            Some(found) => found,
             None => {
                 self.error_at(at, &format!("`{relation}` is not a relation"));
-                Row::new()
+                (relation, Row::new())
             }
         };
 
@@ -362,7 +362,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .result(types::query(self.context))
             .lhs(lhs)
             .kind(StringAttribute::new(self.context, kind.as_str()))
-            .rhs(FlatSymbolRefAttribute::new(self.context, relation))
+            .rhs(FlatSymbolRefAttribute::new(self.context, rhs_symbol))
             .on(on);
         if let Some(alias) = alias {
             builder = builder.rhs_alias(StringAttribute::new(self.context, alias));
@@ -488,11 +488,11 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     ) -> Value<'c, 'a> {
         // A query nobody can name a row for is still converted, against an
         // empty row, so the stages after it are checked too.
-        let row = match self.symbols.relation(source, None) {
-            Some(row) => row,
+        let (symbol, row) = match self.symbols.relation(source, None) {
+            Some(found) => found,
             None => {
                 self.error(node, &format!("`{source}` is not a relation"));
-                Row::new()
+                (source, Row::new())
             }
         };
 
@@ -502,7 +502,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 yzl::from(
                     self.context,
                     types::query(self.context),
-                    FlatSymbolRefAttribute::new(self.context, source),
+                    FlatSymbolRefAttribute::new(self.context, symbol),
                     loc,
                 )
                 .into(),
