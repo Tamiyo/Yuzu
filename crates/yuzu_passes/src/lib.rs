@@ -57,11 +57,16 @@ pub(crate) mod test_support {
         )
         .expect("the source converts");
 
-        let lowered =
-            yuzu_mlir::diagnostics::capture(&context, source_id, source, &mut diagnostics, || {
+        let lowered = yuzu_mlir::diagnostics::capture(
+            &context,
+            &sources,
+            source_id,
+            &mut diagnostics,
+            || {
                 crate::infer_types(&context, &module);
                 crate::lower_yzl_to_yzr(&context, &module)
-            });
+            },
+        );
 
         let printer = DiagnosticPrinter::new(&sources);
         let rendered: Vec<String> = diagnostics
@@ -95,14 +100,19 @@ pub(crate) mod test_support {
         )
         .expect("the source converts");
 
-        let lowered =
-            yuzu_mlir::diagnostics::capture(&context, source_id, source, &mut diagnostics, || {
+        let lowered = yuzu_mlir::diagnostics::capture(
+            &context,
+            &sources,
+            source_id,
+            &mut diagnostics,
+            || {
                 crate::infer_types(&context, &module);
                 crate::inline_calls(&context, &module);
                 let mut lowered = crate::lower_yzl_to_yzr(&context, &module);
                 crate::simplify_yzr(&context, &mut lowered);
                 lowered
-            });
+            },
+        );
 
         let printer = DiagnosticPrinter::new(&sources);
         let rendered: Vec<String> = diagnostics
@@ -153,7 +163,7 @@ pub(crate) mod test_support {
         )
         .expect("the source converts");
 
-        yuzu_mlir::diagnostics::capture(&context, source_id, source, &mut diagnostics, || {
+        yuzu_mlir::diagnostics::capture(&context, &sources, source_id, &mut diagnostics, || {
             passes(&context, &module);
         });
 

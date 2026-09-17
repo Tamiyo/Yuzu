@@ -14,7 +14,7 @@ use text_size::{TextRange, TextSize};
 use yuzu_diagnostics::diagnostics::Span;
 use yuzu_diagnostics::diagnostics::builder::DiagnosticBuilder;
 use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
-use yuzu_diagnostics::source_map::SourceId;
+use yuzu_diagnostics::source_map::{SourceId, SourceMap};
 
 /// Emits an error against a location, into whichever handler is attached.
 pub fn emit_error(location: Location, message: &str) {
@@ -23,90 +23,117 @@ pub fn emit_error(location: Location, message: &str) {
 }
 
 /// Runs `f` with MLIR diagnostics routed into the engine.
+///
+/// A location names the file it came from, so every source the compile read
+/// is offered here and each diagnostic lands in the one it belongs to.
+/// `unnamed` is where a location naming nothing goes, which is the file the
+/// user asked about.
 pub fn capture<T>(
     context: &Context,
-    source_id: SourceId,
-    source: &str,
+    sources: &SourceMap,
+    unnamed: SourceId,
     engine: &mut DiagnosticsEngine,
     f: impl FnOnce() -> T,
 ) -> T {
-    let spans = Spans::new(source_id, source);
     let collected = Rc::new(RefCell::new(Vec::new()));
     let sink = collected.clone();
     let handler = context.attach_diagnostic_handler(move |diagnostic| {
-        sink.borrow_mut().push(convert(&spans, &diagnostic));
+        sink.borrow_mut().push(Reported::of(&diagnostic));
         true
     });
 
     let result = f();
     context.detach_diagnostic_handler(handler);
-    for diagnostic in collected.take() {
-        engine.emit(diagnostic);
+    for reported in collected.take() {
+        engine.emit(reported.build(sources, unnamed));
     }
 
     result
 }
 
-fn convert(spans: &Spans, diagnostic: &Diagnostic) -> DiagnosticBuilder {
-    let span = spans.span(diagnostic.location());
-    let message = diagnostic.to_string();
-    let mut builder = match diagnostic.severity() {
-        DiagnosticSeverity::Error => DiagnosticBuilder::error(span, message),
-        DiagnosticSeverity::Warning => DiagnosticBuilder::warning(span, message),
-        DiagnosticSeverity::Note | DiagnosticSeverity::Remark => {
-            DiagnosticBuilder::remark(span, message)
+/// What a handler saw. The handler has to outlive this call as far as the
+/// type system is concerned, so it cannot borrow the sources a span needs.
+/// It writes down what MLIR said, and the span is worked out afterwards.
+struct Reported {
+    message: String,
+    location: String,
+    severity: DiagnosticSeverity,
+    notes: Vec<String>,
+}
+
+impl Reported {
+    fn of(diagnostic: &Diagnostic) -> Self {
+        Self {
+            message: diagnostic.to_string(),
+            location: diagnostic.location().to_string(),
+            severity: diagnostic.severity(),
+            notes: (0..diagnostic.note_count())
+                .filter_map(|index| diagnostic.note(index).ok())
+                .map(|note| note.to_string())
+                .collect(),
         }
+    }
+
+    fn build(self, sources: &SourceMap, unnamed: SourceId) -> DiagnosticBuilder {
+        let span = span_of(sources, unnamed, &self.location);
+        let mut builder = match self.severity {
+            DiagnosticSeverity::Error => DiagnosticBuilder::error(span, self.message),
+            DiagnosticSeverity::Warning => DiagnosticBuilder::warning(span, self.message),
+            DiagnosticSeverity::Note | DiagnosticSeverity::Remark => {
+                DiagnosticBuilder::remark(span, self.message)
+            }
+        };
+
+        for note in self.notes {
+            builder = builder.note(note);
+        }
+
+        builder
+    }
+}
+
+/// The span a location names. Locations print as `loc("name":line:col)`,
+/// where the name is the one the file was read under. Anything else — an
+/// unknown location, a fused one, or a name no source was added under —
+/// lands at the start of the file the user asked about, which is where a
+/// reader looks first.
+fn span_of(sources: &SourceMap, unnamed: SourceId, printed: &str) -> Span {
+    let Some((name, line, column)) = position(printed) else {
+        return start_of(sources, unnamed);
     };
 
-    for index in 0..diagnostic.note_count() {
-        if let Ok(note) = diagnostic.note(index) {
-            builder = builder.note(note.to_string());
-        }
-    }
+    let Some(id) = sources.id(name) else {
+        return start_of(sources, unnamed);
+    };
 
-    builder
+    match sources.offset(id, line, column) {
+        Some(offset) => one_character(sources, id, offset),
+        None => start_of(sources, id),
+    }
 }
 
-/// MLIR locations mapped back to the engine's spans: the inverse of the
-/// locations a conversion mints on the way in.
-struct Spans {
-    id: SourceId,
-    line_starts: Vec<usize>,
-    len: usize,
+/// The name, line and column a printed location carries. The name is taken
+/// between the first quote and the last one before the numbers, so a path
+/// holding a colon of its own survives the split.
+fn position(printed: &str) -> Option<(&str, usize, usize)> {
+    let (_, quoted) = printed.split_once('"')?;
+    let (name, tail) = quoted.rsplit_once("\":")?;
+    let (line, column) = tail.strip_suffix(')')?.split_once(':')?;
+    Some((name, line.parse().ok()?, column.parse().ok()?))
 }
 
-impl Spans {
-    fn new(id: SourceId, text: &str) -> Self {
-        let mut line_starts = vec![0];
-        line_starts.extend(text.match_indices('\n').map(|(at, _)| at + 1));
-        Self {
-            id,
-            line_starts,
-            len: text.len(),
-        }
+/// One character from the offset: the printer underlines a span, and a
+/// location is a point rather than a range.
+fn one_character(sources: &SourceMap, source_id: SourceId, offset: usize) -> Span {
+    let end = (offset + 1).min(sources.text(source_id).len());
+    Span {
+        source_id,
+        range: TextRange::new(TextSize::new(offset as u32), TextSize::new(end as u32)),
     }
+}
 
-    /// The span of a location. Locations print as `loc("name":line:col)`;
-    /// anything else — an unknown location, a fused one — falls back to the
-    /// start of the source. The textual round trip stands in for the
-    /// FileLineCol getters the MLIR C API does not expose yet.
-    fn span(&self, location: Location) -> Span {
-        let offset = self.offset(&location.to_string()).unwrap_or_default();
-        let end = (offset + 1).min(self.len);
-        Span {
-            source_id: self.id,
-            range: TextRange::new(TextSize::new(offset as u32), TextSize::new(end as u32)),
-        }
-    }
-
-    fn offset(&self, printed: &str) -> Option<usize> {
-        let (_, tail) = printed.rsplit_once("\":")?;
-        let (line, column) = tail.strip_suffix(')')?.split_once(':')?;
-        let line: usize = line.parse().ok()?;
-        let column: usize = column.parse().ok()?;
-        let start = *self.line_starts.get(line.checked_sub(1)?)?;
-        Some(start + column - 1)
-    }
+fn start_of(sources: &SourceMap, source_id: SourceId) -> Span {
+    one_character(sources, source_id, 0)
 }
 
 #[cfg(test)]
@@ -127,7 +154,7 @@ mod tests {
         let source_id = sources.add("test.yz".to_string(), source.to_string());
         let mut diagnostics = DiagnosticsEngine::new();
 
-        capture(&context, source_id, source, &mut diagnostics, || {
+        capture(&context, &sources, source_id, &mut diagnostics, || {
             let location = Location::new(&context, "test.yz", 1, 6);
             emit_error(location, "unknown relation `t`");
         });
@@ -148,6 +175,62 @@ mod tests {
         .assert_eq(&rendered.join("\n"));
     }
 
+    /// A location names its file, so a compile that read more than one
+    /// puts each diagnostic in the file it came from. Before this the name
+    /// was parsed out and dropped, and every span landed in one source.
+    #[test]
+    fn each_diagnostic_lands_in_the_file_it_names() {
+        let context = crate::context();
+        let mut sources = SourceMap::new();
+        sources.add(
+            "prelude.yz".to_string(),
+            "external fn pow(a: int64, b: int64) -> int64\n".to_string(),
+        );
+        let query = sources.add("query.yz".to_string(), "from t\n".to_string());
+        let mut diagnostics = DiagnosticsEngine::new();
+
+        capture(&context, &sources, query, &mut diagnostics, || {
+            emit_error(
+                Location::new(&context, "query.yz", 1, 6),
+                "unknown relation `t`",
+            );
+            emit_error(
+                Location::new(&context, "prelude.yz", 1, 13),
+                "`pow` is declared twice",
+            );
+            // A location naming no source of ours lands in the file the user
+            // asked about rather than nowhere.
+            emit_error(Location::unknown(&context), "the query could not be built");
+        });
+
+        let printer = DiagnosticPrinter::new(&sources);
+        let rendered: Vec<String> = diagnostics
+            .diagnostics()
+            .iter()
+            .map(|diagnostic| printer.print(diagnostic))
+            .collect();
+        expect![[r#"
+            error: unknown relation `t`
+             --> query.yz:1:6
+              |
+            1 | from t
+              |      ^
+
+            error: `pow` is declared twice
+             --> prelude.yz:1:13
+              |
+            1 | external fn pow(a: int64, b: int64) -> int64
+              |             ^
+
+            error: the query could not be built
+             --> query.yz:1:1
+              |
+            1 | from t
+              | ^
+        "#]]
+        .assert_eq(&rendered.join("\n"));
+    }
+
     #[test]
     fn verifier_failures_land_in_the_engine() {
         use melior::ir::operation::{OperationBuilder, OperationLike};
@@ -164,7 +247,7 @@ mod tests {
         let location = Location::new(&context, "test.yz", 1, 1);
         let module = Module::new(location);
         let boolean = Type::parse(&context, "!yz.bool").expect("!yz.bool parses");
-        let verified = capture(&context, source_id, source, &mut diagnostics, || {
+        let verified = capture(&context, &sources, source_id, &mut diagnostics, || {
             let constant = module.body().append_operation(
                 OperationBuilder::new("yz.constant_bool", location)
                     .add_attributes(&[(

@@ -166,7 +166,7 @@ pub fn compile_mlir(name: &str, source: &str, options: &CompileOptions) -> std::
     let mut sources = SourceMap::new();
     let source_id = sources.add(name.to_string(), source.to_string());
 
-    let plan = plan_through_mlir(name, source, source_id, &mut diagnostics, options);
+    let plan = plan_through_mlir(&sources, source_id, &mut diagnostics, options);
     print_diagnostics(&diagnostics, &sources);
     match plan {
         Some(plan) => {
@@ -191,7 +191,7 @@ pub fn compile_to_substrait_mlir(
     let mut sources = SourceMap::new();
     let source_id = sources.add(name.to_string(), source.to_string());
 
-    match plan_through_mlir(name, source, source_id, &mut diagnostics, options) {
+    match plan_through_mlir(&sources, source_id, &mut diagnostics, options) {
         Some(plan) => Ok(yuzu_substrait::to_protobuf(&plan)),
         None => Err(render_diagnostics(&diagnostics, &sources)),
     }
@@ -200,15 +200,18 @@ pub fn compile_to_substrait_mlir(
 /// Source to plan, through every MLIR pass in order. `None` once anything
 /// has reported: a pass reads what the one before it settled, so running on
 /// after an error would report the same mistake again in other words.
+///
+/// The query is one of the sources rather than a text of its own, so its
+/// name, its text and the id a diagnostic carries cannot disagree.
 fn plan_through_mlir(
-    name: &str,
-    source: &str,
+    sources: &SourceMap,
     source_id: yuzu_diagnostics::source_map::SourceId,
     diagnostics: &mut DiagnosticsEngine,
     options: &CompileOptions,
 ) -> Option<yuzu_substrait::Plan> {
     use melior::ir::operation::OperationLike;
 
+    let (name, source) = (sources.name(source_id), sources.text(source_id));
     let context = yuzu_mlir::context();
     let module = yuzu_passes::lower_ast_to_yzl(
         &context,
@@ -220,14 +223,14 @@ fn plan_through_mlir(
     )?;
 
     let verified =
-        yuzu_mlir::diagnostics::capture(&context, source_id, source, diagnostics, || {
+        yuzu_mlir::diagnostics::capture(&context, sources, source_id, diagnostics, || {
             module.as_operation().verify()
         });
     if !verified || has_errors(diagnostics) {
         return None;
     }
 
-    yuzu_mlir::diagnostics::capture(&context, source_id, source, diagnostics, || {
+    yuzu_mlir::diagnostics::capture(&context, sources, source_id, diagnostics, || {
         yuzu_passes::infer_types(&context, &module);
         yuzu_passes::check_aggregates(&module);
     });
@@ -238,14 +241,14 @@ fn plan_through_mlir(
     // Expansion runs after the aggregate rules, which read an `agg fn` body
     // while it is still a body, and before the lowering, which has no way to
     // carry a function across.
-    yuzu_mlir::diagnostics::capture(&context, source_id, source, diagnostics, || {
+    yuzu_mlir::diagnostics::capture(&context, sources, source_id, diagnostics, || {
         yuzu_passes::inline_calls(&context, &module);
     });
     if has_errors(diagnostics) {
         return None;
     }
 
-    yuzu_mlir::diagnostics::capture(&context, source_id, source, diagnostics, || {
+    yuzu_mlir::diagnostics::capture(&context, sources, source_id, diagnostics, || {
         let mut lowered = yuzu_passes::lower_yzl_to_yzr(&context, &module);
         yuzu_passes::simplify_yzr(&context, &mut lowered);
         if options.debug_plan {

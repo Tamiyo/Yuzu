@@ -146,15 +146,20 @@ pub(crate) mod test_support {
         )
         .expect("the source converts");
 
-        let plan =
-            yuzu_mlir::diagnostics::capture(&context, source_id, source, &mut diagnostics, || {
+        let plan = yuzu_mlir::diagnostics::capture(
+            &context,
+            &sources,
+            source_id,
+            &mut diagnostics,
+            || {
                 yuzu_passes::infer_types(&context, &module);
                 yuzu_passes::check_aggregates(&module);
                 yuzu_passes::inline_calls(&context, &module);
                 let mut lowered = yuzu_passes::lower_yzl_to_yzr(&context, &module);
                 yuzu_passes::simplify_yzr(&context, &mut lowered);
                 super::translate(&context, &lowered)
-            });
+            },
+        );
 
         let printer = DiagnosticPrinter::new(&sources);
         let reported: Vec<String> = diagnostics
