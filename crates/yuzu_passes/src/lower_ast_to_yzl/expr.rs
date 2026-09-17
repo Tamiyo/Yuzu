@@ -222,13 +222,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         self.call(block, callee, callable, &operands, loc)
     }
 
-    fn check_arity(
-        &mut self,
-        call: &ast::CallExpr,
-        callee: &str,
-        callable: Callable,
-        given: usize,
-    ) {
+    fn check_arity(&mut self, call: &impl AstNode, callee: &str, callable: Callable, given: usize) {
         let (min, max) = (callable.min_args, callable.max_args);
         if given < min || given > max {
             let expected = if min == max {
@@ -319,14 +313,16 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             Some(BinOp::Lte) => cmp(CmpPredicate::LessOrEqual),
             Some(BinOp::Gt) => cmp(CmpPredicate::Greater),
             Some(BinOp::Gte) => cmp(CmpPredicate::GreaterOrEqual),
-            Some(BinOp::Pow) => return self.builtin(block, "pow", &[lhs, rhs], loc),
-            Some(BinOp::ShiftLeft) => return self.builtin(block, "shift_left", &[lhs, rhs], loc),
-            Some(BinOp::ShiftRight) => {
-                return self.builtin(block, "shift_right", &[lhs, rhs], loc);
+            Some(BinOp::Pow) => return self.operator(block, binary, "pow", &[lhs, rhs], loc),
+            Some(BinOp::ShiftLeft) => {
+                return self.operator(block, binary, "shift_left", &[lhs, rhs], loc);
             }
-            Some(BinOp::In) => return self.builtin(block, "in", &[lhs, rhs], loc),
+            Some(BinOp::ShiftRight) => {
+                return self.operator(block, binary, "shift_right", &[lhs, rhs], loc);
+            }
+            Some(BinOp::In) => return self.operator(block, binary, "in", &[lhs, rhs], loc),
             Some(BinOp::NotIn) => {
-                let contains = self.builtin(block, "in", &[lhs, rhs], loc);
+                let contains = self.operator(block, binary, "in", &[lhs, rhs], loc);
                 yz::not(context, types::var(self.context), contains, loc).into()
             }
             None => {
@@ -465,21 +461,30 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .first_result()
     }
 
-    /// The operators the parser lowers to calls: all scalar, none of them
-    /// aggregates.
-    fn builtin<'a>(
-        &self,
+    /// An operator is sugar for a call to a name the language already offers
+    /// under that name, so it resolves the way a written call resolves. A
+    /// declaration of the name therefore stands for the operator too, which
+    /// is what keeps `a << b` and `shift_left(a, b)` the same expression.
+    fn operator<'a>(
+        &mut self,
         block: BlockRef<'c, 'a>,
+        node: &impl AstNode,
         callee: &str,
         operands: &[Value<'c, 'a>],
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
-        let callable = Callable {
-            kind: CalleeKind::Builtin,
-            min_args: operands.len(),
-            max_args: operands.len(),
-            agg: false,
+        let Some(callable) = self.symbols.operator(callee, self.registry) else {
+            // Only reachable through a registry that does not offer the name,
+            // since the builtins do. The operator has nowhere to go.
+            return self.missing(
+                block,
+                node,
+                &format!("`{callee}` is not available"),
+                types::var(self.context),
+            );
         };
+
+        self.check_arity(node, callee, callable, operands.len());
         self.call(block, callee, callable, operands, loc)
     }
 }
@@ -488,7 +493,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 mod tests {
     use expect_test::{Expect, expect};
 
-    use crate::lower_ast_to_yzl::test_support::{convert, reported};
+    use crate::lower_ast_to_yzl::test_support::{convert, converted, reported};
 
     /// What a column reference that does not land reads like: the row it was
     /// resolved against is the one thing the source does not show.
@@ -541,6 +546,68 @@ from t
     fn check_reported(source: &str, expected: Expect) {
         let context = yuzu_mlir::context();
         expected.assert_eq(&reported(&context, source));
+    }
+
+    /// An operator is a call to a name, so a declaration of that name stands
+    /// for the operator too. Both spellings resolved separately before this,
+    /// and one query could answer twice for the same expression.
+    #[test]
+    fn an_operator_and_its_name_resolve_together() {
+        expect![[r#"
+            module {
+              yzl.struct @Row ["a"] : [!yz.int64]
+              yzl.table @t of @Row
+              yzl.fn @shift_left params ["x", "y"] (!yz.int64, !yz.int64) -> !yz.int64 {
+              ^bb0(%arg0: !yzl.var, %arg1: !yzl.var):
+                %2 = yz.add %arg0, %arg1 : !yzl.var, !yzl.var -> !yzl.var
+                yzl.return %2 : !yzl.var
+              }
+              %0 = yzl.from @t
+              %1 = yzl.select %0 as ["named", "operator"] {
+              ^bb0(%arg0: !yzl.var):
+                %2 = yz.constant_int 2
+                %3 = yzl.call @shift_left(%arg0, %2) : (!yzl.var, !yz.int64) -> !yzl.var {callee_kind = "fn"}
+                %4 = yz.constant_int 2
+                %5 = yzl.call @shift_left(%arg0, %4) : (!yzl.var, !yz.int64) -> !yzl.var {callee_kind = "fn"}
+                yzl.yield %3, %5 : !yzl.var, !yzl.var
+              }
+              yzl.output %1
+            }
+        "#]]
+        .assert_eq(&converted(
+            r#"
+struct Row { a: int64 }
+table t = Row
+
+fn shift_left(x: int64, y: int64) -> int64 { return x + y }
+
+from t
+|> select shift_left(a, 2) as named, a << 2 as operator
+"#,
+        ));
+    }
+
+    /// Only a function can stand for an operator. A value bound to the name
+    /// is a different thing that happens to share it, so `**` goes on
+    /// meaning what the language says.
+    #[test]
+    fn a_value_does_not_stand_for_an_operator() {
+        let module = converted(
+            r#"
+struct Row { a: int64 }
+table t = Row
+
+let pow = 2
+
+from t
+|> select a ** 2 as p
+"#,
+        );
+        assert!(
+            module.contains(r#"yzl.call @pow(%arg0, %2)"#)
+                && module.contains(r#"callee_kind = "builtin""#),
+            "the operator still reaches the builtin:\n{module}"
+        );
     }
 
     /// The HIR lowerer's missing-piece mechanics, ported: a hole in the

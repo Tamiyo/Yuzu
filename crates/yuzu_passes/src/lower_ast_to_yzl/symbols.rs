@@ -334,6 +334,23 @@ impl<'c> SymbolTable<'c> {
             Some(Kind::Struct { .. } | Kind::Relation { .. } | Kind::Trait { .. }) | None => {}
         }
 
+        self.builtin(name, registry)
+    }
+
+    /// The function an operator stands for. An operator is sugar for a call
+    /// to a name the registry already offers, so it resolves the same way —
+    /// except that only a function can stand for one. A value or a type
+    /// sharing the name is a different thing, and the operator goes on
+    /// meaning what the language says it means.
+    pub(super) fn operator(&self, name: &str, registry: &dyn FunctionRegistry) -> Option<Callable> {
+        match self.kind(name) {
+            Some(Kind::Func(callable)) => Some(*callable),
+            Some(Kind::Let | Kind::Struct { .. } | Kind::Relation { .. } | Kind::Trait { .. })
+            | None => self.builtin(name, registry),
+        }
+    }
+
+    fn builtin(&self, name: &str, registry: &dyn FunctionRegistry) -> Option<Callable> {
         let entry = registry.entries().iter().find(|entry| entry.name == name)?;
         Some(Callable {
             kind: CalleeKind::Builtin,
