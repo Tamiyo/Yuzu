@@ -90,6 +90,7 @@ mod tests {
             ("offset", TokenKind::OffsetKw),
             ("on", TokenKind::OnKw),
             ("or", TokenKind::OrKw),
+            ("pub", TokenKind::PubKw),
             ("rename", TokenKind::RenameKw),
             ("return", TokenKind::ReturnKw),
             ("right", TokenKind::RightKw),

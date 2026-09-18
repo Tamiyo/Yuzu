@@ -157,6 +157,9 @@ pub enum TokenKind {
     #[token("or", priority = 1)]
     OrKw,
 
+    #[token("pub", priority = 1)]
+    PubKw,
+
     #[token("rename", priority = 1)]
     RenameKw,
 
@@ -288,6 +291,7 @@ impl std::fmt::Display for TokenKind {
             TokenKind::OffsetKw => "offset",
             TokenKind::OnKw => "on",
             TokenKind::OrKw => "or",
+            TokenKind::PubKw => "pub",
             TokenKind::RenameKw => "rename",
             TokenKind::ReturnKw => "return",
             TokenKind::RightKw => "right",
@@ -373,6 +377,7 @@ mod tests {
             (TokenKind::OffsetKw, "offset"),
             (TokenKind::OnKw, "on"),
             (TokenKind::OrKw, "or"),
+            (TokenKind::PubKw, "pub"),
             (TokenKind::RenameKw, "rename"),
             (TokenKind::ReturnKw, "return"),
             (TokenKind::RightKw, "right"),

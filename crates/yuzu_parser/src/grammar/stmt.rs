@@ -8,6 +8,14 @@ use crate::grammar::ty::parse_type;
 use crate::parser::{Parser, marker::CompletedMarker};
 
 pub(crate) fn parse_stmt(p: &mut Parser) -> CompletedMarker {
+    // `pub` prefixes a declaration, so what follows it decides which one this
+    // is. Each declaration bumps the `pub` itself, the way a function bumps
+    // its own `external` and `agg`, so the keyword lands inside the node it
+    // qualifies.
+    if p.at(TokenKind::PubKw) {
+        return parse_public_stmt(p);
+    }
+
     // Reserved words, so no lookahead is needed to tell a declaration from an
     // expression that happens to start with the same identifier.
     if p.at(TokenKind::FnKw) || p.at(TokenKind::AggKw) || p.at(TokenKind::ExternalKw) {
@@ -34,6 +42,32 @@ pub(crate) fn parse_stmt(p: &mut Parser) -> CompletedMarker {
     parse_expr_stmt(p)
 }
 
+/// A declaration behind `pub`. Only the kinds that carry a name can be
+/// exported, so anything else here is reported against the `pub` rather than
+/// parsed as a declaration it is not.
+fn parse_public_stmt(p: &mut Parser) -> CompletedMarker {
+    match p.peek_nth_kind(1) {
+        Some(TokenKind::FnKw | TokenKind::AggKw | TokenKind::ExternalKw) => parse_func_stmt(p),
+        Some(TokenKind::TraitKw) => parse_trait_stmt(p),
+        Some(TokenKind::LetKw) => parse_let_stmt(p),
+        Some(TokenKind::StructKw) => parse_struct_stmt(p),
+        Some(TokenKind::TableKw) => parse_table_stmt(p),
+        _ => {
+            let m = p.start();
+            p.bump();
+            p.error_expression(&[]);
+            p.complete(m, SyntaxKind::Error)
+        }
+    }
+}
+
+/// Bumps a leading `pub`, so every declaration parser starts the same way.
+fn parse_visibility(p: &mut Parser) {
+    if p.at(TokenKind::PubKw) {
+        p.bump();
+    }
+}
+
 fn parse_block_stmt(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
 
@@ -50,6 +84,7 @@ fn parse_block_stmt(p: &mut Parser) -> CompletedMarker {
 
 fn parse_func_stmt(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
+    parse_visibility(p);
 
     if p.at(TokenKind::ExternalKw) {
         p.bump();
@@ -124,6 +159,7 @@ fn parse_impl_stmt(p: &mut Parser) -> CompletedMarker {
 
 fn parse_trait_stmt(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
+    parse_visibility(p);
     p.expect(TokenKind::TraitKw);
     parse_ident(p);
     p.expect(TokenKind::LeftCurly);
@@ -158,6 +194,7 @@ fn parse_trait_method(p: &mut Parser) -> CompletedMarker {
 
 fn parse_let_stmt(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
+    parse_visibility(p);
     p.expect(TokenKind::LetKw);
 
     if p.at(TokenKind::MutKw) {
@@ -190,6 +227,7 @@ fn parse_return_stmt(p: &mut Parser) -> CompletedMarker {
 
 fn parse_struct_stmt(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
+    parse_visibility(p);
     p.expect(TokenKind::StructKw);
     parse_ident(p);
     parse_struct_field_list(p);
@@ -198,6 +236,7 @@ fn parse_struct_stmt(p: &mut Parser) -> CompletedMarker {
 
 fn parse_table_stmt(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
+    parse_visibility(p);
     p.expect(TokenKind::TableKw);
     parse_ident(p);
     p.expect(TokenKind::Eq);
@@ -272,6 +311,7 @@ fn parse_trait_ref(p: &mut Parser) -> CompletedMarker {
 
 fn parse_struct_field_decl(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
+    parse_visibility(p);
     parse_ident(p);
     p.expect(TokenKind::Colon);
     parse_type(p);
@@ -846,6 +886,49 @@ mod tests {
               Ident@0..10
                 Identifier@0..10 "Comparable"
         "#]],
+        );
+    }
+
+    /// `pub` belongs to the declaration it qualifies, so it sits inside the
+    /// node rather than beside it, and a field carries its own.
+    #[test]
+    fn parse_public_struct_with_a_public_field() {
+        check(
+            "pub struct P { pub x: int, y: int }",
+            expect![[r#"
+                StructStmt@0..35
+                  PubKw@0..3 "pub"
+                  Space@3..4 " "
+                  StructKw@4..10 "struct"
+                  Space@10..11 " "
+                  Ident@11..12
+                    Identifier@11..12 "P"
+                  Space@12..13 " "
+                  LeftCurly@13..14 "{"
+                  Space@14..15 " "
+                  StructField@15..25
+                    PubKw@15..18 "pub"
+                    Space@18..19 " "
+                    Ident@19..20
+                      Identifier@19..20 "x"
+                    Colon@20..21 ":"
+                    Space@21..22 " "
+                    NamedTypeAnnotation@22..25
+                      Ident@22..25
+                        Identifier@22..25 "int"
+                  Comma@25..26 ","
+                  Space@26..27 " "
+                  StructField@27..33
+                    Ident@27..28
+                      Identifier@27..28 "y"
+                    Colon@28..29 ":"
+                    Space@29..30 " "
+                    NamedTypeAnnotation@30..33
+                      Ident@30..33
+                        Identifier@30..33 "int"
+                  Space@33..34 " "
+                  RightCurly@34..35 "}"
+            "#]],
         );
     }
 

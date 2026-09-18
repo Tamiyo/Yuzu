@@ -74,17 +74,31 @@ mod support {
     }
 }
 
+/// The visibility a node's own tokens declare.
+fn visibility_of(syntax: &SyntaxNode) -> Visibility {
+    let public = syntax
+        .children_with_tokens()
+        .filter_map(SyntaxElement::into_token)
+        .any(|token| token.kind() == SyntaxKind::PubKw);
+
+    if public {
+        Visibility::Public
+    } else {
+        Visibility::Private
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Mutability {
     Mutable,
     Immutable,
 }
 
+/// Whether another file may name a declaration. Two states, because Yuzu has
+/// flat files: there is no package and no nesting for a third to name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Visibility {
     Public,
-    Protected,
-    Internal,
     Private,
 }
 
@@ -238,6 +252,12 @@ ast_enum!(Stmt, {
 
 ast_node!(StructStmt);
 impl StructStmt {
+    /// Whether another file may name this. Private unless `pub` says so, so
+    /// forgetting to export is a complaint from the importer rather than a
+    /// name that quietly became API.
+    pub fn visibility(&self) -> Visibility {
+        visibility_of(self.syntax())
+    }
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
@@ -249,6 +269,12 @@ impl StructStmt {
 
 ast_node!(StructField);
 impl StructField {
+    /// Whether another file may name this. Private unless `pub` says so, so
+    /// forgetting to export is a complaint from the importer rather than a
+    /// name that quietly became API.
+    pub fn visibility(&self) -> Visibility {
+        visibility_of(self.syntax())
+    }
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
@@ -274,6 +300,12 @@ impl StructField {
 
 ast_node!(TraitStmt);
 impl TraitStmt {
+    /// Whether another file may name this. Private unless `pub` says so, so
+    /// forgetting to export is a complaint from the importer rather than a
+    /// name that quietly became API.
+    pub fn visibility(&self) -> Visibility {
+        visibility_of(self.syntax())
+    }
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
@@ -300,6 +332,12 @@ impl ImplStmt {
 
 ast_node!(FuncStmt);
 impl FuncStmt {
+    /// Whether another file may name this. Private unless `pub` says so, so
+    /// forgetting to export is a complaint from the importer rather than a
+    /// name that quietly became API.
+    pub fn visibility(&self) -> Visibility {
+        visibility_of(self.syntax())
+    }
     pub fn is_agg(&self) -> bool {
         self.has_marker(SyntaxKind::AggKw)
     }
@@ -354,6 +392,12 @@ impl FuncParam {
 
 ast_node!(TableStmt);
 impl TableStmt {
+    /// Whether another file may name this. Private unless `pub` says so, so
+    /// forgetting to export is a complaint from the importer rather than a
+    /// name that quietly became API.
+    pub fn visibility(&self) -> Visibility {
+        visibility_of(self.syntax())
+    }
     pub fn name(&self) -> Option<Ident> {
         support::nth_child(self.syntax(), 0)
     }
@@ -376,6 +420,12 @@ impl BlockStmt {
 
 ast_node!(LetStmt);
 impl LetStmt {
+    /// Whether another file may name this. Private unless `pub` says so, so
+    /// forgetting to export is a complaint from the importer rather than a
+    /// name that quietly became API.
+    pub fn visibility(&self) -> Visibility {
+        visibility_of(self.syntax())
+    }
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
@@ -936,6 +986,68 @@ mod tests {
             .descendants()
             .find_map(AggregateExpr::cast)
             .expect("input has an aggregate stage")
+    }
+
+    fn parsed(input: &str) -> SyntaxNode {
+        let tokens: Vec<Token> = Lexer::new(input).collect();
+        let mut diagnostics = DiagnosticsEngine::new();
+        let mut sources = SourceMap::new();
+        let source_id = sources.add("test".to_string(), input.to_string());
+        yuzu_parser::parse(&tokens, &mut diagnostics, source_id)
+    }
+
+    /// Private unless `pub` says otherwise, and a field answers for itself
+    /// rather than for the struct holding it.
+    #[test]
+    fn visibility_is_private_until_pub_says_otherwise() {
+        let syntax = parsed("pub struct P { pub x: int, y: int }\nstruct Q { z: int }\n");
+        let structs: Vec<StructStmt> = syntax.descendants().filter_map(StructStmt::cast).collect();
+        assert_eq!(structs[0].visibility(), Visibility::Public);
+        assert_eq!(structs[1].visibility(), Visibility::Private);
+
+        let fields: Vec<StructField> = structs[0].fields().collect();
+        assert_eq!(fields[0].visibility(), Visibility::Public);
+        assert_eq!(fields[1].visibility(), Visibility::Private);
+    }
+
+    /// Every declaration that carries a name carries a visibility with it.
+    #[test]
+    fn every_named_declaration_can_be_public() {
+        let syntax = parsed(
+            "pub table t = P\npub fn f(x: int) -> int { return x }\npub let c = 1\npub trait S { fn s(x: int) -> int }\n",
+        );
+        assert_eq!(
+            syntax
+                .descendants()
+                .find_map(TableStmt::cast)
+                .expect("a table")
+                .visibility(),
+            Visibility::Public
+        );
+        assert_eq!(
+            syntax
+                .descendants()
+                .find_map(FuncStmt::cast)
+                .expect("a function")
+                .visibility(),
+            Visibility::Public
+        );
+        assert_eq!(
+            syntax
+                .descendants()
+                .find_map(LetStmt::cast)
+                .expect("a binding")
+                .visibility(),
+            Visibility::Public
+        );
+        assert_eq!(
+            syntax
+                .descendants()
+                .find_map(TraitStmt::cast)
+                .expect("a trait")
+                .visibility(),
+            Visibility::Public
+        );
     }
 
     #[test]
