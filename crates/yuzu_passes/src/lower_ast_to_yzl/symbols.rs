@@ -169,6 +169,7 @@ pub(super) struct Binding<'c> {
 pub(super) enum Kind<'c> {
     Struct {
         fields: Vec<&'c str>,
+        symbol: &'c str,
     },
     /// A table, or a `let` bound to a query: what `from` and `join` name.
     /// The symbol is what the module holds it under, which is the written
@@ -177,12 +178,13 @@ pub(super) enum Kind<'c> {
         row: Row<'c>,
         symbol: &'c str,
     },
-    Func(Callable),
+    Func(Callable<'c>),
     /// A trait, and the methods it declares. The methods are not names of
     /// their own — choosing an implementation is dispatch, which nothing
     /// does yet — so they hang off the trait rather than sit in the scope.
     Trait {
         methods: Vec<&'c str>,
+        symbol: &'c str,
     },
     /// A `let` bound to a value: a callable of no arguments, which the
     /// inliner expands wherever the name is used. The symbol is what the
@@ -217,7 +219,10 @@ pub(super) struct Local<'c> {
 
 /// A callee's kind, and the argument counts it takes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) struct Callable {
+pub(super) struct Callable<'c> {
+    /// What the module holds the callee under, which is the written name
+    /// unless a declaration took that name for something else.
+    pub(super) symbol: &'c str,
     pub(super) kind: CalleeKind,
     pub(super) min_args: usize,
     pub(super) max_args: usize,
@@ -316,13 +321,30 @@ impl<'c> SymbolTable<'c> {
     /// Whether some trait declares this method.
     pub(super) fn is_method(&self, name: &str) -> bool {
         self.module().values().any(|binding| match &binding.kind {
-            Kind::Trait { methods } => methods.contains(&name),
+            Kind::Trait { methods, .. } => methods.contains(&name),
             Kind::Struct { .. } | Kind::Relation { .. } | Kind::Func(_) | Kind::Let { .. } => false,
         })
     }
 
-    pub(super) fn is_struct(&self, name: &str) -> bool {
-        matches!(self.kind(name), Some(Kind::Struct { .. }))
+    /// The symbol a struct name was declared under, which is what a type
+    /// referring to it names.
+    pub(super) fn struct_symbol(&self, name: &str) -> Option<&'c str> {
+        match self.kind(name) {
+            Some(Kind::Struct { symbol, .. }) => Some(symbol),
+            Some(Kind::Relation { .. } | Kind::Func(_) | Kind::Trait { .. } | Kind::Let { .. })
+            | None => None,
+        }
+    }
+
+    /// The symbol a trait name was declared under.
+    pub(super) fn trait_symbol(&self, name: &str) -> Option<&'c str> {
+        match self.kind(name) {
+            Some(Kind::Trait { symbol, .. }) => Some(symbol),
+            Some(
+                Kind::Struct { .. } | Kind::Relation { .. } | Kind::Func(_) | Kind::Let { .. },
+            )
+            | None => None,
+        }
     }
 
     pub(super) fn kind(&self, name: &str) -> Option<&Kind<'c>> {
@@ -345,11 +367,16 @@ impl<'c> SymbolTable<'c> {
     }
 
     /// A callee by name, from the module's declarations or the registry.
-    pub(super) fn callable(&self, name: &str, registry: &dyn FunctionRegistry) -> Option<Callable> {
+    pub(super) fn callable(
+        &self,
+        name: &str,
+        registry: &dyn FunctionRegistry,
+    ) -> Option<Callable<'c>> {
         match self.kind(name) {
             Some(Kind::Func(callable)) => return Some(*callable),
-            Some(Kind::Let { .. }) => {
+            Some(Kind::Let { symbol }) => {
                 return Some(Callable {
+                    symbol,
                     kind: CalleeKind::Let,
                     min_args: 0,
                     max_args: 0,
@@ -367,7 +394,11 @@ impl<'c> SymbolTable<'c> {
     /// except that only a function can stand for one. A value or a type
     /// sharing the name is a different thing, and the operator goes on
     /// meaning what the language says it means.
-    pub(super) fn operator(&self, name: &str, registry: &dyn FunctionRegistry) -> Option<Callable> {
+    pub(super) fn operator(
+        &self,
+        name: &str,
+        registry: &dyn FunctionRegistry,
+    ) -> Option<Callable<'c>> {
         match self.kind(name) {
             Some(Kind::Func(callable)) => Some(*callable),
             Some(
@@ -377,9 +408,10 @@ impl<'c> SymbolTable<'c> {
         }
     }
 
-    fn builtin(&self, name: &str, registry: &dyn FunctionRegistry) -> Option<Callable> {
+    fn builtin(&self, name: &str, registry: &dyn FunctionRegistry) -> Option<Callable<'c>> {
         let entry = registry.entries().iter().find(|entry| entry.name == name)?;
         Some(Callable {
+            symbol: entry.name,
             kind: CalleeKind::Builtin,
             min_args: entry.min_args,
             max_args: entry.max_args,
@@ -581,6 +613,7 @@ mod tests {
             "Row",
             Kind::Struct {
                 fields: vec!["id", "dept_id"],
+                symbol: "Row",
             },
             TextRange::default(),
         );
@@ -716,6 +749,54 @@ mod tests {
         assert_eq!(symbols.lookup(bare("Row")), Lookup::NotAValue("struct"));
     }
 
+    /// Every declaration says what the module holds it under, not only the
+    /// two that needed it first. The symbol is the written name while that
+    /// name is free, and diverges as soon as something else takes it.
+    #[test]
+    fn every_declaration_carries_its_symbol() {
+        let mut symbols = SymbolTable::new();
+        symbols.bind(
+            "Row",
+            Kind::Struct {
+                fields: vec!["a"],
+                symbol: "helpers.Row",
+            },
+            TextRange::default(),
+        );
+        symbols.bind(
+            "Show",
+            Kind::Trait {
+                methods: vec!["show"],
+                symbol: "helpers.Show",
+            },
+            TextRange::default(),
+        );
+        symbols.bind(
+            "f",
+            Kind::Func(Callable {
+                symbol: "helpers.f",
+                kind: CalleeKind::Fn,
+                min_args: 0,
+                max_args: 0,
+                agg: false,
+            }),
+            TextRange::default(),
+        );
+
+        assert_eq!(symbols.struct_symbol("Row"), Some("helpers.Row"));
+        assert_eq!(symbols.trait_symbol("Show"), Some("helpers.Show"));
+        assert_eq!(
+            symbols
+                .callable("f", &yuzu_types::Builtins)
+                .map(|callable| callable.symbol),
+            Some("helpers.f")
+        );
+
+        // A name declared as one thing is not another kind's symbol.
+        assert_eq!(symbols.trait_symbol("Row"), None);
+        assert_eq!(symbols.struct_symbol("Show"), None);
+    }
+
     #[test]
     fn callables() {
         let mut symbols = symbols();
@@ -723,6 +804,7 @@ mod tests {
         symbols.bind(
             "f",
             Kind::Func(Callable {
+                symbol: "f",
                 kind: CalleeKind::Fn,
                 min_args: 2,
                 max_args: 2,
@@ -734,6 +816,7 @@ mod tests {
             "Zero",
             Kind::Trait {
                 methods: vec!["zero"],
+                symbol: "Zero",
             },
             TextRange::default(),
         );
@@ -748,6 +831,7 @@ mod tests {
         assert_eq!(
             symbols.callable("f", registry),
             Some(Callable {
+                symbol: "f",
                 kind: CalleeKind::Fn,
                 min_args: 2,
                 max_args: 2,

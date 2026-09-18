@@ -219,7 +219,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         };
 
         self.check_arity(call, callee, callable, operands.len());
-        self.call(block, callee, callable, &operands, loc)
+        self.call(block, callable, &operands, loc)
     }
 
     fn check_arity(&mut self, call: &impl AstNode, callee: &str, callable: Callable, given: usize) {
@@ -414,12 +414,13 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             Lookup::Local { slot, .. } => return locals[slot],
             Lookup::Let(symbol) => {
                 let callable = Callable {
+                    symbol,
                     kind: CalleeKind::Let,
                     min_args: 0,
                     max_args: 0,
                     agg: false,
                 };
-                return self.call(block, symbol, callable, &[], loc);
+                return self.call(block, callable, &[], loc);
             }
             Lookup::Ambiguous => {
                 format!("column `{name}` is ambiguous; qualify it with a relation alias")
@@ -439,18 +440,19 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         self.hole(block, node.syntax().text_range(), types::var(self.context))
     }
 
+    /// A call names the symbol the callee was declared under, which is the
+    /// written name unless something else took it.
     fn call<'a>(
         &self,
         block: BlockRef<'c, 'a>,
-        callee: &str,
-        callable: Callable,
+        callable: Callable<'c>,
         operands: &[Value<'c, 'a>],
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         let mut builder = yzl::CallOperationBuilder::new(self.context, loc)
             .result(types::var(self.context))
             .operands(operands)
-            .callee(FlatSymbolRefAttribute::new(self.context, callee))
+            .callee(FlatSymbolRefAttribute::new(self.context, callable.symbol))
             .callee_kind(StringAttribute::new(self.context, callable.kind.as_str()));
         if callable.agg {
             builder = builder.agg(Attribute::unit(self.context));
@@ -485,7 +487,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         };
 
         self.check_arity(node, callee, callable, operands.len());
-        self.call(block, callee, callable, operands, loc)
+        self.call(block, callable, operands, loc)
     }
 }
 

@@ -66,7 +66,14 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         };
 
         let fields = decl.fields().filter_map(|f| self.ident(f.name())).collect();
-        self.declare(decl, name, Kind::Struct { fields });
+        self.declare(
+            decl,
+            name,
+            Kind::Struct {
+                fields,
+                symbol: name,
+            },
+        );
     }
 
     fn hoist_table(&mut self, decl: &ast::TableStmt) {
@@ -88,7 +95,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             };
 
             match self.symbols.kind(declared) {
-                Some(Kind::Struct { fields }) => Row::from(fields.clone()),
+                Some(Kind::Struct { fields, .. }) => Row::from(fields.clone()),
                 Some(_) | None => {
                     self.error(decl, &format!("`{declared}` is not a struct"));
                     return;
@@ -108,7 +115,14 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .methods()
             .filter_map(|m| self.ident(m.name()))
             .collect();
-        self.declare(decl, name, Kind::Trait { methods });
+        self.declare(
+            decl,
+            name,
+            Kind::Trait {
+                methods,
+                symbol: name,
+            },
+        );
     }
 
     fn hoist_fn(&mut self, decl: &ast::FuncStmt) {
@@ -129,6 +143,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             decl,
             name,
             Kind::Func(Callable {
+                symbol: name,
                 kind,
                 min_args: arity,
                 max_args: arity,
@@ -358,7 +373,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
             for trait_ref in bound.traits() {
                 if let Some(trait_name) = self.ident(trait_ref.name())
-                    && !matches!(self.symbols.kind(trait_name), Some(Kind::Trait { .. }))
+                    && self.symbols.trait_symbol(trait_name).is_none()
                 {
                     self.error(&trait_ref, &format!("unknown trait `{trait_name}`"));
                 }
@@ -474,13 +489,24 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             return;
         };
 
-        if !matches!(self.symbols.kind(trait_name), Some(Kind::Trait { .. })) {
-            self.error(decl, &format!("unknown trait `{trait_name}`"));
-        }
+        let trait_name = match self.symbols.trait_symbol(trait_name) {
+            Some(symbol) => symbol,
+            None => {
+                self.error(decl, &format!("unknown trait `{trait_name}`"));
+                trait_name
+            }
+        };
 
-        if self.scalar_type(target).is_none() && !self.symbols.is_struct(target) {
-            self.error(decl, &format!("unknown type `{target}`"));
-        }
+        let target = match self.symbols.struct_symbol(target) {
+            Some(symbol) => symbol,
+            None => {
+                if self.scalar_type(target).is_none() {
+                    self.error(decl, &format!("unknown type `{target}`"));
+                }
+
+                target
+            }
+        };
 
         let region = Region::new();
         let body = region.append_block(Block::new(&[]));
@@ -737,8 +763,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             return scalar;
         }
 
-        if self.symbols.is_struct(name) {
-            return StructType::new(self.context, name).into();
+        if let Some(symbol) = self.symbols.struct_symbol(name) {
+            return StructType::new(self.context, symbol).into();
         }
 
         self.error(&named, &format!("unknown type `{name}`"));
