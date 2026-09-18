@@ -1,6 +1,8 @@
 //! LowerAst: the AST → yzl conversion. Names resolve as they are emitted;
 //! unresolved types come out as `!yzl.var` for inference, sugar intact.
 
+use std::collections::HashMap;
+
 use melior::Context;
 use melior::ir::attribute::StringAttribute;
 use melior::ir::operation::OperationLike;
@@ -16,7 +18,7 @@ use yuzu_mlir::ods::yzl;
 use yuzu_mlir::types;
 use yuzu_types::FunctionRegistry;
 
-use crate::lower_ast_to_yzl::symbols::SymbolTable;
+use crate::lower_ast_to_yzl::symbols::{Binding, SymbolTable};
 
 /// Parses the source and converts it to a yzl module. Everything the
 /// conversion cannot carry — parse errors, missing pieces, unsupported
@@ -73,6 +75,10 @@ struct AstToYzl<'c, 'd> {
     module: Option<String>,
     diagnostics: &'d mut DiagnosticsEngine,
     symbols: SymbolTable<'c>,
+    /// What each module converted so far declared, by its path. A file is
+    /// converted after everything it imports, so whatever it asks for is
+    /// already in here.
+    exports: HashMap<String, HashMap<&'c str, Binding<'c>>>,
     registry: &'d dyn FunctionRegistry,
     /// How many `let`s have taken a name something else already held. One
     /// name is one symbol in the module, so a rebinding needs its own.
@@ -99,6 +105,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             module: None,
             diagnostics,
             symbols: SymbolTable::new(),
+            exports: HashMap::new(),
             registry,
             rebound: 0,
         }
@@ -261,9 +268,14 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         self.module = file.module.clone();
         self.symbols = SymbolTable::new();
 
+        self.bind_imports(&file.root);
         self.hoist(&file.root);
         for stmt in file.root.stmts() {
             self.convert_stmt(top, &stmt);
+        }
+
+        if let Some(module) = &file.module {
+            self.exports.insert(module.clone(), self.symbols.exports());
         }
     }
 
@@ -484,6 +496,95 @@ mod tests {
                 "main.yz",
                 None,
                 "struct Row { b: int64 }\ntable t = Row\n\nfrom t |> select b as v\n",
+            ),
+        ]));
+    }
+
+    /// A name imported from another file reaches the declaration itself, so
+    /// the call inlines like any other and the module's own symbol is what
+    /// stands in the module they share.
+    #[test]
+    fn an_imported_name_reaches_the_declaration_it_came_from() {
+        expect![[r#"
+            module {
+              yzl.fn @helpers.double params ["x"] (!yz.int64) -> !yz.int64 {
+              ^bb0(%arg0: !yzl.var):
+                %2 = yz.constant_int 2
+                %3 = yz.mul %arg0, %2 : !yzl.var, !yz.int64 -> !yzl.var
+                yzl.return %3 : !yzl.var
+              }
+              yzl.struct @Row ["a"] : [!yz.int64]
+              yzl.table @t of @Row
+              %0 = yzl.from @t
+              %1 = yzl.select %0 as ["v"] {
+              ^bb0(%arg0: !yzl.var):
+                %2 = yzl.call @helpers.double(%arg0) : (!yzl.var) -> !yzl.var {callee_kind = "fn"}
+                yzl.yield %2 : !yzl.var
+              }
+              yzl.output %1
+            }
+        "#]].assert_eq(&converted_program(&[
+            (
+                "helpers.yz",
+                Some("helpers"),
+                "pub def double(x: int64) -> int64 { return x * 2 }\n",
+            ),
+            (
+                "main.yz",
+                None,
+                "from helpers import double\n\nstruct Row { a: int64 }\ntable t = Row\n\nfrom t |> select double(a) as v\n",
+            ),
+        ]));
+    }
+
+    /// `as` names an import something else in the file that asked for it,
+    /// while the symbol it reaches is unchanged.
+    #[test]
+    fn an_import_may_be_renamed() {
+        let module = converted_program(&[
+            (
+                "helpers.yz",
+                Some("helpers"),
+                "pub def double(x: int64) -> int64 { return x * 2 }\n",
+            ),
+            (
+                "main.yz",
+                None,
+                "from helpers import double as twice\n\nstruct Row { a: int64 }\ntable t = Row\n\nfrom t |> select twice(a) as v\n",
+            ),
+        ]);
+        assert!(
+            module.contains("yzl.call @helpers.double"),
+            "the rename reaches the same declaration:\n{module}"
+        );
+    }
+
+    /// What a module keeps to itself is not another file's to name, and a
+    /// name it never declared is reported against the item asking for it.
+    #[test]
+    fn a_module_lends_only_what_it_made_public() {
+        expect![[r#"
+            error: `secret` is not public; `helpers` keeps it to itself
+             --> main.yz:1:21
+              |
+            1 | from helpers import secret, nothere
+              |                     ^^^^^^
+
+            error: `helpers` does not declare `nothere`
+             --> main.yz:1:29
+              |
+            1 | from helpers import secret, nothere
+              |                             ^^^^^^^
+        "#]].assert_eq(&reported_program(&[
+            (
+                "helpers.yz",
+                Some("helpers"),
+                "pub def double(x: int64) -> int64 { return x * 2 }\ndef secret(x: int64) -> int64 { return x + 99 }\n",
+            ),
+            (
+                "main.yz",
+                None,
+                "from helpers import secret, nothere\n\nstruct Row { a: int64 }\ntable t = Row\n\nfrom t |> select a as v\n",
             ),
         ]));
     }

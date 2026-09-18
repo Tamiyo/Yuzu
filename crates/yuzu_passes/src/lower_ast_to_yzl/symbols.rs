@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 use text_size::TextRange;
+use yuzu_ast::Visibility;
 use yuzu_mlir::attributes::CalleeKind;
 use yuzu_types::FunctionRegistry;
 
@@ -158,11 +159,13 @@ impl<'c> From<Vec<&'c str>> for Row<'c> {
     }
 }
 
-/// What a module-level name was declared as, and where it was declared.
+/// What a module-level name was declared as, where it was declared, and how
+/// far the name reaches.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(super) struct Binding<'c> {
     pub(super) kind: Kind<'c>,
     pub(super) declared: TextRange,
+    pub(super) visibility: Visibility,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -296,9 +299,9 @@ impl<'c> SymbolTable<'c> {
 
     // --- the module scope ---
 
-    pub(super) fn bind(&mut self, name: &'c str, kind: Kind<'c>, declared: TextRange) {
+    pub(super) fn bind(&mut self, name: &'c str, binding: Binding<'c>) {
         match self.scopes.first_mut() {
-            Some(Scope::Module(bindings)) => bindings.insert(name, Binding { kind, declared }),
+            Some(Scope::Module(bindings)) => bindings.insert(name, binding),
             Some(Scope::Function { .. } | Scope::Block { .. } | Scope::Relation { .. }) | None => {
                 unreachable!("the module scope is the bottom of the stack")
             }
@@ -307,6 +310,12 @@ impl<'c> SymbolTable<'c> {
 
     pub(super) fn binding(&self, name: &str) -> Option<&Binding<'c>> {
         self.module().get(name)
+    }
+
+    /// Everything the file being converted declared, which is what another
+    /// file importing it may ask for.
+    pub(super) fn exports(&self) -> HashMap<&'c str, Binding<'c>> {
+        self.module().clone()
     }
 
     fn module(&self) -> &HashMap<&'c str, Binding<'c>> {
@@ -602,20 +611,24 @@ impl<'c> SymbolTable<'c> {
 #[cfg(test)]
 mod tests {
     use text_size::TextRange;
+    use yuzu_ast::Visibility;
     use yuzu_mlir::attributes::CalleeKind;
 
-    use super::{Callable, ColumnLookup, Kind, Lookup, Reference, Row, SymbolTable};
+    use super::{Binding, Callable, ColumnLookup, Kind, Lookup, Reference, Row, SymbolTable};
 
     /// A module declaring `struct Row` and a table `t` over it.
     fn symbols() -> SymbolTable<'static> {
         let mut symbols = SymbolTable::new();
         symbols.bind(
             "Row",
-            Kind::Struct {
-                fields: vec!["id", "dept_id"],
-                symbol: "Row",
+            Binding {
+                kind: Kind::Struct {
+                    fields: vec!["id", "dept_id"],
+                    symbol: "Row",
+                },
+                declared: TextRange::default(),
+                visibility: Visibility::Private,
             },
-            TextRange::default(),
         );
         bind_relation(&mut symbols, "t", vec!["id", "dept_id"]);
         symbols
@@ -628,11 +641,14 @@ mod tests {
     ) {
         symbols.bind(
             name,
-            Kind::Relation {
-                row: Row::from(row),
-                symbol: name,
+            Binding {
+                kind: Kind::Relation {
+                    row: Row::from(row),
+                    symbol: name,
+                },
+                declared: TextRange::default(),
+                visibility: Visibility::Private,
             },
-            TextRange::default(),
         );
     }
 
@@ -698,8 +714,22 @@ mod tests {
     #[test]
     fn the_innermost_scope_holding_a_name_decides_it() {
         let mut symbols = symbols();
-        symbols.bind("cap", Kind::Let { symbol: "cap" }, TextRange::default());
-        symbols.bind("id", Kind::Let { symbol: "id" }, TextRange::default());
+        symbols.bind(
+            "cap",
+            Binding {
+                kind: Kind::Let { symbol: "cap" },
+                declared: TextRange::default(),
+                visibility: Visibility::Private,
+            },
+        );
+        symbols.bind(
+            "id",
+            Binding {
+                kind: Kind::Let { symbol: "id" },
+                declared: TextRange::default(),
+                visibility: Visibility::Private,
+            },
+        );
 
         assert_eq!(symbols.lookup(bare("cap")), Lookup::Let("cap"));
         symbols.enter_function(vec!["cap"]);
@@ -727,7 +757,14 @@ mod tests {
     #[test]
     fn an_isolated_scope_reaches_the_module_and_nothing_between() {
         let mut symbols = symbols();
-        symbols.bind("cap", Kind::Let { symbol: "cap" }, TextRange::default());
+        symbols.bind(
+            "cap",
+            Binding {
+                kind: Kind::Let { symbol: "cap" },
+                declared: TextRange::default(),
+                visibility: Visibility::Private,
+            },
+        );
         symbols.enter_function(vec!["x"]);
         symbols.enter_block();
         symbols.bind_local("local", 0, false);
@@ -757,30 +794,39 @@ mod tests {
         let mut symbols = SymbolTable::new();
         symbols.bind(
             "Row",
-            Kind::Struct {
-                fields: vec!["a"],
-                symbol: "helpers.Row",
+            Binding {
+                kind: Kind::Struct {
+                    fields: vec!["a"],
+                    symbol: "helpers.Row",
+                },
+                declared: TextRange::default(),
+                visibility: Visibility::Private,
             },
-            TextRange::default(),
         );
         symbols.bind(
             "Show",
-            Kind::Trait {
-                methods: vec!["show"],
-                symbol: "helpers.Show",
+            Binding {
+                kind: Kind::Trait {
+                    methods: vec!["show"],
+                    symbol: "helpers.Show",
+                },
+                declared: TextRange::default(),
+                visibility: Visibility::Private,
             },
-            TextRange::default(),
         );
         symbols.bind(
             "f",
-            Kind::Func(Callable {
-                symbol: "helpers.f",
-                kind: CalleeKind::Fn,
-                min_args: 0,
-                max_args: 0,
-                agg: false,
-            }),
-            TextRange::default(),
+            Binding {
+                kind: Kind::Func(Callable {
+                    symbol: "helpers.f",
+                    kind: CalleeKind::Fn,
+                    min_args: 0,
+                    max_args: 0,
+                    agg: false,
+                }),
+                declared: TextRange::default(),
+                visibility: Visibility::Private,
+            },
         );
 
         assert_eq!(symbols.struct_symbol("Row"), Some("helpers.Row"));
@@ -800,25 +846,38 @@ mod tests {
     #[test]
     fn callables() {
         let mut symbols = symbols();
-        symbols.bind("cap", Kind::Let { symbol: "cap" }, TextRange::default());
+        symbols.bind(
+            "cap",
+            Binding {
+                kind: Kind::Let { symbol: "cap" },
+                declared: TextRange::default(),
+                visibility: Visibility::Private,
+            },
+        );
         symbols.bind(
             "f",
-            Kind::Func(Callable {
-                symbol: "f",
-                kind: CalleeKind::Fn,
-                min_args: 2,
-                max_args: 2,
-                agg: false,
-            }),
-            TextRange::default(),
+            Binding {
+                kind: Kind::Func(Callable {
+                    symbol: "f",
+                    kind: CalleeKind::Fn,
+                    min_args: 2,
+                    max_args: 2,
+                    agg: false,
+                }),
+                declared: TextRange::default(),
+                visibility: Visibility::Private,
+            },
         );
         symbols.bind(
             "Zero",
-            Kind::Trait {
-                methods: vec!["zero"],
-                symbol: "Zero",
+            Binding {
+                kind: Kind::Trait {
+                    methods: vec!["zero"],
+                    symbol: "Zero",
+                },
+                declared: TextRange::default(),
+                visibility: Visibility::Private,
             },
-            TextRange::default(),
         );
 
         let registry = &yuzu_types::Builtins;

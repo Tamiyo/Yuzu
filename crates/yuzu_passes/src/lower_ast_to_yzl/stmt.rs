@@ -2,12 +2,12 @@ use melior::ir::{
     Attribute, Block, BlockLike, BlockRef, Location, Region, RegionLike, Type, Value,
     attribute::{ArrayAttribute, FlatSymbolRefAttribute, StringAttribute, TypeAttribute},
 };
-use yuzu_ast::{AstNode, ast};
+use yuzu_ast::{AstNode, Visibility, ast};
 use yuzu_mlir::attributes::CalleeKind;
 use yuzu_mlir::ods::yzl;
 use yuzu_mlir::{ListType, ParamType, StructType};
 
-use crate::lower_ast_to_yzl::symbols::{Callable, Kind, Lookup, Reference, Row};
+use crate::lower_ast_to_yzl::symbols::{Binding, Callable, Kind, Lookup, Reference, Row};
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 use yuzu_mlir::types;
 
@@ -69,7 +69,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
         let fields = decl.fields().filter_map(|f| self.ident(f.name())).collect();
         let symbol = self.symbol_for(name);
-        self.declare(decl, name, Kind::Struct { fields, symbol });
+        self.declare(
+            decl,
+            name,
+            Kind::Struct { fields, symbol },
+            decl.visibility(),
+        );
     }
 
     fn hoist_table(&mut self, decl: &ast::TableStmt) {
@@ -100,7 +105,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         };
 
         let symbol = self.symbol_for(name);
-        self.declare(decl, name, Kind::Relation { row, symbol });
+        self.declare(
+            decl,
+            name,
+            Kind::Relation { row, symbol },
+            decl.visibility(),
+        );
     }
 
     fn hoist_trait(&mut self, decl: &ast::TraitStmt) {
@@ -113,7 +123,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .filter_map(|m| self.ident(m.name()))
             .collect();
         let symbol = self.symbol_for(name);
-        self.declare(decl, name, Kind::Trait { methods, symbol });
+        self.declare(
+            decl,
+            name,
+            Kind::Trait { methods, symbol },
+            decl.visibility(),
+        );
     }
 
     fn hoist_fn(&mut self, decl: &ast::FuncStmt) {
@@ -141,19 +156,111 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 max_args: arity,
                 agg: decl.is_agg(),
             }),
+            decl.visibility(),
         );
+    }
+
+    /// Binds what this file's imports ask for, before its own declarations,
+    /// so a name it declares and a name it imports collide the way two
+    /// declarations do.
+    pub(super) fn bind_imports(&mut self, root: &ast::Root) {
+        for stmt in root.stmts() {
+            let ast::Stmt::FromImportStmt(import) = &stmt else {
+                continue;
+            };
+
+            let Some(path) = import.path().map(|path| self.module_path(&path)) else {
+                continue;
+            };
+
+            for item in import.items() {
+                self.bind_import(&path, &item);
+            }
+        }
+    }
+
+    /// One name out of a module. The module is converted before this file, so
+    /// what it declared is already recorded; a name it does not declare, or
+    /// declares but does not export, is reported here.
+    fn bind_import(&mut self, path: &str, item: &ast::ImportItem) {
+        let Some(name) = self.ident(item.name()) else {
+            self.error(item, "import item is missing its name");
+            return;
+        };
+
+        let Some(module) = self.exports.get(path) else {
+            self.error(item, &format!("`{path}` is not a module this file reads"));
+            return;
+        };
+
+        let Some(binding) = module.get(name).cloned() else {
+            self.error(item, &format!("`{path}` does not declare `{name}`"));
+            return;
+        };
+
+        // `pub(mod)` reaches the files of the enclosing module. Until modules
+        // hold more than one file, that is this file alone, so an importer is
+        // never one of them.
+        if binding.visibility != Visibility::Public {
+            self.error(
+                item,
+                &format!("`{name}` is not public; `{path}` keeps it to itself"),
+            );
+            return;
+        }
+
+        // The name this file calls it, bound to the symbol the module holds
+        // it under, so everything downstream reaches the declaration itself.
+        let local = self.ident(item.alias()).unwrap_or(name);
+        self.declare_imported(item, local, binding);
+    }
+
+    fn declare_imported(&mut self, node: &impl AstNode, name: &'c str, binding: Binding<'c>) {
+        if self.symbols.binding(name).is_some() {
+            self.check_duplicate(node, binding.kind.what(), name);
+            return;
+        }
+
+        self.symbols.bind(
+            name,
+            Binding {
+                declared: node.syntax().text_range(),
+                ..binding
+            },
+        );
+    }
+
+    /// A path as the program wrote it.
+    fn module_path(&self, path: &ast::ModulePath) -> String {
+        path.segments()
+            .filter_map(|segment| segment.text())
+            .collect::<Vec<_>>()
+            .join(".")
     }
 
     /// Binds a module-level name. A second declaration of one is reported
     /// and then left alone: the name goes on meaning the declaration that
     /// took it, so everything written against that one still resolves.
-    fn declare(&mut self, node: &impl AstNode, name: &'c str, kind: Kind<'c>) {
+    fn declare(
+        &mut self,
+        node: &impl AstNode,
+        name: &'c str,
+        kind: Kind<'c>,
+        visibility: Visibility,
+    ) {
         if self.symbols.binding(name).is_some() {
             self.check_duplicate(node, kind.what(), name);
             return;
         }
 
-        self.symbols.bind(name, kind, node.syntax().text_range());
+        self.symbols.bind(
+            name,
+            Binding {
+                kind,
+                declared: node.syntax().text_range(),
+                visibility,
+            },
+        );
     }
 
     /// The symbol a `let` declares under. It is the written name while that
@@ -224,9 +331,13 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             ast::Stmt::ReturnStmt(stmt) => {
                 self.error(stmt, "a return is not a top-level statement")
             }
-            // The syntax is in; nothing loads a second file yet.
-            ast::Stmt::ImportStmt(stmt) => self.error(stmt, "imports are not supported yet"),
-            ast::Stmt::FromImportStmt(stmt) => self.error(stmt, "imports are not supported yet"),
+            // `from … import …` bound its names before the file converted.
+            // Naming a whole module is what has no answer yet.
+            ast::Stmt::ImportStmt(stmt) => self.error(
+                stmt,
+                "naming a whole module is not supported yet; import the names you use",
+            ),
+            ast::Stmt::FromImportStmt(_) => {}
         }
     }
 
@@ -698,15 +809,24 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 self.symbols.leave();
                 self.symbols.bind(
                     name,
-                    Kind::Relation { row, symbol },
-                    decl.syntax().text_range(),
+                    Binding {
+                        kind: Kind::Relation { row, symbol },
+                        declared: decl.syntax().text_range(),
+                        visibility: decl.visibility(),
+                    },
                 );
                 value
             }
             _ => {
                 let value = self.convert_expr(body, &Locals::new(), &expr);
-                self.symbols
-                    .bind(name, Kind::Let { symbol }, decl.syntax().text_range());
+                self.symbols.bind(
+                    name,
+                    Binding {
+                        kind: Kind::Let { symbol },
+                        declared: decl.syntax().text_range(),
+                        visibility: decl.visibility(),
+                    },
+                );
                 value
             }
         };
@@ -1045,17 +1165,17 @@ external def upper(s: str) -> str
 
         let context = yuzu_mlir::context();
         expect![[r#"
-            error: imports are not supported yet
+            error: `helpers` is not a module this file reads
+             --> test.yz:2:21
+              |
+            2 | from helpers import spread
+              |                     ^^^^^^
+
+            error: naming a whole module is not supported yet; import the names you use
              --> test.yz:1:1
               |
             1 | import helpers
               | ^^^^^^^^^^^^^^
-
-            error: imports are not supported yet
-             --> test.yz:2:1
-              |
-            2 | from helpers import spread
-              | ^^^^^^^^^^^^^^^^^^^^^^^^^^
         "#]]
         .assert_eq(&reported(
             &context,
