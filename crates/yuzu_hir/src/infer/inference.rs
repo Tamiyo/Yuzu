@@ -267,13 +267,8 @@ impl<'i> TypeInferrer<'i> {
         self.symbols.push_scope(ScopeKind::Func { return_ty });
         for param in params {
             let ty = self.resolve_annotation(param.type_annotation);
-            self.symbols.bind_symbol(
-                param.name.symbol,
-                Binding::Param {
-                    symbol: param.name.symbol,
-                    ty,
-                },
-            );
+            self.symbols
+                .bind_symbol(param.name.symbol, Binding::Param { ty });
         }
 
         // A function body is a group barrier: whatever aggregate context the
@@ -331,7 +326,6 @@ impl<'i> TypeInferrer<'i> {
         self.symbols.bind_symbol(
             name,
             Binding::LetStmt {
-                stmt: stmt_id,
                 mutability,
                 ty: ty_id,
             },

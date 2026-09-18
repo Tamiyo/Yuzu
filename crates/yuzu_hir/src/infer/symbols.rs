@@ -2,17 +2,15 @@ use std::collections::HashMap;
 
 use yuzu_types::{BuiltinFunc, TypeId};
 
-use crate::{ExprId, Mutability, StmtId, SymbolId};
+use crate::{Mutability, StmtId, SymbolId};
 
 #[derive(Clone, Copy)]
 pub(crate) enum Binding {
     LetStmt {
-        stmt: StmtId,
         mutability: Mutability,
         ty: TypeId,
     },
     Param {
-        symbol: SymbolId,
         ty: TypeId,
     },
     /// A `from`/`join` alias standing for a row of the query, so `alias.column`
@@ -25,10 +23,6 @@ pub(crate) enum Binding {
         ty: TypeId,
         is_agg: bool,
         is_external: bool,
-    },
-    Ident {
-        expr: ExprId,
-        ty: TypeId,
     },
     /// A registered builtin. Not a value — call sites resolve it through the
     /// registry, and a bare reference is an error.
@@ -43,8 +37,7 @@ impl Binding {
             Binding::LetStmt { ty, .. }
             | Binding::Param { ty, .. }
             | Binding::Relation { ty, .. }
-            | Binding::FuncStmt { ty, .. }
-            | Binding::Ident { ty, .. } => *ty,
+            | Binding::FuncStmt { ty, .. } => *ty,
             Binding::Builtin { .. } => unreachable!("a builtin has no value type"),
         }
     }

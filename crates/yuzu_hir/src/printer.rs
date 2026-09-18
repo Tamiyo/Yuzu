@@ -16,24 +16,6 @@ pub fn dump(hir: &HirCtx, interner: &StringInterner, root: &Root) -> String {
     out
 }
 
-pub fn dump_stmt(hir: &HirCtx, interner: &StringInterner, id: StmtId) -> String {
-    let mut out = String::new();
-    HirPrinter { hir, interner }.fmt_stmt(id, 0, &mut out);
-    out
-}
-
-pub fn dump_expr(hir: &HirCtx, interner: &StringInterner, id: ExprId) -> String {
-    let mut out = String::new();
-    HirPrinter { hir, interner }.fmt_expr(id, 0, &mut out);
-    out
-}
-
-pub fn dump_rel(hir: &HirCtx, interner: &StringInterner, id: RelId) -> String {
-    let mut out = String::new();
-    HirPrinter { hir, interner }.fmt_rel(id, 0, &mut out);
-    out
-}
-
 fn line(out: &mut String, depth: usize, text: impl AsRef<str>) {
     for _ in 0..depth {
         out.push_str("  ");
