@@ -180,7 +180,7 @@ mod tests {
     fn struct_in_function_body_projects() {
         check(
             &format!(
-                "{TABLE}struct P {{ v: int64 }}\nfn f() -> int64 {{ let p = P {{ v: 40 }}\nreturn p.v }}\nfrom t |> select f() as w"
+                "{TABLE}struct P {{ v: int64 }}\ndef f() -> int64 {{ let p = P {{ v: 40 }}\nreturn p.v }}\nfrom t |> select f() as w"
             ),
             expect![[r#"
                 struct Row { a, b }

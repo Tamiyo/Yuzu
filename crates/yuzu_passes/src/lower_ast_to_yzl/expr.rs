@@ -579,7 +579,7 @@ from t
 struct Row { a: int64 }
 table t = Row
 
-fn shift_left(x: int64, y: int64) -> int64 { return x + y }
+def shift_left(x: int64, y: int64) -> int64 { return x + y }
 
 from t
 |> select shift_left(a, 2) as named, a << 2 as operator

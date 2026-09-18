@@ -72,7 +72,7 @@ def test_aggregate_then_pipeline_continues():
 
 def test_agg_fn_composes_builtins():
     query = """
-        agg fn spread(x: int64) -> int64 { return max(x) - min(x) }
+        agg def spread(x: int64) -> int64 { return max(x) - min(x) }
         from employees
         |> aggregate spread(salary) as v
         group by dept_id

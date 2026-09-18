@@ -203,7 +203,7 @@ mod tests {
     fn inlines_call_and_drops_dead_function() {
         check(
             &format!(
-                "{TABLE}fn add_one(x: int32) -> int32 {{ return x + 1 }}\nfrom t |> select add_one(7) as v"
+                "{TABLE}def add_one(x: int32) -> int32 {{ return x + 1 }}\nfrom t |> select add_one(7) as v"
             ),
             expect![[r#"
                 struct Row { a, b }
@@ -218,7 +218,7 @@ mod tests {
     fn helper_of_kept_function_stays_live() {
         check(
             &format!(
-                "{TABLE}fn g(n: int64) -> int64 {{ return n + 1 }}\nfn f(n: int64) -> int64 {{ return g(n) * f(n - 1) }}\nfrom t |> select f(3) as v"
+                "{TABLE}def g(n: int64) -> int64 {{ return n + 1 }}\ndef f(n: int64) -> int64 {{ return g(n) * f(n - 1) }}\nfrom t |> select f(3) as v"
             ),
             expect![[r#"
                 struct Row { a, b }

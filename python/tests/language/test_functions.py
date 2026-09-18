@@ -5,7 +5,7 @@ from support import rows, sorted_rows
 
 def test_function_without_parameters():
     query = """
-        fn cap() -> int64 { return 2 }
+        def cap() -> int64 { return 2 }
         from employees
         |> where level > cap()
         |> select name
@@ -15,7 +15,7 @@ def test_function_without_parameters():
 
 def test_function_with_a_parameter():
     query = """
-        fn twice(n: int64) -> int64 { return n * 2 }
+        def twice(n: int64) -> int64 { return n * 2 }
         from employees
         |> where level == twice(1)
         |> select name
@@ -25,8 +25,8 @@ def test_function_with_a_parameter():
 
 def test_function_calling_another_function():
     query = """
-        fn one() -> int64 { return 1 }
-        fn two() -> int64 { return one() + one() }
+        def one() -> int64 { return 1 }
+        def two() -> int64 { return one() + one() }
         from employees
         |> where level > two()
         |> select name
@@ -36,7 +36,7 @@ def test_function_calling_another_function():
 
 def test_local_bindings_and_assignment():
     query = """
-        fn threshold() -> int64 { let x = 10
+        def threshold() -> int64 { let x = 10
         let mut y = 5
         y = 2
         return y }
@@ -49,7 +49,7 @@ def test_local_bindings_and_assignment():
 
 def test_function_applied_to_a_column():
     query = """
-        fn double(n: int64) -> int64 { return n * 2 }
+        def double(n: int64) -> int64 { return n * 2 }
         from employees
         |> where name == "carol"
         |> select double(level) as doubled

@@ -83,7 +83,7 @@ def test_operator_without_a_substrait_equivalent():
 
 def test_unbounded_recursion_is_rejected_at_compile_time():
     query = """
-        fn f(n: int64) -> int64 { return f(n - 1) }
+        def f(n: int64) -> int64 { return f(n - 1) }
         from employees
         |> select f(3) as v
     """

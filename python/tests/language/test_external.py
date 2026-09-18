@@ -5,7 +5,7 @@ from support import error_of, rows, sorted_rows
 
 def test_external_scalar():
     query = """
-        external fn upper(s: str) -> str
+        external def upper(s: str) -> str
         from employees
         |> where name == "alice"
         |> select upper(name) as shout
@@ -15,7 +15,7 @@ def test_external_scalar():
 
 def test_external_scalar_composes():
     query = """
-        external fn char_length(s: str) -> int64
+        external def char_length(s: str) -> int64
         from employees
         |> select char_length(name) + 1 as n
         |> where n == 4
@@ -26,7 +26,7 @@ def test_external_scalar_composes():
 
 def test_external_agg():
     query = """
-        external agg fn median(x: int64) -> float64
+        external agg def median(x: int64) -> float64
         from employees
         |> aggregate median(salary) as mid
         group by dept_id
@@ -36,7 +36,7 @@ def test_external_agg():
 
 def test_external_scalar_in_a_select():
     query = """
-        external fn abs(x: int64) -> int64
+        external def abs(x: int64) -> int64
         from employees
         |> where name == "alice"
         |> select abs(0 - level) as v
@@ -46,7 +46,7 @@ def test_external_scalar_in_a_select():
 
 def test_external_with_a_body_is_rejected():
     query = """
-        external fn nope(x: int64) -> int64 { return x }
+        external def nope(x: int64) -> int64 { return x }
         from employees
         |> select level
     """
@@ -55,7 +55,7 @@ def test_external_with_a_body_is_rejected():
 
 def test_fn_without_a_body_is_rejected():
     query = """
-        fn nope(x: int64) -> int64
+        def nope(x: int64) -> int64
         from employees
         |> select level
     """

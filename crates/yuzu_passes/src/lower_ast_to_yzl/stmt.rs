@@ -788,16 +788,16 @@ mod tests {
         "#]]
         .assert_eq(&converted(
             r#"
-fn f(x: int64) -> int64 {
+def f(x: int64) -> int64 {
     let doubled = x * 2
     return doubled + 1
 }
 
-agg fn spread(x: int64) -> int64 {
+agg def spread(x: int64) -> int64 {
     return max(x) - min(x)
 }
 
-external fn upper(s: str) -> str
+external def upper(s: str) -> str
 "#,
         ));
     }
@@ -822,7 +822,7 @@ external fn upper(s: str) -> str
               yzl.output %0
             }
         "#]].assert_eq(&converted(
-            "struct Row { a: int64 }\ntable t = Row\n\nfn f(x: int64) -> int64 {\n    x + 1\n    let y = x * 2\n    return y\n}\n\nfrom t\n",
+            "struct Row { a: int64 }\ntable t = Row\n\ndef f(x: int64) -> int64 {\n    x + 1\n    let y = x * 2\n    return y\n}\n\nfrom t\n",
         ));
     }
 
@@ -850,7 +850,7 @@ external fn upper(s: str) -> str
               }
             }
         "#]].assert_eq(&converted(
-        "trait Add {\n    fn add(x: Self, y: Self) -> Self\n}\n\nimpl Add for int64 {\n    fn add(x: int64, y: int64) -> int64 { return x + y }\n}\n\nfn id[T](x: T) -> T where T: Add { return x }\n",
+        "trait Add {\n    def add(x: Self, y: Self) -> Self\n}\n\nimpl Add for int64 {\n    def add(x: int64, y: int64) -> int64 { return x + y }\n}\n\ndef id[T](x: T) -> T where T: Add { return x }\n",
     ));
     }
 
@@ -860,7 +860,7 @@ external fn upper(s: str) -> str
         use yuzu_diagnostics::diagnostics::printer::DiagnosticPrinter;
 
         let context = yuzu_mlir::context();
-        let source = "fn f(x: int64) -> int64 {\n    struct S { a: int64 }\n    return x\n}\n";
+        let source = "def f(x: int64) -> int64 {\n    struct S { a: int64 }\n    return x\n}\n";
         let (_, sources, diagnostics) = convert(&context, "test.yz", source);
         let printer = DiagnosticPrinter::new(&sources);
         let rendered: Vec<String> = diagnostics
@@ -956,7 +956,7 @@ external fn upper(s: str) -> str
         "#]]
         .assert_eq(&reported(
             &context,
-            "struct Row { a: int64 }\ntable t = Row\n\nfn f(x: int64) -> int64 {\n    let n = 0\n    n = n + 1\n    return n\n}\n\nfrom t |> select f(a) as v\n",
+            "struct Row { a: int64 }\ntable t = Row\n\ndef f(x: int64) -> int64 {\n    let n = 0\n    n = n + 1\n    return n\n}\n\nfrom t |> select f(a) as v\n",
         ));
     }
 
@@ -965,7 +965,7 @@ external fn upper(s: str) -> str
     #[test]
     fn a_mutable_binding_may_be_assigned() {
         let module = converted(
-            "struct Row { a: int64 }\ntable t = Row\n\nfn f(x: int64) -> int64 {\n    let mut n = 0\n    n = n + 1\n    return n\n}\n\nfrom t |> select f(a) as v\n",
+            "struct Row { a: int64 }\ntable t = Row\n\ndef f(x: int64) -> int64 {\n    let mut n = 0\n    n = n + 1\n    return n\n}\n\nfrom t |> select f(a) as v\n",
         );
         assert!(
             module.contains("yzl.return"),
@@ -989,7 +989,7 @@ external fn upper(s: str) -> str
         "#]]
         .assert_eq(&reported(
             &context,
-            "struct Row { a: int64 }\ntable t = Row\n\nfn f(x: int64) -> int64 {\n    x = 1\n    return x\n}\n\nfrom t |> select f(a) as v\n",
+            "struct Row { a: int64 }\ntable t = Row\n\ndef f(x: int64) -> int64 {\n    x = 1\n    return x\n}\n\nfrom t |> select f(a) as v\n",
         ));
     }
 
@@ -1102,18 +1102,18 @@ external fn upper(s: str) -> str
             error: an external function cannot have a body
              --> test.yz:1:1
               |
-            1 | external fn upper(s: str) -> str { return s }
-              | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            1 | external def upper(s: str) -> str { return s }
+              | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
             error: function is missing its body
              --> test.yz:2:1
               |
-            2 | fn lower(s: str) -> str
-              | ^^^^^^^^^^^^^^^^^^^^^^^
+            2 | def lower(s: str) -> str
+              | ^^^^^^^^^^^^^^^^^^^^^^^^
         "#]]
         .assert_eq(&reported(
             &context,
-            "external fn upper(s: str) -> str { return s }\nfn lower(s: str) -> str\n",
+            "external def upper(s: str) -> str { return s }\ndef lower(s: str) -> str\n",
         ));
 
         // A trait's methods are signatures, and an implementation of one is
@@ -1122,12 +1122,12 @@ external fn upper(s: str) -> str
             error: function is missing its body
              --> test.yz:5:23
               |
-            5 | impl Show for int64 { fn show(x: Self) -> str }
-              |                       ^^^^^^^^^^^^^^^^^^^^^^^
+            5 | impl Show for int64 { def show(x: Self) -> str }
+              |                       ^^^^^^^^^^^^^^^^^^^^^^^^
         "#]]
         .assert_eq(&reported(
             &context,
-            "trait Show {\n    fn show(x: Self) -> str\n}\n\nimpl Show for int64 { fn show(x: Self) -> str }\n",
+            "trait Show {\n    def show(x: Self) -> str\n}\n\nimpl Show for int64 { def show(x: Self) -> str }\n",
         ));
     }
 
@@ -1136,7 +1136,7 @@ external fn upper(s: str) -> str
         use yuzu_diagnostics::diagnostics::printer::DiagnosticPrinter;
 
         let context = yuzu_mlir::context();
-        let source = "fn f(x: Nope) -> int64 { return 1 }\n";
+        let source = "def f(x: Nope) -> int64 { return 1 }\n";
         let (_, sources, diagnostics) = convert(&context, "test.yz", source);
         let printer = DiagnosticPrinter::new(&sources);
         let rendered: Vec<String> = diagnostics
@@ -1145,12 +1145,12 @@ external fn upper(s: str) -> str
             .map(|diagnostic| printer.print(diagnostic))
             .collect();
         expect![[r#"
-        error: unknown type `Nope`
-         --> test.yz:1:9
-          |
-        1 | fn f(x: Nope) -> int64 { return 1 }
-          |         ^^^^
-    "#]]
+            error: unknown type `Nope`
+             --> test.yz:1:10
+              |
+            1 | def f(x: Nope) -> int64 { return 1 }
+              |          ^^^^
+        "#]]
         .assert_eq(&rendered.join("\n"));
     }
 }

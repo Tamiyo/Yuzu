@@ -350,7 +350,7 @@ impl FuncStmt {
         self.syntax()
             .children_with_tokens()
             .filter_map(SyntaxElement::into_token)
-            .take_while(|token| token.kind() != SyntaxKind::FnKw)
+            .take_while(|token| token.kind() != SyntaxKind::DefKw)
             .any(|token| token.kind() == marker)
     }
 
@@ -1014,7 +1014,7 @@ mod tests {
     #[test]
     fn every_named_declaration_can_be_public() {
         let syntax = parsed(
-            "pub table t = P\npub fn f(x: int) -> int { return x }\npub let c = 1\npub trait S { fn s(x: int) -> int }\n",
+            "pub table t = P\npub def f(x: int) -> int { return x }\npub let c = 1\npub trait S { def s(x: int) -> int }\n",
         );
         assert_eq!(
             syntax
@@ -1082,7 +1082,7 @@ mod tests {
     #[test]
     fn func_stmt_reads_the_agg_marker() {
         let tokens: Vec<Token> =
-            Lexer::new("agg fn agg_of(x: int64) -> int64 { return sum(x) }").collect();
+            Lexer::new("agg def agg_of(x: int64) -> int64 { return sum(x) }").collect();
         let mut diagnostics = DiagnosticsEngine::new();
         let mut sources = SourceMap::new();
         let source_id = sources.add("test".to_string(), "x".to_string());
@@ -1094,7 +1094,7 @@ mod tests {
         assert!(func.is_agg());
         assert_eq!(text(func.name()).as_deref(), Some("agg_of"));
 
-        let tokens: Vec<Token> = Lexer::new("fn plain(x: int64) -> int64 { return x }").collect();
+        let tokens: Vec<Token> = Lexer::new("def plain(x: int64) -> int64 { return x }").collect();
         let syntax = yuzu_parser::parse(&tokens, &mut diagnostics, source_id);
         let func = syntax
             .descendants()

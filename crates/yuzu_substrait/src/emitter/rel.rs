@@ -396,7 +396,7 @@ mod tests {
     fn emits_external_functions_by_name() {
         check(
             &format!(
-                "{TABLE}external fn clamp(x: int32, low: int32) -> int32\nexternal agg fn median(x: int32) -> float64\nfrom t |> aggregate median(a) as m group by b |> extend clamp(b, 1) as c"
+                "{TABLE}external def clamp(x: int32, low: int32) -> int32\nexternal agg def median(x: int32) -> float64\nfrom t |> aggregate median(a) as m group by b |> extend clamp(b, 1) as c"
             ),
             expect![[r#"
                 {

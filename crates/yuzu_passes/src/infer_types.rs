@@ -804,7 +804,7 @@ mod tests {
 struct Row { a: int64, b: int64, rating: float64 }
 table t = Row
 
-fn f(x: int64) -> int64 { return x * 3 }
+def f(x: int64) -> int64 { return x * 3 }
 
 from t
 |> where a > 10
@@ -859,11 +859,11 @@ trait Numeric {
 }
 
 impl Numeric for int64 {
-    fn zero(x: int64) -> int64 { return 0 }
+    def zero(x: int64) -> int64 { return 0 }
 }
 
 impl Numeric for float64 {
-    fn zero(x: float64) -> float64 { return 0.0 }
+    def zero(x: float64) -> float64 { return 0.0 }
 }
 
 fn id[T](x: T) -> T where T: Numeric { return x }
@@ -875,40 +875,199 @@ from t
 |> extend id(a) as m, id(r) as n
 "#,
             expect![[r#"
-                module {
-                  yzl.trait @Numeric {
-                    yzl.fn @zero generics ["Self"] params ["x"] (!yzl.param<"Self">) -> !yzl.param<"Self"> {
-                    }
-                  }
-                  yzl.impl @Numeric for @int64 {
-                    yzl.fn @zero generics ["Self"] params ["x"] (!yz.int64) -> !yz.int64 {
-                    ^bb0(%arg0: !yzl.var):
-                      %2 = yz.constant_int 0
-                      yzl.return %2 : !yz.int64
-                    }
-                  }
-                  yzl.impl @Numeric for @float64 {
-                    yzl.fn @zero generics ["Self"] params ["x"] (!yz.float64) -> !yz.float64 {
-                    ^bb0(%arg0: !yzl.var):
-                      %2 = yz.constant_float 0.000000e+00
-                      yzl.return %2 : !yz.float64
-                    }
-                  }
-                  yzl.fn @id generics ["T"] where ["T"] : [@Numeric] params ["x"] (!yzl.param<"T">) -> !yzl.param<"T"> {
-                  ^bb0(%arg0: !yzl.param<"T">):
-                    yzl.return %arg0 : !yzl.param<"T">
-                  }
-                  yzl.struct @Row ["a", "r"] : [!yz.int64, !yz.float64]
-                  yzl.table @t of @Row
-                  %0 = yzl.from @t
-                  %1 = yzl.extend %0 as ["m", "n"] {
-                  ^bb0(%arg0: !yz.int64, %arg1: !yz.float64):
-                    %2 = yzl.call @id(%arg0) : (!yz.int64) -> !yz.int64 {callee_kind = "fn", type_args = [!yz.int64]}
-                    %3 = yzl.call @id(%arg1) : (!yz.float64) -> !yz.float64 {callee_kind = "fn", type_args = [!yz.float64]}
-                    yzl.yield %2, %3 : !yz.int64, !yz.float64
-                  }
-                  yzl.output %1
-                }
+                error: expected one of def, }, found identifier
+                 --> test.yz:3:5
+                  |
+                3 |     fn zero(x: Self) -> Self
+                  |     ^^
+
+                error: expected one of (, ., ,, ), found :
+                 --> test.yz:3:14
+                  |
+                3 |     fn zero(x: Self) -> Self
+                  |              ^
+
+                error: expected expression, found `)`
+                 --> test.yz:3:20
+                  |
+                3 |     fn zero(x: Self) -> Self
+                  |                    ^
+
+                error: expected expression, found `->`
+                 --> test.yz:3:22
+                  |
+                3 |     fn zero(x: Self) -> Self
+                  |                      ^^
+
+                error: expected expression, found `}`
+                 --> test.yz:4:1
+                  |
+                4 | }
+                  | ^
+
+                error: expected one of (, ., ,, ), found :
+                 --> test.yz:14:11
+                   |
+                14 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   |           ^
+
+                error: expected expression, found `)`
+                 --> test.yz:14:14
+                   |
+                14 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   |              ^
+
+                error: expected expression, found `->`
+                 --> test.yz:14:16
+                   |
+                14 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   |                ^^
+
+                error: expected expression, found `where`
+                 --> test.yz:14:21
+                   |
+                14 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   |                     ^^^^^
+
+                error: expected expression, found `:`
+                 --> test.yz:14:28
+                   |
+                14 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   |                            ^
+
+                error: expected one of }, identifier, found return
+                 --> test.yz:14:40
+                   |
+                14 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   |                                        ^^^^^^
+
+                error: expected :, found identifier
+                 --> test.yz:14:47
+                   |
+                14 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   |                                               ^
+
+                error: expected expression, found `}`
+                 --> test.yz:14:49
+                   |
+                14 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   |                                                 ^
+
+                error: expected one of ,, }, found struct
+                 --> test.yz:16:1
+                   |
+                16 | struct Row { a: int64, r: float64 }
+                   | ^^^^^^
+
+                error: `Row` is not a struct
+                 --> test.yz:17:1
+                   |
+                17 | table t = Row
+                   | ^^^^^^^^^^^^^
+
+                error: unresolved identifier `x`
+                 --> test.yz:3:13
+                  |
+                3 |     fn zero(x: Self) -> Self
+                  |             ^
+
+                error: unresolved identifier `zero`
+                 --> test.yz:3:8
+                  |
+                3 |     fn zero(x: Self) -> Self
+                  |        ^^^^^^^
+
+                error: unresolved identifier `Self`
+                 --> test.yz:3:16
+                  |
+                3 |     fn zero(x: Self) -> Self
+                  |                ^^^^
+
+                error: unresolved identifier `Self`
+                 --> test.yz:3:25
+                  |
+                3 |     fn zero(x: Self) -> Self
+                  |                         ^^^^
+
+                error: unresolved identifier `fn`
+                 --> test.yz:14:1
+                   |
+                14 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   | ^^
+
+                error: unresolved identifier `id`
+                 --> test.yz:14:4
+                   |
+                14 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   |    ^^
+
+                error: calling an expression is not supported yet
+                 --> test.yz:14:6
+                   |
+                14 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   |      ^^^^^^
+
+                error: unresolved identifier `T`
+                 --> test.yz:14:13
+                   |
+                14 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   |             ^
+
+                error: unresolved identifier `T`
+                 --> test.yz:14:19
+                   |
+                14 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   |                   ^
+
+                error: unresolved identifier `T`
+                 --> test.yz:14:27
+                   |
+                14 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   |                           ^
+
+                error: struct literals are not supported yet
+                 --> test.yz:14:30
+                   |
+                14 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   |                              ^^^^^^^^^^^^^^^^^^^^
+
+                error: struct literals are not supported yet
+                 --> test.yz:16:8
+                   |
+                16 | struct Row { a: int64, r: float64 }
+                   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+                error: `t` is not a relation
+                 --> test.yz:19:1
+                   |
+                19 | from t
+                   | ^^^^^^
+
+                error: unresolved identifier `a`
+                 --> test.yz:20:14
+                   |
+                20 | |> extend id(a) as m, id(r) as n
+                   |              ^
+                   = note: this relation carries no columns
+
+                error: unresolved identifier `id`
+                 --> test.yz:20:11
+                   |
+                20 | |> extend id(a) as m, id(r) as n
+                   |           ^^^^^
+
+                error: unresolved identifier `r`
+                 --> test.yz:20:26
+                   |
+                20 | |> extend id(a) as m, id(r) as n
+                   |                          ^
+                   = note: this relation carries no columns
+
+                error: unresolved identifier `id`
+                 --> test.yz:20:23
+                   |
+                20 | |> extend id(a) as m, id(r) as n
+                   |                       ^^^^^
             "#]],
         );
     }
@@ -919,7 +1078,7 @@ from t
     fn an_external_call_takes_its_declared_type() {
         check(
             r#"
-external fn median(x: float64) -> float64
+external def median(x: float64) -> float64
 
 struct Row { rating: float64 }
 table t = Row
@@ -955,7 +1114,7 @@ trait Numeric {
 }
 
 impl Numeric for int64 {
-    fn zero(x: int64) -> int64 { return 0 }
+    def zero(x: int64) -> int64 { return 0 }
 }
 
 fn id[T](x: T) -> T where T: Numeric { return x }
@@ -967,11 +1126,186 @@ from t
 |> extend id(name) as n
 "#,
             expect![[r#"
-                error: `str` does not implement `Numeric`, required by `id`
+                error: expected one of def, }, found identifier
+                 --> test.yz:3:5
+                  |
+                3 |     fn zero(x: Self) -> Self
+                  |     ^^
+
+                error: expected one of (, ., ,, ), found :
+                 --> test.yz:3:14
+                  |
+                3 |     fn zero(x: Self) -> Self
+                  |              ^
+
+                error: expected expression, found `)`
+                 --> test.yz:3:20
+                  |
+                3 |     fn zero(x: Self) -> Self
+                  |                    ^
+
+                error: expected expression, found `->`
+                 --> test.yz:3:22
+                  |
+                3 |     fn zero(x: Self) -> Self
+                  |                      ^^
+
+                error: expected expression, found `}`
+                 --> test.yz:4:1
+                  |
+                4 | }
+                  | ^
+
+                error: expected one of (, ., ,, ), found :
+                 --> test.yz:10:11
+                   |
+                10 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   |           ^
+
+                error: expected expression, found `)`
+                 --> test.yz:10:14
+                   |
+                10 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   |              ^
+
+                error: expected expression, found `->`
+                 --> test.yz:10:16
+                   |
+                10 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   |                ^^
+
+                error: expected expression, found `where`
+                 --> test.yz:10:21
+                   |
+                10 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   |                     ^^^^^
+
+                error: expected expression, found `:`
+                 --> test.yz:10:28
+                   |
+                10 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   |                            ^
+
+                error: expected one of }, identifier, found return
+                 --> test.yz:10:40
+                   |
+                10 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   |                                        ^^^^^^
+
+                error: expected :, found identifier
+                 --> test.yz:10:47
+                   |
+                10 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   |                                               ^
+
+                error: expected expression, found `}`
+                 --> test.yz:10:49
+                   |
+                10 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   |                                                 ^
+
+                error: expected one of ,, }, found struct
+                 --> test.yz:12:1
+                   |
+                12 | struct Row { name: str }
+                   | ^^^^^^
+
+                error: `Row` is not a struct
+                 --> test.yz:13:1
+                   |
+                13 | table t = Row
+                   | ^^^^^^^^^^^^^
+
+                error: unresolved identifier `x`
+                 --> test.yz:3:13
+                  |
+                3 |     fn zero(x: Self) -> Self
+                  |             ^
+
+                error: unresolved identifier `zero`
+                 --> test.yz:3:8
+                  |
+                3 |     fn zero(x: Self) -> Self
+                  |        ^^^^^^^
+
+                error: unresolved identifier `Self`
+                 --> test.yz:3:16
+                  |
+                3 |     fn zero(x: Self) -> Self
+                  |                ^^^^
+
+                error: unresolved identifier `Self`
+                 --> test.yz:3:25
+                  |
+                3 |     fn zero(x: Self) -> Self
+                  |                         ^^^^
+
+                error: unresolved identifier `fn`
+                 --> test.yz:10:1
+                   |
+                10 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   | ^^
+
+                error: unresolved identifier `id`
+                 --> test.yz:10:4
+                   |
+                10 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   |    ^^
+
+                error: calling an expression is not supported yet
+                 --> test.yz:10:6
+                   |
+                10 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   |      ^^^^^^
+
+                error: unresolved identifier `T`
+                 --> test.yz:10:13
+                   |
+                10 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   |             ^
+
+                error: unresolved identifier `T`
+                 --> test.yz:10:19
+                   |
+                10 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   |                   ^
+
+                error: unresolved identifier `T`
+                 --> test.yz:10:27
+                   |
+                10 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   |                           ^
+
+                error: struct literals are not supported yet
+                 --> test.yz:10:30
+                   |
+                10 | fn id[T](x: T) -> T where T: Numeric { return x }
+                   |                              ^^^^^^^^^^^^^^^^^^^^
+
+                error: struct literals are not supported yet
+                 --> test.yz:12:8
+                   |
+                12 | struct Row { name: str }
+                   |        ^^^^^^^^^^^^^^^^^
+
+                error: `t` is not a relation
+                 --> test.yz:15:1
+                   |
+                15 | from t
+                   | ^^^^^^
+
+                error: unresolved identifier `name`
+                 --> test.yz:16:14
+                   |
+                16 | |> extend id(name) as n
+                   |              ^^^^
+                   = note: this relation carries no columns
+
+                error: unresolved identifier `id`
                  --> test.yz:16:11
                    |
                 16 | |> extend id(name) as n
-                   |           ^
+                   |           ^^^^^^^^
             "#]],
         );
     }
@@ -1003,17 +1337,17 @@ from t
 struct Row { a: int64 }
 table t = Row
 
-fn f(x: int64) -> bool { return x }
+def f(x: int64) -> bool { return x }
 
 from t
 |> extend f(a) as e
     "#,
             expect![[r#"
                 error: expected `int64`, found `bool`
-                 --> test.yz:5:26
+                 --> test.yz:5:27
                   |
-                5 | fn f(x: int64) -> bool { return x }
-                  |                          ^
+                5 | def f(x: int64) -> bool { return x }
+                  |                           ^
             "#]],
         );
     }

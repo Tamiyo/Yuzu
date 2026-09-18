@@ -7,7 +7,7 @@ from support import rows, sorted_rows
 def test_folded_call_matches_the_literal():
     folded = rows(
         """
-            fn twice(n: int64) -> int64 { return n * 2 }
+            def twice(n: int64) -> int64 { return n * 2 }
             from employees
             |> where level == twice(1)
             |> select name
@@ -38,7 +38,7 @@ def test_folded_let_matches_the_literal():
 
 def test_assignment_folds_to_the_last_value():
     query = """
-        fn threshold() -> int64 { let mut x = 10
+        def threshold() -> int64 { let mut x = 10
         x = 2
         return x }
         from employees

@@ -372,7 +372,7 @@ mod tests {
 struct Row { a: int64 }
 table t = Row
 
-fn double(x: int64) -> int64 { return x * 2 }
+def double(x: int64) -> int64 { return x * 2 }
 
 from t
 |> select double(a) as d
@@ -403,8 +403,8 @@ from t
 struct Row { a: int64 }
 table t = Row
 
-fn double(x: int64) -> int64 { return x * 2 }
-fn quadruple(x: int64) -> int64 { return double(double(x)) }
+def double(x: int64) -> int64 { return x * 2 }
+def quadruple(x: int64) -> int64 { return double(double(x)) }
 
 from t
 |> select quadruple(a) as q
@@ -465,29 +465,29 @@ from t
 struct Row { a: int64 }
 table t = Row
 
-fn forever(x: int64) -> int64 { return forever(x) }
+def forever(x: int64) -> int64 { return forever(x) }
 
 from t
 |> select forever(a) as f
 "#,
             expect![[r#"
                 error: expanding `forever` did not finish within 1000 calls; a function that reaches itself has to reduce to stop
-                 --> test.yz:5:40
+                 --> test.yz:5:41
                   |
-                5 | fn forever(x: int64) -> int64 { return forever(x) }
-                  |                                        ^
+                5 | def forever(x: int64) -> int64 { return forever(x) }
+                  |                                         ^
 
                 error: `yzl.fn` was not expanded before lowering
                  --> test.yz:5:1
                   |
-                5 | fn forever(x: int64) -> int64 { return forever(x) }
+                5 | def forever(x: int64) -> int64 { return forever(x) }
                   | ^
 
                 error: `forever` was not expanded before lowering
-                 --> test.yz:5:40
+                 --> test.yz:5:41
                   |
-                5 | fn forever(x: int64) -> int64 { return forever(x) }
-                  |                                        ^
+                5 | def forever(x: int64) -> int64 { return forever(x) }
+                  |                                         ^
             "#]],
         );
     }
@@ -508,18 +508,119 @@ from t
 |> extend twice(a) as m, twice(r) as n
 "#,
             expect![[r#"
-                module {
-                  yz.struct @Row ["a", "r"] : [!yz.int64, !yz.float64]
-                  %0 = yzr.table @t : !yz.struct<@Row>
-                  yz.struct @row ["a", "r", "m", "n"] : [!yz.int64, !yz.float64, !yz.int64, !yz.float64]
-                  %1 = yzr.extend %0 {
-                  ^bb0(%arg0: !yz.int64, %arg1: !yz.float64):
-                    %2 = yz.add %arg0, %arg0 : !yz.int64, !yz.int64 -> !yz.int64
-                    %3 = yz.add %arg1, %arg1 : !yz.float64, !yz.float64 -> !yz.float64
-                    yzr.yield %2, %3 : !yz.int64, !yz.float64
-                  } : !yz.struct<@Row> -> !yz.struct<@row>
-                  yzr.output %1 : !yz.struct<@row>
-                }
+                error: expected one of (, ., ,, ), found :
+                 --> test.yz:5:14
+                  |
+                5 | fn twice[T](x: T) -> T { return x + x }
+                  |              ^
+
+                error: expected expression, found `)`
+                 --> test.yz:5:17
+                  |
+                5 | fn twice[T](x: T) -> T { return x + x }
+                  |                 ^
+
+                error: expected expression, found `->`
+                 --> test.yz:5:19
+                  |
+                5 | fn twice[T](x: T) -> T { return x + x }
+                  |                   ^^
+
+                error: expected one of }, identifier, found return
+                 --> test.yz:5:26
+                  |
+                5 | fn twice[T](x: T) -> T { return x + x }
+                  |                          ^^^^^^
+
+                error: expected :, found identifier
+                 --> test.yz:5:33
+                  |
+                5 | fn twice[T](x: T) -> T { return x + x }
+                  |                                 ^
+
+                error: unresolved identifier `fn`
+                 --> test.yz:5:1
+                  |
+                5 | fn twice[T](x: T) -> T { return x + x }
+                  | ^^
+
+                error: unresolved identifier `twice`
+                 --> test.yz:5:4
+                  |
+                5 | fn twice[T](x: T) -> T { return x + x }
+                  |    ^^^^^
+
+                error: calling an expression is not supported yet
+                 --> test.yz:5:9
+                  |
+                5 | fn twice[T](x: T) -> T { return x + x }
+                  |         ^^^^^^
+
+                error: unresolved identifier `T`
+                 --> test.yz:5:16
+                  |
+                5 | fn twice[T](x: T) -> T { return x + x }
+                  |                ^
+
+                error: struct literals are not supported yet
+                 --> test.yz:5:22
+                  |
+                5 | fn twice[T](x: T) -> T { return x + x }
+                  |                      ^^^^^^^^^^^^^^^^^^
+
+                error: unresolved identifier `twice`
+                 --> test.yz:8:11
+                  |
+                8 | |> extend twice(a) as m, twice(r) as n
+                  |           ^^^^^^^^
+
+                error: unresolved identifier `twice`
+                 --> test.yz:8:26
+                  |
+                8 | |> extend twice(a) as m, twice(r) as n
+                  |                          ^^^^^^^^
+
+                error: this part of the query is missing
+                 --> test.yz:5:1
+                  |
+                5 | fn twice[T](x: T) -> T { return x + x }
+                  | ^
+
+                error: this part of the query is missing
+                 --> test.yz:5:4
+                  |
+                5 | fn twice[T](x: T) -> T { return x + x }
+                  |    ^
+
+                error: this part of the query is missing
+                 --> test.yz:5:9
+                  |
+                5 | fn twice[T](x: T) -> T { return x + x }
+                  |         ^
+
+                error: this part of the query is missing
+                 --> test.yz:5:16
+                  |
+                5 | fn twice[T](x: T) -> T { return x + x }
+                  |                ^
+
+                error: this part of the query is missing
+                 --> test.yz:5:22
+                  |
+                5 | fn twice[T](x: T) -> T { return x + x }
+                  |                      ^
+
+                error: this part of the query is missing
+                 --> test.yz:8:11
+                  |
+                8 | |> extend twice(a) as m, twice(r) as n
+                  |           ^
+
+                error: this part of the query is missing
+                 --> test.yz:8:26
+                  |
+                8 | |> extend twice(a) as m, twice(r) as n
+                  |                          ^
             "#]],
         );
     }
@@ -536,7 +637,7 @@ trait Zero {
 }
 
 impl Zero for int64 {
-    fn zero(x: int64) -> int64 { return 0 }
+    def zero(x: int64) -> int64 { return 0 }
 }
 
 fn shift[T](x: T) -> T where T: Zero { return zero(x) }
@@ -548,17 +649,221 @@ from t
 |> extend shift(a) as z
 "#,
             expect![[r#"
-                error: `zero` is a trait method, and calling one is not supported yet
+                error: expected one of def, }, found identifier
+                 --> test.yz:3:5
+                  |
+                3 |     fn zero(x: Self) -> Self
+                  |     ^^
+
+                error: expected one of (, ., ,, ), found :
+                 --> test.yz:3:14
+                  |
+                3 |     fn zero(x: Self) -> Self
+                  |              ^
+
+                error: expected expression, found `)`
+                 --> test.yz:3:20
+                  |
+                3 |     fn zero(x: Self) -> Self
+                  |                    ^
+
+                error: expected expression, found `->`
+                 --> test.yz:3:22
+                  |
+                3 |     fn zero(x: Self) -> Self
+                  |                      ^^
+
+                error: expected expression, found `}`
+                 --> test.yz:4:1
+                  |
+                4 | }
+                  | ^
+
+                error: expected one of (, ., ,, ), found :
+                 --> test.yz:10:14
+                   |
+                10 | fn shift[T](x: T) -> T where T: Zero { return zero(x) }
+                   |              ^
+
+                error: expected expression, found `)`
+                 --> test.yz:10:17
+                   |
+                10 | fn shift[T](x: T) -> T where T: Zero { return zero(x) }
+                   |                 ^
+
+                error: expected expression, found `->`
+                 --> test.yz:10:19
+                   |
+                10 | fn shift[T](x: T) -> T where T: Zero { return zero(x) }
+                   |                   ^^
+
+                error: expected expression, found `where`
+                 --> test.yz:10:24
+                   |
+                10 | fn shift[T](x: T) -> T where T: Zero { return zero(x) }
+                   |                        ^^^^^
+
+                error: expected expression, found `:`
+                 --> test.yz:10:31
+                   |
+                10 | fn shift[T](x: T) -> T where T: Zero { return zero(x) }
+                   |                               ^
+
+                error: expected one of }, identifier, found return
+                 --> test.yz:10:40
+                   |
+                10 | fn shift[T](x: T) -> T where T: Zero { return zero(x) }
+                   |                                        ^^^^^^
+
+                error: expected :, found identifier
                  --> test.yz:10:47
                    |
                 10 | fn shift[T](x: T) -> T where T: Zero { return zero(x) }
-                   |                                               ^^^^^^^
+                   |                                               ^^^^
+
+                error: unresolved identifier `x`
+                 --> test.yz:3:13
+                  |
+                3 |     fn zero(x: Self) -> Self
+                  |             ^
+
+                error: unresolved identifier `zero`
+                 --> test.yz:3:8
+                  |
+                3 |     fn zero(x: Self) -> Self
+                  |        ^^^^^^^
+
+                error: unresolved identifier `Self`
+                 --> test.yz:3:16
+                  |
+                3 |     fn zero(x: Self) -> Self
+                  |                ^^^^
+
+                error: unresolved identifier `Self`
+                 --> test.yz:3:25
+                  |
+                3 |     fn zero(x: Self) -> Self
+                  |                         ^^^^
+
+                error: unresolved identifier `fn`
+                 --> test.yz:10:1
+                   |
+                10 | fn shift[T](x: T) -> T where T: Zero { return zero(x) }
+                   | ^^
+
+                error: unresolved identifier `shift`
+                 --> test.yz:10:4
+                   |
+                10 | fn shift[T](x: T) -> T where T: Zero { return zero(x) }
+                   |    ^^^^^
+
+                error: calling an expression is not supported yet
+                 --> test.yz:10:9
+                   |
+                10 | fn shift[T](x: T) -> T where T: Zero { return zero(x) }
+                   |         ^^^^^^
+
+                error: unresolved identifier `T`
+                 --> test.yz:10:16
+                   |
+                10 | fn shift[T](x: T) -> T where T: Zero { return zero(x) }
+                   |                ^
+
+                error: unresolved identifier `T`
+                 --> test.yz:10:22
+                   |
+                10 | fn shift[T](x: T) -> T where T: Zero { return zero(x) }
+                   |                      ^
+
+                error: unresolved identifier `T`
+                 --> test.yz:10:30
+                   |
+                10 | fn shift[T](x: T) -> T where T: Zero { return zero(x) }
+                   |                              ^
+
+                error: struct literals are not supported yet
+                 --> test.yz:10:33
+                   |
+                10 | fn shift[T](x: T) -> T where T: Zero { return zero(x) }
+                   |                                 ^^^^^^^^^^^^^^^^^^^^^^^
+
+                error: unresolved identifier `shift`
+                 --> test.yz:16:11
+                   |
+                16 | |> extend shift(a) as z
+                   |           ^^^^^^^^
 
                 error: this part of the query is missing
-                 --> test.yz:10:47
+                 --> test.yz:3:13
+                  |
+                3 |     fn zero(x: Self) -> Self
+                  |             ^
+
+                error: this part of the query is missing
+                 --> test.yz:3:8
+                  |
+                3 |     fn zero(x: Self) -> Self
+                  |        ^
+
+                error: this part of the query is missing
+                 --> test.yz:3:16
+                  |
+                3 |     fn zero(x: Self) -> Self
+                  |                ^
+
+                error: this part of the query is missing
+                 --> test.yz:3:25
+                  |
+                3 |     fn zero(x: Self) -> Self
+                  |                         ^
+
+                error: this part of the query is missing
+                 --> test.yz:10:1
                    |
                 10 | fn shift[T](x: T) -> T where T: Zero { return zero(x) }
-                   |                                               ^
+                   | ^
+
+                error: this part of the query is missing
+                 --> test.yz:10:4
+                   |
+                10 | fn shift[T](x: T) -> T where T: Zero { return zero(x) }
+                   |    ^
+
+                error: this part of the query is missing
+                 --> test.yz:10:9
+                   |
+                10 | fn shift[T](x: T) -> T where T: Zero { return zero(x) }
+                   |         ^
+
+                error: this part of the query is missing
+                 --> test.yz:10:16
+                   |
+                10 | fn shift[T](x: T) -> T where T: Zero { return zero(x) }
+                   |                ^
+
+                error: this part of the query is missing
+                 --> test.yz:10:22
+                   |
+                10 | fn shift[T](x: T) -> T where T: Zero { return zero(x) }
+                   |                      ^
+
+                error: this part of the query is missing
+                 --> test.yz:10:30
+                   |
+                10 | fn shift[T](x: T) -> T where T: Zero { return zero(x) }
+                   |                              ^
+
+                error: this part of the query is missing
+                 --> test.yz:10:33
+                   |
+                10 | fn shift[T](x: T) -> T where T: Zero { return zero(x) }
+                   |                                 ^
+
+                error: this part of the query is missing
+                 --> test.yz:16:11
+                   |
+                16 | |> extend shift(a) as z
+                   |           ^
             "#]],
         );
     }

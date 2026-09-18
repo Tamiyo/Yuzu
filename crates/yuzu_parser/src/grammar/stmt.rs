@@ -18,7 +18,7 @@ pub(crate) fn parse_stmt(p: &mut Parser) -> CompletedMarker {
 
     // Reserved words, so no lookahead is needed to tell a declaration from an
     // expression that happens to start with the same identifier.
-    if p.at(TokenKind::FnKw) || p.at(TokenKind::AggKw) || p.at(TokenKind::ExternalKw) {
+    if p.at(TokenKind::DefKw) || p.at(TokenKind::AggKw) || p.at(TokenKind::ExternalKw) {
         return parse_func_stmt(p);
     }
     if p.at(TokenKind::ImplKw) {
@@ -47,7 +47,7 @@ pub(crate) fn parse_stmt(p: &mut Parser) -> CompletedMarker {
 /// parsed as a declaration it is not.
 fn parse_public_stmt(p: &mut Parser) -> CompletedMarker {
     match p.peek_nth_kind(1) {
-        Some(TokenKind::FnKw | TokenKind::AggKw | TokenKind::ExternalKw) => parse_func_stmt(p),
+        Some(TokenKind::DefKw | TokenKind::AggKw | TokenKind::ExternalKw) => parse_func_stmt(p),
         Some(TokenKind::TraitKw) => parse_trait_stmt(p),
         Some(TokenKind::LetKw) => parse_let_stmt(p),
         Some(TokenKind::StructKw) => parse_struct_stmt(p),
@@ -92,7 +92,7 @@ fn parse_func_stmt(p: &mut Parser) -> CompletedMarker {
     if p.at(TokenKind::AggKw) {
         p.bump();
     }
-    p.expect(TokenKind::FnKw);
+    p.expect(TokenKind::DefKw);
     parse_ident(p);
 
     if p.at(TokenKind::LeftSquare) {
@@ -149,7 +149,7 @@ fn parse_impl_stmt(p: &mut Parser) -> CompletedMarker {
 
     parse_ident(p);
     p.expect(TokenKind::LeftCurly);
-    while p.at(TokenKind::FnKw) {
+    while p.at(TokenKind::DefKw) {
         parse_func_stmt(p);
     }
     p.expect(TokenKind::RightCurly);
@@ -163,7 +163,7 @@ fn parse_trait_stmt(p: &mut Parser) -> CompletedMarker {
     p.expect(TokenKind::TraitKw);
     parse_ident(p);
     p.expect(TokenKind::LeftCurly);
-    while p.at(TokenKind::FnKw) {
+    while p.at(TokenKind::DefKw) {
         parse_trait_method(p);
     }
     p.expect(TokenKind::RightCurly);
@@ -173,7 +173,7 @@ fn parse_trait_stmt(p: &mut Parser) -> CompletedMarker {
 
 fn parse_trait_method(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
-    p.expect(TokenKind::FnKw);
+    p.expect(TokenKind::DefKw);
     parse_ident(p);
     p.expect(TokenKind::LeftParen);
     if !p.at(TokenKind::RightParen) {
@@ -347,32 +347,32 @@ mod tests {
     #[test]
     fn parse_external_fn_stmt() {
         test_support::check(
-            "external fn upper(s: str) -> str",
+            "external def upper(s: str) -> str",
             parse_stmt,
             expect![[r#"
-                FuncStmt@0..32
+                FuncStmt@0..33
                   ExternalKw@0..8 "external"
                   Space@8..9 " "
-                  FnKw@9..11 "fn"
-                  Space@11..12 " "
-                  Ident@12..17
-                    Identifier@12..17 "upper"
-                  LeftParen@17..18 "("
-                  FuncParam@18..24
-                    Ident@18..19
-                      Identifier@18..19 "s"
-                    Colon@19..20 ":"
-                    Space@20..21 " "
-                    NamedTypeAnnotation@21..24
-                      Ident@21..24
-                        Identifier@21..24 "str"
-                  RightParen@24..25 ")"
-                  Space@25..26 " "
-                  Arrow@26..28 "->"
-                  Space@28..29 " "
-                  NamedTypeAnnotation@29..32
-                    Ident@29..32
-                      Identifier@29..32 "str"
+                  DefKw@9..12 "def"
+                  Space@12..13 " "
+                  Ident@13..18
+                    Identifier@13..18 "upper"
+                  LeftParen@18..19 "("
+                  FuncParam@19..25
+                    Ident@19..20
+                      Identifier@19..20 "s"
+                    Colon@20..21 ":"
+                    Space@21..22 " "
+                    NamedTypeAnnotation@22..25
+                      Ident@22..25
+                        Identifier@22..25 "str"
+                  RightParen@25..26 ")"
+                  Space@26..27 " "
+                  Arrow@27..29 "->"
+                  Space@29..30 " "
+                  NamedTypeAnnotation@30..33
+                    Ident@30..33
+                      Identifier@30..33 "str"
             "#]],
         );
     }
@@ -380,34 +380,34 @@ mod tests {
     #[test]
     fn parse_external_agg_fn_stmt() {
         test_support::check(
-            "external agg fn median(x: int64) -> float64",
+            "external agg def median(x: int64) -> float64",
             parse_stmt,
             expect![[r#"
-                FuncStmt@0..43
+                FuncStmt@0..44
                   ExternalKw@0..8 "external"
                   Space@8..9 " "
                   AggKw@9..12 "agg"
                   Space@12..13 " "
-                  FnKw@13..15 "fn"
-                  Space@15..16 " "
-                  Ident@16..22
-                    Identifier@16..22 "median"
-                  LeftParen@22..23 "("
-                  FuncParam@23..31
-                    Ident@23..24
-                      Identifier@23..24 "x"
-                    Colon@24..25 ":"
-                    Space@25..26 " "
-                    NamedTypeAnnotation@26..31
-                      Ident@26..31
-                        Identifier@26..31 "int64"
-                  RightParen@31..32 ")"
-                  Space@32..33 " "
-                  Arrow@33..35 "->"
-                  Space@35..36 " "
-                  NamedTypeAnnotation@36..43
-                    Ident@36..43
-                      Identifier@36..43 "float64"
+                  DefKw@13..16 "def"
+                  Space@16..17 " "
+                  Ident@17..23
+                    Identifier@17..23 "median"
+                  LeftParen@23..24 "("
+                  FuncParam@24..32
+                    Ident@24..25
+                      Identifier@24..25 "x"
+                    Colon@25..26 ":"
+                    Space@26..27 " "
+                    NamedTypeAnnotation@27..32
+                      Ident@27..32
+                        Identifier@27..32 "int64"
+                  RightParen@32..33 ")"
+                  Space@33..34 " "
+                  Arrow@34..36 "->"
+                  Space@36..37 " "
+                  NamedTypeAnnotation@37..44
+                    Ident@37..44
+                      Identifier@37..44 "float64"
             "#]],
         );
     }
@@ -415,51 +415,51 @@ mod tests {
     #[test]
     fn parse_agg_func_stmt() {
         test_support::check(
-            "agg fn spread(x: int64) -> int64 { return sum(x) }",
+            "agg def spread(x: int64) -> int64 { return sum(x) }",
             parse_stmt,
             expect![[r#"
-                FuncStmt@0..50
+                FuncStmt@0..51
                   AggKw@0..3 "agg"
                   Space@3..4 " "
-                  FnKw@4..6 "fn"
-                  Space@6..7 " "
-                  Ident@7..13
-                    Identifier@7..13 "spread"
-                  LeftParen@13..14 "("
-                  FuncParam@14..22
-                    Ident@14..15
-                      Identifier@14..15 "x"
-                    Colon@15..16 ":"
-                    Space@16..17 " "
-                    NamedTypeAnnotation@17..22
-                      Ident@17..22
-                        Identifier@17..22 "int64"
-                  RightParen@22..23 ")"
-                  Space@23..24 " "
-                  Arrow@24..26 "->"
-                  Space@26..27 " "
-                  NamedTypeAnnotation@27..32
-                    Ident@27..32
-                      Identifier@27..32 "int64"
-                  Space@32..33 " "
-                  BlockStmt@33..50
-                    LeftCurly@33..34 "{"
-                    Space@34..35 " "
-                    ReturnStmt@35..48
-                      ReturnKw@35..41 "return"
-                      Space@41..42 " "
-                      CallExpr@42..48
-                        IdentExpr@42..45
-                          Ident@42..45
-                            Identifier@42..45 "sum"
-                        ArgList@45..48
-                          LeftParen@45..46 "("
-                          IdentExpr@46..47
-                            Ident@46..47
-                              Identifier@46..47 "x"
-                          RightParen@47..48 ")"
-                    Space@48..49 " "
-                    RightCurly@49..50 "}"
+                  DefKw@4..7 "def"
+                  Space@7..8 " "
+                  Ident@8..14
+                    Identifier@8..14 "spread"
+                  LeftParen@14..15 "("
+                  FuncParam@15..23
+                    Ident@15..16
+                      Identifier@15..16 "x"
+                    Colon@16..17 ":"
+                    Space@17..18 " "
+                    NamedTypeAnnotation@18..23
+                      Ident@18..23
+                        Identifier@18..23 "int64"
+                  RightParen@23..24 ")"
+                  Space@24..25 " "
+                  Arrow@25..27 "->"
+                  Space@27..28 " "
+                  NamedTypeAnnotation@28..33
+                    Ident@28..33
+                      Identifier@28..33 "int64"
+                  Space@33..34 " "
+                  BlockStmt@34..51
+                    LeftCurly@34..35 "{"
+                    Space@35..36 " "
+                    ReturnStmt@36..49
+                      ReturnKw@36..42 "return"
+                      Space@42..43 " "
+                      CallExpr@43..49
+                        IdentExpr@43..46
+                          Ident@43..46
+                            Identifier@43..46 "sum"
+                        ArgList@46..49
+                          LeftParen@46..47 "("
+                          IdentExpr@47..48
+                            Ident@47..48
+                              Identifier@47..48 "x"
+                          RightParen@48..49 ")"
+                    Space@49..50 " "
+                    RightCurly@50..51 "}"
             "#]],
         );
     }
@@ -509,42 +509,42 @@ mod tests {
     #[test]
     fn parse_func_stmt_directly() {
         test_support::check(
-            "fn f(x: int) -> int { return x }",
+            "def f(x: int) -> int { return x }",
             parse_func_stmt,
             expect![[r#"
-                FuncStmt@0..32
-                  FnKw@0..2 "fn"
-                  Space@2..3 " "
-                  Ident@3..4
-                    Identifier@3..4 "f"
-                  LeftParen@4..5 "("
-                  FuncParam@5..11
-                    Ident@5..6
-                      Identifier@5..6 "x"
-                    Colon@6..7 ":"
-                    Space@7..8 " "
-                    NamedTypeAnnotation@8..11
-                      Ident@8..11
-                        Identifier@8..11 "int"
-                  RightParen@11..12 ")"
-                  Space@12..13 " "
-                  Arrow@13..15 "->"
-                  Space@15..16 " "
-                  NamedTypeAnnotation@16..19
-                    Ident@16..19
-                      Identifier@16..19 "int"
-                  Space@19..20 " "
-                  BlockStmt@20..32
-                    LeftCurly@20..21 "{"
-                    Space@21..22 " "
-                    ReturnStmt@22..30
-                      ReturnKw@22..28 "return"
-                      Space@28..29 " "
-                      IdentExpr@29..30
-                        Ident@29..30
-                          Identifier@29..30 "x"
-                    Space@30..31 " "
-                    RightCurly@31..32 "}"
+                FuncStmt@0..33
+                  DefKw@0..3 "def"
+                  Space@3..4 " "
+                  Ident@4..5
+                    Identifier@4..5 "f"
+                  LeftParen@5..6 "("
+                  FuncParam@6..12
+                    Ident@6..7
+                      Identifier@6..7 "x"
+                    Colon@7..8 ":"
+                    Space@8..9 " "
+                    NamedTypeAnnotation@9..12
+                      Ident@9..12
+                        Identifier@9..12 "int"
+                  RightParen@12..13 ")"
+                  Space@13..14 " "
+                  Arrow@14..16 "->"
+                  Space@16..17 " "
+                  NamedTypeAnnotation@17..20
+                    Ident@17..20
+                      Identifier@17..20 "int"
+                  Space@20..21 " "
+                  BlockStmt@21..33
+                    LeftCurly@21..22 "{"
+                    Space@22..23 " "
+                    ReturnStmt@23..31
+                      ReturnKw@23..29 "return"
+                      Space@29..30 " "
+                      IdentExpr@30..31
+                        Ident@30..31
+                          Identifier@30..31 "x"
+                    Space@31..32 " "
+                    RightCurly@32..33 "}"
             "#]],
         );
     }
@@ -552,10 +552,10 @@ mod tests {
     #[test]
     fn parse_impl_stmt_directly() {
         test_support::check(
-            "impl Point { fn x(self) { return self } }",
+            "impl Point { def x(self) { return self } }",
             parse_impl_stmt,
             expect![[r#"
-                ImplStmt@0..41
+                ImplStmt@0..42
                   ImplKw@0..4 "impl"
                   Space@4..5 " "
                   Ident@5..10
@@ -563,30 +563,30 @@ mod tests {
                   Space@10..11 " "
                   LeftCurly@11..12 "{"
                   Space@12..13 " "
-                  FuncStmt@13..39
-                    FnKw@13..15 "fn"
-                    Space@15..16 " "
-                    Ident@16..17
-                      Identifier@16..17 "x"
-                    LeftParen@17..18 "("
-                    FuncParam@18..22
-                      Ident@18..22
-                        Identifier@18..22 "self"
-                    RightParen@22..23 ")"
-                    Space@23..24 " "
-                    BlockStmt@24..39
-                      LeftCurly@24..25 "{"
-                      Space@25..26 " "
-                      ReturnStmt@26..37
-                        ReturnKw@26..32 "return"
-                        Space@32..33 " "
-                        IdentExpr@33..37
-                          Ident@33..37
-                            Identifier@33..37 "self"
-                      Space@37..38 " "
-                      RightCurly@38..39 "}"
-                  Space@39..40 " "
-                  RightCurly@40..41 "}"
+                  FuncStmt@13..40
+                    DefKw@13..16 "def"
+                    Space@16..17 " "
+                    Ident@17..18
+                      Identifier@17..18 "x"
+                    LeftParen@18..19 "("
+                    FuncParam@19..23
+                      Ident@19..23
+                        Identifier@19..23 "self"
+                    RightParen@23..24 ")"
+                    Space@24..25 " "
+                    BlockStmt@25..40
+                      LeftCurly@25..26 "{"
+                      Space@26..27 " "
+                      ReturnStmt@27..38
+                        ReturnKw@27..33 "return"
+                        Space@33..34 " "
+                        IdentExpr@34..38
+                          Ident@34..38
+                            Identifier@34..38 "self"
+                      Space@38..39 " "
+                      RightCurly@39..40 "}"
+                  Space@40..41 " "
+                  RightCurly@41..42 "}"
             "#]],
         );
     }
@@ -594,10 +594,10 @@ mod tests {
     #[test]
     fn parse_trait_stmt_directly() {
         test_support::check(
-            "trait Show { fn show(self) -> str }",
+            "trait Show { def show(self) -> str }",
             parse_trait_stmt,
             expect![[r#"
-                TraitStmt@0..35
+                TraitStmt@0..36
                   TraitKw@0..5 "trait"
                   Space@5..6 " "
                   Ident@6..10
@@ -605,24 +605,24 @@ mod tests {
                   Space@10..11 " "
                   LeftCurly@11..12 "{"
                   Space@12..13 " "
-                  FuncStmt@13..33
-                    FnKw@13..15 "fn"
-                    Space@15..16 " "
-                    Ident@16..20
-                      Identifier@16..20 "show"
-                    LeftParen@20..21 "("
-                    FuncParam@21..25
-                      Ident@21..25
-                        Identifier@21..25 "self"
-                    RightParen@25..26 ")"
-                    Space@26..27 " "
-                    Arrow@27..29 "->"
-                    Space@29..30 " "
-                    NamedTypeAnnotation@30..33
-                      Ident@30..33
-                        Identifier@30..33 "str"
-                  Space@33..34 " "
-                  RightCurly@34..35 "}"
+                  FuncStmt@13..34
+                    DefKw@13..16 "def"
+                    Space@16..17 " "
+                    Ident@17..21
+                      Identifier@17..21 "show"
+                    LeftParen@21..22 "("
+                    FuncParam@22..26
+                      Ident@22..26
+                        Identifier@22..26 "self"
+                    RightParen@26..27 ")"
+                    Space@27..28 " "
+                    Arrow@28..30 "->"
+                    Space@30..31 " "
+                    NamedTypeAnnotation@31..34
+                      Ident@31..34
+                        Identifier@31..34 "str"
+                  Space@34..35 " "
+                  RightCurly@35..36 "}"
             "#]],
         );
     }
@@ -630,26 +630,26 @@ mod tests {
     #[test]
     fn parse_trait_method_directly() {
         test_support::check(
-            "fn show(self) -> str",
+            "def show(self) -> str",
             parse_trait_method,
             expect![[r#"
-            FuncStmt@0..20
-              FnKw@0..2 "fn"
-              Space@2..3 " "
-              Ident@3..7
-                Identifier@3..7 "show"
-              LeftParen@7..8 "("
-              FuncParam@8..12
-                Ident@8..12
-                  Identifier@8..12 "self"
-              RightParen@12..13 ")"
-              Space@13..14 " "
-              Arrow@14..16 "->"
-              Space@16..17 " "
-              NamedTypeAnnotation@17..20
-                Ident@17..20
-                  Identifier@17..20 "str"
-        "#]],
+                FuncStmt@0..21
+                  DefKw@0..3 "def"
+                  Space@3..4 " "
+                  Ident@4..8
+                    Identifier@4..8 "show"
+                  LeftParen@8..9 "("
+                  FuncParam@9..13
+                    Ident@9..13
+                      Identifier@9..13 "self"
+                  RightParen@13..14 ")"
+                  Space@14..15 " "
+                  Arrow@15..17 "->"
+                  Space@17..18 " "
+                  NamedTypeAnnotation@18..21
+                    Ident@18..21
+                      Identifier@18..21 "str"
+            "#]],
         );
     }
 
@@ -1031,51 +1031,51 @@ mod tests {
     #[test]
     fn func_stmt() {
         check(
-            "fn add(x: int, y: int) -> int { return x }",
+            "def add(x: int, y: int) -> int { return x }",
             expect![[r#"
-                FuncStmt@0..42
-                  FnKw@0..2 "fn"
-                  Space@2..3 " "
-                  Ident@3..6
-                    Identifier@3..6 "add"
-                  LeftParen@6..7 "("
-                  FuncParam@7..13
-                    Ident@7..8
-                      Identifier@7..8 "x"
-                    Colon@8..9 ":"
-                    Space@9..10 " "
-                    NamedTypeAnnotation@10..13
-                      Ident@10..13
-                        Identifier@10..13 "int"
-                  Comma@13..14 ","
-                  Space@14..15 " "
-                  FuncParam@15..21
-                    Ident@15..16
-                      Identifier@15..16 "y"
-                    Colon@16..17 ":"
-                    Space@17..18 " "
-                    NamedTypeAnnotation@18..21
-                      Ident@18..21
-                        Identifier@18..21 "int"
-                  RightParen@21..22 ")"
-                  Space@22..23 " "
-                  Arrow@23..25 "->"
-                  Space@25..26 " "
-                  NamedTypeAnnotation@26..29
-                    Ident@26..29
-                      Identifier@26..29 "int"
-                  Space@29..30 " "
-                  BlockStmt@30..42
-                    LeftCurly@30..31 "{"
-                    Space@31..32 " "
-                    ReturnStmt@32..40
-                      ReturnKw@32..38 "return"
-                      Space@38..39 " "
-                      IdentExpr@39..40
-                        Ident@39..40
-                          Identifier@39..40 "x"
-                    Space@40..41 " "
-                    RightCurly@41..42 "}"
+                FuncStmt@0..43
+                  DefKw@0..3 "def"
+                  Space@3..4 " "
+                  Ident@4..7
+                    Identifier@4..7 "add"
+                  LeftParen@7..8 "("
+                  FuncParam@8..14
+                    Ident@8..9
+                      Identifier@8..9 "x"
+                    Colon@9..10 ":"
+                    Space@10..11 " "
+                    NamedTypeAnnotation@11..14
+                      Ident@11..14
+                        Identifier@11..14 "int"
+                  Comma@14..15 ","
+                  Space@15..16 " "
+                  FuncParam@16..22
+                    Ident@16..17
+                      Identifier@16..17 "y"
+                    Colon@17..18 ":"
+                    Space@18..19 " "
+                    NamedTypeAnnotation@19..22
+                      Ident@19..22
+                        Identifier@19..22 "int"
+                  RightParen@22..23 ")"
+                  Space@23..24 " "
+                  Arrow@24..26 "->"
+                  Space@26..27 " "
+                  NamedTypeAnnotation@27..30
+                    Ident@27..30
+                      Identifier@27..30 "int"
+                  Space@30..31 " "
+                  BlockStmt@31..43
+                    LeftCurly@31..32 "{"
+                    Space@32..33 " "
+                    ReturnStmt@33..41
+                      ReturnKw@33..39 "return"
+                      Space@39..40 " "
+                      IdentExpr@40..41
+                        Ident@40..41
+                          Identifier@40..41 "x"
+                    Space@41..42 " "
+                    RightCurly@42..43 "}"
             "#]],
         );
     }
@@ -1083,57 +1083,57 @@ mod tests {
     #[test]
     fn generic_func_with_where_clause() {
         check(
-            "fn id[T](x: T) -> T where T: Eq { return x }",
+            "def id[T](x: T) -> T where T: Eq { return x }",
             expect![[r#"
-                FuncStmt@0..44
-                  FnKw@0..2 "fn"
-                  Space@2..3 " "
-                  Ident@3..5
-                    Identifier@3..5 "id"
-                  LeftSquare@5..6 "["
-                  TypeParam@6..7
-                    Ident@6..7
-                      Identifier@6..7 "T"
-                  RightSquare@7..8 "]"
-                  LeftParen@8..9 "("
-                  FuncParam@9..13
-                    Ident@9..10
-                      Identifier@9..10 "x"
-                    Colon@10..11 ":"
-                    Space@11..12 " "
-                    NamedTypeAnnotation@12..13
-                      Ident@12..13
-                        Identifier@12..13 "T"
-                  RightParen@13..14 ")"
-                  Space@14..15 " "
-                  Arrow@15..17 "->"
-                  Space@17..18 " "
-                  NamedTypeAnnotation@18..19
-                    Ident@18..19
-                      Identifier@18..19 "T"
-                  Space@19..20 " "
-                  WhereKw@20..25 "where"
-                  Space@25..26 " "
-                  TypeBound@26..31
-                    Ident@26..27
-                      Identifier@26..27 "T"
-                    Colon@27..28 ":"
-                    Space@28..29 " "
-                    TraitRef@29..31
-                      Ident@29..31
-                        Identifier@29..31 "Eq"
-                  Space@31..32 " "
-                  BlockStmt@32..44
-                    LeftCurly@32..33 "{"
-                    Space@33..34 " "
-                    ReturnStmt@34..42
-                      ReturnKw@34..40 "return"
-                      Space@40..41 " "
-                      IdentExpr@41..42
-                        Ident@41..42
-                          Identifier@41..42 "x"
-                    Space@42..43 " "
-                    RightCurly@43..44 "}"
+                FuncStmt@0..45
+                  DefKw@0..3 "def"
+                  Space@3..4 " "
+                  Ident@4..6
+                    Identifier@4..6 "id"
+                  LeftSquare@6..7 "["
+                  TypeParam@7..8
+                    Ident@7..8
+                      Identifier@7..8 "T"
+                  RightSquare@8..9 "]"
+                  LeftParen@9..10 "("
+                  FuncParam@10..14
+                    Ident@10..11
+                      Identifier@10..11 "x"
+                    Colon@11..12 ":"
+                    Space@12..13 " "
+                    NamedTypeAnnotation@13..14
+                      Ident@13..14
+                        Identifier@13..14 "T"
+                  RightParen@14..15 ")"
+                  Space@15..16 " "
+                  Arrow@16..18 "->"
+                  Space@18..19 " "
+                  NamedTypeAnnotation@19..20
+                    Ident@19..20
+                      Identifier@19..20 "T"
+                  Space@20..21 " "
+                  WhereKw@21..26 "where"
+                  Space@26..27 " "
+                  TypeBound@27..32
+                    Ident@27..28
+                      Identifier@27..28 "T"
+                    Colon@28..29 ":"
+                    Space@29..30 " "
+                    TraitRef@30..32
+                      Ident@30..32
+                        Identifier@30..32 "Eq"
+                  Space@32..33 " "
+                  BlockStmt@33..45
+                    LeftCurly@33..34 "{"
+                    Space@34..35 " "
+                    ReturnStmt@35..43
+                      ReturnKw@35..41 "return"
+                      Space@41..42 " "
+                      IdentExpr@42..43
+                        Ident@42..43
+                          Identifier@42..43 "x"
+                    Space@43..44 " "
+                    RightCurly@44..45 "}"
             "#]],
         );
     }
@@ -1226,9 +1226,9 @@ mod tests {
     #[test]
     fn impl_trait_for_type() {
         check(
-            "impl Show for Point { fn show(self) { return self } }",
+            "impl Show for Point { def show(self) { return self } }",
             expect![[r#"
-                ImplStmt@0..53
+                ImplStmt@0..54
                   ImplKw@0..4 "impl"
                   Space@4..5 " "
                   TraitRef@5..9
@@ -1242,30 +1242,30 @@ mod tests {
                   Space@19..20 " "
                   LeftCurly@20..21 "{"
                   Space@21..22 " "
-                  FuncStmt@22..51
-                    FnKw@22..24 "fn"
-                    Space@24..25 " "
-                    Ident@25..29
-                      Identifier@25..29 "show"
-                    LeftParen@29..30 "("
-                    FuncParam@30..34
-                      Ident@30..34
-                        Identifier@30..34 "self"
-                    RightParen@34..35 ")"
-                    Space@35..36 " "
-                    BlockStmt@36..51
-                      LeftCurly@36..37 "{"
-                      Space@37..38 " "
-                      ReturnStmt@38..49
-                        ReturnKw@38..44 "return"
-                        Space@44..45 " "
-                        IdentExpr@45..49
-                          Ident@45..49
-                            Identifier@45..49 "self"
-                      Space@49..50 " "
-                      RightCurly@50..51 "}"
-                  Space@51..52 " "
-                  RightCurly@52..53 "}"
+                  FuncStmt@22..52
+                    DefKw@22..25 "def"
+                    Space@25..26 " "
+                    Ident@26..30
+                      Identifier@26..30 "show"
+                    LeftParen@30..31 "("
+                    FuncParam@31..35
+                      Ident@31..35
+                        Identifier@31..35 "self"
+                    RightParen@35..36 ")"
+                    Space@36..37 " "
+                    BlockStmt@37..52
+                      LeftCurly@37..38 "{"
+                      Space@38..39 " "
+                      ReturnStmt@39..50
+                        ReturnKw@39..45 "return"
+                        Space@45..46 " "
+                        IdentExpr@46..50
+                          Ident@46..50
+                            Identifier@46..50 "self"
+                      Space@50..51 " "
+                      RightCurly@51..52 "}"
+                  Space@52..53 " "
+                  RightCurly@53..54 "}"
             "#]],
         );
     }
@@ -1273,9 +1273,9 @@ mod tests {
     #[test]
     fn trait_stmt() {
         check(
-            "trait Show { fn show(self) -> str }",
+            "trait Show { def show(self) -> str }",
             expect![[r#"
-                TraitStmt@0..35
+                TraitStmt@0..36
                   TraitKw@0..5 "trait"
                   Space@5..6 " "
                   Ident@6..10
@@ -1283,24 +1283,24 @@ mod tests {
                   Space@10..11 " "
                   LeftCurly@11..12 "{"
                   Space@12..13 " "
-                  FuncStmt@13..33
-                    FnKw@13..15 "fn"
-                    Space@15..16 " "
-                    Ident@16..20
-                      Identifier@16..20 "show"
-                    LeftParen@20..21 "("
-                    FuncParam@21..25
-                      Ident@21..25
-                        Identifier@21..25 "self"
-                    RightParen@25..26 ")"
-                    Space@26..27 " "
-                    Arrow@27..29 "->"
-                    Space@29..30 " "
-                    NamedTypeAnnotation@30..33
-                      Ident@30..33
-                        Identifier@30..33 "str"
-                  Space@33..34 " "
-                  RightCurly@34..35 "}"
+                  FuncStmt@13..34
+                    DefKw@13..16 "def"
+                    Space@16..17 " "
+                    Ident@17..21
+                      Identifier@17..21 "show"
+                    LeftParen@21..22 "("
+                    FuncParam@22..26
+                      Ident@22..26
+                        Identifier@22..26 "self"
+                    RightParen@26..27 ")"
+                    Space@27..28 " "
+                    Arrow@28..30 "->"
+                    Space@30..31 " "
+                    NamedTypeAnnotation@31..34
+                      Ident@31..34
+                        Identifier@31..34 "str"
+                  Space@34..35 " "
+                  RightCurly@35..36 "}"
             "#]],
         );
     }

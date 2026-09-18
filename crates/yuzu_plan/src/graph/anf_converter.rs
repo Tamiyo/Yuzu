@@ -980,7 +980,7 @@ mod tests {
     fn unreduced_call_in_a_column_is_reported() {
         check_error(
             &format!(
-                "{TABLES}fn f(n: int64) -> int64 {{ return n * f(n - 1) }}\nfrom t |> select f(3) as v"
+                "{TABLES}def f(n: int64) -> int64 {{ return n * f(n - 1) }}\nfrom t |> select f(3) as v"
             ),
             "call to `f` could not be fully reduced",
         );
@@ -1224,7 +1224,7 @@ mod tests {
     fn extern_calls_become_external_plan_calls() {
         check(
             &format!(
-                "{TABLES}external fn clamp(x: int32, low: int32) -> int32\nexternal agg fn median(x: int32) -> float64\nfrom t |> aggregate median(a) as m group by b |> select m, clamp(b, 1) as c"
+                "{TABLES}external def clamp(x: int32, low: int32) -> int32\nexternal agg def median(x: int32) -> float64\nfrom t |> aggregate median(a) as m group by b |> select m, clamp(b, 1) as c"
             ),
             expect![[r#"
                 select [#1, clamp(#0, 1i32) as c]
@@ -1238,7 +1238,7 @@ mod tests {
     fn limit_needs_a_constant_count() {
         check_error(
             &format!(
-                "{TABLES}fn f(n: int64) -> int64 {{ return n * f(n - 1) }}\nfrom t |> limit f(3)"
+                "{TABLES}def f(n: int64) -> int64 {{ return n * f(n - 1) }}\nfrom t |> limit f(3)"
             ),
             "`limit` needs a row count that is known at compile time",
         );

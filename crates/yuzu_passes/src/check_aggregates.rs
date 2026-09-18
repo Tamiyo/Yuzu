@@ -217,8 +217,8 @@ mod tests {
 struct Row { a: int64, rating: float64 }
 table t = Row
 
-fn double(x: int64) -> int64 { return x * 2 }
-agg fn spread(x: float64) -> float64 { return max(x) - min(x) }
+def double(x: int64) -> int64 { return x * 2 }
+agg def spread(x: float64) -> float64 { return max(x) - min(x) }
 
 from t
 |> where a > 1
@@ -235,23 +235,23 @@ from t
 struct Row { a: int64 }
 table t = Row
 
-fn double(x: int64) -> int64 { return sum(x) }
+def double(x: int64) -> int64 { return sum(x) }
 
 from t
 |> where sum(a) > 1
     "#,
             expect![[r#"
-            error: aggregate function `sum` can only be used in an `aggregate` item
-             --> test.yz:5:39
-              |
-            5 | fn double(x: int64) -> int64 { return sum(x) }
-              |                                       ^
+                error: aggregate function `sum` can only be used in an `aggregate` item
+                 --> test.yz:5:40
+                  |
+                5 | def double(x: int64) -> int64 { return sum(x) }
+                  |                                        ^
 
-            error: aggregate function `sum` can only be used in an `aggregate` item
-             --> test.yz:8:10
-              |
-            8 | |> where sum(a) > 1
-              |          ^
+                error: aggregate function `sum` can only be used in an `aggregate` item
+                 --> test.yz:8:10
+                  |
+                8 | |> where sum(a) > 1
+                  |          ^
             "#]],
         );
     }
@@ -265,7 +265,7 @@ from t
 struct Row { a: int64 }
 table t = Row
 
-external agg fn median(x: int64) -> float64
+external agg def median(x: int64) -> float64
 
 from t
 |> aggregate median(a) as m group by a
@@ -324,17 +324,17 @@ from t
 struct Row { rating: float64 }
 table t = Row
 
-agg fn spread(x: float64) -> float64 { return spread(x) }
+agg def spread(x: float64) -> float64 { return spread(x) }
 
 from t
 |> aggregate spread(rating) as r group by rating
     "#,
             expect![[r#"
-            error: `spread` is an `agg fn` and cannot call itself
-             --> test.yz:5:47
-              |
-            5 | agg fn spread(x: float64) -> float64 { return spread(x) }
-              |                                               ^
+                error: `spread` is an `agg fn` and cannot call itself
+                 --> test.yz:5:48
+                  |
+                5 | agg def spread(x: float64) -> float64 { return spread(x) }
+                  |                                                ^
             "#]],
         );
     }
@@ -346,7 +346,7 @@ from t
 struct Row { rating: float64 }
 table t = Row
 
-agg fn spread(x: float64) -> float64 { return x }
+agg def spread(x: float64) -> float64 { return x }
 
 from t
 |> aggregate spread(rating) as r group by rating
@@ -355,7 +355,7 @@ from t
                 error: an `agg fn` must use an aggregate function
                  --> test.yz:5:1
                   |
-                5 | agg fn spread(x: float64) -> float64 { return x }
+                5 | agg def spread(x: float64) -> float64 { return x }
                   | ^
             "#]],
         );

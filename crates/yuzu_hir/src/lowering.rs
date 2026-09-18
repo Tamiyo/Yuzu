@@ -1093,7 +1093,7 @@ mod tests {
     #[test]
     fn func_stmt() {
         check(
-            "fn add(x: int, y: int) -> int { return x }",
+            "def add(x: int, y: int) -> int { return x }",
             expect![[r#"
             Func "add"
               param "x":
@@ -1113,7 +1113,7 @@ mod tests {
     #[test]
     fn generic_func_with_bound() {
         check(
-            "fn id[T](x: T) -> T where T: Eq { return x }",
+            "def id[T](x: T) -> T where T: Eq { return x }",
             expect![[r#"
             Func "id"
               type_param "T"
@@ -1134,7 +1134,7 @@ mod tests {
     #[test]
     fn impl_stmt() {
         check(
-            "impl Point { fn x(self) { return self } }",
+            "impl Point { def x(self) { return self } }",
             expect![[r#"
                 Impl "Point"
                   Func "x"
@@ -1153,7 +1153,7 @@ mod tests {
     #[test]
     fn impl_trait_for_stmt() {
         check(
-            "impl Show for Point { fn show(self) { return self } }",
+            "impl Show for Point { def show(self) { return self } }",
             expect![[r#"
                 Impl "Show" for "Point"
                   Func "show"
@@ -1172,7 +1172,7 @@ mod tests {
     #[test]
     fn self_receiver_param() {
         check(
-            "impl Counter { fn value(self) -> int { return 0 } }",
+            "impl Counter { def value(self) -> int { return 0 } }",
             expect![[r#"
                 Impl "Counter"
                   Func "value"
@@ -1191,7 +1191,7 @@ mod tests {
     #[test]
     fn trait_stmt() {
         check(
-            "trait Show { fn show(self) -> str }",
+            "trait Show { def show(self) -> str }",
             expect![[r#"
                 Trait "Show"
                   Func "show"
@@ -1207,7 +1207,7 @@ mod tests {
     #[test]
     fn trait_method_without_body() {
         check(
-            "trait Greet { fn hello(self) }",
+            "trait Greet { def hello(self) }",
             expect![[r#"
             Trait "Greet"
               Func "hello"
@@ -1311,7 +1311,7 @@ mod tests {
     #[test]
     fn func_without_return_annotation() {
         check(
-            "fn f() { return 1 }",
+            "def f() { return 1 }",
             expect![[r#"
             Func "f"
               ret:
@@ -1353,7 +1353,7 @@ mod tests {
     #[test]
     fn return_without_value() {
         check(
-            "fn f() { return }",
+            "def f() { return }",
             expect![[r#"
             Func "f"
               ret:
@@ -1775,7 +1775,7 @@ mod tests {
     #[test]
     fn external_func_stmts() {
         check(
-            "external fn upper(s: str) -> str\nexternal agg fn median(x: int64) -> float64",
+            "external def upper(s: str) -> str\nexternal agg def median(x: int64) -> float64",
             expect![[r#"
                 External Func "upper"
                   param "s":
@@ -1796,7 +1796,7 @@ mod tests {
     #[test]
     fn agg_func_stmt() {
         check(
-            "agg fn spread(x: int64) -> int64 { return sum(x) }",
+            "agg def spread(x: int64) -> int64 { return sum(x) }",
             expect![[r#"
                 Agg Func "spread"
                   param "x":
@@ -2064,7 +2064,7 @@ mod tests {
     #[test]
     fn missing_param_type() {
         check(
-            "fn f(x) { return x }",
+            "def f(x) { return x }",
             expect![[r#"
             Func "f"
               param "x":

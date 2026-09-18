@@ -263,7 +263,7 @@ mod tests {
     fn assign_of_runtime_computation() {
         check(
             &format!(
-                "{TABLE}fn fact(n: int64) -> int64 {{ return n * fact(n - 1) }}\nlet mut a = 1\na = fact(3)\nfrom t |> select a as w"
+                "{TABLE}def fact(n: int64) -> int64 {{ return n * fact(n - 1) }}\nlet mut a = 1\na = fact(3)\nfrom t |> select a as w"
             ),
             expect![[r#"
                 struct Row { a, b }
@@ -286,7 +286,7 @@ mod tests {
     fn runtime_residue_binds_at_root() {
         check(
             &format!(
-                "{TABLE}fn fact(n: int64) -> int64 {{ return n * fact(n - 1) }}\nlet v = fact(3)\nfrom t |> select v as w"
+                "{TABLE}def fact(n: int64) -> int64 {{ return n * fact(n - 1) }}\nlet v = fact(3)\nfrom t |> select v as w"
             ),
             expect![[r#"
                 struct Row { a, b }
@@ -309,7 +309,7 @@ mod tests {
     fn void_function_effects_fold_into_environment() {
         check(
             &format!(
-                "{TABLE}let mut a = 1\nfn bump() {{ a = 2 }}\nbump()\nfrom t |> select a as w"
+                "{TABLE}let mut a = 1\ndef bump() {{ a = 2 }}\nbump()\nfrom t |> select a as w"
             ),
             expect![[r#"
                 struct Row { a, b }
@@ -324,7 +324,7 @@ mod tests {
     fn void_call_chain_absorbs() {
         check(
             &format!(
-                "{TABLE}let mut a = 1\nfn nested() {{ a = 2 }}\nfn outer() {{ nested() }}\nouter()\nfrom t |> select a as w"
+                "{TABLE}let mut a = 1\ndef nested() {{ a = 2 }}\ndef outer() {{ nested() }}\nouter()\nfrom t |> select a as w"
             ),
             expect![[r#"
                 struct Row { a, b }
@@ -339,7 +339,7 @@ mod tests {
     fn repeated_void_calls_accumulate() {
         check(
             &format!(
-                "{TABLE}let mut a = 1\nfn inc() {{ a = a + 1 }}\ninc()\ninc()\ninc()\nfrom t |> select a as w"
+                "{TABLE}let mut a = 1\ndef inc() {{ a = a + 1 }}\ninc()\ninc()\ninc()\nfrom t |> select a as w"
             ),
             expect![[r#"
                 struct Row { a, b }
@@ -354,7 +354,7 @@ mod tests {
     fn function_with_effect_and_value() {
         check(
             &format!(
-                "{TABLE}let mut a = 1\nfn bump() -> int64 {{ a = a + 1\nreturn a }}\nlet v = bump()\nfrom t |> select a as x, v as y"
+                "{TABLE}let mut a = 1\ndef bump() -> int64 {{ a = a + 1\nreturn a }}\nlet v = bump()\nfrom t |> select a as x, v as y"
             ),
             expect![[r#"
                 struct Row { a, b }
@@ -368,7 +368,7 @@ mod tests {
     #[test]
     fn recursive_void_call_is_kept() {
         check(
-            &format!("{TABLE}fn r() {{ r() }}\nr()\nfrom t |> select a"),
+            &format!("{TABLE}def r() {{ r() }}\nr()\nfrom t |> select a"),
             expect![[r#"
                 struct Row { a, b }
                 table t
@@ -387,7 +387,7 @@ mod tests {
     fn code_after_return_is_unreachable() {
         check(
             &format!(
-                "{TABLE}let mut a = 1\nfn f() -> int64 {{ return 1\na = 2\nreturn 3 }}\nlet v = f()\nfrom t |> select a as x, v as y"
+                "{TABLE}let mut a = 1\ndef f() -> int64 {{ return 1\na = 2\nreturn 3 }}\nlet v = f()\nfrom t |> select a as x, v as y"
             ),
             expect![[r#"
                 struct Row { a, b }

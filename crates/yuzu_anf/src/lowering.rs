@@ -831,7 +831,7 @@ mod tests {
     #[test]
     fn func_call_references_function_and_arg() {
         check(
-            "fn add_one(x: int32) -> int32 { return x + 1 }\nlet a = add_one(7)",
+            "def add_one(x: int32) -> int32 { return x + 1 }\nlet a = add_one(7)",
             expect![[r#"
                 fn add_one(x) {
                   let %t0 = add(x, 1i32)
@@ -878,7 +878,7 @@ mod tests {
     #[test]
     fn return_with_value_in_func() {
         check(
-            "fn f(x: int32) -> int32 { return x }",
+            "def f(x: int32) -> int32 { return x }",
             expect![[r#"
                 fn f(x) {
                   return x
@@ -890,7 +890,7 @@ mod tests {
     #[test]
     fn bare_return_in_func() {
         check(
-            "fn f() { return }",
+            "def f() { return }",
             expect![[r#"
             fn f() {
               return
@@ -902,7 +902,7 @@ mod tests {
     #[test]
     fn expr_statement_calls_function() {
         check(
-            "fn f(x: int32) -> int32 { return x }\nf(3)",
+            "def f(x: int32) -> int32 { return x }\nf(3)",
             expect![[r#"
                 fn f(x) {
                   return x
@@ -956,7 +956,7 @@ mod tests {
     #[test]
     fn func_with_multiple_params_body_and_return() {
         check(
-            "fn add(x: int32, y: int32) -> int32 { return x + y }",
+            "def add(x: int32, y: int32) -> int32 { return x + y }",
             expect![[r#"
                 fn add(x, y) {
                   let %t0 = add(x, y)
@@ -1181,7 +1181,7 @@ mod tests {
     #[test]
     fn func_call_with_multiple_args() {
         check(
-            "fn add(x: int32, y: int32) -> int32 { return x + y }\nlet a = add(1, 2)",
+            "def add(x: int32, y: int32) -> int32 { return x + y }\nlet a = add(1, 2)",
             expect![[r#"
                 fn add(x, y) {
                   let %t0 = add(x, y)
@@ -1195,7 +1195,7 @@ mod tests {
     #[test]
     fn func_name_resolves_to_funcref() {
         check(
-            "fn f(x: int32) -> int32 { return x }\nlet a = f(1)",
+            "def f(x: int32) -> int32 { return x }\nlet a = f(1)",
             expect![[r#"
                 fn f(x) {
                   return x
@@ -1319,7 +1319,7 @@ mod tests {
     #[test]
     fn param_shadows_outer_binding() {
         check(
-            "let x = 1\nfn f(x: int32) -> int32 { return x }",
+            "let x = 1\ndef f(x: int32) -> int32 { return x }",
             expect![[r#"
                 let x = 1i64
                 fn f(x) {

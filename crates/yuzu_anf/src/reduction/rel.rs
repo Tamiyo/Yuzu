@@ -164,7 +164,7 @@ mod tests {
     fn agg_fn_inlines_to_the_handwritten_body() {
         let handwritten = &format!("{TABLE}from t |> aggregate max(a) - min(a) as v group by b");
         let through_fn = &format!(
-            "{TABLE}agg fn spread(x: int32) -> int32 {{ return max(x) - min(x) }}\nfrom t |> aggregate spread(a) as v group by b"
+            "{TABLE}agg def spread(x: int32) -> int32 {{ return max(x) - min(x) }}\nfrom t |> aggregate spread(a) as v group by b"
         );
         check(
             handwritten,
@@ -203,7 +203,7 @@ mod tests {
     fn extern_call_survives_with_folded_arguments() {
         check(
             &format!(
-                "{TABLE}external fn clamp(x: int32, low: int32) -> int32\nfrom t |> select clamp(a, 2 + 3) as v"
+                "{TABLE}external def clamp(x: int32, low: int32) -> int32\nfrom t |> select clamp(a, 2 + 3) as v"
             ),
             expect![[r#"
                 struct Row { a, b }
@@ -231,7 +231,7 @@ mod tests {
     fn aggregate_inlines_a_scalar_function_in_measure_arguments() {
         check(
             &format!(
-                "{TABLE}fn double(x: int32) -> int32 {{ return x * 2 }}\nfrom t |> aggregate min(double(a)) as v"
+                "{TABLE}def double(x: int32) -> int32 {{ return x * 2 }}\nfrom t |> aggregate min(double(a)) as v"
             ),
             expect![[r#"
                 struct Row { a, b }

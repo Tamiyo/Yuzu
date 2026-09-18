@@ -724,7 +724,7 @@ mod tests {
             r#"
 struct Row { a: int64, b: int64 }
 table t = Row
-fn f(x: int64) -> int64 { return x }
+def f(x: int64) -> int64 { return x }
 
 from t
 |> where a > 10

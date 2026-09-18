@@ -94,6 +94,9 @@ pub enum TokenKind {
     #[token("by", priority = 1)]
     ByKw,
 
+    #[token("def", priority = 1)]
+    DefKw,
+
     #[token("distinct", priority = 1)]
     DistinctKw,
 
@@ -105,9 +108,6 @@ pub enum TokenKind {
 
     #[token("external", priority = 1)]
     ExternalKw,
-
-    #[token("fn", priority = 1)]
-    FnKw,
 
     #[token("for", priority = 1)]
     ForKw,
@@ -270,11 +270,11 @@ impl std::fmt::Display for TokenKind {
             TokenKind::AndKw => "and",
             TokenKind::AsKw => "as",
             TokenKind::ByKw => "by",
+            TokenKind::DefKw => "def",
             TokenKind::DistinctKw => "distinct",
             TokenKind::DropKw => "drop",
             TokenKind::ExtendKw => "extend",
             TokenKind::ExternalKw => "external",
-            TokenKind::FnKw => "fn",
             TokenKind::ForKw => "for",
             TokenKind::FromKw => "from",
             TokenKind::FullKw => "full",
@@ -356,11 +356,11 @@ mod tests {
             (TokenKind::AndKw, "and"),
             (TokenKind::AsKw, "as"),
             (TokenKind::ByKw, "by"),
+            (TokenKind::DefKw, "def"),
             (TokenKind::DistinctKw, "distinct"),
             (TokenKind::DropKw, "drop"),
             (TokenKind::ExtendKw, "extend"),
             (TokenKind::ExternalKw, "external"),
-            (TokenKind::FnKw, "fn"),
             (TokenKind::ForKw, "for"),
             (TokenKind::FromKw, "from"),
             (TokenKind::FullKw, "full"),

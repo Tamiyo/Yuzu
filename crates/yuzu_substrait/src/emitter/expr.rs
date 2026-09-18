@@ -138,7 +138,7 @@ mod tests {
     fn reports_a_call_that_could_not_be_reduced() {
         check_error(
             &format!(
-                "{TABLE}fn fact(n: int64) -> int64 {{ return n * fact(n - 1) }}\nfrom t |> select fact(3) as v"
+                "{TABLE}def fact(n: int64) -> int64 {{ return n * fact(n - 1) }}\nfrom t |> select fact(3) as v"
             ),
             expect!["call to `fact` could not be fully reduced"],
         );
@@ -268,7 +268,7 @@ mod tests {
     fn reports_an_unreduced_column_dependency() {
         check_error(
             &format!(
-                "{TABLE}fn fact(n: int64) -> int64 {{ return n * fact(n - 1) }}\nlet v = fact(3)\nfrom t |> select v as w"
+                "{TABLE}def fact(n: int64) -> int64 {{ return n * fact(n - 1) }}\nlet v = fact(3)\nfrom t |> select v as w"
             ),
             expect!["query column depends on a value that could not be fully reduced"],
         );

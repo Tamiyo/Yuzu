@@ -2097,7 +2097,7 @@ mod tests {
 
     #[test]
     fn src_func_ok() {
-        check_src("fn f(x: int64) -> int64 { return x }", expect![""]);
+        check_src("def f(x: int64) -> int64 { return x }", expect![""]);
     }
 
     // --- infer_stmt: let ---
@@ -2164,7 +2164,7 @@ mod tests {
     #[test]
     fn src_assign_field_of_non_place_base() {
         check_src(
-            "struct S { x: int64 }\nfn g() -> S { return S { x: 0 } }\ng().x = 1",
+            "struct S { x: int64 }\ndef g() -> S { return S { x: 0 } }\ng().x = 1",
             expect![[r#"
                 cannot assign to immutable field `x`
                 cannot assign to this expression"#]],
@@ -2175,13 +2175,13 @@ mod tests {
 
     #[test]
     fn src_return_matching_ok() {
-        check_src("fn f() -> int64 { return 0 }", expect![""]);
+        check_src("def f() -> int64 { return 0 }", expect![""]);
     }
 
     #[test]
     fn src_return_coerce_widens() {
         check_src(
-            "fn f() -> int64 { let a: int32 = 0\nreturn a }",
+            "def f() -> int64 { let a: int32 = 0\nreturn a }",
             expect![""],
         );
     }
@@ -2189,20 +2189,20 @@ mod tests {
     #[test]
     fn src_return_mismatch() {
         check_src(
-            "fn f() -> int64 { return true }",
+            "def f() -> int64 { return true }",
             expect!["value of type `Bool` is not assignable to return type `Int64`"],
         );
     }
 
     #[test]
     fn src_return_without_value_unit_ok() {
-        check_src("fn f() { return }", expect![""]);
+        check_src("def f() { return }", expect![""]);
     }
 
     #[test]
     fn src_return_without_value_nonunit() {
         check_src(
-            "fn f() -> int64 { return }",
+            "def f() -> int64 { return }",
             expect!["value of type `Unit` is not assignable to return type `Int64`"],
         );
     }
@@ -2246,7 +2246,7 @@ mod tests {
     #[test]
     fn src_func_call_ok() {
         check_src(
-            "fn f(x: int64) -> int64 { return x }\nlet r: int64 = f(0)",
+            "def f(x: int64) -> int64 { return x }\nlet r: int64 = f(0)",
             expect![""],
         );
     }
@@ -2262,7 +2262,7 @@ mod tests {
     #[test]
     fn src_call_too_many_args() {
         check_src(
-            "fn f(x: int64) -> int64 { return x }\nf(0, 1)",
+            "def f(x: int64) -> int64 { return x }\nf(0, 1)",
             expect!["expected 1 argument(s), found 2"],
         );
     }
@@ -2270,7 +2270,7 @@ mod tests {
     #[test]
     fn src_call_too_few_args() {
         check_src(
-            "fn f(x: int64) -> int64 { return x }\nf()",
+            "def f(x: int64) -> int64 { return x }\nf()",
             expect!["expected 1 argument(s), found 0"],
         );
     }
@@ -2278,7 +2278,7 @@ mod tests {
     #[test]
     fn src_call_arg_not_assignable() {
         check_src(
-            "fn f(x: bool) -> bool { return x }\nf(0)",
+            "def f(x: bool) -> bool { return x }\nf(0)",
             expect!["argument of type `Int64` is not assignable to parameter of type `Bool`"],
         );
     }
@@ -2757,7 +2757,7 @@ mod tests {
     }
 
     const EXTERNALS: &str =
-        "external fn upper(s: str) -> str\nexternal agg fn median(x: int64) -> float64\n";
+        "external def upper(s: str) -> str\nexternal agg def median(x: int64) -> float64\n";
 
     #[test]
     fn src_external_scalar_calls_anywhere() {
@@ -2951,7 +2951,7 @@ mod tests {
     fn src_aggregate_user_fn_shadows_a_builtin() {
         check_src(
             &format!(
-                "{TABLE}fn sum(x: int64) -> int64 {{ return x }}\nlet q = from t |> select sum(a) as v"
+                "{TABLE}def sum(x: int64) -> int64 {{ return x }}\nlet q = from t |> select sum(a) as v"
             ),
             expect![""],
         );
@@ -2961,7 +2961,7 @@ mod tests {
     fn src_agg_fn_used_in_an_aggregate() {
         check_src(
             &format!(
-                "{TABLE}agg fn spread(x: int64) -> int64 {{ return max(x) - min(x) }}\nlet q = from t |> aggregate spread(a) as v group by active"
+                "{TABLE}agg def spread(x: int64) -> int64 {{ return max(x) - min(x) }}\nlet q = from t |> aggregate spread(a) as v group by active"
             ),
             expect![""],
         );
@@ -2971,7 +2971,7 @@ mod tests {
     fn src_agg_fn_outside_an_aggregate() {
         check_src(
             &format!(
-                "{TABLE}agg fn spread(x: int64) -> int64 {{ return max(x) - min(x) }}\nlet q = from t |> select spread(a) as v"
+                "{TABLE}agg def spread(x: int64) -> int64 {{ return max(x) - min(x) }}\nlet q = from t |> select spread(a) as v"
             ),
             expect!["aggregate function `spread` can only be used in an `aggregate` item"],
         );
@@ -2981,7 +2981,7 @@ mod tests {
     fn src_agg_fn_cannot_nest_in_an_aggregate() {
         check_src(
             &format!(
-                "{TABLE}agg fn spread(x: int64) -> int64 {{ return max(x) - min(x) }}\nlet q = from t |> aggregate sum(spread(a)) as v"
+                "{TABLE}agg def spread(x: int64) -> int64 {{ return max(x) - min(x) }}\nlet q = from t |> aggregate sum(spread(a)) as v"
             ),
             expect!["aggregate function `spread` cannot be nested in another aggregate"],
         );
@@ -2990,7 +2990,7 @@ mod tests {
     #[test]
     fn src_group_value_cannot_reenter_an_aggregate() {
         check_src(
-            &format!("{TABLE}agg fn sneaky(x: int64) -> int64 {{ let m = max(x) return sum(m) }}"),
+            &format!("{TABLE}agg def sneaky(x: int64) -> int64 {{ let m = max(x) return sum(m) }}"),
             expect![
                 "`m` is a group-level value and cannot be used inside an aggregate's arguments"
             ],
@@ -3000,7 +3000,7 @@ mod tests {
     #[test]
     fn src_agg_fn_cannot_call_itself() {
         check_src(
-            &format!("{TABLE}agg fn bad(x: int64) -> int64 {{ return sum(x) + bad(x) }}"),
+            &format!("{TABLE}agg def bad(x: int64) -> int64 {{ return sum(x) + bad(x) }}"),
             expect!["`bad` is an `agg fn` and cannot call itself"],
         );
     }
@@ -3008,7 +3008,7 @@ mod tests {
     #[test]
     fn src_agg_fn_needs_an_aggregate_call() {
         check_src(
-            &format!("{TABLE}agg fn nothing(x: int64) -> int64 {{ return x + 1 }}"),
+            &format!("{TABLE}agg def nothing(x: int64) -> int64 {{ return x + 1 }}"),
             expect![[r#"
                 parameter `x` can only be used inside an aggregate function's arguments
                 an `agg fn` must use an aggregate function"#]],
@@ -3018,7 +3018,7 @@ mod tests {
     #[test]
     fn src_agg_fn_param_at_group_level() {
         check_src(
-            &format!("{TABLE}agg fn off(x: int64) -> int64 {{ return sum(x) + x }}"),
+            &format!("{TABLE}agg def off(x: int64) -> int64 {{ return sum(x) + x }}"),
             expect!["parameter `x` can only be used inside an aggregate function's arguments"],
         );
     }
@@ -3026,7 +3026,7 @@ mod tests {
     #[test]
     fn src_plain_fn_cannot_aggregate() {
         check_src(
-            &format!("{TABLE}fn sneaky(x: int64) -> int64 {{ return sum(x) }}"),
+            &format!("{TABLE}def sneaky(x: int64) -> int64 {{ return sum(x) }}"),
             expect!["aggregate function `sum` can only be used in an `aggregate` item"],
         );
     }
@@ -3035,7 +3035,7 @@ mod tests {
     fn src_agg_fn_is_not_a_value() {
         check_src(
             &format!(
-                "{TABLE}agg fn spread(x: int64) -> int64 {{ return max(x) - min(x) }}\nlet q = from t |> select spread as v"
+                "{TABLE}agg def spread(x: int64) -> int64 {{ return max(x) - min(x) }}\nlet q = from t |> select spread as v"
             ),
             expect!["`spread` is an aggregate function, not a value"],
         );

@@ -184,7 +184,7 @@ mod tests {
         let mut sources = SourceMap::new();
         sources.add(
             "prelude.yz".to_string(),
-            "external fn pow(a: int64, b: int64) -> int64\n".to_string(),
+            "external def pow(a: int64, b: int64) -> int64\n".to_string(),
         );
         let query = sources.add("query.yz".to_string(), "from t\n".to_string());
         let mut diagnostics = DiagnosticsEngine::new();
@@ -219,7 +219,7 @@ mod tests {
             error: `pow` is declared twice
              --> prelude.yz:1:13
               |
-            1 | external fn pow(a: int64, b: int64) -> int64
+            1 | external def pow(a: int64, b: int64) -> int64
               |             ^
 
             error: the query could not be built

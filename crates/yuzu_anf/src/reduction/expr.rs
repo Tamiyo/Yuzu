@@ -337,7 +337,7 @@ mod tests {
     fn inlines_nested_calls() {
         check(
             &format!(
-                "{TABLE}fn inc(x: int32) -> int32 {{ return x + 1 }}\nfn twice(x: int32) -> int32 {{ return inc(inc(x)) }}\nfrom t |> select twice(10) as v"
+                "{TABLE}def inc(x: int32) -> int32 {{ return x + 1 }}\ndef twice(x: int32) -> int32 {{ return inc(inc(x)) }}\nfrom t |> select twice(10) as v"
             ),
             expect![[r#"
                 struct Row { a, b }
@@ -352,7 +352,7 @@ mod tests {
     fn inlines_function_into_column_and_sweeps_it() {
         check(
             &format!(
-                "{TABLE}fn double(x: int32) -> int32 {{ return x * 2 }}\nlet q = from t |> select double(b) as db"
+                "{TABLE}def double(x: int32) -> int32 {{ return x * 2 }}\nlet q = from t |> select double(b) as db"
             ),
             expect![[r#"
                 struct Row { a, b }
@@ -367,7 +367,7 @@ mod tests {
     fn inlined_function_resolves_closed_over_binding() {
         check(
             &format!(
-                "{TABLE}let base = 5\nfn add_base(x: int64) -> int64 {{ return x + base }}\nfrom t |> select add_base(10) as v"
+                "{TABLE}let base = 5\ndef add_base(x: int64) -> int64 {{ return x + base }}\nfrom t |> select add_base(10) as v"
             ),
             expect![[r#"
                 struct Row { a, b }
@@ -382,7 +382,7 @@ mod tests {
     fn recursive_call_is_left_in_place() {
         check(
             &format!(
-                "{TABLE}fn fact(n: int64) -> int64 {{ return n * fact(n - 1) }}\nfrom t |> select fact(3) as v"
+                "{TABLE}def fact(n: int64) -> int64 {{ return n * fact(n - 1) }}\nfrom t |> select fact(3) as v"
             ),
             expect![[r#"
                 struct Row { a, b }
@@ -403,7 +403,7 @@ mod tests {
     fn shadowed_nested_function_inlines_by_identity() {
         check(
             &format!(
-                "{TABLE}fn f() -> int64 {{ return 1 }}\nfn g() -> int64 {{ fn f() -> int64 {{ return 2 }}\nreturn f() }}\nfrom t |> select g() as v"
+                "{TABLE}def f() -> int64 {{ return 1 }}\ndef g() -> int64 {{ def f() -> int64 {{ return 2 }}\nreturn f() }}\nfrom t |> select g() as v"
             ),
             expect![[r#"
                 struct Row { a, b }
@@ -417,7 +417,7 @@ mod tests {
     #[test]
     fn body_tail_expression_is_the_return_value() {
         check(
-            &format!("{TABLE}fn f() -> int64 {{ 5 }}\nfrom t |> select f() as w"),
+            &format!("{TABLE}def f() -> int64 {{ 5 }}\nfrom t |> select f() as w"),
             expect![[r#"
                 struct Row { a, b }
                 table t
