@@ -211,12 +211,10 @@ fn plan_through_mlir(
 ) -> Option<yuzu_substrait::Plan> {
     use melior::ir::operation::OperationLike;
 
-    let (name, source) = (sources.name(source_id), sources.text(source_id));
     let context = yuzu_mlir::context();
     let module = yuzu_passes::lower_ast_to_yzl(
         &context,
-        name,
-        source,
+        sources,
         source_id,
         diagnostics,
         &yuzu_types::Builtins,

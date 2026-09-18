@@ -9,7 +9,7 @@ use yuzu_ast::{AstNode, ast};
 use yuzu_diagnostics::diagnostics::Span;
 use yuzu_diagnostics::diagnostics::builder::DiagnosticBuilder;
 use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
-use yuzu_diagnostics::source_map::SourceId;
+use yuzu_diagnostics::source_map::{SourceId, SourceMap};
 use yuzu_lexer::lexer::{Lexer, Token};
 use yuzu_mlir::ext::BlockExt;
 use yuzu_mlir::ext::OperationExt;
@@ -26,25 +26,26 @@ use crate::lower_ast_to_yzl::symbols::SymbolTable;
 /// Returns `None` when the source has no root.
 pub fn lower_ast_to_yzl<'c>(
     context: &'c Context,
-    name: &str,
-    source: &str,
+    sources: &SourceMap,
     source_id: SourceId,
     diagnostics: &mut DiagnosticsEngine,
     registry: &dyn FunctionRegistry,
 ) -> Option<Module<'c>> {
-    let tokens: Vec<Token> = Lexer::new(source).collect();
+    let tokens: Vec<Token> = Lexer::new(sources.text(source_id)).collect();
     let syntax = yuzu_parser::parse(&tokens, diagnostics, source_id);
     let root = ast::Root::cast(syntax)?;
-    let mut converter = AstToYzl::new(context, name, source, source_id, diagnostics, registry);
+    let mut converter = AstToYzl::new(context, sources, source_id, diagnostics, registry);
     Some(converter.convert(&root))
 }
 
 struct AstToYzl<'c, 'd> {
     context: &'c Context,
-    name: String,
+    /// Every file the compile read, and which of them is being converted.
+    /// The name a location carries, the text being lexed and the identifier
+    /// a diagnostic gets all come from here, so none of them can disagree.
+    sources: &'d SourceMap,
     source_id: SourceId,
     diagnostics: &'d mut DiagnosticsEngine,
-    line_starts: Vec<usize>,
     symbols: SymbolTable<'c>,
     registry: &'d dyn FunctionRegistry,
     /// How many `let`s have taken a name something else already held. One
@@ -60,20 +61,16 @@ type Locals<'c, 'a> = Vec<Value<'c, 'a>>;
 impl<'c, 'd> AstToYzl<'c, 'd> {
     fn new(
         context: &'c Context,
-        name: &str,
-        source: &str,
+        sources: &'d SourceMap,
         source_id: SourceId,
         diagnostics: &'d mut DiagnosticsEngine,
         registry: &'d dyn FunctionRegistry,
     ) -> Self {
-        let mut line_starts = vec![0];
-        line_starts.extend(source.match_indices('\n').map(|(at, _)| at + 1));
         Self {
             context,
-            name: name.to_string(),
+            sources,
             source_id,
             diagnostics,
-            line_starts,
             symbols: SymbolTable::new(),
             registry,
             rebound: 0,
@@ -153,7 +150,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     /// Where a range starts, as the printer would show it.
     fn position(&self, range: text_size::TextRange) -> String {
         let (line, column) = self.line_col(range.start().into());
-        format!("{}:{line}:{column}", self.name)
+        format!("{}:{line}:{column}", self.name())
     }
 
     /// Reports and stands a `yzl.missing` value in for the hole.
@@ -186,16 +183,21 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
     fn location_at(&self, offset: usize) -> Location<'c> {
         let (line, column) = self.line_col(offset);
-        Location::new(self.context, &self.name, line, column)
+        Location::new(self.context, self.name(), line, column)
     }
 
     fn line_col(&self, offset: usize) -> (usize, usize) {
-        let line = self.line_starts.partition_point(|&start| start <= offset);
-        (line, offset - self.line_starts[line - 1] + 1)
+        let at = self.sources.line_col(self.source_id, offset);
+        (at.line, at.col)
+    }
+
+    /// The name of the file being converted, which is what a location says.
+    fn name(&self) -> &str {
+        self.sources.name(self.source_id)
     }
 
     fn convert(&mut self, root: &ast::Root) -> Module<'c> {
-        let module = Module::new(Location::new(self.context, &self.name, 1, 1));
+        let module = Module::new(Location::new(self.context, self.name(), 1, 1));
         let top = module.body();
         self.hoist(root);
         for stmt in root.stmts() {
@@ -246,8 +248,7 @@ pub(crate) mod test_support {
         let mut diagnostics = DiagnosticsEngine::new();
         let module = super::lower_ast_to_yzl(
             context,
-            name,
-            source,
+            &sources,
             source_id,
             &mut diagnostics,
             &yuzu_types::Builtins,
@@ -355,8 +356,7 @@ mod tests {
                     yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine::new();
                 match super::lower_ast_to_yzl(
                     &context,
-                    "corpus.yz",
-                    chunk,
+                    &sources,
                     source_id,
                     &mut diagnostics,
                     &yuzu_types::Builtins,

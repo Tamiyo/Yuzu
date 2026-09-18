@@ -138,8 +138,7 @@ pub(crate) mod test_support {
         let mut diagnostics = DiagnosticsEngine::new();
         let module = yuzu_passes::lower_ast_to_yzl(
             &context,
-            "test.yz",
-            source,
+            &sources,
             source_id,
             &mut diagnostics,
             &yuzu_types::Builtins,

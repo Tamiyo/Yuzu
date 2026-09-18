@@ -49,8 +49,7 @@ pub(crate) mod test_support {
         let mut diagnostics = DiagnosticsEngine::new();
         let module = crate::lower_ast_to_yzl(
             &context,
-            "test.yz",
-            source,
+            &sources,
             source_id,
             &mut diagnostics,
             &yuzu_types::Builtins,
@@ -92,8 +91,7 @@ pub(crate) mod test_support {
         let mut diagnostics = DiagnosticsEngine::new();
         let module = crate::lower_ast_to_yzl(
             &context,
-            "test.yz",
-            source,
+            &sources,
             source_id,
             &mut diagnostics,
             &yuzu_types::Builtins,
@@ -155,8 +153,7 @@ pub(crate) mod test_support {
         let mut diagnostics = DiagnosticsEngine::new();
         let module = crate::lower_ast_to_yzl(
             &context,
-            "test.yz",
-            source,
+            &sources,
             source_id,
             &mut diagnostics,
             &yuzu_types::Builtins,
