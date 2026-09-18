@@ -7,7 +7,7 @@ use yuzu_mlir::attributes::CalleeKind;
 use yuzu_mlir::ods::yzl;
 use yuzu_mlir::{ListType, ParamType, StructType};
 
-use crate::lower_ast_to_yzl::symbols::{Callable, Kind, Row};
+use crate::lower_ast_to_yzl::symbols::{Callable, Kind, Lookup, Reference, Row};
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 use yuzu_mlir::types;
 
@@ -534,7 +534,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 };
 
                 let value = self.convert_expr(block, locals, &expr);
-                self.bind_local(locals, name, value);
+                let mutable = binding.mutability() == ast::Mutability::Mutable;
+                self.bind_local(locals, name, value, mutable);
             }
             ast::Stmt::AssignStmt(assign) => {
                 let target = assign.target().and_then(|target| match target {
@@ -552,8 +553,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     return;
                 };
 
+                if !self.assignable(assign, name) {
+                    return;
+                }
+
                 let value = self.convert_expr(block, locals, &value);
-                self.bind_local(locals, name, value);
+                self.bind_local(locals, name, value, true);
             }
             ast::Stmt::ReturnStmt(ret) => {
                 let values: Vec<Value> = ret
@@ -583,8 +588,41 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
     /// The value goes in the traversal's stack, and the name goes in the
     /// scope, pointing at the slot it landed in.
-    fn bind_local<'a>(&mut self, locals: &mut Locals<'c, 'a>, name: &'c str, value: Value<'c, 'a>) {
-        self.symbols.bind_local(name, locals.len());
+    /// Whether an assignment may write this name. Assignment writes a
+    /// binding that is already there, which is what separates it from a
+    /// `let`: a second `let` shadows and needs no permission, while writing
+    /// the one already bound needs `mut`.
+    fn assignable(&mut self, node: &impl AstNode, name: &'c str) -> bool {
+        let message = match self.symbols.lookup(Reference::bare(name)) {
+            Lookup::Local { mutable: true, .. } => return true,
+            Lookup::Local { mutable: false, .. } => {
+                format!("`{name}` is not mutable; declare it with `let mut` to assign it")
+            }
+            // A parameter has no `mut` to give it, so there is nothing to
+            // say except that it cannot be written.
+            Lookup::Param(_) => format!("`{name}` is a parameter and cannot be assigned"),
+            Lookup::Column(_) | Lookup::Ambiguous | Lookup::NarrowedAway => {
+                format!("`{name}` is a column; `set` is how a query writes one")
+            }
+            Lookup::Let(_) => {
+                format!("`{name}` is a module-level binding and cannot be assigned")
+            }
+            Lookup::NotAValue(what) => format!("`{name}` is a {what}, not a binding"),
+            Lookup::Unknown => format!("unresolved identifier `{name}`"),
+        };
+
+        self.error(node, &message);
+        false
+    }
+
+    fn bind_local<'a>(
+        &mut self,
+        locals: &mut Locals<'c, 'a>,
+        name: &'c str,
+        value: Value<'c, 'a>,
+        mutable: bool,
+    ) {
+        self.symbols.bind_local(name, locals.len(), mutable);
         locals.push(value);
     }
 
@@ -897,6 +935,61 @@ external fn upper(s: str) -> str
         .assert_eq(&reported(
             &context,
             "struct Row { a: int64 }\nstruct Row { b: int64 }\ntable t = Row\n\nfrom t\n|> select a as x\n",
+        ));
+    }
+
+    /// Assignment writes a binding that is already there, and `mut` is what
+    /// permits it. A second `let` shadows instead, and needs no permission.
+    /// Both of these compiled silently before, which made `mut` a word that
+    /// meant nothing.
+    #[test]
+    fn assigning_a_binding_needs_mut() {
+        use crate::lower_ast_to_yzl::test_support::reported;
+
+        let context = yuzu_mlir::context();
+        expect![[r#"
+            error: `n` is not mutable; declare it with `let mut` to assign it
+             --> test.yz:6:5
+              |
+            6 |     n = n + 1
+              |     ^^^^^^^^^
+        "#]]
+        .assert_eq(&reported(
+            &context,
+            "struct Row { a: int64 }\ntable t = Row\n\nfn f(x: int64) -> int64 {\n    let n = 0\n    n = n + 1\n    return n\n}\n\nfrom t |> select f(a) as v\n",
+        ));
+    }
+
+    /// With `mut` the assignment stands, and the body folds to what it
+    /// computes.
+    #[test]
+    fn a_mutable_binding_may_be_assigned() {
+        let module = converted(
+            "struct Row { a: int64 }\ntable t = Row\n\nfn f(x: int64) -> int64 {\n    let mut n = 0\n    n = n + 1\n    return n\n}\n\nfrom t |> select f(a) as v\n",
+        );
+        assert!(
+            module.contains("yzl.return"),
+            "the body converts:\n{module}"
+        );
+    }
+
+    /// A parameter has no `mut` to give it, and a column is written by
+    /// `set`, so neither answers to an assignment.
+    #[test]
+    fn a_parameter_is_not_assignable() {
+        use crate::lower_ast_to_yzl::test_support::reported;
+
+        let context = yuzu_mlir::context();
+        expect![[r#"
+            error: `x` is a parameter and cannot be assigned
+             --> test.yz:5:5
+              |
+            5 |     x = 1
+              |     ^^^^^
+        "#]]
+        .assert_eq(&reported(
+            &context,
+            "struct Row { a: int64 }\ntable t = Row\n\nfn f(x: int64) -> int64 {\n    x = 1\n    return x\n}\n\nfrom t |> select f(a) as v\n",
         ));
     }
 

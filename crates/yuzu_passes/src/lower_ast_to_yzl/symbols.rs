@@ -206,6 +206,15 @@ impl Kind<'_> {
     }
 }
 
+/// A `let` in a function body: the name it binds, the slot the traversal put
+/// its value in, and whether an assignment may write it again.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) struct Local<'c> {
+    pub(super) name: &'c str,
+    pub(super) slot: usize,
+    pub(super) mutable: bool,
+}
+
 /// A callee's kind, and the argument counts it takes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct Callable {
@@ -225,9 +234,12 @@ pub(super) enum Lookup<'c> {
     Column(usize),
     /// A parameter of the enclosing function, by position.
     Param(usize),
-    /// A `let` in the enclosing function body, by the slot the traversal
-    /// put its value in.
-    Local(usize),
+    /// A `let` in the enclosing function body: the slot the traversal put
+    /// its value in, and whether an assignment may write it again.
+    Local {
+        slot: usize,
+        mutable: bool,
+    },
     Let(&'c str),
     Ambiguous,
     /// The relation carried the column until a stage stopped carrying it.
@@ -254,7 +266,7 @@ enum Scope<'c> {
     /// local stands for an SSA value, which only the traversal can hold, so
     /// what is kept here is the slot the traversal put it in.
     Block {
-        locals: Vec<(&'c str, usize)>,
+        locals: Vec<Local<'c>>,
     },
     /// A relation and the row it carries. Its stages replace that row as
     /// they run, and `narrowed` is the names they stopped carrying: a name
@@ -388,12 +400,16 @@ impl<'c> SymbolTable<'c> {
     /// Binds a `let` in the innermost block to the slot the traversal put
     /// its value in. Binding a name twice shadows it, which is what a
     /// second `let` and an assignment both do.
-    pub(super) fn bind_local(&mut self, name: &'c str, slot: usize) {
+    pub(super) fn bind_local(&mut self, name: &'c str, slot: usize, mutable: bool) {
         let Some(Scope::Block { locals }) = self.scopes.last_mut() else {
             panic!("a local is being bound outside a block")
         };
 
-        locals.push((name, slot));
+        locals.push(Local {
+            name,
+            slot,
+            mutable,
+        });
     }
 
     pub(super) fn enter_relation(&mut self, row: Row<'c>) {
@@ -446,12 +462,15 @@ impl<'c> SymbolTable<'c> {
                 }
                 Scope::Block { locals } => {
                     if reference.qualifier.is_none()
-                        && let Some(&(_, slot)) = locals
+                        && let Some(local) = locals
                             .iter()
                             .rev()
-                            .find(|(name, _)| *name == reference.name)
+                            .find(|local| local.name == reference.name)
                     {
-                        return Lookup::Local(slot);
+                        return Lookup::Local {
+                            slot: local.slot,
+                            mutable: local.mutable,
+                        };
                     }
                 }
                 Scope::Function { params } => {
@@ -653,8 +672,14 @@ mod tests {
         symbols.enter_function(vec!["cap"]);
         assert_eq!(symbols.lookup(bare("cap")), Lookup::Param(0));
         symbols.enter_block();
-        symbols.bind_local("cap", 7);
-        assert_eq!(symbols.lookup(bare("cap")), Lookup::Local(7));
+        symbols.bind_local("cap", 7, false);
+        assert_eq!(
+            symbols.lookup(bare("cap")),
+            Lookup::Local {
+                slot: 7,
+                mutable: false
+            }
+        );
         symbols.leave();
         assert_eq!(symbols.lookup(bare("cap")), Lookup::Param(0));
         symbols.leave();
@@ -672,7 +697,7 @@ mod tests {
         symbols.bind("cap", Kind::Let { symbol: "cap" }, TextRange::default());
         symbols.enter_function(vec!["x"]);
         symbols.enter_block();
-        symbols.bind_local("local", 0);
+        symbols.bind_local("local", 0, false);
         enter_relation(&mut symbols, "t");
 
         assert_eq!(symbols.lookup(bare("id")), Lookup::Column(0));

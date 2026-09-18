@@ -411,7 +411,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .expect("the scope answered from the row this block was built for")
                     .into();
             }
-            Lookup::Local(slot) => return locals[slot],
+            Lookup::Local { slot, .. } => return locals[slot],
             Lookup::Let(symbol) => {
                 let callable = Callable {
                     kind: CalleeKind::Let,
