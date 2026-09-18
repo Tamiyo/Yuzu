@@ -24,18 +24,35 @@ use crate::lower_ast_to_yzl::symbols::SymbolTable;
 /// constructs — lands in the engine as an error, and a missing piece
 /// converts to a `yzl.missing` value, the way HIR lowered `Expr::Missing`.
 /// Returns `None` when the source has no root.
+/// One file of the program: which source it is, and the module path holding
+/// its declarations. The entry file is held under no module, so the names it
+/// declares keep the symbols they were written with.
+#[derive(Clone, Copy)]
+pub struct File<'a> {
+    pub source_id: SourceId,
+    pub module: Option<&'a str>,
+}
+
+impl File<'_> {
+    /// The file the user asked about, which is the one holding the query.
+    pub fn entry(source_id: SourceId) -> Self {
+        Self {
+            source_id,
+            module: None,
+        }
+    }
+}
+
 pub fn lower_ast_to_yzl<'c>(
     context: &'c Context,
     sources: &SourceMap,
-    source_id: SourceId,
+    files: &[File<'_>],
     diagnostics: &mut DiagnosticsEngine,
     registry: &dyn FunctionRegistry,
 ) -> Option<Module<'c>> {
-    let tokens: Vec<Token> = Lexer::new(sources.text(source_id)).collect();
-    let syntax = yuzu_parser::parse(&tokens, diagnostics, source_id);
-    let root = ast::Root::cast(syntax)?;
-    let mut converter = AstToYzl::new(context, sources, source_id, diagnostics, registry);
-    Some(converter.convert(&root))
+    let first = files.first()?;
+    let mut converter = AstToYzl::new(context, sources, first.source_id, diagnostics, registry);
+    converter.convert(files)
 }
 
 struct AstToYzl<'c, 'd> {
@@ -45,6 +62,10 @@ struct AstToYzl<'c, 'd> {
     /// a diagnostic gets all come from here, so none of them can disagree.
     sources: &'d SourceMap,
     source_id: SourceId,
+    /// The module path holding what the file being converted declares, or
+    /// none for the entry file. It is what qualifies every symbol, so one
+    /// module's `Row` and another's are two declarations in one module.
+    module: Option<String>,
     diagnostics: &'d mut DiagnosticsEngine,
     symbols: SymbolTable<'c>,
     registry: &'d dyn FunctionRegistry,
@@ -70,10 +91,21 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             context,
             sources,
             source_id,
+            module: None,
             diagnostics,
             symbols: SymbolTable::new(),
             registry,
             rebound: 0,
+        }
+    }
+
+    /// The symbol a declared name is held under. A module qualifies what it
+    /// declares, so two modules may each declare `Row` and the module they
+    /// lower into holds two.
+    fn symbol_for(&self, name: &'c str) -> &'c str {
+        match &self.module {
+            Some(module) => self.intern(&format!("{module}.{name}")),
+            None => name,
         }
     }
 
@@ -196,16 +228,44 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         self.sources.name(self.source_id)
     }
 
-    fn convert(&mut self, root: &ast::Root) -> Module<'c> {
-        let module = Module::new(Location::new(self.context, self.name(), 1, 1));
+    /// Every file into one module, in the order the caller resolved them,
+    /// with the entry last. A module is a scope rather than a nesting: what
+    /// a file declares is qualified by its path and lowered alongside
+    /// everything else, so nothing downstream has a module to walk into.
+    fn convert(&mut self, files: &[File<'_>]) -> Option<Module<'c>> {
+        let entry = files.last()?;
+        let module = Module::new(Location::new(
+            self.context,
+            self.sources.name(entry.source_id),
+            1,
+            1,
+        ));
         let top = module.body();
-        self.hoist(root);
-        for stmt in root.stmts() {
-            self.convert_stmt(top, &stmt);
+        for file in files {
+            self.convert_file(top, *file);
         }
 
         self.convert_output(top);
-        module
+        Some(module)
+    }
+
+    /// One file, under a scope of its own. Nothing crosses between files
+    /// until imports bind a name, so each starts from an empty module scope.
+    fn convert_file<'a>(&mut self, top: BlockRef<'c, 'a>, file: File<'_>) {
+        self.source_id = file.source_id;
+        self.module = file.module.map(|module| module.to_string());
+        self.symbols = SymbolTable::new();
+
+        let tokens: Vec<Token> = Lexer::new(self.sources.text(file.source_id)).collect();
+        let syntax = yuzu_parser::parse(&tokens, self.diagnostics, file.source_id);
+        let Some(root) = ast::Root::cast(syntax) else {
+            return;
+        };
+
+        self.hoist(&root);
+        for stmt in root.stmts() {
+            self.convert_stmt(top, &stmt);
+        }
     }
 
     /// The program's result is its trailing query: the last top-level value
@@ -249,13 +309,80 @@ pub(crate) mod test_support {
         let module = super::lower_ast_to_yzl(
             context,
             &sources,
-            source_id,
+            &[super::File::entry(source_id)],
             &mut diagnostics,
             &yuzu_types::Builtins,
         )
         .expect("the source converts");
 
         (module, sources, diagnostics)
+    }
+
+    /// Converts a program of several files, the entry last, and renders the
+    /// one module they became.
+    pub(crate) fn converted_program(files: &[(&str, Option<&str>, &str)]) -> String {
+        let context = yuzu_mlir::context();
+        let mut sources = SourceMap::new();
+        let mut diagnostics = DiagnosticsEngine::new();
+        let ids: Vec<super::File<'_>> = files
+            .iter()
+            .map(|(name, module, source)| super::File {
+                source_id: sources.add(name.to_string(), source.to_string()),
+                module: *module,
+            })
+            .collect();
+
+        let module = super::lower_ast_to_yzl(
+            &context,
+            &sources,
+            &ids,
+            &mut diagnostics,
+            &yuzu_types::Builtins,
+        )
+        .expect("the program converts");
+        assert!(
+            diagnostics.diagnostics().is_empty(),
+            "conversion reported: {:?}",
+            diagnostics
+                .diagnostics()
+                .iter()
+                .map(|d| d.message.as_str())
+                .collect::<Vec<_>>()
+        );
+
+        module.as_operation().to_string()
+    }
+
+    /// What a program of several files reported, rendered with its snippet.
+    pub(crate) fn reported_program(files: &[(&str, Option<&str>, &str)]) -> String {
+        use yuzu_diagnostics::diagnostics::printer::DiagnosticPrinter;
+
+        let context = yuzu_mlir::context();
+        let mut sources = SourceMap::new();
+        let mut diagnostics = DiagnosticsEngine::new();
+        let ids: Vec<super::File<'_>> = files
+            .iter()
+            .map(|(name, module, source)| super::File {
+                source_id: sources.add(name.to_string(), source.to_string()),
+                module: *module,
+            })
+            .collect();
+
+        super::lower_ast_to_yzl(
+            &context,
+            &sources,
+            &ids,
+            &mut diagnostics,
+            &yuzu_types::Builtins,
+        );
+
+        let printer = DiagnosticPrinter::new(&sources);
+        diagnostics
+            .diagnostics()
+            .iter()
+            .map(|diagnostic| printer.print(diagnostic))
+            .collect::<Vec<String>>()
+            .join("\n")
     }
 
     /// Everything a conversion reported, rendered with its snippet.
@@ -296,7 +423,73 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
+    use expect_test::expect;
     use melior::ir::operation::OperationLike;
+
+    use crate::lower_ast_to_yzl::test_support::{converted_program, reported_program};
+
+    /// Several files become one module, and a module's declarations are held
+    /// under its path. Two modules each declaring `Row` is two declarations,
+    /// not a collision, which is what qualification buys.
+    #[test]
+    fn a_program_of_several_files_becomes_one_module() {
+        expect![[r#"
+            module {
+              yzl.struct @helpers.Row ["a"] : [!yz.int64]
+              yzl.fn @helpers.double params ["x"] (!yz.int64) -> !yz.int64 {
+              ^bb0(%arg0: !yzl.var):
+                %2 = yz.constant_int 2
+                %3 = yz.mul %arg0, %2 : !yzl.var, !yz.int64 -> !yzl.var
+                yzl.return %3 : !yzl.var
+              }
+              yzl.struct @Row ["b"] : [!yz.int64]
+              yzl.table @t of @Row
+              %0 = yzl.from @t
+              %1 = yzl.select %0 as ["v"] {
+              ^bb0(%arg0: !yzl.var):
+                yzl.yield %arg0 : !yzl.var
+              }
+              yzl.output %1
+            }
+        "#]]
+        .assert_eq(&converted_program(&[
+            (
+                "helpers.yz",
+                Some("helpers"),
+                "struct Row { a: int64 }\ndef double(x: int64) -> int64 { return x * 2 }\n",
+            ),
+            (
+                "main.yz",
+                None,
+                "struct Row { b: int64 }\ntable t = Row\n\nfrom t |> select b as v\n",
+            ),
+        ]));
+    }
+
+    /// The program's query is the entry file's. A module holding one would
+    /// leave two, and which ran would be an accident of resolution order.
+    #[test]
+    fn a_module_cannot_hold_a_query() {
+        expect![[r#"
+            error: a module cannot hold a query
+             --> helpers.yz:4:1
+              |
+            4 | from t |> select a as v
+              | ^^^^^^^^^^^^^^^^^^^^^^^
+        "#]]
+        .assert_eq(&reported_program(&[
+            (
+                "helpers.yz",
+                Some("helpers"),
+                "struct Row { a: int64 }\ntable t = Row\n\nfrom t |> select a as v\n",
+            ),
+            (
+                "main.yz",
+                None,
+                "struct M { b: int64 }\ntable m = M\n\nfrom m |> select b as w\n",
+            ),
+        ]));
+    }
 
     /// Every query the existing end-to-end suites compile must convert cleanly:
     /// no unsupported constructs, and a module that verifies.
@@ -357,7 +550,7 @@ mod tests {
                 match super::lower_ast_to_yzl(
                     &context,
                     &sources,
-                    source_id,
+                    &[super::File::entry(source_id)],
                     &mut diagnostics,
                     &yuzu_types::Builtins,
                 ) {

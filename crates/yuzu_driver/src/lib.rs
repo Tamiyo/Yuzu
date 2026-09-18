@@ -215,7 +215,7 @@ fn plan_through_mlir(
     let module = yuzu_passes::lower_ast_to_yzl(
         &context,
         sources,
-        source_id,
+        &[yuzu_passes::File::entry(source_id)],
         diagnostics,
         &yuzu_types::Builtins,
     )?;

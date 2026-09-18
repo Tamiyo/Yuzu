@@ -139,7 +139,7 @@ pub(crate) mod test_support {
         let module = yuzu_passes::lower_ast_to_yzl(
             &context,
             &sources,
-            source_id,
+            &[yuzu_passes::File::entry(source_id)],
             &mut diagnostics,
             &yuzu_types::Builtins,
         )

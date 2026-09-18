@@ -68,14 +68,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         };
 
         let fields = decl.fields().filter_map(|f| self.ident(f.name())).collect();
-        self.declare(
-            decl,
-            name,
-            Kind::Struct {
-                fields,
-                symbol: name,
-            },
-        );
+        let symbol = self.symbol_for(name);
+        self.declare(decl, name, Kind::Struct { fields, symbol });
     }
 
     fn hoist_table(&mut self, decl: &ast::TableStmt) {
@@ -105,7 +99,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             }
         };
 
-        self.declare(decl, name, Kind::Relation { row, symbol: name });
+        let symbol = self.symbol_for(name);
+        self.declare(decl, name, Kind::Relation { row, symbol });
     }
 
     fn hoist_trait(&mut self, decl: &ast::TraitStmt) {
@@ -117,14 +112,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .methods()
             .filter_map(|m| self.ident(m.name()))
             .collect();
-        self.declare(
-            decl,
-            name,
-            Kind::Trait {
-                methods,
-                symbol: name,
-            },
-        );
+        let symbol = self.symbol_for(name);
+        self.declare(decl, name, Kind::Trait { methods, symbol });
     }
 
     fn hoist_fn(&mut self, decl: &ast::FuncStmt) {
@@ -141,11 +130,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         };
 
         let arity = decl.params().count();
+        let symbol = self.symbol_for(name);
         self.declare(
             decl,
             name,
             Kind::Func(Callable {
-                symbol: name,
+                symbol,
                 kind,
                 min_args: arity,
                 max_args: arity,
@@ -172,11 +162,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     /// the earlier one and both have to stay in the module.
     fn rebound_symbol(&mut self, name: &'c str) -> &'c str {
         if self.symbols.binding(name).is_none() {
-            return name;
+            return self.symbol_for(name);
         }
 
         self.rebound += 1;
-        self.intern(&format!("{name}.{}", self.rebound))
+        let taken = self.intern(&format!("{name}.{}", self.rebound));
+        self.symbol_for(taken)
     }
 
     /// Whether this node is the declaration holding the name. The second
@@ -214,6 +205,14 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             ast::Stmt::ImplStmt(decl) => self.convert_impl(block, decl),
             ast::Stmt::LetStmt(decl) => self.convert_let(block, decl),
             ast::Stmt::ExprStmt(stmt) => {
+                // The program's query is the entry file's. A module holding
+                // one would leave two, and which ran would be an accident of
+                // the order the modules were resolved in.
+                if self.module.is_some() && matches!(stmt.expr(), Some(ast::Expr::Rel(_))) {
+                    self.error(stmt, "a module cannot hold a query");
+                    return;
+                }
+
                 if let Some(expr) = stmt.expr() {
                     self.convert_expr(block, &Locals::new(), &expr);
                 }
@@ -241,11 +240,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             return;
         }
 
+        let symbol = self.symbol_for(name);
         let (names, types) = self.field_attrs(decl.fields());
         block.append_operation(
             yzl::r#struct(
                 self.context,
-                StringAttribute::new(self.context, name),
+                StringAttribute::new(self.context, symbol),
                 names,
                 types,
                 self.location(decl),
@@ -268,6 +268,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             Some(row) => row,
             None => {
                 let row = self.intern(&format!("{name}_row"));
+                let row = self.symbol_for(row);
                 let (names, types) = self.field_attrs(decl.inline_fields());
                 block.append_operation(
                     yzl::r#struct(
@@ -283,10 +284,11 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             }
         };
 
+        let symbol = self.symbol_for(name);
         block.append_operation(
             yzl::table(
                 self.context,
-                StringAttribute::new(self.context, name),
+                StringAttribute::new(self.context, symbol),
                 FlatSymbolRefAttribute::new(self.context, row),
                 self.location(decl),
             )
@@ -399,8 +401,14 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             self.symbols.leave();
         }
 
+        // A trait or an implementation is a symbol table of its own, so a
+        // method inside one is already scoped by it and keeps its bare name.
+        let symbol = match declared {
+            Declared::AtModule => self.symbol_for(name),
+            Declared::InTrait | Declared::InImpl => name,
+        };
         let mut builder = yzl::FnOperationBuilder::new(self.context, self.location(decl))
-            .sym_name(StringAttribute::new(self.context, name))
+            .sym_name(StringAttribute::new(self.context, symbol))
             .params(ArrayAttribute::new(self.context, &params))
             .signature(TypeAttribute::new(signature))
             .body(region);
@@ -471,9 +479,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             self.convert_method(body, &method, Declared::InTrait);
         }
 
+        let symbol = self.symbol_for(name);
         block.append_operation(
             yzl::TraitOperationBuilder::new(self.context, self.location(decl))
-                .sym_name(StringAttribute::new(self.context, name))
+                .sym_name(StringAttribute::new(self.context, symbol))
                 .body(region)
                 .build()
                 .into(),

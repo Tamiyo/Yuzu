@@ -10,7 +10,7 @@ mod simplify_yzr;
 pub use check_aggregates::check_aggregates;
 pub use infer_types::infer_types;
 pub use inline_calls::inline_calls;
-pub use lower_ast_to_yzl::lower_ast_to_yzl;
+pub use lower_ast_to_yzl::{File, lower_ast_to_yzl};
 pub use lower_yzl_to_yzr::lower_yzl_to_yzr;
 pub use simplify_yzr::simplify_yzr;
 
@@ -50,7 +50,7 @@ pub(crate) mod test_support {
         let module = crate::lower_ast_to_yzl(
             &context,
             &sources,
-            source_id,
+            &[crate::File::entry(source_id)],
             &mut diagnostics,
             &yuzu_types::Builtins,
         )
@@ -92,7 +92,7 @@ pub(crate) mod test_support {
         let module = crate::lower_ast_to_yzl(
             &context,
             &sources,
-            source_id,
+            &[crate::File::entry(source_id)],
             &mut diagnostics,
             &yuzu_types::Builtins,
         )
@@ -154,7 +154,7 @@ pub(crate) mod test_support {
         let module = crate::lower_ast_to_yzl(
             &context,
             &sources,
-            source_id,
+            &[crate::File::entry(source_id)],
             &mut diagnostics,
             &yuzu_types::Builtins,
         )
