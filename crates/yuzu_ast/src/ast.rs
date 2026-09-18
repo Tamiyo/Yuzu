@@ -260,7 +260,53 @@ ast_enum!(Stmt, {
     AssignStmt,
     ReturnStmt,
     ExprStmt,
+    ImportStmt,
+    FromImportStmt,
 });
+
+ast_node!(ModulePath);
+impl ModulePath {
+    /// The segments, outermost first. One segment names a module directly;
+    /// more name the path through the modules holding it.
+    pub fn segments(&self) -> impl Iterator<Item = Ident> + use<> {
+        support::children(self.syntax())
+    }
+}
+
+ast_node!(ImportStmt);
+impl ImportStmt {
+    pub fn path(&self) -> Option<ModulePath> {
+        support::child(self.syntax())
+    }
+
+    /// The name this file calls the module, when `as` gave it one.
+    pub fn alias(&self) -> Option<Ident> {
+        support::child(self.syntax())
+    }
+}
+
+ast_node!(FromImportStmt);
+impl FromImportStmt {
+    pub fn path(&self) -> Option<ModulePath> {
+        support::child(self.syntax())
+    }
+
+    pub fn items(&self) -> impl Iterator<Item = ImportItem> + use<> {
+        support::children(self.syntax())
+    }
+}
+
+ast_node!(ImportItem);
+impl ImportItem {
+    pub fn name(&self) -> Option<Ident> {
+        support::child(self.syntax())
+    }
+
+    /// The name this file calls the import, when `as` gave it one.
+    pub fn alias(&self) -> Option<Ident> {
+        support::children(self.syntax()).nth(1)
+    }
+}
 
 ast_node!(StructStmt);
 impl StructStmt {
@@ -1020,6 +1066,46 @@ mod tests {
         let fields: Vec<StructField> = structs[0].fields().collect();
         assert_eq!(fields[0].visibility(), Visibility::Public);
         assert_eq!(fields[1].visibility(), Visibility::Private);
+    }
+
+    #[test]
+    fn import_reads_its_path_and_alias() {
+        let syntax = parsed("import yuzu.std.math as m\n");
+        let import = syntax
+            .descendants()
+            .find_map(ImportStmt::cast)
+            .expect("an import");
+        let segments: Vec<String> = import
+            .path()
+            .expect("a path")
+            .segments()
+            .filter_map(|s| s.text())
+            .collect();
+        assert_eq!(segments, ["yuzu", "std", "math"]);
+        assert_eq!(text(import.alias()).as_deref(), Some("m"));
+    }
+
+    #[test]
+    fn from_import_reads_its_items_and_their_renames() {
+        let syntax = parsed("from helpers import spread, avg3 as mean\n");
+        let import = syntax
+            .descendants()
+            .find_map(FromImportStmt::cast)
+            .expect("a from-import");
+        let segments: Vec<String> = import
+            .path()
+            .expect("a path")
+            .segments()
+            .filter_map(|s| s.text())
+            .collect();
+        assert_eq!(segments, ["helpers"]);
+
+        let items: Vec<ImportItem> = import.items().collect();
+        assert_eq!(items.len(), 2);
+        assert_eq!(text(items[0].name()).as_deref(), Some("spread"));
+        assert!(items[0].alias().is_none());
+        assert_eq!(text(items[1].name()).as_deref(), Some("avg3"));
+        assert_eq!(text(items[1].alias()).as_deref(), Some("mean"));
     }
 
     /// Three reaches, and `pub(mod)` is the middle: the files of the

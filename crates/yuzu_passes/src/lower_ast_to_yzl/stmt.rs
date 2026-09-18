@@ -49,7 +49,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 | ast::Stmt::ExprStmt(_)
                 | ast::Stmt::BlockStmt(_)
                 | ast::Stmt::AssignStmt(_)
-                | ast::Stmt::ReturnStmt(_) => {}
+                | ast::Stmt::ReturnStmt(_)
+                | ast::Stmt::ImportStmt(_)
+                | ast::Stmt::FromImportStmt(_) => {}
             }
         }
 
@@ -223,6 +225,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             ast::Stmt::ReturnStmt(stmt) => {
                 self.error(stmt, "a return is not a top-level statement")
             }
+            // The syntax is in; nothing loads a second file yet.
+            ast::Stmt::ImportStmt(stmt) => self.error(stmt, "imports are not supported yet"),
+            ast::Stmt::FromImportStmt(stmt) => self.error(stmt, "imports are not supported yet"),
         }
     }
 
@@ -608,6 +613,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             | ast::Stmt::FuncStmt(_)
             | ast::Stmt::TableStmt(_) => {
                 self.error(stmt, "declarations inside functions are not supported yet");
+            }
+            // A file says what it imports, not a function inside it.
+            ast::Stmt::ImportStmt(_) | ast::Stmt::FromImportStmt(_) => {
+                self.error(stmt, "an import belongs at the top of the file");
             }
         }
     }
@@ -1016,6 +1025,32 @@ external def upper(s: str) -> str
         .assert_eq(&reported(
             &context,
             "struct Row { a: int64 }\ntable t = Row\n\ndef f(x: int64) -> int64 {\n    x = 1\n    return x\n}\n\nfrom t |> select f(a) as v\n",
+        ));
+    }
+
+    /// The syntax is in and nothing acts on it, so an import says that
+    /// rather than resolving to a name that is not there.
+    #[test]
+    fn an_import_is_not_supported_yet() {
+        use crate::lower_ast_to_yzl::test_support::reported;
+
+        let context = yuzu_mlir::context();
+        expect![[r#"
+            error: imports are not supported yet
+             --> test.yz:1:1
+              |
+            1 | import helpers
+              | ^^^^^^^^^^^^^^
+
+            error: imports are not supported yet
+             --> test.yz:2:1
+              |
+            2 | from helpers import spread
+              | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+        "#]]
+        .assert_eq(&reported(
+            &context,
+            "import helpers\nfrom helpers import spread\n",
         ));
     }
 

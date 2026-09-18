@@ -52,6 +52,11 @@ impl<'l> HirLowerer<'l> {
             ast::Stmt::AssignStmt(assign_stmt) => self.lower_assign_stmt(assign_stmt),
             ast::Stmt::ReturnStmt(return_stmt) => self.lower_return_stmt(return_stmt),
             ast::Stmt::ExprStmt(expr_stmt) => self.lower_expr_stmt(expr_stmt),
+            // Modules belong to the MLIR pipeline; this one reads one file.
+            ast::Stmt::ImportStmt(_) | ast::Stmt::FromImportStmt(_) => {
+                self.error(&stmt, "imports are not supported by this pipeline");
+                Stmt::Missing
+            }
         };
 
         let id = self.ctx.alloc_stmt(lowered);

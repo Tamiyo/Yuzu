@@ -39,6 +39,12 @@ pub(crate) fn parse_stmt(p: &mut Parser) -> CompletedMarker {
     if p.at(TokenKind::TableKw) {
         return parse_table_stmt(p);
     }
+    if p.at(TokenKind::ImportKw) {
+        return parse_import_stmt(p);
+    }
+    if at_from_import(p) {
+        return parse_from_import_stmt(p);
+    }
     parse_expr_stmt(p)
 }
 
@@ -81,6 +87,82 @@ fn parse_visibility(p: &mut Parser) {
         p.bump();
         p.expect(TokenKind::ModKw);
         p.expect(TokenKind::RightParen);
+    }
+}
+
+/// Whether `from` starts an import rather than a query. Both begin with the
+/// same keyword, and the path between them is any number of segments, so the
+/// scan runs to the `import` that settles it. A query's `from` is followed by
+/// a relation and then a pipe or the end of the statement, never by `import`.
+fn at_from_import(p: &mut Parser) -> bool {
+    if p.peek_kind() != Some(TokenKind::FromKw) {
+        return false;
+    }
+
+    let mut at = 1;
+    loop {
+        if p.peek_nth_kind(at) != Some(TokenKind::Identifier) {
+            return false;
+        }
+
+        at += 1;
+        match p.peek_nth_kind(at) {
+            Some(TokenKind::Dot) => at += 1,
+            Some(TokenKind::ImportKw) => return true,
+            _ => return false,
+        }
+    }
+}
+
+/// `import a.b`, optionally renamed by `as`.
+fn parse_import_stmt(p: &mut Parser) -> CompletedMarker {
+    let m = p.start();
+    p.expect(TokenKind::ImportKw);
+    parse_module_path(p);
+    parse_rename(p);
+    p.complete(m, SyntaxKind::ImportStmt)
+}
+
+/// `from a.b import x, y as z`.
+fn parse_from_import_stmt(p: &mut Parser) -> CompletedMarker {
+    let m = p.start();
+    p.expect(TokenKind::FromKw);
+    parse_module_path(p);
+    p.expect(TokenKind::ImportKw);
+    parse_import_item(p);
+    while p.at(TokenKind::Comma) {
+        p.bump();
+        parse_import_item(p);
+    }
+
+    p.complete(m, SyntaxKind::FromImportStmt)
+}
+
+/// The dotted name of a module: one segment, or a path through the modules
+/// holding it.
+fn parse_module_path(p: &mut Parser) -> CompletedMarker {
+    let m = p.start();
+    parse_ident(p);
+    while p.at(TokenKind::Dot) {
+        p.bump();
+        parse_ident(p);
+    }
+
+    p.complete(m, SyntaxKind::ModulePath)
+}
+
+fn parse_import_item(p: &mut Parser) -> CompletedMarker {
+    let m = p.start();
+    parse_ident(p);
+    parse_rename(p);
+    p.complete(m, SyntaxKind::ImportItem)
+}
+
+/// The `as` that names an import something else in this file.
+fn parse_rename(p: &mut Parser) {
+    if p.at(TokenKind::AsKw) {
+        p.bump();
+        parse_ident(p);
     }
 }
 
@@ -994,6 +1076,96 @@ mod tests {
                     Space@40..41 " "
                     RightCurly@41..42 "}"
             "#]],
+        );
+    }
+
+    #[test]
+    fn parse_import_of_a_path() {
+        check(
+            "import yuzu.std.math as m",
+            expect![[r#"
+            ImportStmt@0..25
+              ImportKw@0..6 "import"
+              Space@6..7 " "
+              ModulePath@7..20
+                Ident@7..11
+                  Identifier@7..11 "yuzu"
+                Dot@11..12 "."
+                Ident@12..15
+                  Identifier@12..15 "std"
+                Dot@15..16 "."
+                Ident@16..20
+                  Identifier@16..20 "math"
+              Space@20..21 " "
+              AsKw@21..23 "as"
+              Space@23..24 " "
+              Ident@24..25
+                Identifier@24..25 "m"
+        "#]],
+        );
+    }
+
+    #[test]
+    fn parse_from_import_with_renames() {
+        check(
+            "from helpers import spread, avg3 as mean",
+            expect![[r#"
+            FromImportStmt@0..40
+              FromKw@0..4 "from"
+              Space@4..5 " "
+              ModulePath@5..12
+                Ident@5..12
+                  Identifier@5..12 "helpers"
+              Space@12..13 " "
+              ImportKw@13..19 "import"
+              Space@19..20 " "
+              ImportItem@20..26
+                Ident@20..26
+                  Identifier@20..26 "spread"
+              Comma@26..27 ","
+              Space@27..28 " "
+              ImportItem@28..40
+                Ident@28..32
+                  Identifier@28..32 "avg3"
+                Space@32..33 " "
+                AsKw@33..35 "as"
+                Space@35..36 " "
+                Ident@36..40
+                  Identifier@36..40 "mean"
+        "#]],
+        );
+    }
+
+    /// `from` starts both an import and a query, and the path between them is
+    /// any length, so the scan has to reach the `import` to decide. A query
+    /// must still come out a query.
+    #[test]
+    fn a_query_is_not_an_import() {
+        check(
+            "from t |> select a as v",
+            expect![[r#"
+            ExprStmt@0..23
+              SelectExpr@0..23
+                FromExpr@0..6
+                  FromKw@0..4 "from"
+                  Space@4..5 " "
+                  Ident@5..6
+                    Identifier@5..6 "t"
+                Space@6..7 " "
+                Pipe@7..9 "|>"
+                Space@9..10 " "
+                SelectKw@10..16 "select"
+                Space@16..17 " "
+                SelectItem@17..23
+                  IdentExpr@17..18
+                    Ident@17..18
+                      Identifier@17..18 "a"
+                  Space@18..19 " "
+                  AsKw@19..21 "as"
+                  Space@21..22 " "
+                  Ident@22..23
+                    Identifier@22..23 "v"
+        "#]],
         );
     }
 

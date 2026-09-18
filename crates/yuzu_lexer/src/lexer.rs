@@ -79,6 +79,7 @@ mod tests {
             ("full", TokenKind::FullKw),
             ("group", TokenKind::GroupKw),
             ("impl", TokenKind::ImplKw),
+            ("import", TokenKind::ImportKw),
             ("in", TokenKind::InKw),
             ("inner", TokenKind::InnerKw),
             ("join", TokenKind::JoinKw),

@@ -124,6 +124,9 @@ pub enum TokenKind {
     #[token("impl", priority = 1)]
     ImplKw,
 
+    #[token("import", priority = 1)]
+    ImportKw,
+
     #[token("in", priority = 1)]
     InKw,
 
@@ -283,6 +286,7 @@ impl std::fmt::Display for TokenKind {
             TokenKind::FullKw => "full",
             TokenKind::GroupKw => "group",
             TokenKind::ImplKw => "impl",
+            TokenKind::ImportKw => "import",
             TokenKind::InKw => "in",
             TokenKind::InnerKw => "inner",
             TokenKind::JoinKw => "join",
@@ -370,6 +374,7 @@ mod tests {
             (TokenKind::FullKw, "full"),
             (TokenKind::GroupKw, "group"),
             (TokenKind::ImplKw, "impl"),
+            (TokenKind::ImportKw, "import"),
             (TokenKind::InKw, "in"),
             (TokenKind::InnerKw, "inner"),
             (TokenKind::JoinKw, "join"),
