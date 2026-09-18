@@ -46,7 +46,15 @@ pub(crate) fn parse_stmt(p: &mut Parser) -> CompletedMarker {
 /// exported, so anything else here is reported against the `pub` rather than
 /// parsed as a declaration it is not.
 fn parse_public_stmt(p: &mut Parser) -> CompletedMarker {
-    match p.peek_nth_kind(1) {
+    // `pub` alone is one token; `pub(mod)` is four, so the declaration it
+    // qualifies sits further along.
+    let declaration = if p.peek_nth_kind(1) == Some(TokenKind::LeftParen) {
+        4
+    } else {
+        1
+    };
+
+    match p.peek_nth_kind(declaration) {
         Some(TokenKind::DefKw | TokenKind::AggKw | TokenKind::ExternalKw) => parse_func_stmt(p),
         Some(TokenKind::TraitKw) => parse_trait_stmt(p),
         Some(TokenKind::LetKw) => parse_let_stmt(p),
@@ -61,10 +69,18 @@ fn parse_public_stmt(p: &mut Parser) -> CompletedMarker {
     }
 }
 
-/// Bumps a leading `pub`, so every declaration parser starts the same way.
+/// Bumps a leading `pub`, and the `(mod)` that narrows it, so every
+/// declaration parser starts the same way.
 fn parse_visibility(p: &mut Parser) {
-    if p.at(TokenKind::PubKw) {
+    if !p.at(TokenKind::PubKw) {
+        return;
+    }
+
+    p.bump();
+    if p.at(TokenKind::LeftParen) {
         p.bump();
+        p.expect(TokenKind::ModKw);
+        p.expect(TokenKind::RightParen);
     }
 }
 
@@ -928,6 +944,55 @@ mod tests {
                         Identifier@30..33 "int"
                   Space@33..34 " "
                   RightCurly@34..35 "}"
+            "#]],
+        );
+    }
+
+    /// `pub(mod)` narrows the reach rather than naming a different thing, so
+    /// it belongs to the declaration the same way a bare `pub` does.
+    #[test]
+    fn parse_module_visible_declaration() {
+        check(
+            "pub(mod) def f(x: int) -> int { return x }",
+            expect![[r#"
+                FuncStmt@0..42
+                  PubKw@0..3 "pub"
+                  LeftParen@3..4 "("
+                  ModKw@4..7 "mod"
+                  RightParen@7..8 ")"
+                  Space@8..9 " "
+                  DefKw@9..12 "def"
+                  Space@12..13 " "
+                  Ident@13..14
+                    Identifier@13..14 "f"
+                  LeftParen@14..15 "("
+                  FuncParam@15..21
+                    Ident@15..16
+                      Identifier@15..16 "x"
+                    Colon@16..17 ":"
+                    Space@17..18 " "
+                    NamedTypeAnnotation@18..21
+                      Ident@18..21
+                        Identifier@18..21 "int"
+                  RightParen@21..22 ")"
+                  Space@22..23 " "
+                  Arrow@23..25 "->"
+                  Space@25..26 " "
+                  NamedTypeAnnotation@26..29
+                    Ident@26..29
+                      Identifier@26..29 "int"
+                  Space@29..30 " "
+                  BlockStmt@30..42
+                    LeftCurly@30..31 "{"
+                    Space@31..32 " "
+                    ReturnStmt@32..40
+                      ReturnKw@32..38 "return"
+                      Space@38..39 " "
+                      IdentExpr@39..40
+                        Ident@39..40
+                          Identifier@39..40 "x"
+                    Space@40..41 " "
+                    RightCurly@41..42 "}"
             "#]],
         );
     }

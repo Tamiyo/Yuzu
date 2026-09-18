@@ -142,6 +142,9 @@ pub enum TokenKind {
     #[token("limit", priority = 1)]
     LimitKw,
 
+    #[token("mod", priority = 1)]
+    ModKw,
+
     #[token("mut", priority = 1)]
     MutKw,
 
@@ -286,6 +289,7 @@ impl std::fmt::Display for TokenKind {
             TokenKind::LeftKw => "left",
             TokenKind::LetKw => "let",
             TokenKind::LimitKw => "limit",
+            TokenKind::ModKw => "mod",
             TokenKind::MutKw => "mut",
             TokenKind::NotKw => "not",
             TokenKind::OffsetKw => "offset",
@@ -372,6 +376,7 @@ mod tests {
             (TokenKind::LeftKw, "left"),
             (TokenKind::LetKw, "let"),
             (TokenKind::LimitKw, "limit"),
+            (TokenKind::ModKw, "mod"),
             (TokenKind::MutKw, "mut"),
             (TokenKind::NotKw, "not"),
             (TokenKind::OffsetKw, "offset"),

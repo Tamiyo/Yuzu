@@ -85,6 +85,7 @@ mod tests {
             ("left", TokenKind::LeftKw),
             ("let", TokenKind::LetKw),
             ("limit", TokenKind::LimitKw),
+            ("mod", TokenKind::ModKw),
             ("mut", TokenKind::MutKw),
             ("not", TokenKind::NotKw),
             ("offset", TokenKind::OffsetKw),

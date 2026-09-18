@@ -74,17 +74,27 @@ mod support {
     }
 }
 
-/// The visibility a node's own tokens declare.
+/// The visibility a node's own tokens declare. `mod` only appears inside the
+/// parentheses that narrow a `pub`, so finding one is enough to tell the two
+/// public forms apart.
 fn visibility_of(syntax: &SyntaxNode) -> Visibility {
-    let public = syntax
+    let mut public = false;
+    let mut narrowed = false;
+    for token in syntax
         .children_with_tokens()
         .filter_map(SyntaxElement::into_token)
-        .any(|token| token.kind() == SyntaxKind::PubKw);
+    {
+        match token.kind() {
+            SyntaxKind::PubKw => public = true,
+            SyntaxKind::ModKw => narrowed = true,
+            _ => {}
+        }
+    }
 
-    if public {
-        Visibility::Public
-    } else {
-        Visibility::Private
+    match (public, narrowed) {
+        (true, true) => Visibility::Module,
+        (true, false) => Visibility::Public,
+        (false, _) => Visibility::Private,
     }
 }
 
@@ -94,11 +104,13 @@ pub enum Mutability {
     Immutable,
 }
 
-/// Whether another file may name a declaration. Two states, because Yuzu has
-/// flat files: there is no package and no nesting for a third to name.
+/// How far a declaration's name reaches. `Module` is what `pub(mod)` asks
+/// for: the files of the enclosing module and no further, which is how a
+/// module keeps a helper its own while its siblings still use it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Visibility {
     Public,
+    Module,
     Private,
 }
 
@@ -1008,6 +1020,23 @@ mod tests {
         let fields: Vec<StructField> = structs[0].fields().collect();
         assert_eq!(fields[0].visibility(), Visibility::Public);
         assert_eq!(fields[1].visibility(), Visibility::Private);
+    }
+
+    /// Three reaches, and `pub(mod)` is the middle: the files of the
+    /// enclosing module see it and nobody beyond them does.
+    #[test]
+    fn pub_mod_reaches_the_enclosing_module_only() {
+        let syntax = parsed(
+            "pub struct A { pub x: int, pub(mod) y: int, z: int }\npub(mod) struct B { w: int }\n",
+        );
+        let structs: Vec<StructStmt> = syntax.descendants().filter_map(StructStmt::cast).collect();
+        assert_eq!(structs[0].visibility(), Visibility::Public);
+        assert_eq!(structs[1].visibility(), Visibility::Module);
+
+        let fields: Vec<StructField> = structs[0].fields().collect();
+        assert_eq!(fields[0].visibility(), Visibility::Public);
+        assert_eq!(fields[1].visibility(), Visibility::Module);
+        assert_eq!(fields[2].visibility(), Visibility::Private);
     }
 
     /// Every declaration that carries a name carries a visibility with it.
