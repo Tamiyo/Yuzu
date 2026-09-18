@@ -69,7 +69,11 @@ fn main() -> ExitCode {
 
     let name = cli.file.display().to_string();
     if cli.pipeline.as_deref() == Some("mlir") {
-        return yuzu_driver::compile_mlir(&name, &source, &options);
+        // A module is resolved beside the file that imported it.
+        let resolver = yuzu_driver::modules::FsResolver {
+            base: yuzu_driver::modules::base_of(&cli.file),
+        };
+        return yuzu_driver::compile_mlir(&name, &source, &options, &resolver);
     }
 
     compile(&name, &source, &options);

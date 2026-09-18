@@ -1,3 +1,5 @@
+pub mod modules;
+
 use std::time::Instant;
 
 use yuzu_anf::AnfCtx;
@@ -161,12 +163,17 @@ pub fn compile(name: &str, source: &str, options: &CompileOptions) {
 }
 
 /// Compiles through the MLIR pipeline, printing what each stage asked for.
-pub fn compile_mlir(name: &str, source: &str, options: &CompileOptions) -> std::process::ExitCode {
+pub fn compile_mlir(
+    name: &str,
+    source: &str,
+    options: &CompileOptions,
+    resolver: &dyn modules::ModuleResolver,
+) -> std::process::ExitCode {
     let mut diagnostics = DiagnosticsEngine::new();
     let mut sources = SourceMap::new();
     let source_id = sources.add(name.to_string(), source.to_string());
 
-    let plan = plan_through_mlir(&sources, source_id, &mut diagnostics, options);
+    let plan = plan_through_mlir(&mut sources, source_id, &mut diagnostics, options, resolver);
     print_diagnostics(&diagnostics, &sources);
     match plan {
         Some(plan) => {
@@ -186,12 +193,13 @@ pub fn compile_to_substrait_mlir(
     name: &str,
     source: &str,
     options: &CompileOptions,
+    resolver: &dyn modules::ModuleResolver,
 ) -> Result<Vec<u8>, String> {
     let mut diagnostics = DiagnosticsEngine::new();
     let mut sources = SourceMap::new();
     let source_id = sources.add(name.to_string(), source.to_string());
 
-    match plan_through_mlir(&sources, source_id, &mut diagnostics, options) {
+    match plan_through_mlir(&mut sources, source_id, &mut diagnostics, options, resolver) {
         Some(plan) => Ok(yuzu_substrait::to_protobuf(&plan)),
         None => Err(render_diagnostics(&diagnostics, &sources)),
     }
@@ -204,18 +212,20 @@ pub fn compile_to_substrait_mlir(
 /// The query is one of the sources rather than a text of its own, so its
 /// name, its text and the id a diagnostic carries cannot disagree.
 fn plan_through_mlir(
-    sources: &SourceMap,
+    sources: &mut SourceMap,
     source_id: yuzu_diagnostics::source_map::SourceId,
     diagnostics: &mut DiagnosticsEngine,
     options: &CompileOptions,
+    resolver: &dyn modules::ModuleResolver,
 ) -> Option<yuzu_substrait::Plan> {
     use melior::ir::operation::OperationLike;
 
+    let files = modules::load(source_id, sources, diagnostics, resolver)?;
     let context = yuzu_mlir::context();
     let module = yuzu_passes::lower_ast_to_yzl(
         &context,
         sources,
-        &[yuzu_passes::File::entry(source_id)],
+        &files,
         diagnostics,
         &yuzu_types::Builtins,
     )?;

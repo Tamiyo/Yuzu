@@ -136,10 +136,14 @@ pub(crate) mod test_support {
         let mut sources = SourceMap::new();
         let source_id = sources.add("test.yz".to_string(), source.to_string());
         let mut diagnostics = DiagnosticsEngine::new();
+        let tokens: Vec<yuzu_lexer::lexer::Token> = yuzu_lexer::lexer::Lexer::new(source).collect();
+        let syntax = yuzu_parser::parse(&tokens, &mut diagnostics, source_id);
+        let root =
+            <yuzu_ast::ast::Root as yuzu_ast::AstNode>::cast(syntax).expect("a source has a root");
         let module = yuzu_passes::lower_ast_to_yzl(
             &context,
             &sources,
-            &[yuzu_passes::File::entry(source_id)],
+            &[yuzu_passes::File::entry(source_id, root)],
             &mut diagnostics,
             &yuzu_types::Builtins,
         )

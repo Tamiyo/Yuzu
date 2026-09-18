@@ -10,7 +10,6 @@ use yuzu_diagnostics::diagnostics::Span;
 use yuzu_diagnostics::diagnostics::builder::DiagnosticBuilder;
 use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
 use yuzu_diagnostics::source_map::{SourceId, SourceMap};
-use yuzu_lexer::lexer::{Lexer, Token};
 use yuzu_mlir::ext::BlockExt;
 use yuzu_mlir::ext::OperationExt;
 use yuzu_mlir::ods::yzl;
@@ -24,21 +23,27 @@ use crate::lower_ast_to_yzl::symbols::SymbolTable;
 /// constructs — lands in the engine as an error, and a missing piece
 /// converts to a `yzl.missing` value, the way HIR lowered `Expr::Missing`.
 /// Returns `None` when the source has no root.
-/// One file of the program: which source it is, and the module path holding
-/// its declarations. The entry file is held under no module, so the names it
-/// declares keep the symbols they were written with.
-#[derive(Clone, Copy)]
-pub struct File<'a> {
+/// One file of the program: which source it is, the module path holding its
+/// declarations, and what it parsed to. The entry file is held under no
+/// module, so the names it declares keep the symbols they were written with.
+///
+/// The root comes in rather than being parsed here, because whoever resolved
+/// the imports had to parse the file to find them, and parsing twice would
+/// report every syntax error twice.
+#[derive(Clone)]
+pub struct File {
     pub source_id: SourceId,
-    pub module: Option<&'a str>,
+    pub module: Option<String>,
+    pub root: ast::Root,
 }
 
-impl File<'_> {
+impl File {
     /// The file the user asked about, which is the one holding the query.
-    pub fn entry(source_id: SourceId) -> Self {
+    pub fn entry(source_id: SourceId, root: ast::Root) -> Self {
         Self {
             source_id,
             module: None,
+            root,
         }
     }
 }
@@ -46,7 +51,7 @@ impl File<'_> {
 pub fn lower_ast_to_yzl<'c>(
     context: &'c Context,
     sources: &SourceMap,
-    files: &[File<'_>],
+    files: &[File],
     diagnostics: &mut DiagnosticsEngine,
     registry: &dyn FunctionRegistry,
 ) -> Option<Module<'c>> {
@@ -232,7 +237,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     /// with the entry last. A module is a scope rather than a nesting: what
     /// a file declares is qualified by its path and lowered alongside
     /// everything else, so nothing downstream has a module to walk into.
-    fn convert(&mut self, files: &[File<'_>]) -> Option<Module<'c>> {
+    fn convert(&mut self, files: &[File]) -> Option<Module<'c>> {
         let entry = files.last()?;
         let module = Module::new(Location::new(
             self.context,
@@ -242,7 +247,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         ));
         let top = module.body();
         for file in files {
-            self.convert_file(top, *file);
+            self.convert_file(top, file);
         }
 
         self.convert_output(top);
@@ -251,19 +256,13 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
     /// One file, under a scope of its own. Nothing crosses between files
     /// until imports bind a name, so each starts from an empty module scope.
-    fn convert_file<'a>(&mut self, top: BlockRef<'c, 'a>, file: File<'_>) {
+    fn convert_file<'a>(&mut self, top: BlockRef<'c, 'a>, file: &File) {
         self.source_id = file.source_id;
-        self.module = file.module.map(|module| module.to_string());
+        self.module = file.module.clone();
         self.symbols = SymbolTable::new();
 
-        let tokens: Vec<Token> = Lexer::new(self.sources.text(file.source_id)).collect();
-        let syntax = yuzu_parser::parse(&tokens, self.diagnostics, file.source_id);
-        let Some(root) = ast::Root::cast(syntax) else {
-            return;
-        };
-
-        self.hoist(&root);
-        for stmt in root.stmts() {
+        self.hoist(&file.root);
+        for stmt in file.root.stmts() {
             self.convert_stmt(top, &stmt);
         }
     }
@@ -296,6 +295,20 @@ pub(crate) mod test_support {
     use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
     use yuzu_diagnostics::source_map::SourceMap;
 
+    /// The root a source parses to, with parse errors going to the engine.
+    pub(crate) fn parsed(
+        sources: &SourceMap,
+        source_id: yuzu_diagnostics::source_map::SourceId,
+        diagnostics: &mut DiagnosticsEngine,
+    ) -> yuzu_ast::ast::Root {
+        use yuzu_lexer::lexer::{Lexer, Token};
+
+        let tokens: Vec<Token> = Lexer::new(sources.text(source_id)).collect();
+        let syntax = yuzu_parser::parse(&tokens, diagnostics, source_id);
+        use yuzu_ast::AstNode;
+        yuzu_ast::ast::Root::cast(syntax).expect("a source has a root")
+    }
+
     /// Converts a source file, handing back everything a test needs to
     /// render what came out.
     pub(crate) fn convert<'c>(
@@ -306,10 +319,11 @@ pub(crate) mod test_support {
         let mut sources = SourceMap::new();
         let source_id = sources.add(name.to_string(), source.to_string());
         let mut diagnostics = DiagnosticsEngine::new();
+        let root = parsed(&sources, source_id, &mut diagnostics);
         let module = super::lower_ast_to_yzl(
             context,
             &sources,
-            &[super::File::entry(source_id)],
+            &[super::File::entry(source_id, root)],
             &mut diagnostics,
             &yuzu_types::Builtins,
         )
@@ -324,11 +338,15 @@ pub(crate) mod test_support {
         let context = yuzu_mlir::context();
         let mut sources = SourceMap::new();
         let mut diagnostics = DiagnosticsEngine::new();
-        let ids: Vec<super::File<'_>> = files
+        let ids: Vec<super::File> = files
             .iter()
-            .map(|(name, module, source)| super::File {
-                source_id: sources.add(name.to_string(), source.to_string()),
-                module: *module,
+            .map(|(name, module, source)| {
+                let source_id = sources.add(name.to_string(), source.to_string());
+                super::File {
+                    source_id,
+                    module: module.map(str::to_string),
+                    root: parsed(&sources, source_id, &mut diagnostics),
+                }
             })
             .collect();
 
@@ -360,11 +378,15 @@ pub(crate) mod test_support {
         let context = yuzu_mlir::context();
         let mut sources = SourceMap::new();
         let mut diagnostics = DiagnosticsEngine::new();
-        let ids: Vec<super::File<'_>> = files
+        let ids: Vec<super::File> = files
             .iter()
-            .map(|(name, module, source)| super::File {
-                source_id: sources.add(name.to_string(), source.to_string()),
-                module: *module,
+            .map(|(name, module, source)| {
+                let source_id = sources.add(name.to_string(), source.to_string());
+                super::File {
+                    source_id,
+                    module: module.map(str::to_string),
+                    root: parsed(&sources, source_id, &mut diagnostics),
+                }
             })
             .collect();
 
@@ -547,10 +569,15 @@ mod tests {
                 let source_id = sources.add("corpus.yz".to_string(), chunk.to_string());
                 let mut diagnostics =
                     yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine::new();
+                let root = crate::lower_ast_to_yzl::test_support::parsed(
+                    &sources,
+                    source_id,
+                    &mut diagnostics,
+                );
                 match super::lower_ast_to_yzl(
                     &context,
                     &sources,
-                    &[super::File::entry(source_id)],
+                    &[super::File::entry(source_id, root)],
                     &mut diagnostics,
                     &yuzu_types::Builtins,
                 ) {

@@ -47,10 +47,12 @@ pub(crate) mod test_support {
         let mut sources = SourceMap::new();
         let source_id = sources.add("test.yz".to_string(), source.to_string());
         let mut diagnostics = DiagnosticsEngine::new();
+        let root =
+            crate::lower_ast_to_yzl::test_support::parsed(&sources, source_id, &mut diagnostics);
         let module = crate::lower_ast_to_yzl(
             &context,
             &sources,
-            &[crate::File::entry(source_id)],
+            &[crate::File::entry(source_id, root)],
             &mut diagnostics,
             &yuzu_types::Builtins,
         )
@@ -89,10 +91,12 @@ pub(crate) mod test_support {
         let mut sources = SourceMap::new();
         let source_id = sources.add("test.yz".to_string(), source.to_string());
         let mut diagnostics = DiagnosticsEngine::new();
+        let root =
+            crate::lower_ast_to_yzl::test_support::parsed(&sources, source_id, &mut diagnostics);
         let module = crate::lower_ast_to_yzl(
             &context,
             &sources,
-            &[crate::File::entry(source_id)],
+            &[crate::File::entry(source_id, root)],
             &mut diagnostics,
             &yuzu_types::Builtins,
         )
@@ -151,10 +155,12 @@ pub(crate) mod test_support {
         let mut sources = SourceMap::new();
         let source_id = sources.add("test.yz".to_string(), source.to_string());
         let mut diagnostics = DiagnosticsEngine::new();
+        let root =
+            crate::lower_ast_to_yzl::test_support::parsed(&sources, source_id, &mut diagnostics);
         let module = crate::lower_ast_to_yzl(
             &context,
             &sources,
-            &[crate::File::entry(source_id)],
+            &[crate::File::entry(source_id, root)],
             &mut diagnostics,
             &yuzu_types::Builtins,
         )
