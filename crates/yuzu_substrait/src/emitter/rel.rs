@@ -1,6 +1,6 @@
 use substrait::proto::{
     AggregateFunction, AggregateRel, AggregationPhase, Expression, FetchRel, FilterRel,
-    FunctionArgument, JoinRel, NamedStruct, ProjectRel, ReadRel, Rel, RelCommon,
+    FunctionArgument, JoinRel, NamedStruct, ProjectRel, ReadRel, Rel,
     aggregate_function::AggregationInvocation,
     aggregate_rel::{Grouping, Measure},
     expression::{RexType, ScalarFunction, literal::LiteralType},
@@ -9,7 +9,6 @@ use substrait::proto::{
     join_rel::JoinType,
     read_rel::{NamedTable, ReadType},
     rel::RelType,
-    rel_common::{Emit, EmitKind},
     r#type,
 };
 use yuzu_core::adt::SymbolId;
@@ -19,10 +18,10 @@ use yuzu_plan::{
 };
 use yuzu_types::TypeId;
 
-use crate::emitter::expr::{literal, selection};
-use crate::emitter::types::{emit_type, nullable, row_columns, type_code};
+use crate::emitter::types::{emit_type, row_columns, type_code};
 use crate::emitter::{GraphEmitter, Unsupported};
 use crate::extensions::{BOOLEAN_URN, COMPARISON_URN, aggregate_target};
+use crate::proto::{emit_common, literal, nullable, selection};
 
 impl GraphEmitter<'_> {
     pub(crate) fn emit_rel(&mut self, id: RelId) -> Result<Rel, Unsupported> {
@@ -357,13 +356,6 @@ impl GraphEmitter<'_> {
     fn width(&self, input: RelId) -> i32 {
         row_columns(self.types, self.graph.plan().rel(input).ty()).len() as i32
     }
-}
-
-fn emit_common(output_mapping: Vec<i32>) -> Option<RelCommon> {
-    Some(RelCommon {
-        emit_kind: Some(EmitKind::Emit(Emit { output_mapping })),
-        ..Default::default()
-    })
 }
 
 /// A `_distinct` builtin is its base function under Substrait's DISTINCT

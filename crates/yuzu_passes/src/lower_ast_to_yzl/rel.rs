@@ -1,17 +1,23 @@
+use melior::ir::attribute::{
+    ArrayAttribute, FlatSymbolRefAttribute, IntegerAttribute, StringAttribute,
+};
+use melior::ir::r#type::IntegerType;
 use melior::ir::{
-    Attribute, Block, BlockLike, BlockRef, Location, Region, RegionLike, Type, Value,
-    attribute::{ArrayAttribute, FlatSymbolRefAttribute, IntegerAttribute, StringAttribute},
+    Attribute, Block, BlockLike, BlockRef, Location, Operation, Region, RegionLike, Type, Value,
 };
 use text_size::TextRange;
 use yuzu_ast::{AstNode, ast};
+use yuzu_mlir::attributes::JoinKind;
+use yuzu_mlir::ext::{OperationExt, OperationMutExt};
 use yuzu_mlir::ods::yzl;
+use yuzu_mlir::types;
 
 use crate::lower_ast_to_yzl::symbols::{ColumnLookup, Reference, Row};
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
-use melior::ir::r#type::IntegerType;
-use yuzu_mlir::attributes::JoinKind;
-use yuzu_mlir::ext::{OperationExt, OperationMutExt};
-use yuzu_mlir::types;
+
+/// A stage item as every kind of stage presents one: its name, its
+/// expression, and where it was written.
+type Item = (Option<ast::Ident>, Option<ast::Expr>, TextRange);
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
     pub(super) fn convert_rel<'a>(
@@ -97,8 +103,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let input = self.convert_input(block, stage, "`select`", stage.input());
         let items = stage
             .items()
-            .map(|item| (item.alias(), item.expr(), item.syntax().text_range()))
-            .collect();
+            .map(|item| (item.alias(), item.expr(), item.syntax().text_range()));
         let (names, region) = self.convert_items(items, "select item", loc);
         let columns = self.string_attrs(&names);
         self.symbols.replace(names);
@@ -127,8 +132,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let input = self.convert_input(block, stage, "`extend`", stage.input());
         let items = stage
             .items()
-            .map(|item| (item.alias(), item.expr(), item.syntax().text_range()))
-            .collect();
+            .map(|item| (item.alias(), item.expr(), item.syntax().text_range()));
         let (names, region) = self.convert_items(items, "extend item", loc);
         let columns = self.string_attrs(&names);
         self.symbols.extend(names);
@@ -159,7 +163,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let mut key_names: Vec<&'c str> = Vec::new();
         for item in stage.group_by().into_iter().flat_map(|group| group.items()) {
             let Some(column) = self.ident(item.column()) else {
-                self.error(&item, "group by key is missing its column");
+                self.report(&item, "group by key is missing its column");
                 continue;
             };
 
@@ -175,8 +179,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
         let items = stage
             .items()
-            .map(|item| (item.alias(), item.expr(), item.syntax().text_range()))
-            .collect();
+            .map(|item| (item.alias(), item.expr(), item.syntax().text_range()));
         let (names, region) = self.convert_items(items, "aggregate item", loc);
         let group_by = self.string_attrs(&key_names);
         let measures = self.string_attrs(&names);
@@ -184,7 +187,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         key_names.extend(names);
         self.symbols.replace(key_names);
 
-        let mut op: melior::ir::Operation<'c> = yzl::aggregate(
+        let mut op: Operation<'c> = yzl::aggregate(
             self.context,
             types::query(self.context),
             input,
@@ -209,7 +212,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let count = match stage.count() {
             Some(count) => self.int_literal(&count),
             None => {
-                self.error_at(at, "`limit` is missing its row count");
+                self.report_at(at, "`limit` is missing its row count");
                 0
             }
         };
@@ -242,7 +245,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let mut renames = Vec::new();
         for item in stage.items() {
             let (Some(old), Some(new)) = (self.ident(item.from()), self.ident(item.to())) else {
-                self.error(&item, "rename item is missing a column name");
+                self.report(&item, "rename item is missing a column name");
                 continue;
             };
 
@@ -259,7 +262,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
         self.symbols.rename(&renames);
         let indices: Vec<usize> = renames.iter().map(|&(index, _)| index).collect();
-        let mut op: melior::ir::Operation<'c> = yzl::rename(
+        let mut op: Operation<'c> = yzl::rename(
             self.context,
             types::query(self.context),
             input,
@@ -281,7 +284,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let loc = self.location_at(at.start().into());
         let input = self.convert_input(block, stage, "`as`", stage.input());
         let Some(alias) = self.ident(stage.alias()) else {
-            self.error_at(at, "`as` is missing its alias");
+            self.report_at(at, "`as` is missing its alias");
             return input;
         };
 
@@ -315,7 +318,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let (rhs_symbol, rhs) = match self.symbols.relation(relation, alias) {
             Some(found) => found,
             None => {
-                self.error_at(at, &format!("`{relation}` is not a relation"));
+                self.report_at(at, &format!("`{relation}` is not a relation"));
                 (relation, Row::new())
             }
         };
@@ -327,13 +330,13 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 .filter_map(|column| self.ident(Some(column)))
                 .collect();
             if using.is_empty() {
-                self.error(&clause, "`using` needs at least one column");
+                self.report(&clause, "`using` needs at least one column");
             }
 
             for &column in &using {
                 let column = Reference::bare(column);
                 if !self.symbols.row().has(column) || !rhs.has(column) {
-                    self.error(
+                    self.report(
                         &clause,
                         &format!("column {column} not present in both relations"),
                     );
@@ -346,9 +349,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let on = Region::new();
         if stage.using().is_none() {
             match stage.on() {
-                None => self.error_at(at, "`join` is missing its `on` or `using` clause"),
+                None => self.report_at(at, "`join` is missing its `on` or `using` clause"),
                 Some(clause) => match clause.condition() {
-                    None => self.error(&clause, "`on` is missing its condition"),
+                    None => self.report(&clause, "`on` is missing its condition"),
                     Some(condition) => {
                         let body = self.stage_block(&on, loc);
                         let value = self.convert_expr(body, &Locals::new(), &condition);
@@ -385,25 +388,25 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     ) -> Value<'c, 'a> {
         let loc = self.location_at(at.start().into());
         let input = self.convert_input(block, stage, "`set`", stage.input());
+        let items: Vec<ast::SetItem> = stage.items().collect();
         let mut columns = Vec::new();
-        for item in stage.items() {
+        for item in &items {
             let Some(name) = self.ident(item.column()) else {
-                self.error(&item, "set item is incomplete");
+                self.report(item, "set item is incomplete");
                 continue;
             };
 
-            if let Some(index) = self.column(&item, "column", Reference::bare(name)) {
+            if let Some(index) = self.column(item, "column", Reference::bare(name)) {
                 columns.push(index);
             }
         }
 
-        let items = stage
-            .items()
-            .map(|item| (item.column(), item.value(), item.syntax().text_range()))
-            .collect();
+        let items = items
+            .iter()
+            .map(|item| (item.column(), item.value(), item.syntax().text_range()));
         let (names, region) = self.convert_items(items, "set item", loc);
         let names = self.string_attrs(&names);
-        let mut op: melior::ir::Operation<'c> = yzl::set(
+        let mut op: Operation<'c> = yzl::set(
             self.context,
             types::query(self.context),
             input,
@@ -441,7 +444,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let input = self.convert_input(block, stage, "`drop`", stage.input());
         let mut names: Vec<&'c str> = Vec::new();
         for column in stage.columns() {
-            let Some(name) = column.text().map(|text| self.intern(&text)) else {
+            let Some(name) = self.ident(Some(column.clone())) else {
                 continue;
             };
 
@@ -473,12 +476,14 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 int.value().unwrap_or_default() as i64
             }
             other => {
-                self.error(other, "`limit` takes an integer literal");
+                self.report(other, "`limit` takes an integer literal");
                 0
             }
         }
     }
 
+    /// A query nobody can name a row for is still lowered, against an
+    /// empty row, so the stages after it are checked too.
     fn scan<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
@@ -486,12 +491,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         source: &str,
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
-        // A query nobody can name a row for is still converted, against an
-        // empty row, so the stages after it are checked too.
         let (symbol, row) = match self.symbols.relation(source, None) {
             Some(found) => found,
             None => {
-                self.error(node, &format!("`{source}` is not a relation"));
+                self.report(node, &format!("`{source}` is not a relation"));
                 (source, Row::new())
             }
         };
@@ -602,17 +605,19 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         None
     }
 
+    /// The names a stage's items produce, and the region computing them. An
+    /// item with no name of its own is named by position.
     fn convert_items(
         &mut self,
-        items: Vec<(Option<ast::Ident>, Option<ast::Expr>, text_size::TextRange)>,
+        items: impl Iterator<Item = Item>,
         what: &str,
         loc: Location<'c>,
     ) -> (Vec<&'c str>, Region<'c>) {
         let region = Region::new();
         let body = self.stage_block(&region, loc);
-        let mut names = Vec::with_capacity(items.len());
-        let mut values = Vec::with_capacity(items.len());
-        for (index, (alias, expr, range)) in items.into_iter().enumerate() {
+        let mut names = Vec::new();
+        let mut values = Vec::new();
+        for (index, (alias, expr, range)) in items.enumerate() {
             let name = self
                 .ident(alias)
                 .or_else(|| match &expr {
@@ -624,7 +629,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             let value = match &expr {
                 Some(expr) => self.convert_expr(body, &Locals::new(), expr),
                 None => {
-                    self.error_at(range, &format!("{what} is missing its expression"));
+                    self.report_at(range, &format!("{what} is missing its expression"));
                     self.hole(body, range, types::var(self.context))
                 }
             };
@@ -636,7 +641,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         (names, region)
     }
 
-    fn string_attrs(&self, names: &[&'c str]) -> Vec<Attribute<'c>> {
+    pub(super) fn string_attrs(&self, names: &[&'c str]) -> Vec<Attribute<'c>> {
         names
             .iter()
             .map(|&name| StringAttribute::new(self.context, name).into())
@@ -663,8 +668,8 @@ fn stage_input(rel: &ast::Rel) -> Option<ast::Expr> {
 }
 
 /// A stage's own range. Its node covers everything piped into it, so the
-/// node starts where the pipeline starts — which is not what a complaint
-/// about the stage should point at. The stage begins at the first token
+/// node starts where the pipeline starts, which is not what a complaint
+/// about the stage should point at: the stage begins at the first token
 /// after the input it reads.
 fn stage_range(rel: &ast::Rel) -> TextRange {
     let node = rel.syntax();
@@ -686,7 +691,7 @@ fn stage_range(rel: &ast::Rel) -> TextRange {
 mod tests {
     use expect_test::expect;
 
-    use crate::lower_ast_to_yzl::test_support::converted;
+    use crate::test_support::lowered;
 
     #[test]
     fn converts_the_canonical_pipeline() {
@@ -720,7 +725,7 @@ mod tests {
               yzl.output %4
             }
         "#]]
-        .assert_eq(&converted(
+        .assert_eq(&lowered(
             r#"
 struct Row { a: int64, b: int64 }
 table t = Row
@@ -769,7 +774,7 @@ from t
               yzl.output %6
             }
         "#]]
-        .assert_eq(&converted(
+        .assert_eq(&lowered(
             r#"
 struct Employee { id: str, dept_id: int64, level: int64, rating: float64 }
 table employees = Employee
@@ -810,7 +815,7 @@ from employees as e
               yzl.output %3
             }
         "#]]
-        .assert_eq(&converted(
+        .assert_eq(&lowered(
             r#"
 struct Row { a: int64, active: bool }
 table t = Row

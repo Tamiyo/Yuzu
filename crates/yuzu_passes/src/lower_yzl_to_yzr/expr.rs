@@ -1,14 +1,15 @@
-//! The expressions inside a stage's region. A `yz` op carries over with
-//! the type inference gave it; a call becomes a measure, an external
-//! call, or a plain one, depending on what resolution decided it names.
+//! The expressions inside a stage's region. A `yz` op carries over with the
+//! type inference gave it; a call becomes a measure, an external call, or a
+//! plain one, depending on what resolution decided it names.
+
 use std::collections::HashMap;
 
 use melior::ir::attribute::{FlatSymbolRefAttribute, StringAttribute};
 use melior::ir::operation::{OperationBuilder, OperationLike, OperationRef};
-use melior::ir::{Attribute, BlockLike, BlockRef, Identifier, Type, Value, ValueLike};
+use melior::ir::{Attribute, BlockLike, BlockRef, Identifier, Operation, Type, Value, ValueLike};
 use yuzu_mlir::ListType;
 use yuzu_mlir::attributes::CalleeKind;
-use yuzu_mlir::ext::{OperationCast, OperationExt, ValueExt};
+use yuzu_mlir::ext::{OperationCast, OperationExt, ValueExt, ValueId};
 use yuzu_mlir::ods::{yz, yzr};
 use yuzu_mlir::ops::yzl::YzlOp;
 
@@ -16,11 +17,11 @@ use crate::lower_yzl_to_yzr::{YzlToYzr, op_name};
 
 impl<'c, 'a> YzlToYzr<'c, 'a> {
     /// An expression op, rebuilt against the values its operands became.
-    pub(super) fn lower_expression<'b>(
+    pub(super) fn convert_expression<'b>(
         &mut self,
         op: OperationRef<'c, '_>,
         body: BlockRef<'c, 'b>,
-        values: &mut HashMap<usize, Value<'c, 'b>>,
+        values: &mut HashMap<ValueId, Value<'c, 'b>>,
         produced: &mut Vec<Value<'c, 'b>>,
     ) {
         match op.as_yzl() {
@@ -32,7 +33,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                 produced.extend(operands);
             }
             Some(YzlOp::Call(call)) => {
-                let callee = call.callee().value().to_string();
+                let callee = call.callee().value();
                 let Some(operands) = lowered_operands(op, values) else {
                     return;
                 };
@@ -40,24 +41,24 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                 let ty = op.first_result().r#type();
                 let kind = call.callee_kind();
                 // Expansion removes every call to a function or let; one
-                // reaching here means expansion did not finish, which it has
+                // reaching here means it did not finish, which it has
                 // already reported.
                 if matches!(
                     kind,
                     Some(CalleeKind::Fn | CalleeKind::AggFn | CalleeKind::Let)
                 ) {
-                    self.error(op, format!("`{callee}` was not expanded before lowering"));
+                    self.report(op, &format!("`{callee}` was not expanded before lowering"));
                     return;
                 }
 
                 let lowered = if call.agg() {
-                    self.lower_measure(op, &callee, &operands, ty, body)
+                    self.convert_measure(op, callee, &operands, ty)
                 } else if kind == Some(CalleeKind::External) {
                     yz::extern_call(
                         self.context,
                         ty,
                         &operands,
-                        StringAttribute::new(self.context, &callee),
+                        StringAttribute::new(self.context, callee),
                         op.location(),
                     )
                     .into()
@@ -66,7 +67,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                         self.context,
                         ty,
                         &operands,
-                        FlatSymbolRefAttribute::new(self.context, &callee),
+                        FlatSymbolRefAttribute::new(self.context, callee),
                         op.location(),
                     )
                     .into()
@@ -82,7 +83,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 
                 let ty = op.first_result().r#type();
                 if ListType::from_type(ty).is_none() {
-                    self.error(op, "the type of this list could not be inferred");
+                    self.report(op, "the type of this list could not be inferred");
                     return;
                 }
 
@@ -90,22 +91,20 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                     .append_operation(yz::list(self.context, ty, &operands, op.location()).into());
                 values.insert(op.first_result().id(), appended.first_result());
             }
-            // Everything else is a `yz` op, structurally unchanged: the
-            // operands it was given, and the type inference stamped on it.
+            // A `yz` op is structurally unchanged: the operands it was given,
+            // and the type inference stamped on it.
             None => {
                 let Some(operands) = lowered_operands(op, values) else {
                     return;
                 };
 
-                let rebuilt = self.rebuild(op, &operands, body);
-                if let Some(rebuilt) = rebuilt {
+                if let Some(rebuilt) = self.rebuild(op, &operands, body) {
                     values.insert(op.first_result().id(), rebuilt);
                 }
             }
-            // The parse error above it already said what went wrong; this says
-            // the query cannot be built from what is left, rather than
-            // implying some lowering is still to come.
-            Some(YzlOp::Missing(_)) => self.error(op, "this part of the query is missing"),
+            // The parse error above it already said what went wrong; this
+            // says the query cannot be built from what is left.
+            Some(YzlOp::Missing(_)) => self.report(op, "this part of the query is missing"),
             Some(
                 YzlOp::From(_)
                 | YzlOp::Where(_)
@@ -127,12 +126,10 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                 | YzlOp::Impl(_)
                 | YzlOp::Let(_)
                 | YzlOp::Return(_),
-            ) => self.error(op, format!("`{}` is not lowered yet", op_name(op))),
+            ) => self.report(op, &format!("`{}` is not lowered yet", op_name(op))),
         }
     }
 
-    /// A `yz` op carried over with its attributes, its mapped operands, and
-    /// the concrete type inference gave it.
     fn rebuild<'b>(
         &mut self,
         op: OperationRef<'c, '_>,
@@ -162,14 +159,13 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
     }
 
     /// A measure: `count` takes no value, every other aggregate does.
-    fn lower_measure(
+    fn convert_measure(
         &self,
         op: OperationRef<'c, '_>,
         callee: &str,
         operands: &[Value<'c, '_>],
         ty: Type<'c>,
-        _body: BlockRef<'c, '_>,
-    ) -> melior::ir::Operation<'c> {
+    ) -> Operation<'c> {
         match operands.first() {
             Some(value) => yzr::agg(
                 self.context,
@@ -186,16 +182,13 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 
 /// What an op's operands became. The region is rebuilt from the top, so every
 /// operand has been lowered by the time its user is reached, and the stage
-/// regions are `IsolatedFromAbove` so none can come from outside.
-///
-/// An operand with nothing to stand for it therefore means its producer
-/// failed, and every path that fails to record a value reports first — so
-/// this says nothing, it just declines to build the op. Taking the operands
-/// that happen to be there would build one of the wrong shape and carry the
-/// mistake into the plan.
+/// regions are `IsolatedFromAbove` so none can come from outside. An operand
+/// with nothing to stand for it therefore means its producer failed and has
+/// already reported, so this declines to build the op rather than build one
+/// of the wrong shape.
 fn lowered_operands<'c, 'b>(
     op: OperationRef<'c, '_>,
-    values: &HashMap<usize, Value<'c, 'b>>,
+    values: &HashMap<ValueId, Value<'c, 'b>>,
 ) -> Option<Vec<Value<'c, 'b>>> {
     op.operands()
         .map(|operand| values.get(&operand.id()).copied())
@@ -206,13 +199,11 @@ fn lowered_operands<'c, 'b>(
 mod tests {
     use expect_test::expect;
 
-    use crate::test_support::check_lowered;
+    use crate::test_support::check_yzr;
 
-    /// Measures become `yzr.agg`, and the keys come from the stamp
-    /// resolution left.
     #[test]
     fn measures_become_aggregate_ops() {
-        check_lowered(
+        check_yzr(
             r#"
 struct Row { a: int64, b: int64 }
 table t = Row
@@ -237,12 +228,9 @@ from t
         );
     }
 
-    /// A hole the parser left behind reaches here as a `yzl.missing`. The
-    /// parse error above it says what went wrong; this says the query cannot
-    /// be built from it, rather than implying a lowering is missing.
     #[test]
     fn reports_a_missing_piece() {
-        check_lowered(
+        check_yzr(
             r#"
 struct Row { a: int64 }
 table t = Row
@@ -274,7 +262,7 @@ from t
 
     #[test]
     fn a_list_lowers_with_its_type() {
-        check_lowered(
+        check_yzr(
             r#"
 struct Row { a: int64 }
 table t = Row

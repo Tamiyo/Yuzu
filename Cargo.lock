@@ -2195,7 +2195,6 @@ version = "0.0.0"
 dependencies = [
  "expect-test",
  "melior",
- "mlir-sys",
  "text-size",
  "yuzu_ast",
  "yuzu_diagnostics",

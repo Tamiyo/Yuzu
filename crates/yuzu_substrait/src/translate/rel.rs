@@ -8,7 +8,7 @@ use melior::ir::operation::{OperationLike, OperationRef};
 use melior::ir::{Value, ValueLike};
 use substrait::proto::{
     AggregateFunction, AggregateRel, AggregationPhase, Expression, FetchRel, FilterRel,
-    FunctionArgument, JoinRel, NamedStruct, ProjectRel, ReadRel, Rel, RelCommon,
+    FunctionArgument, JoinRel, NamedStruct, ProjectRel, ReadRel, Rel,
     aggregate_rel::{Grouping, Measure},
     expression::literal::LiteralType,
     fetch_rel::{CountMode, OffsetMode},
@@ -16,17 +16,25 @@ use substrait::proto::{
     join_rel::JoinType,
     read_rel::{NamedTable, ReadType},
     rel::RelType,
-    rel_common::{Emit, EmitKind},
     r#type,
 };
 use yuzu_mlir::attributes::JoinKind;
-use yuzu_mlir::ext::{OperationCast, OperationExt, ValueExt};
+use yuzu_mlir::ext::{OperationCast, OperationExt, ValueExt, ValueId};
 use yuzu_mlir::ops::yzr::YzrOp;
 
+use crate::proto::{emit_common, literal, nullable, selection};
 use crate::translate::Translator;
-use crate::translate::expr::{Region, literal, selection};
+use crate::translate::expr::Region;
 use crate::translate::functions;
-use crate::translate::types::{emit_type, nullable, type_code};
+use crate::translate::types::{emit_type, type_code};
+
+/// What a projection keeps of its input's columns.
+enum Projection {
+    /// `select`: the row becomes what the region computed.
+    Replace,
+    /// `extend`: what the region computed joins the row.
+    Append,
+}
 
 impl<'c, 'a> Translator<'c, 'a, '_> {
     /// The relation a value stands for. A value two stages read is walked
@@ -60,11 +68,11 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
                 self.translate_join(op, kind)?
             }
             YzrOp::Union(_) | YzrOp::Intersect(_) | YzrOp::Except(_) => {
-                self.unsupported(op, "set operations are not lowered yet");
+                self.report(op, "set operations are not lowered yet");
                 return None;
             }
             YzrOp::Output(_) | YzrOp::Agg(_) | YzrOp::Count(_) | YzrOp::Yield(_) => {
-                self.unsupported(op, "this is not a relation");
+                self.report(op, "this is not a relation");
                 return None;
             }
         };
@@ -76,19 +84,12 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         Some(rel)
     }
 
-    /// The relation a stage reads, and how many columns it carries.
-    fn translate_input(&mut self, op: OperationRef<'c, 'a>) -> Option<(Rel, usize)> {
-        let value = op.try_first_operand()?;
-        let width = self.width(value)?;
-        Some((self.translate_rel(value)?, width))
-    }
-
     fn translate_table(&mut self, op: OperationRef<'c, 'a>, name: &str) -> Option<RelType> {
         let (names, types) = self.row(op.first_result().r#type())?;
         let mut fields = Vec::with_capacity(types.len());
         for ty in types {
             let Some(field) = emit_type(self.context, ty) else {
-                self.unsupported(op, "this column has no Substrait type");
+                self.report(op, "this column has no Substrait type");
                 return None;
             };
 
@@ -116,7 +117,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         let (input, _) = self.translate_input(op)?;
         let region = self.translate_region(op)?;
         let Some(condition) = self.yielded(op, &region)?.into_iter().next() else {
-            self.unsupported(op, "`where` has no predicate to filter on");
+            self.report(op, "`where` has no predicate to filter on");
             return None;
         };
 
@@ -144,7 +145,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         };
 
         Some(RelType::Project(Box::new(ProjectRel {
-            common: emit(output_mapping),
+            common: emit_common(output_mapping),
             input: Some(Box::new(input)),
             expressions,
             ..Default::default()
@@ -205,7 +206,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
                 ),
                 Some(YzrOp::Count(_)) => (functions::of_aggregate("count"), Vec::new()),
                 _ => {
-                    self.unsupported(op, "a grouping yields measures, and this is not one");
+                    self.report(op, "a grouping yields measures, and this is not one");
                     return None;
                 }
             };
@@ -221,13 +222,13 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         op: OperationRef<'c, '_>,
         func: functions::Aggregate,
         arguments: &[Value<'c, '_>],
-        values: &HashMap<usize, Expression>,
+        values: &HashMap<ValueId, Expression>,
     ) -> Option<Measure> {
         let mut signature = Vec::new();
         let mut emitted = Vec::new();
         for &argument in arguments {
             let Some(code) = type_code(self.context, argument.r#type()) else {
-                self.unsupported(op, "this measure's argument has no Substrait type");
+                self.report(op, "this measure's argument has no Substrait type");
                 return None;
             };
 
@@ -238,7 +239,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         }
 
         let Some(output) = emit_type(self.context, op.first_result().r#type()) else {
-            self.unsupported(op, "this measure has no Substrait type");
+            self.report(op, "this measure has no Substrait type");
             return None;
         };
 
@@ -263,7 +264,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         let right = self.translate_rel(op.operand(1).ok()?)?;
         let region = self.translate_region(op)?;
         let Some(expression) = self.yielded(op, &region)?.into_iter().next() else {
-            self.unsupported(op, "a join needs a condition to match its rows on");
+            self.report(op, "a join needs a condition to match its rows on");
             return None;
         };
 
@@ -275,20 +276,13 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
             ..Default::default()
         })))
     }
-}
 
-enum Projection {
-    /// `select`: the row becomes what the region computed.
-    Replace,
-    /// `extend`: what the region computed joins the row.
-    Append,
-}
-
-fn emit(output_mapping: Vec<i32>) -> Option<RelCommon> {
-    Some(RelCommon {
-        emit_kind: Some(EmitKind::Emit(Emit { output_mapping })),
-        ..Default::default()
-    })
+    /// The relation a stage reads, and how many columns it carries.
+    fn translate_input(&mut self, op: OperationRef<'c, 'a>) -> Option<(Rel, usize)> {
+        let value = op.try_first_operand()?;
+        let width = self.width(value)?;
+        Some((self.translate_rel(value)?, width))
+    }
 }
 
 fn join_type(kind: JoinKind) -> JoinType {

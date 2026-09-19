@@ -2,6 +2,7 @@ use prost::Message;
 
 mod emitter;
 mod extensions;
+mod proto;
 mod translate;
 
 pub use emitter::emit;

@@ -1,17 +1,16 @@
-use melior::ir::{
-    Attribute, BlockLike, BlockRef, Location, Type, Value,
-    attribute::{FlatSymbolRefAttribute, FloatAttribute, IntegerAttribute, StringAttribute},
+use melior::ir::attribute::{
+    FlatSymbolRefAttribute, FloatAttribute, IntegerAttribute, StringAttribute,
 };
-use yuzu_ast::{AstNode, BinOp, UnaryOp, ast};
-use yuzu_mlir::ods::{yz, yzl};
-
-use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 use melior::ir::r#type::IntegerType;
-use yuzu_mlir::attributes::{CalleeKind, CmpPredicate};
+use melior::ir::{Attribute, BlockLike, BlockRef, Location, Type, Value};
+use yuzu_ast::{AstNode, BinOp, UnaryOp, ast};
+use yuzu_mlir::attributes::CmpPredicate;
+use yuzu_mlir::ext::OperationExt;
+use yuzu_mlir::ods::{yz, yzl};
+use yuzu_mlir::types;
 
 use crate::lower_ast_to_yzl::symbols::{Callable, Kind, Lookup, Reference};
-use yuzu_mlir::ext::OperationExt;
-use yuzu_mlir::types;
+use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
     pub(super) fn convert_expr<'a>(
@@ -40,8 +39,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     types::var(self.context),
                 ),
             },
-            // A query is a scope, and it ends where the expression that is
-            // the query ends.
+            // A query is a scope, and it ends where the expression ends.
             ast::Expr::Rel(rel) => {
                 let value = self.convert_rel(block, rel);
                 self.symbols.leave();
@@ -54,6 +52,61 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 types::var(self.context),
             ),
         }
+    }
+
+    fn convert_literal<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        literal: &ast::Literal,
+    ) -> Value<'c, 'a> {
+        let loc = self.location(literal);
+        let operation = match literal {
+            ast::Literal::IntLiteral(int) => yz::constant_int(
+                self.context,
+                types::int64(self.context),
+                IntegerAttribute::new(
+                    IntegerType::new(self.context, 64).into(),
+                    int.value().unwrap_or_default() as i64,
+                ),
+                loc,
+            )
+            .into(),
+            ast::Literal::FloatLiteral(float) => yz::constant_float(
+                self.context,
+                types::float64(self.context),
+                FloatAttribute::new(
+                    self.context,
+                    Type::float64(self.context),
+                    float.value().unwrap_or_default(),
+                ),
+                loc,
+            )
+            .into(),
+            ast::Literal::BoolLiteral(boolean) => yz::constant_bool(
+                self.context,
+                types::boolean(self.context),
+                Attribute::parse(
+                    self.context,
+                    if boolean.value().unwrap_or_default() {
+                        "true"
+                    } else {
+                        "false"
+                    },
+                )
+                .expect("a bool attribute parses"),
+                loc,
+            )
+            .into(),
+            ast::Literal::StringLiteral(string) => yz::constant_str(
+                self.context,
+                types::str(self.context),
+                StringAttribute::new(self.context, &string.value().unwrap_or_default()),
+                loc,
+            )
+            .into(),
+        };
+
+        block.append_operation(operation).first_result()
     }
 
     fn convert_ident<'a>(
@@ -121,6 +174,89 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         self.name_ref(block, locals, access, reference, loc)
     }
 
+    fn convert_binary<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        locals: &Locals<'c, 'a>,
+        binary: &ast::BinaryExpr,
+    ) -> Value<'c, 'a> {
+        let loc = self.location(binary);
+        let lhs = match binary.lhs() {
+            Some(expr) => self.convert_expr(block, locals, &expr),
+            None => {
+                return self.missing(
+                    block,
+                    binary,
+                    "binary expression is missing its left operand",
+                    types::var(self.context),
+                );
+            }
+        };
+
+        let rhs = match binary.rhs() {
+            Some(expr) => self.convert_expr(block, locals, &expr),
+            None => {
+                return self.missing(
+                    block,
+                    binary,
+                    "binary expression is missing its right operand",
+                    types::var(self.context),
+                );
+            }
+        };
+
+        let context = self.context;
+        let var = types::var(context);
+        let cmp = |predicate: CmpPredicate| {
+            yz::cmp(
+                context,
+                var,
+                lhs,
+                rhs,
+                StringAttribute::new(context, predicate.as_str()),
+                loc,
+            )
+            .into()
+        };
+
+        let operation = match binary.op() {
+            Some(BinOp::Add) => yz::add(context, var, lhs, rhs, loc).into(),
+            Some(BinOp::Sub) => yz::sub(context, var, lhs, rhs, loc).into(),
+            Some(BinOp::Mul) => yz::mul(context, var, lhs, rhs, loc).into(),
+            Some(BinOp::Div) => yz::div(context, var, lhs, rhs, loc).into(),
+            Some(BinOp::And) => yz::and(context, var, lhs, rhs, loc).into(),
+            Some(BinOp::Or) => yz::or(context, var, lhs, rhs, loc).into(),
+            Some(BinOp::Eq) => cmp(CmpPredicate::Equal),
+            Some(BinOp::Neq) => cmp(CmpPredicate::NotEqual),
+            Some(BinOp::Lt) => cmp(CmpPredicate::Less),
+            Some(BinOp::Lte) => cmp(CmpPredicate::LessOrEqual),
+            Some(BinOp::Gt) => cmp(CmpPredicate::Greater),
+            Some(BinOp::Gte) => cmp(CmpPredicate::GreaterOrEqual),
+            Some(BinOp::Pow) => return self.operator(block, binary, "pow", &[lhs, rhs], loc),
+            Some(BinOp::ShiftLeft) => {
+                return self.operator(block, binary, "shift_left", &[lhs, rhs], loc);
+            }
+            Some(BinOp::ShiftRight) => {
+                return self.operator(block, binary, "shift_right", &[lhs, rhs], loc);
+            }
+            Some(BinOp::In) => return self.operator(block, binary, "in", &[lhs, rhs], loc),
+            Some(BinOp::NotIn) => {
+                let contains = self.operator(block, binary, "in", &[lhs, rhs], loc);
+                yz::not(context, var, contains, loc).into()
+            }
+            None => {
+                return self.missing(
+                    block,
+                    binary,
+                    "binary expression is missing its operator",
+                    var,
+                );
+            }
+        };
+
+        block.append_operation(operation).first_result()
+    }
+
     fn convert_unary<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
@@ -181,8 +317,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 }
             },
             // `helpers.double(a)` names a module and then one thing in it.
-            // A column qualified by a relation alias is the same syntax, and
-            // the row is checked first, so a column wins.
             Some(ast::Expr::FieldAccessExpr(access)) => {
                 return self.convert_module_call(block, locals, call, &access, loc);
             }
@@ -204,14 +338,11 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             }
         };
 
-        let args: Vec<ast::Expr> = call
+        let operands: Vec<Value> = call
             .args()
             .into_iter()
             .flat_map(|args| args.args())
-            .collect();
-        let operands: Vec<Value> = args
-            .iter()
-            .map(|arg| self.convert_expr(block, locals, arg))
+            .map(|arg| self.convert_expr(block, locals, &arg))
             .collect();
         let Some(callable) = self.symbols.callable(callee, self.registry) else {
             let message = match self.symbols.kind(callee) {
@@ -240,7 +371,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     ) -> Value<'c, 'a> {
         let base = match access.base() {
             Some(ast::Expr::IdentExpr(ident)) => self.ident(ident.name()),
-            Some(_) | None => None,
+            _ => None,
         };
 
         let (Some(base), Some(name)) = (base, self.ident(access.field())) else {
@@ -285,21 +416,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         self.call(block, callable, &operands, loc)
     }
 
-    fn check_arity(&mut self, call: &impl AstNode, callee: &str, callable: Callable, given: usize) {
-        let (min, max) = (callable.min_args, callable.max_args);
-        if given < min || given > max {
-            let expected = if min == max {
-                format!("{min}")
-            } else {
-                format!("{min} to {max}")
-            };
-            self.error(
-                call,
-                &format!("`{callee}` expects {expected} argument(s), found {given}"),
-            );
-        }
-    }
-
     fn convert_list<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
@@ -307,153 +423,15 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         list: &ast::ListExpr,
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
-        let elements: Vec<ast::Expr> = list.elements().collect();
-        let values: Vec<Value> = elements
-            .iter()
-            .map(|element| self.convert_expr(block, locals, element))
+        let values: Vec<Value> = list
+            .elements()
+            .map(|element| self.convert_expr(block, locals, &element))
             .collect();
         block
             .append_operation(
                 yzl::list(self.context, types::var(self.context), &values, loc).into(),
             )
             .first_result()
-    }
-
-    fn convert_binary<'a>(
-        &mut self,
-        block: BlockRef<'c, 'a>,
-        locals: &Locals<'c, 'a>,
-        binary: &ast::BinaryExpr,
-    ) -> Value<'c, 'a> {
-        let loc = self.location(binary);
-        let lhs = match binary.lhs() {
-            Some(expr) => self.convert_expr(block, locals, &expr),
-            None => {
-                return self.missing(
-                    block,
-                    binary,
-                    "binary expression is missing its left operand",
-                    types::var(self.context),
-                );
-            }
-        };
-
-        let rhs = match binary.rhs() {
-            Some(expr) => self.convert_expr(block, locals, &expr),
-            None => {
-                return self.missing(
-                    block,
-                    binary,
-                    "binary expression is missing its right operand",
-                    types::var(self.context),
-                );
-            }
-        };
-
-        let context = self.context;
-        let cmp = |predicate: CmpPredicate| {
-            yz::cmp(
-                context,
-                types::var(self.context),
-                lhs,
-                rhs,
-                StringAttribute::new(context, predicate.as_str()),
-                loc,
-            )
-            .into()
-        };
-
-        let operation = match binary.op() {
-            Some(BinOp::Add) => yz::add(context, types::var(self.context), lhs, rhs, loc).into(),
-            Some(BinOp::Sub) => yz::sub(context, types::var(self.context), lhs, rhs, loc).into(),
-            Some(BinOp::Mul) => yz::mul(context, types::var(self.context), lhs, rhs, loc).into(),
-            Some(BinOp::Div) => yz::div(context, types::var(self.context), lhs, rhs, loc).into(),
-            Some(BinOp::And) => yz::and(context, types::var(self.context), lhs, rhs, loc).into(),
-            Some(BinOp::Or) => yz::or(context, types::var(self.context), lhs, rhs, loc).into(),
-            Some(BinOp::Eq) => cmp(CmpPredicate::Equal),
-            Some(BinOp::Neq) => cmp(CmpPredicate::NotEqual),
-            Some(BinOp::Lt) => cmp(CmpPredicate::Less),
-            Some(BinOp::Lte) => cmp(CmpPredicate::LessOrEqual),
-            Some(BinOp::Gt) => cmp(CmpPredicate::Greater),
-            Some(BinOp::Gte) => cmp(CmpPredicate::GreaterOrEqual),
-            Some(BinOp::Pow) => return self.operator(block, binary, "pow", &[lhs, rhs], loc),
-            Some(BinOp::ShiftLeft) => {
-                return self.operator(block, binary, "shift_left", &[lhs, rhs], loc);
-            }
-            Some(BinOp::ShiftRight) => {
-                return self.operator(block, binary, "shift_right", &[lhs, rhs], loc);
-            }
-            Some(BinOp::In) => return self.operator(block, binary, "in", &[lhs, rhs], loc),
-            Some(BinOp::NotIn) => {
-                let contains = self.operator(block, binary, "in", &[lhs, rhs], loc);
-                yz::not(context, types::var(self.context), contains, loc).into()
-            }
-            None => {
-                return self.missing(
-                    block,
-                    binary,
-                    "binary expression is missing its operator",
-                    types::var(self.context),
-                );
-            }
-        };
-
-        block.append_operation(operation).first_result()
-    }
-
-    fn convert_literal<'a>(
-        &mut self,
-        block: BlockRef<'c, 'a>,
-        literal: &ast::Literal,
-    ) -> Value<'c, 'a> {
-        let loc = self.location(literal);
-        let operation = match literal {
-            ast::Literal::IntLiteral(int) => yz::constant_int(
-                self.context,
-                types::int64(self.context),
-                IntegerAttribute::new(
-                    IntegerType::new(self.context, 64).into(),
-                    int.value().unwrap_or_default() as i64,
-                ),
-                loc,
-            )
-            .into(),
-            ast::Literal::FloatLiteral(float) => yz::constant_float(
-                self.context,
-                types::float64(self.context),
-                FloatAttribute::new(
-                    self.context,
-                    Type::float64(self.context),
-                    float.value().unwrap_or_default(),
-                ),
-                loc,
-            )
-            .into(),
-            ast::Literal::BoolLiteral(boolean) => yz::constant_bool(
-                self.context,
-                types::boolean(self.context),
-                Attribute::parse(
-                    self.context,
-                    if boolean.value().unwrap_or_default() {
-                        "true"
-                    } else {
-                        "false"
-                    },
-                )
-                .expect("a bool attribute parses"),
-                loc,
-            )
-            .into(),
-            ast::Literal::StringLiteral(string) => yz::constant_str(
-                self.context,
-                types::str(self.context),
-                StringAttribute::new(self.context, &string.value().unwrap_or_default()),
-                loc,
-            )
-            .into(),
-        };
-
-        block.append_operation(operation).first_result()
     }
 
     /// A column or parameter is a block argument; a module-level `let` is a
@@ -476,14 +454,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             }
             Lookup::Local { slot, .. } => return locals[slot],
             Lookup::Let(symbol) => {
-                let callable = Callable {
-                    symbol,
-                    kind: CalleeKind::Let,
-                    min_args: 0,
-                    max_args: 0,
-                    agg: false,
-                };
-                return self.call(block, callable, &[], loc);
+                return self.call(block, Callable::let_binding(symbol), &[], loc);
             }
             Lookup::Ambiguous => {
                 format!("column `{name}` is ambiguous; qualify it with a relation alias")
@@ -497,14 +468,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             Lookup::Unknown => format!("unresolved identifier `{reference}`"),
         };
 
-        // Inside a relation every one of these is a column reference that
-        // did not land, so the row it was resolved against is the note.
         self.unresolved_column(node, &message);
         self.hole(block, node.syntax().text_range(), types::var(self.context))
     }
 
-    /// A call names the symbol the callee was declared under, which is the
-    /// written name unless something else took it.
     fn call<'a>(
         &self,
         block: BlockRef<'c, 'a>,
@@ -517,7 +484,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .operands(operands)
             .callee(FlatSymbolRefAttribute::new(self.context, callable.symbol))
             .callee_kind(StringAttribute::new(self.context, callable.kind.as_str()));
-        if callable.agg {
+        if callable.is_agg {
             builder = builder.agg(Attribute::unit(self.context));
         }
 
@@ -526,10 +493,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .first_result()
     }
 
-    /// An operator is sugar for a call to a name the language already offers
-    /// under that name, so it resolves the way a written call resolves. A
-    /// declaration of the name therefore stands for the operator too, which
-    /// is what keeps `a << b` and `shift_left(a, b)` the same expression.
+    /// An operator is sugar for a call to a name the language offers under
+    /// that name, so it resolves the way a written call resolves.
     fn operator<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
@@ -539,8 +504,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         let Some(callable) = self.symbols.operator(callee, self.registry) else {
-            // Only reachable through a registry that does not offer the name,
-            // since the builtins do. The operator has nowhere to go.
             return self.missing(
                 block,
                 node,
@@ -552,19 +515,42 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         self.check_arity(node, callee, callable, operands.len());
         self.call(block, callable, operands, loc)
     }
+
+    fn check_arity(&mut self, call: &impl AstNode, callee: &str, callable: Callable, given: usize) {
+        let (min, max) = (callable.min_args, callable.max_args);
+        if given < min || given > max {
+            let expected = if min == max {
+                format!("{min}")
+            } else {
+                format!("{min} to {max}")
+            };
+            self.report(
+                call,
+                &format!("`{callee}` expects {expected} argument(s), found {given}"),
+            );
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use expect_test::{Expect, expect};
+    use expect_test::expect;
 
-    use crate::lower_ast_to_yzl::test_support::{convert, converted, reported};
+    use crate::test_support::{lower, lowered, rendered, reported};
 
-    /// What a column reference that does not land reads like: the row it was
-    /// resolved against is the one thing the source does not show.
+    /// The row a reference was resolved against is the one thing the source
+    /// does not show.
     #[test]
     fn a_column_reference_says_what_the_row_carries() {
-        check_reported(
+        expect![[r#"
+            error: column `id` is ambiguous; qualify it with a relation alias
+             --> test.yz:9:11
+              |
+            9 | |> select id
+              |           ^^
+              = note: the row carries `e.id`, `e.dept_id`, `d.id`, `d.name`
+        "#]]
+        .assert_eq(&reported(
             r#"
 struct Employee { id: str, dept_id: int64 }
 table employees = Employee
@@ -575,20 +561,20 @@ from employees as e
 |> inner join departments as d on e.dept_id == d.id
 |> select id
 "#,
-            expect![[r#"
-                error: column `id` is ambiguous; qualify it with a relation alias
-                 --> test.yz:9:11
-                  |
-                9 | |> select id
-                  |           ^^
-                  = note: the row carries `e.id`, `e.dept_id`, `d.id`, `d.name`
-            "#]],
-        );
+        ));
     }
 
     #[test]
     fn a_narrowed_column_says_what_is_left() {
-        check_reported(
+        expect![[r#"
+            error: column `level` is no longer in the row: an earlier stage narrowed it away
+             --> test.yz:7:10
+              |
+            7 | |> where level > 1
+              |          ^^^^^
+              = note: the row carries `id`
+        "#]]
+        .assert_eq(&reported(
             r#"
 struct Row { id: str, level: int64 }
 table t = Row
@@ -597,25 +583,11 @@ from t
 |> select id
 |> where level > 1
 "#,
-            expect![[r#"
-                error: column `level` is no longer in the row: an earlier stage narrowed it away
-                 --> test.yz:7:10
-                  |
-                7 | |> where level > 1
-                  |          ^^^^^
-                  = note: the row carries `id`
-            "#]],
-        );
+        ));
     }
 
-    fn check_reported(source: &str, expected: Expect) {
-        let context = yuzu_mlir::context();
-        expected.assert_eq(&reported(&context, source));
-    }
-
-    /// An operator is a call to a name, so a declaration of that name stands
-    /// for the operator too. Both spellings resolved separately before this,
-    /// and one query could answer twice for the same expression.
+    /// A declaration of an operator's name stands for the operator too, so
+    /// `a << b` and `shift_left(a, b)` are the same expression.
     #[test]
     fn an_operator_and_its_name_resolve_together() {
         expect![[r#"
@@ -639,7 +611,7 @@ from t
               yzl.output %1
             }
         "#]]
-        .assert_eq(&converted(
+        .assert_eq(&lowered(
             r#"
 struct Row { a: int64 }
 table t = Row
@@ -652,12 +624,9 @@ from t
         ));
     }
 
-    /// Only a function can stand for an operator. A value bound to the name
-    /// is a different thing that happens to share it, so `**` goes on
-    /// meaning what the language says.
     #[test]
     fn a_value_does_not_stand_for_an_operator() {
-        let module = converted(
+        let module = lowered(
             r#"
 struct Row { a: int64 }
 table t = Row
@@ -675,21 +644,19 @@ from t
         );
     }
 
-    /// The HIR lowerer's missing-piece mechanics, ported: a hole in the
-    /// parse converts to a reported diagnostic and a `yzl.missing` value.
+    /// A hole in the parse lowers to a reported diagnostic and a
+    /// `yzl.missing` value.
     #[test]
     fn reports_missing_pieces() {
-        use yuzu_diagnostics::diagnostics::printer::DiagnosticPrinter;
-
-        let source = "struct Row { a: int64 }\ntable t = Row\n\nfrom t\n|> where a >\n";
         let context = yuzu_mlir::context();
-        let (module, sources, diagnostics) = convert(&context, "test.yz", source);
-        let printer = DiagnosticPrinter::new(&sources);
-        let rendered: Vec<String> = diagnostics
-            .diagnostics()
-            .iter()
-            .map(|diagnostic| printer.print(diagnostic))
-            .collect();
+        let lowered = lower(
+            &context,
+            &[(
+                "test.yz",
+                None,
+                "struct Row { a: int64 }\ntable t = Row\n\nfrom t\n|> where a >\n",
+            )],
+        );
         expect![[r#"
             error: expected expression, found end of input
              --> test.yz:5:13
@@ -703,10 +670,14 @@ from t
             5 | |> where a >
               |          ^^^
         "#]]
-        .assert_eq(&rendered.join("\n"));
+        .assert_eq(&rendered(&lowered.sources, &lowered.diagnostics));
         assert!(
-            module.as_operation().to_string().contains("yzl.missing"),
-            "the hole converts to a yzl.missing value"
+            lowered
+                .module
+                .as_operation()
+                .to_string()
+                .contains("yzl.missing"),
+            "the hole lowers to a yzl.missing value"
         );
     }
 }

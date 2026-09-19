@@ -1,18 +1,14 @@
-//! Yuzu's types as Substrait's. Everything is nullable: the language has no
-//! nullability yet, and a plan that claimed otherwise would promise the
-//! engine something the compiler has not checked.
+//! Yuzu's types as Substrait's.
 
 use melior::Context;
 use melior::ir::Type;
 use substrait::proto::{
     Type as SubstraitType,
-    r#type::{self, Kind, Nullability},
+    r#type::{self, Kind},
 };
 use yuzu_mlir::types;
 
-pub(crate) fn nullable() -> i32 {
-    Nullability::Nullable as i32
-}
+use crate::proto::nullable;
 
 /// The code a Substrait function signature names this type by, as in
 /// `add:i64_i64`. `None` for a type no signature can carry.

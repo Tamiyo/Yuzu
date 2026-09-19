@@ -1,12 +1,10 @@
 use substrait::proto::{
     Type as SubstraitType,
-    r#type::{self, Kind, Nullability},
+    r#type::{self, Kind},
 };
 use yuzu_types::{Column, Type, TypeCtx, TypeId};
 
-pub(crate) fn nullable() -> i32 {
-    Nullability::Nullable as i32
-}
+use crate::proto::nullable;
 
 pub(crate) fn type_code(types: &TypeCtx, ty: TypeId) -> &'static str {
     match types.ty(ty) {

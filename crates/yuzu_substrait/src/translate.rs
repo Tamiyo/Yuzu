@@ -10,14 +10,14 @@
 use std::collections::HashMap;
 
 use melior::Context;
-use melior::ir::attribute::{ArrayAttribute, TypeAttribute};
 use melior::ir::operation::{OperationLike, OperationRef, OperationResult};
 use melior::ir::{Module, Type, Value, ValueLike};
 use substrait::proto::{Plan, PlanRel, Rel, RelRoot, plan_rel};
 use substrait::version;
 use yuzu_mlir::StructType;
 use yuzu_mlir::SymbolTable;
-use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationCast, OperationExt};
+use yuzu_mlir::diagnostics::emit_error;
+use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationCast, OperationExt, ValueId};
 use yuzu_mlir::ops::yz::YzOp;
 use yuzu_mlir::ops::yzr::YzrOp;
 
@@ -76,7 +76,7 @@ struct Translator<'c, 'a, 's> {
     symbols: &'s SymbolTable<'c, 'a>,
     /// What each relational value already translated to, so a relation two
     /// stages read is walked once.
-    translated: HashMap<usize, Rel>,
+    translated: HashMap<ValueId, Rel>,
     extensions: Extensions,
 }
 
@@ -95,7 +95,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
             return None;
         };
 
-        Some((item.names().strings(), field_types(item.types())))
+        Some((item.names().strings(), item.types().types()))
     }
 
     fn width(&self, value: Value<'c, 'a>) -> Option<usize> {
@@ -104,25 +104,20 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
 
     /// Substrait has no way to say this. Reported against the operation, so
     /// the location it carries is the source the reader wrote.
-    fn unsupported(&self, op: OperationRef<'c, '_>, message: impl AsRef<str>) {
-        yuzu_mlir::diagnostics::emit_error(op.location(), message.as_ref());
+    fn report(&self, op: OperationRef<'c, '_>, message: &str) {
+        emit_error(op.location(), message);
     }
-}
-
-fn field_types<'c>(types: ArrayAttribute<'c>) -> Vec<Type<'c>> {
-    types
-        .elements()
-        .filter_map(|element| TypeAttribute::try_from(element).ok())
-        .map(|attribute| attribute.value())
-        .collect()
 }
 
 #[cfg(test)]
 pub(crate) mod test_support {
     use expect_test::Expect;
+    use yuzu_ast::AstNode;
+    use yuzu_ast::ast;
     use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
     use yuzu_diagnostics::diagnostics::printer::DiagnosticPrinter;
     use yuzu_diagnostics::source_map::SourceMap;
+    use yuzu_lexer::lexer::{Lexer, Token};
 
     use crate::to_json;
 
@@ -136,18 +131,17 @@ pub(crate) mod test_support {
         let mut sources = SourceMap::new();
         let source_id = sources.add("test.yz".to_string(), source.to_string());
         let mut diagnostics = DiagnosticsEngine::new();
-        let tokens: Vec<yuzu_lexer::lexer::Token> = yuzu_lexer::lexer::Lexer::new(source).collect();
+        let tokens: Vec<Token> = Lexer::new(source).collect();
         let syntax = yuzu_parser::parse(&tokens, &mut diagnostics, source_id);
-        let root =
-            <yuzu_ast::ast::Root as yuzu_ast::AstNode>::cast(syntax).expect("a source has a root");
-        let module = yuzu_passes::lower_ast_to_yzl(
+        let root = ast::Root::cast(syntax).expect("a source has a root");
+        let mut module = yuzu_passes::lower_ast_to_yzl(
             &context,
             &sources,
             &[yuzu_passes::File::entry(source_id, root)],
             &mut diagnostics,
             &yuzu_types::Builtins,
         )
-        .expect("the source converts");
+        .expect("the source lowers");
 
         let plan = yuzu_mlir::diagnostics::capture(
             &context,
@@ -155,9 +149,9 @@ pub(crate) mod test_support {
             source_id,
             &mut diagnostics,
             || {
-                yuzu_passes::infer_types(&context, &module);
+                yuzu_passes::infer_types(&context, &mut module, &yuzu_types::Builtins);
                 yuzu_passes::check_aggregates(&module);
-                yuzu_passes::inline_calls(&context, &module);
+                yuzu_passes::inline_calls(&context, &mut module);
                 let mut lowered = yuzu_passes::lower_yzl_to_yzr(&context, &module);
                 yuzu_passes::simplify_yzr(&context, &mut lowered);
                 super::translate(&context, &lowered)

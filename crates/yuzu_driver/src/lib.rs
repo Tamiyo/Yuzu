@@ -222,7 +222,7 @@ fn plan_through_mlir(
 
     let files = modules::load(source_id, sources, diagnostics, resolver)?;
     let context = yuzu_mlir::context();
-    let module = yuzu_passes::lower_ast_to_yzl(
+    let mut module = yuzu_passes::lower_ast_to_yzl(
         &context,
         sources,
         &files,
@@ -239,7 +239,7 @@ fn plan_through_mlir(
     }
 
     yuzu_mlir::diagnostics::capture(&context, sources, source_id, diagnostics, || {
-        yuzu_passes::infer_types(&context, &module);
+        yuzu_passes::infer_types(&context, &mut module, &yuzu_types::Builtins);
         yuzu_passes::check_aggregates(&module);
     });
     if has_errors(diagnostics) {
@@ -250,7 +250,7 @@ fn plan_through_mlir(
     // while it is still a body, and before the lowering, which has no way to
     // carry a function across.
     yuzu_mlir::diagnostics::capture(&context, sources, source_id, diagnostics, || {
-        yuzu_passes::inline_calls(&context, &module);
+        yuzu_passes::inline_calls(&context, &mut module);
     });
     if has_errors(diagnostics) {
         return None;

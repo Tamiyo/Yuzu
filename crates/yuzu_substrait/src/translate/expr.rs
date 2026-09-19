@@ -5,57 +5,28 @@
 use std::collections::HashMap;
 
 use melior::ir::operation::{OperationLike, OperationRef};
-use melior::ir::{BlockLike, RegionLike, Value, ValueLike};
+use melior::ir::{RegionLike, Value, ValueLike};
 use substrait::proto::{
     Expression, FunctionArgument,
-    expression::{
-        FieldReference, Literal, ReferenceSegment, RexType, ScalarFunction, SingularOrList,
-        field_reference::{ReferenceType, RootReference, RootType},
-        literal::LiteralType,
-        reference_segment,
-    },
+    expression::{RexType, ScalarFunction, SingularOrList, literal::LiteralType},
     function_argument::ArgType,
 };
-use yuzu_mlir::ext::{BlockExt, OperationCast, OperationExt, ValueExt};
+use yuzu_mlir::ext::{BlockExt, OperationCast, OperationExt, ValueExt, ValueId};
 use yuzu_mlir::ops::yz::YzOp;
 use yuzu_mlir::ops::yzr::YzrOp;
 use yuzu_types::Func;
 
 use crate::extensions::{EXTERNAL_URN, function_target};
+use crate::proto::{literal, selection};
 use crate::translate::Translator;
 use crate::translate::functions;
 use crate::translate::types::{emit_type, type_code};
-
-pub(crate) fn selection(index: i32) -> Expression {
-    Expression {
-        rex_type: Some(RexType::Selection(Box::new(FieldReference {
-            reference_type: Some(ReferenceType::DirectReference(ReferenceSegment {
-                reference_type: Some(reference_segment::ReferenceType::StructField(Box::new(
-                    reference_segment::StructField {
-                        field: index,
-                        child: None,
-                    },
-                ))),
-            })),
-            root_type: Some(RootType::RootReference(RootReference {})),
-        }))),
-    }
-}
-
-pub(crate) fn literal(value: LiteralType) -> Expression {
-    Expression {
-        rex_type: Some(RexType::Literal(Literal {
-            literal_type: Some(value),
-            ..Default::default()
-        })),
-    }
-}
 
 /// A translated region: what each of its values became, and the values its
 /// `yzr.yield` named. The yields stay as values because what they mean is
 /// the stage's business — a grouping yields measures, not expressions.
 pub(crate) struct Region<'c, 'a> {
-    pub(crate) values: HashMap<usize, Expression>,
+    pub(crate) values: HashMap<ValueId, Expression>,
     pub(crate) yielded: Vec<Value<'c, 'a>>,
 }
 
@@ -68,13 +39,11 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
             });
         };
 
-        let mut values = HashMap::new();
-        for index in 0..block.argument_count() {
-            let argument = block
-                .argument(index)
-                .expect("the argument index is in range");
-            values.insert(argument.id(), selection(index as i32));
-        }
+        let mut values: HashMap<ValueId, Expression> = block
+            .arguments()
+            .enumerate()
+            .map(|(index, argument)| (argument.id(), selection(index as i32)))
+            .collect();
 
         let mut yielded = Vec::new();
         for inner in block.operations() {
@@ -94,40 +63,10 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         Some(Region { values, yielded })
     }
 
-    /// The expressions a region yielded, for a stage that wants values.
-    pub(crate) fn yielded(
-        &self,
-        op: OperationRef<'c, '_>,
-        region: &Region<'c, 'a>,
-    ) -> Option<Vec<Expression>> {
-        region
-            .yielded
-            .iter()
-            .map(|&value| self.expression_of(op, value, &region.values))
-            .collect()
-    }
-
-    /// What a value became, which the operation producing it recorded before
-    /// this one was reached.
-    pub(crate) fn expression_of(
-        &self,
-        op: OperationRef<'c, '_>,
-        value: Value<'c, '_>,
-        values: &HashMap<usize, Expression>,
-    ) -> Option<Expression> {
-        match values.get(&value.id()) {
-            Some(expression) => Some(expression.clone()),
-            None => {
-                self.unsupported(op, "this expression has no Substrait equivalent");
-                None
-            }
-        }
-    }
-
     fn translate_value(
         &mut self,
         op: OperationRef<'c, '_>,
-        values: &HashMap<usize, Expression>,
+        values: &HashMap<ValueId, Expression>,
     ) -> Option<Expression> {
         match op.as_yz()? {
             YzOp::ConstantInt(constant) => {
@@ -157,7 +96,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
             YzOp::Call(call) => {
                 let callee = call.callee().value();
                 let Some(func) = functions::of_builtin(callee) else {
-                    self.unsupported(op, format!("`{callee}` has no Substrait mapping yet"));
+                    self.report(op, &format!("`{callee}` has no Substrait mapping yet"));
                     return None;
                 };
 
@@ -171,12 +110,12 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
                 self.translate_function(op, EXTERNAL_URN, callee, values)
             }
             YzOp::Rem(_) => {
-                self.unsupported(op, "`%` is not supported by the datafusion target");
+                self.report(op, "`%` is not supported by the datafusion target");
                 None
             }
             // Declarations and terminators are not values.
             YzOp::Struct(_) | YzOp::Func(_) | YzOp::Return(_) | YzOp::List(_) => {
-                self.unsupported(op, "this is not an expression");
+                self.report(op, "this is not an expression");
                 None
             }
         }
@@ -187,12 +126,12 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
     fn translate_membership(
         &mut self,
         op: OperationRef<'c, '_>,
-        values: &HashMap<usize, Expression>,
+        values: &HashMap<ValueId, Expression>,
     ) -> Option<Expression> {
         let value = self.expression_of(op, op.operand(0).ok()?, values)?;
         let list = op.operand(1).ok()?;
         let Some(producer) = Self::producer(list) else {
-            self.unsupported(op, "`in` takes a list of values on its right");
+            self.report(op, "`in` takes a list of values on its right");
             return None;
         };
 
@@ -213,13 +152,13 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         &mut self,
         op: OperationRef<'c, '_>,
         func: Func,
-        values: &HashMap<usize, Expression>,
+        values: &HashMap<ValueId, Expression>,
     ) -> Option<Expression> {
         let Some((urn, base)) = function_target(func) else {
             let symbol = func.symbol();
-            self.unsupported(
+            self.report(
                 op,
-                format!("`{symbol}` is not supported by the datafusion target"),
+                &format!("`{symbol}` is not supported by the datafusion target"),
             );
             return None;
         };
@@ -234,13 +173,13 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         op: OperationRef<'c, '_>,
         urn: &'static str,
         base: String,
-        values: &HashMap<usize, Expression>,
+        values: &HashMap<ValueId, Expression>,
     ) -> Option<Expression> {
         let mut signature = Vec::new();
         let mut arguments = Vec::new();
         for operand in op.operands() {
             let Some(code) = type_code(self.context, operand.r#type()) else {
-                self.unsupported(op, "this argument has no Substrait type");
+                self.report(op, "this argument has no Substrait type");
                 return None;
             };
 
@@ -251,7 +190,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         }
 
         let Some(output) = emit_type(self.context, op.first_result().r#type()) else {
-            self.unsupported(op, "this expression has no Substrait type");
+            self.report(op, "this expression has no Substrait type");
             return None;
         };
 
@@ -266,5 +205,35 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
                 ..Default::default()
             })),
         })
+    }
+
+    /// The expressions a region yielded, for a stage that wants values.
+    pub(crate) fn yielded(
+        &self,
+        op: OperationRef<'c, '_>,
+        region: &Region<'c, 'a>,
+    ) -> Option<Vec<Expression>> {
+        region
+            .yielded
+            .iter()
+            .map(|&value| self.expression_of(op, value, &region.values))
+            .collect()
+    }
+
+    /// What a value became, which the operation producing it recorded before
+    /// this one was reached.
+    pub(crate) fn expression_of(
+        &self,
+        op: OperationRef<'c, '_>,
+        value: Value<'c, '_>,
+        values: &HashMap<ValueId, Expression>,
+    ) -> Option<Expression> {
+        match values.get(&value.id()) {
+            Some(expression) => Some(expression.clone()),
+            None => {
+                self.report(op, "this expression has no Substrait equivalent");
+                None
+            }
+        }
     }
 }

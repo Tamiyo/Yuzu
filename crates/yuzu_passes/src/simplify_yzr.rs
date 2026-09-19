@@ -1,19 +1,14 @@
-//! SimplifyYZR: the work a query does not need to carry. The `yz` ops declare
-//! their own folders, so this is MLIR's canonicalizer and CSE rather than a
-//! rewrite of our own — constants folded, repeated work shared, and anything
-//! nothing reads dropped.
-//!
-//! Stage regions are `IsolatedFromAbove`, so what a fold leaves behind stays
-//! inside the region that becomes a Substrait expression. Without that, the
-//! canonicalizer hoists constants to the module and the emitter has to chase
-//! values across a boundary Substrait cannot express.
+//! The work a query does not need to carry. The `yz` ops declare their own
+//! folders, so this is MLIR's canonicalizer and CSE rather than a rewrite of
+//! our own. Stage regions are `IsolatedFromAbove`, so what a fold leaves
+//! behind stays inside the region that becomes a Substrait expression.
 
 use melior::Context;
 use melior::ir::Module;
 use melior::ir::operation::OperationLike;
 use melior::pass::{PassManager, transform};
 
-/// Expects a lowered yzr module. Diagnostics go through MLIR — run this
+/// Expects a lowered yzr module. Diagnostics go through MLIR: run this
 /// inside `yuzu_mlir::diagnostics::capture` to collect them.
 pub fn simplify_yzr(context: &Context, module: &mut Module) {
     let passes = PassManager::new(context);
@@ -21,8 +16,6 @@ pub fn simplify_yzr(context: &Context, module: &mut Module) {
     passes.add_pass(transform::create_cse());
 
     if let Err(error) = passes.run(module) {
-        // MLIR reports why through the handler the capture installed; this
-        // says that it happened at all, so a failure is never silent.
         yuzu_mlir::diagnostics::emit_error(
             module.as_operation().location(),
             &format!("simplifying the query failed: {error}"),
@@ -36,9 +29,6 @@ mod tests {
 
     use crate::test_support::check_simplified;
 
-    /// The folders live on the `yz` ops, so constant arithmetic collapses
-    /// without a rewrite of our own — and `1 / 0` stands, because folding it
-    /// would decide at compile time what the query is entitled to fail on.
     #[test]
     fn constant_arithmetic_folds_in_place() {
         check_simplified(
@@ -65,8 +55,6 @@ from t
         );
     }
 
-    /// Two identical computations become one: CSE reaches inside the stage
-    /// region, where the repeated work actually is.
     #[test]
     fn repeated_work_is_computed_once() {
         check_simplified(
@@ -93,11 +81,8 @@ from t
         );
     }
 
-    /// The limit of a generic DCE, pinned so the gap is visible: MLIR drops
-    /// dead *operations*, and the `yzr.extend` here is live — the projection
-    /// downstream reads it. That nothing reads its third column is a fact
-    /// about rows, not about SSA, so `unused` is still computed. Removing it
-    /// is column pruning, and that stays ours to write.
+    /// MLIR drops dead operations; that nothing reads a column is a fact
+    /// about rows, not SSA, so column pruning stays ours to write.
     #[test]
     fn an_unread_column_is_still_computed() {
         check_simplified(
@@ -130,9 +115,8 @@ from t
         );
     }
 
-    /// Integers compare as integers. These two differ by one and share a
-    /// double, so folding through one would answer `false` and silently
-    /// return no rows.
+    /// These two differ by one and share a double, so folding through one
+    /// would answer `false`.
     #[test]
     fn large_integers_compare_exactly() {
         check_simplified(
@@ -158,9 +142,6 @@ from t
         );
     }
 
-    /// A constant reaches another through the value between them, so a
-    /// chain of additions collapses to one. Folding alone cannot do this,
-    /// because neither operand of the inner add is constant.
     #[test]
     fn constants_reach_each_other_through_a_value() {
         check_simplified(
@@ -190,10 +171,8 @@ from t
         );
     }
 
-    /// Two constants whose sum has no representable answer do not
-    /// reassociate, for the same reason a sum of two constants does not
-    /// fold: the query keeps the shape it was written in rather than one
-    /// the engine might answer differently.
+    /// The query keeps the shape it was written in when the reassociated
+    /// form has no representable answer.
     #[test]
     fn an_unrepresentable_sum_keeps_its_order() {
         check_simplified(
@@ -225,10 +204,8 @@ from t
         );
     }
 
-    /// Constants of opposite sign do not reassociate. The intermediate can
-    /// overflow where the reassociated form does not, so the two shapes are
-    /// the same answer only while nothing overflows, and overflow belongs to
-    /// the engine.
+    /// The intermediate can overflow where the reassociated form does not,
+    /// and overflow belongs to the engine.
     #[test]
     fn opposite_signs_keep_the_order_they_were_written_in() {
         check_simplified(
@@ -260,8 +237,6 @@ from t
         );
     }
 
-    /// A sum with no representable answer declines to fold: what overflow
-    /// does is the engine's to say, and a wrong constant would not even fail.
     #[test]
     fn an_overflowing_sum_is_left_to_the_engine() {
         check_simplified(
@@ -290,9 +265,7 @@ from t
         );
     }
 
-    /// The range is asymmetric, so the least integer has no negation — and
-    /// declining there leaves the division downstream nothing to fold
-    /// either, which is the whole expression left to the engine.
+    /// The range is asymmetric, so the least integer has no negation.
     #[test]
     fn the_least_integer_is_left_to_the_engine() {
         check_simplified(
@@ -322,8 +295,6 @@ from t
         );
     }
 
-    /// Arithmetic that does fit still folds, so declining costs nothing that
-    /// was ever safe to take.
     #[test]
     fn arithmetic_that_fits_still_folds() {
         check_simplified(
@@ -350,10 +321,9 @@ from t
         );
     }
 
-    /// A relation nothing reads costs nothing: the stage ops are `Pure`, so
-    /// a binding the output never reaches is dropped whole. The struct the
-    /// dead stages declared outlives them — a symbol is not an operation,
-    /// and nothing yet collects the ones no type names.
+    /// The stage ops are `Pure`, so a binding the output never reaches is
+    /// dropped whole. The struct it declared outlives it: a symbol is not
+    /// an operation, and nothing yet collects the ones no type names.
     #[test]
     fn a_relation_the_output_never_reads_is_dropped() {
         check_simplified(
@@ -382,16 +352,9 @@ from t
         );
     }
 
-    /// A relation can be unused for its values and still decide the answer.
-    /// No column of `u` is read here, but the join says which rows exist and
-    /// how many: an inner join drops left rows that match nothing, and
-    /// multiplies them when the key repeats. So the join stays, and with it
-    /// both sides.
-    ///
-    /// Dropping it would need the right side to be known unique on the key,
-    /// and nothing declares keys — a guard rail for column pruning, which
-    /// will see these columns go unread and must not conclude from that
-    /// alone that the relation is dead.
+    /// No column of `u` is read, but the join decides which rows exist and
+    /// how many. Column pruning must not conclude from unread columns alone
+    /// that a relation is dead.
     #[test]
     fn a_join_survives_when_nothing_reads_its_right_side() {
         check_simplified(

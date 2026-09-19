@@ -1,95 +1,93 @@
-//! CheckAggregates: the placement rules for aggregate functions, ported
-//! from the old inference. An aggregate call lives only in an `aggregate`
-//! item or an `agg fn` body, never in another aggregate's arguments, and an
-//! `agg fn` must use an aggregate without calling itself.
+//! The placement rules for aggregate functions. An aggregate call lives
+//! only in an `aggregate` item or an `agg fn` body, never in another
+//! aggregate's arguments, and an `agg fn` must use an aggregate without
+//! calling itself.
 
 use std::collections::{HashMap, HashSet};
+use std::mem;
 
 use melior::ir::operation::{OperationLike, OperationRef, OperationResult};
 use melior::ir::{BlockRef, Location, Module, RegionLike};
-use yuzu_mlir::ext::{BlockExt, OperationCast, OperationExt, RegionExt, ValueExt};
-use yuzu_mlir::ops::yzl::{CallOp, YzlOp};
-
-/// Where the walk currently is, aggregate-wise.
-#[derive(Clone, Copy, PartialEq)]
-enum Grouping<'m> {
-    /// Row context: aggregate calls may not appear.
-    None,
-    /// An `aggregate` item region.
-    Item,
-    /// An `agg fn` body, named to catch self-calls.
-    FnBody(&'m str),
-}
-
-struct Checker<'c> {
-    /// Each group-level value, with the aggregate calls it came from.
-    group_values: HashMap<usize, Vec<usize>>,
-    /// The location and callee of each aggregate call, by its result.
-    aggregate_calls: HashMap<usize, (Location<'c>, String)>,
-    /// Calls already reported as nested, so each reports once.
-    nested: HashSet<usize>,
-    /// Whether the current `agg fn` body used an aggregate.
-    saw_aggregate: bool,
-}
+use yuzu_mlir::diagnostics::emit_error;
+use yuzu_mlir::ext::{BlockExt, OperationCast, OperationExt, RegionExt, ValueExt, ValueId};
+use yuzu_mlir::ops::yzl::YzlOp;
 
 /// Expects a resolved module: callees are classified by their stamped
-/// `callee_kind`. Diagnostics go through MLIR — run this inside
+/// `callee_kind`. Diagnostics go through MLIR: run this inside
 /// `yuzu_mlir::diagnostics::capture` to collect them.
 pub fn check_aggregates(module: &Module) {
-    let mut checker = Checker {
+    let mut checker = AggregateChecker {
         group_values: HashMap::new(),
         aggregate_calls: HashMap::new(),
         nested: HashSet::new(),
         saw_aggregate: false,
     };
 
-    checker.check_block(module.body(), Grouping::None);
+    checker.check_block(module.body(), None);
 }
 
-impl<'c> Checker<'c> {
-    fn check_block<'m>(&mut self, block: BlockRef<'c, 'm>, grouping: Grouping<'m>) {
+/// Where an aggregate call may appear. Outside either, in row context, it
+/// may not.
+#[derive(Clone, Copy)]
+enum Grouping<'c> {
+    /// An `aggregate` item region.
+    Item,
+    /// An `agg fn` body, named to catch self-calls.
+    FnBody(&'c str),
+}
+
+struct AggregateChecker<'c> {
+    /// Each group-level value, with the aggregate calls it came from.
+    group_values: HashMap<ValueId, Vec<ValueId>>,
+    /// The location and callee of each aggregate call, by its result.
+    aggregate_calls: HashMap<ValueId, (Location<'c>, &'c str)>,
+    /// Calls already reported as nested, so each reports once.
+    nested: HashSet<ValueId>,
+    /// Whether the current `agg fn` body used an aggregate.
+    saw_aggregate: bool,
+}
+
+impl<'c> AggregateChecker<'c> {
+    fn check_block(&mut self, block: BlockRef<'c, '_>, grouping: Option<Grouping<'c>>) {
         for op in block.operations() {
             match op.as_yzl() {
-                Some(YzlOp::Call(call)) => {
-                    let callee = call.callee().value();
-                    if self.is_aggregate_call(&call) {
-                        self.check_aggregate_call(op, callee, grouping);
-                    } else {
-                        self.propagate_group_values(op);
-                    }
+                Some(YzlOp::Call(call)) if call.agg() => {
+                    self.check_aggregate_call(op, call.callee().value(), grouping);
                 }
                 Some(YzlOp::Aggregate(stage)) => {
-                    self.check_regions(stage.operation(), Grouping::Item);
+                    self.check_regions(stage.operation(), Some(Grouping::Item));
+                }
+                // An `external agg fn` has no body to aggregate in.
+                Some(YzlOp::Fn(function)) if function.agg() && !function.external() => {
+                    let name = function.sym_name().value();
+                    let outer = mem::replace(&mut self.saw_aggregate, false);
+                    self.check_regions(function.operation(), Some(Grouping::FnBody(name)));
+                    if !self.saw_aggregate {
+                        emit_error(
+                            Self::returned_location(function.operation())
+                                .unwrap_or_else(|| op.location()),
+                            "an `agg fn` must use an aggregate function",
+                        );
+                    }
+
+                    self.saw_aggregate = outer;
                 }
                 Some(YzlOp::Fn(function)) => {
-                    // An `external agg fn` has no body to aggregate in.
-                    if function.agg() && !function.external() {
-                        let name = function.sym_name().value();
-                        let outer = std::mem::replace(&mut self.saw_aggregate, false);
-                        self.check_regions(function.operation(), Grouping::FnBody(name));
-                        if !self.saw_aggregate {
-                            yuzu_mlir::diagnostics::emit_error(
-                                Self::returned_location(function.operation())
-                                    .unwrap_or_else(|| op.location()),
-                                "an `agg fn` must use an aggregate function",
-                            );
-                        }
-
-                        self.saw_aggregate = outer;
-                    } else {
-                        self.check_regions(function.operation(), Grouping::None);
-                    }
+                    self.check_regions(function.operation(), None);
                 }
                 _ => {
                     self.propagate_group_values(op);
-                    self.check_regions(&op, Grouping::None);
+                    self.check_regions(&op, None);
                 }
             }
         }
     }
 
-    fn check_regions<'m, O: OperationLike<'c, 'm>>(&mut self, op: &O, grouping: Grouping<'m>)
-    where
+    fn check_regions<'m, O: OperationLike<'c, 'm>>(
+        &mut self,
+        op: &O,
+        grouping: Option<Grouping<'c>>,
+    ) where
         'c: 'm,
     {
         for region in op.regions() {
@@ -99,31 +97,36 @@ impl<'c> Checker<'c> {
         }
     }
 
-    fn check_aggregate_call(&mut self, op: OperationRef<'c, '_>, callee: &str, grouping: Grouping) {
+    fn check_aggregate_call(
+        &mut self,
+        op: OperationRef<'c, '_>,
+        callee: &'c str,
+        grouping: Option<Grouping<'c>>,
+    ) {
         self.saw_aggregate = true;
-        if grouping == Grouping::None {
-            yuzu_mlir::diagnostics::emit_error(
+        if grouping.is_none() {
+            emit_error(
                 op.location(),
                 &format!("aggregate function `{callee}` can only be used in an `aggregate` item"),
             );
         }
 
-        if let Grouping::FnBody(name) = grouping
+        if let Some(Grouping::FnBody(name)) = grouping
             && callee == name
         {
-            yuzu_mlir::diagnostics::emit_error(
+            emit_error(
                 op.location(),
                 &format!("`{name}` is an `agg fn` and cannot call itself"),
             );
         }
 
         let nested = self.operand_aggregates(op);
-        if grouping != Grouping::None {
+        if grouping.is_some() {
             for &call in &nested {
                 if self.nested.insert(call) {
-                    let (location, name) = &self.aggregate_calls[&call];
-                    yuzu_mlir::diagnostics::emit_error(
-                        *location,
+                    let (location, name) = self.aggregate_calls[&call];
+                    emit_error(
+                        location,
                         &format!(
                             "aggregate function `{name}` cannot be nested in another aggregate"
                         ),
@@ -136,8 +139,7 @@ impl<'c> Checker<'c> {
             let id = result.id();
             let mut calls = nested;
             calls.push(id);
-            self.aggregate_calls
-                .insert(id, (op.location(), callee.to_string()));
+            self.aggregate_calls.insert(id, (op.location(), callee));
             self.group_values.insert(id, calls);
         }
     }
@@ -155,7 +157,7 @@ impl<'c> Checker<'c> {
     }
 
     /// The aggregate calls flowing into an op's operands.
-    fn operand_aggregates(&self, op: OperationRef<'c, '_>) -> Vec<usize> {
+    fn operand_aggregates(&self, op: OperationRef<'c, '_>) -> Vec<ValueId> {
         let mut calls = Vec::new();
         for operand in op.operands() {
             if let Some(through) = self.group_values.get(&operand.id()) {
@@ -170,7 +172,7 @@ impl<'c> Checker<'c> {
         calls
     }
 
-    /// The expression a function body returns — what to blame when an
+    /// The expression a function body returns: what to blame when an
     /// `agg fn` never aggregates.
     fn returned_location<'m>(op: &impl OperationLike<'c, 'm>) -> Option<Location<'c>>
     where
@@ -185,12 +187,6 @@ impl<'c> Checker<'c> {
 
         Some(OperationResult::try_from(returned).ok()?.owner().location())
     }
-
-    /// Resolution decided this when it built the call, whichever kind of
-    /// callee it is, so nothing here asks the registry again.
-    fn is_aggregate_call(&self, call: &CallOp<'c, '_>) -> bool {
-        call.agg()
-    }
 }
 
 #[cfg(test)]
@@ -201,10 +197,11 @@ mod tests {
     use crate::test_support;
 
     fn check(source: &str, expected: Expect) {
-        test_support::check_diagnostics(
+        test_support::check(
             source,
             |_context, module| {
                 check_aggregates(module);
+                "no diagnostics".to_string()
             },
             expected,
         );
@@ -256,8 +253,6 @@ from t
         );
     }
 
-    /// An `external agg fn` has no body, so the "must aggregate" rule
-    /// cannot apply to it.
     #[test]
     fn accepts_an_external_agg_fn() {
         check(
@@ -274,7 +269,6 @@ from t
         );
     }
 
-    /// A join's `on` region is row context, like any other stage's.
     #[test]
     fn reports_an_aggregate_in_a_join_condition() {
         check(

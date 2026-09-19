@@ -1,42 +1,70 @@
-//! InferTypes: unification over MLIR values. Every `!yzl.var`-typed value is
-//! a type variable; op semantics, function signatures, and the field types
-//! flowing through the stages fill the substitutions. The answers are written
-//! onto the values themselves, so `!yzl.var` is gone by the end and every
-//! later pass reads a type rather than a stamp beside one.
+//! Unification over MLIR values. Every `!yzl.var`-typed value is a type
+//! variable; op semantics, function signatures, and the field types flowing
+//! through the stages fill the substitutions. The answers are written onto
+//! the values themselves, so `!yzl.var` is gone by the end.
 
 use std::collections::{HashMap, HashSet};
+use std::mem;
 
 use melior::Context;
-use melior::ir::attribute::{ArrayAttribute, IntegerAttribute, TypeAttribute};
+use melior::ir::attribute::{ArrayAttribute, TypeAttribute};
 use melior::ir::operation::{OperationLike, OperationMutLike, OperationRef, OperationRefMut};
 use melior::ir::r#type::FunctionType;
-use melior::ir::{
-    Attribute, BlockLike, BlockRef, Location, Module, RegionLike, Type, Value, ValueLike,
-};
-use yuzu_mlir::ListType;
+use melior::ir::{Attribute, BlockRef, Location, Module, RegionLike, Type, Value, ValueLike};
 use yuzu_mlir::attributes::CalleeKind;
+use yuzu_mlir::diagnostics::emit_error;
 use yuzu_mlir::ext::{
-    ArrayAttributeExt, BlockExt, OperationCast, OperationExt, RegionExt, ValueExt,
+    ArrayAttributeExt, BlockExt, OperationCast, OperationExt, RegionExt, ValueExt, ValueId,
 };
 use yuzu_mlir::ops::yz::YzOp;
-use yuzu_mlir::ops::yzl::YzlOp;
+use yuzu_mlir::ops::yzl::{FnOp, YzlOp};
 use yuzu_mlir::types;
+use yuzu_mlir::{ListType, ParamType};
+use yuzu_types::{AggFunc, BuiltinFunc, Func, FunctionRegistry};
 
-/// A type either known or still being solved for: a concrete MLIR type, a
-/// type variable whose substitution is still being filled, or a list whose
-/// inner type is the variable's.
+/// Expects a verified module and writes the types it infers onto it. The
+/// registry says how each builtin is typed. Diagnostics go through MLIR:
+/// run this inside `yuzu_mlir::diagnostics::capture` to collect them.
+pub fn infer_types<'c>(
+    context: &'c Context,
+    module: &mut Module<'c>,
+    registry: &dyn FunctionRegistry,
+) {
+    let declared = Declarations::of(module.body());
+    let mut inferrer = TypeInferrer {
+        context,
+        declared: &declared,
+        registry,
+        filled: Vec::new(),
+        vars: HashMap::new(),
+        rows: HashMap::new(),
+        bindings: HashMap::new(),
+        pending: Vec::new(),
+        instances: HashMap::new(),
+    };
+
+    inferrer.infer_block(module.body());
+    inferrer.check_pending_bounds();
+    inferrer.stamp_block(module.body());
+}
+
+/// A type variable: a slot in the substitution table.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct TypeVar(usize);
+
+/// A type either known or still being solved for: a concrete type, a type
+/// variable, or a list whose inner type is the variable's.
 #[derive(Clone, Copy)]
 enum Term<'c> {
     Concrete(Type<'c>),
-    Var(usize),
-    List(usize),
+    Var(TypeVar),
+    List(TypeVar),
 }
 
 type Row<'c> = Vec<Term<'c>>;
 
-/// A function's declared shape: the types as written, plus the parameters
-/// a call instantiates and the bounds those parameters carry.
-#[derive(Clone)]
+/// A function's declared shape: the types as written, the parameters a call
+/// instantiates, and the bounds those parameters carry.
 struct Signature<'c> {
     params: Vec<Type<'c>>,
     result: Type<'c>,
@@ -44,62 +72,91 @@ struct Signature<'c> {
     bounds: Vec<(&'c str, &'c str)>,
 }
 
-/// A bound one instantiation owes: the variable standing for the parameter,
-/// the trait it must satisfy, and where to report if it does not.
+/// What the module declares, gathered before inference and never written by
+/// it.
+#[derive(Default)]
+struct Declarations<'c> {
+    signatures: HashMap<&'c str, Signature<'c>>,
+    /// The `(trait, type)` pairs the implementations supply.
+    impls: HashSet<(&'c str, &'c str)>,
+    /// The row each struct and table carries.
+    rows: HashMap<&'c str, Row<'c>>,
+}
+
+impl<'c> Declarations<'c> {
+    fn of(block: BlockRef<'c, '_>) -> Self {
+        let mut declared = Self::default();
+        for op in block.operations() {
+            match op.as_yzl() {
+                Some(YzlOp::Fn(function)) => {
+                    if let Some(signature) = parse_signature(&function) {
+                        declared
+                            .signatures
+                            .insert(function.sym_name().value(), signature);
+                    }
+                }
+                Some(YzlOp::Impl(item)) => {
+                    declared
+                        .impls
+                        .insert((item.r#trait().value(), item.target().value()));
+                }
+                Some(YzlOp::Struct(item)) => {
+                    let row = item
+                        .types()
+                        .types()
+                        .into_iter()
+                        .map(Term::Concrete)
+                        .collect();
+                    declared.rows.insert(item.sym_name().value(), row);
+                }
+                Some(YzlOp::Table(table)) => {
+                    let row = declared
+                        .rows
+                        .get(table.row().value())
+                        .cloned()
+                        .unwrap_or_default();
+                    declared.rows.insert(table.sym_name().value(), row);
+                }
+                _ => {}
+            }
+        }
+
+        declared
+    }
+}
+
+/// A bound one instantiation owes, checked once the variable standing for
+/// its parameter resolves.
+#[derive(Clone, Copy)]
 struct PendingBound<'c> {
-    var: usize,
-    r#trait: &'c str,
+    var: TypeVar,
+    trait_: &'c str,
     callee: &'c str,
     location: Location<'c>,
 }
 
-struct TypeInferrer<'c> {
+struct TypeInferrer<'c, 'd> {
     context: &'c Context,
+    declared: &'d Declarations<'c>,
+    registry: &'d dyn FunctionRegistry,
     /// One slot per type variable: unbound, substituted by another variable,
     /// or filled with its concrete type.
     filled: Vec<Option<Term<'c>>>,
-    /// The type variable of each `!yzl.var` value, keyed by value identity —
-    /// a hash map because MLIR values are pointers, not arena indices.
-    vars: HashMap<usize, usize>,
+    /// The type variable of each `!yzl.var` value.
+    vars: HashMap<ValueId, TypeVar>,
     /// The row of column terms flowing out of each stage value.
-    rows: HashMap<usize, Row<'c>>,
-    signatures: HashMap<&'c str, Signature<'c>>,
-    /// The `(trait, type)` pairs the module's implementations supply.
-    impls: HashSet<(&'c str, &'c str)>,
-    /// A bound to check once the type variable standing for its parameter
-    /// resolves — deferred, because the argument may resolve after the call.
+    rows: HashMap<ValueId, Row<'c>>,
+    /// The row each `let` yielded.
+    bindings: HashMap<&'c str, Row<'c>>,
     pending: Vec<PendingBound<'c>>,
-    /// The type variables a generic call minted, in the order its function
-    /// declared them — resolved and stamped once inference settles.
-    instances: HashMap<usize, Vec<usize>>,
-    relations: HashMap<&'c str, Row<'c>>,
+    /// The type variables a generic call minted, in declaration order, by
+    /// the call's result.
+    instances: HashMap<ValueId, Vec<TypeVar>>,
 }
 
-/// Expects a verified module: required ODS attributes are read through
-/// typed accessors that panic when absent. Diagnostics go through MLIR —
-/// run this inside `yuzu_mlir::diagnostics::capture` to collect them.
-pub fn infer_types<'c>(context: &'c Context, module: &Module<'c>) {
-    let mut inferrer = TypeInferrer {
-        context,
-        filled: Vec::new(),
-        vars: HashMap::new(),
-        rows: HashMap::new(),
-        signatures: HashMap::new(),
-        impls: HashSet::new(),
-        pending: Vec::new(),
-        instances: HashMap::new(),
-        relations: HashMap::new(),
-    };
-
-    inferrer.hoist(module.body());
-    inferrer.infer_block(module.body(), &Row::new(), &[]);
-    inferrer.check_pending_bounds();
-    inferrer.stamp_block(module.body());
-}
-
-impl<'c> TypeInferrer<'c> {
+impl<'c, 'd> TypeInferrer<'c, 'd> {
     /// The term of a value: its concrete type, or the type variable minted
-    /// for it — a `!yzl.var` value is its own variable.
+    /// for it.
     fn term_of(&mut self, value: Value<'c, '_>) -> Term<'c> {
         let ty = value.r#type();
         if ty != types::var(self.context) {
@@ -116,18 +173,18 @@ impl<'c> TypeInferrer<'c> {
         Term::Var(var)
     }
 
-    fn fresh(&mut self) -> usize {
+    fn fresh(&mut self) -> TypeVar {
         self.filled.push(None);
-        self.filled.len() - 1
+        TypeVar(self.filled.len() - 1)
     }
 
     /// Follows the substitution chain to a variable's root, compressing the
     /// chain on the way.
-    fn find(&mut self, var: usize) -> usize {
-        match self.filled[var] {
+    fn find(&mut self, var: TypeVar) -> TypeVar {
+        match self.filled[var.0] {
             Some(Term::Var(next)) => {
                 let root = self.find(next);
-                self.filled[var] = Some(Term::Var(root));
+                self.filled[var.0] = Some(Term::Var(root));
                 root
             }
             _ => var,
@@ -139,7 +196,7 @@ impl<'c> TypeInferrer<'c> {
         match term {
             Term::Var(var) => {
                 let root = self.find(var);
-                self.filled[root].unwrap_or(Term::Var(root))
+                self.filled[root.0].unwrap_or(Term::Var(root))
             }
             term => term,
         }
@@ -150,38 +207,23 @@ impl<'c> TypeInferrer<'c> {
         let b = self.shallow(b);
         match (a, b) {
             (Term::Var(a), Term::Var(b)) if a == b => {}
-            (Term::Var(var), term) | (term, Term::Var(var)) => self.filled[var] = Some(term),
-            (Term::Concrete(a), Term::Concrete(b)) => {
-                if a != b {
-                    let (a, b) = (
-                        self.display(Term::Concrete(a)),
-                        self.display(Term::Concrete(b)),
-                    );
-                    self.error(op, format!("expected `{a}`, found `{b}`"));
+            (Term::Var(var), term) | (term, Term::Var(var)) => self.filled[var.0] = Some(term),
+            (Term::List(_), Term::List(_) | Term::Concrete(_))
+            | (Term::Concrete(_), Term::List(_)) => match (element(a), element(b)) {
+                (Some(a), Some(b)) => self.unify(op, a, b),
+                _ => self.mismatch(op, a, b),
+            },
+            (Term::Concrete(x), Term::Concrete(y)) => {
+                if x != y {
+                    self.mismatch(op, a, b);
                 }
             }
-            (Term::List(a), Term::List(b)) => self.unify(op, Term::Var(a), Term::Var(b)),
-            (Term::List(inner), Term::Concrete(ty)) => match ListType::from_type(ty) {
-                Some(list) => self.unify(op, Term::Var(inner), Term::Concrete(list.inner())),
-                None => {
-                    let (expected, found) = (
-                        self.display(Term::List(inner)),
-                        self.display(Term::Concrete(ty)),
-                    );
-                    self.error(op, format!("expected `{expected}`, found `{found}`"));
-                }
-            },
-            (Term::Concrete(ty), Term::List(inner)) => match ListType::from_type(ty) {
-                Some(list) => self.unify(op, Term::Concrete(list.inner()), Term::Var(inner)),
-                None => {
-                    let (expected, found) = (
-                        self.display(Term::Concrete(ty)),
-                        self.display(Term::List(inner)),
-                    );
-                    self.error(op, format!("expected `{expected}`, found `{found}`"));
-                }
-            },
         }
+    }
+
+    fn mismatch(&mut self, op: OperationRef<'c, '_>, expected: Term<'c>, found: Term<'c>) {
+        let (expected, found) = (self.display(expected), self.display(found));
+        self.report(op, &format!("expected `{expected}`, found `{found}`"));
     }
 
     /// The value a stage's region yields, held to the type the stage needs.
@@ -199,18 +241,16 @@ impl<'c> TypeInferrer<'c> {
                     self.display(Term::Concrete(expected)),
                     self.display(Term::Concrete(found)),
                 );
-                self.error(
+                self.report(
                     op,
-                    format!("expected the {what} to be `{expected}`, found `{found}`"),
+                    &format!("expected the {what} to be `{expected}`, found `{found}`"),
                 );
             }
-            // Nothing pinned it down, so the stage is what says what it is.
             None => self.unify(op, term, Term::Concrete(expected)),
             Some(_) => {}
         }
     }
 
-    /// Resolves (collapses) a term to its final type, when it has one.
     fn resolve(&mut self, term: Term<'c>) -> Option<Type<'c>> {
         match self.shallow(term) {
             Term::Concrete(ty) => Some(ty),
@@ -232,56 +272,22 @@ impl<'c> TypeInferrer<'c> {
         }
     }
 
-    fn hoist(&mut self, block: BlockRef<'c, '_>) {
+    fn infer_block(&mut self, block: BlockRef<'c, '_>) {
         for op in block.operations() {
-            match op.as_yzl() {
-                Some(YzlOp::Fn(function)) => {
-                    if let Some(signature) = parse_signature(&function) {
-                        self.signatures
-                            .insert(function.sym_name().value(), signature);
-                    }
-                }
-                Some(YzlOp::Impl(item)) => {
-                    self.impls
-                        .insert((item.r#trait().value(), item.target().value()));
-                }
-                Some(YzlOp::Struct(item)) => {
-                    let row = field_row(item.types());
-                    self.relations.insert(item.sym_name().value(), row);
-                }
-                Some(YzlOp::Table(table)) => {
-                    let row = self
-                        .relations
-                        .get(table.row().value())
-                        .cloned()
-                        .unwrap_or_default();
-
-                    self.relations.insert(table.sym_name().value(), row);
-                }
-                _ => {}
-            }
+            self.infer_op(op);
         }
     }
 
-    fn infer_block(&mut self, block: BlockRef<'c, '_>, columns: &Row<'c>, params: &[Type<'c>]) {
-        for op in block.operations() {
-            self.infer_op(op, columns, params);
-        }
-    }
-
-    fn infer_op(&mut self, op: OperationRef<'c, '_>, columns: &Row<'c>, params: &[Type<'c>]) {
+    fn infer_op(&mut self, op: OperationRef<'c, '_>) {
+        let declared = self.declared;
         match op.as_yzl() {
             Some(YzlOp::Call(call)) => {
                 let callee = call.callee().value();
                 match call.callee_kind() {
                     Some(CalleeKind::Builtin) => self.resolve_builtin_ty(op, callee),
-                    // An external declares its signature like any other
-                    // function; only the body is missing, and a call does not
-                    // need one. Skipping it left the call's type unresolved
-                    // and carried a `!yzl.var` all the way into yzr.
                     Some(CalleeKind::Let) => {
                         let yielded = self
-                            .relations
+                            .bindings
                             .get(callee)
                             .and_then(|row| row.first().copied());
                         if let Some(yielded) = yielded {
@@ -289,12 +295,14 @@ impl<'c> TypeInferrer<'c> {
                             self.unify(op, term, yielded);
                         }
                     }
+                    // An external has no body, but a call only needs the
+                    // signature.
                     Some(CalleeKind::Fn | CalleeKind::AggFn | CalleeKind::External) | None => {
-                        let Some(signature) = self.signatures.get(callee).cloned() else {
+                        let Some(signature) = declared.signatures.get(callee) else {
                             return;
                         };
 
-                        let bindings = self.instantiate(op, callee, &signature);
+                        let bindings = self.instantiate(op, callee, signature);
                         for (argument, parameter) in op.operands().zip(&signature.params) {
                             let term = self.term_of(argument);
                             let expected = self.substitute(*parameter, &bindings);
@@ -308,18 +316,19 @@ impl<'c> TypeInferrer<'c> {
                 }
             }
             Some(YzlOp::Fn(function)) => {
-                let Some(signature) = self.signatures.get(function.sym_name().value()) else {
+                let Some(signature) = declared.signatures.get(function.sym_name().value()) else {
                     return;
                 };
 
-                let (parameters, result) = (signature.params.clone(), signature.result);
-                self.infer_regions(op, &Row::new(), &parameters);
-                self.unify_returns(op, result);
+                self.infer_regions(op, &Row::new(), &signature.params);
+                self.unify_returns(op, signature.result);
             }
             Some(YzlOp::From(from)) => {
-                let row = self
-                    .relations
-                    .get(from.source().value())
+                let source = from.source().value();
+                let row = declared
+                    .rows
+                    .get(source)
+                    .or_else(|| self.bindings.get(source))
                     .cloned()
                     .unwrap_or_default();
                 self.record_row(op, row);
@@ -333,7 +342,7 @@ impl<'c> TypeInferrer<'c> {
                     self.unify(op, Term::Concrete(annotation.value()), yielded);
                 }
 
-                self.relations.insert(binding.sym_name().value(), row);
+                self.bindings.insert(binding.sym_name().value(), row);
             }
             Some(YzlOp::List(_)) => {
                 let inner = self.fresh();
@@ -366,7 +375,8 @@ impl<'c> TypeInferrer<'c> {
                 let row = self.input_row(op);
                 self.infer_regions(op, &row, &[]);
                 let yields = self.yield_terms(op);
-                for (index, term) in indices(stage.set_cols()).into_iter().zip(yields) {
+                let columns = stage.set_cols().map(|columns| columns.indices());
+                for (index, term) in columns.unwrap_or_default().into_iter().zip(yields) {
                     if let Some(&column) = row.get(index) {
                         self.unify(op, column, term);
                     }
@@ -389,7 +399,9 @@ impl<'c> TypeInferrer<'c> {
             Some(YzlOp::Aggregate(stage)) => {
                 let input = self.input_row(op);
                 self.infer_regions(op, &input, &[]);
-                let mut row: Row = indices(stage.key_cols())
+                let keys = stage.key_cols().map(|keys| keys.indices());
+                let mut row: Row = keys
+                    .unwrap_or_default()
                     .into_iter()
                     .filter_map(|index| input.get(index).copied())
                     .collect();
@@ -404,12 +416,15 @@ impl<'c> TypeInferrer<'c> {
                 self.expect_yield(op, boolean, "`on` condition");
                 self.record_row(op, row);
             }
-            Some(_) => self.infer_regions(op, columns, params),
-            None => self.infer_yz_op(op, columns, params),
+            // A trait or an implementation holds functions, each typed by
+            // its own signature; the body itself carries no row.
+            Some(_) => self.infer_regions(op, &Row::new(), &[]),
+            None => self.infer_yz_op(op),
         }
     }
 
-    fn infer_yz_op(&mut self, op: OperationRef<'c, '_>, columns: &Row<'c>, params: &[Type<'c>]) {
+    fn infer_yz_op(&mut self, op: OperationRef<'c, '_>) {
+        let boolean = Term::Concrete(types::boolean(self.context));
         match op.as_yz() {
             Some(YzOp::Add(_) | YzOp::Sub(_) | YzOp::Mul(_) | YzOp::Div(_) | YzOp::Rem(_)) => {
                 let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
@@ -426,22 +441,22 @@ impl<'c> TypeInferrer<'c> {
                 let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
                 let out = self.term_of(op.first_result());
                 self.unify(op, lhs, rhs);
-                self.unify(op, out, Term::Concrete(types::boolean(self.context)));
+                self.unify(op, out, boolean);
             }
             Some(YzOp::And(_) | YzOp::Or(_)) => {
                 let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
                 let out = self.term_of(op.first_result());
-                self.unify(op, lhs, Term::Concrete(types::boolean(self.context)));
-                self.unify(op, rhs, Term::Concrete(types::boolean(self.context)));
-                self.unify(op, out, Term::Concrete(types::boolean(self.context)));
+                self.unify(op, lhs, boolean);
+                self.unify(op, rhs, boolean);
+                self.unify(op, out, boolean);
             }
             Some(YzOp::Not(_)) => {
                 let value = self.operand_term(op, 0);
                 let out = self.term_of(op.first_result());
-                self.unify(op, value, Term::Concrete(types::boolean(self.context)));
-                self.unify(op, out, Term::Concrete(types::boolean(self.context)));
+                self.unify(op, value, boolean);
+                self.unify(op, out, boolean);
             }
-            _ => self.infer_regions(op, columns, params),
+            _ => self.infer_regions(op, &Row::new(), &[]),
         }
     }
 
@@ -453,7 +468,7 @@ impl<'c> TypeInferrer<'c> {
         op: OperationRef<'c, '_>,
         callee: &'c str,
         signature: &Signature<'c>,
-    ) -> HashMap<&'c str, usize> {
+    ) -> HashMap<&'c str, TypeVar> {
         let mut bindings = HashMap::new();
         let mut ordered = Vec::new();
         for name in &signature.type_params {
@@ -462,20 +477,20 @@ impl<'c> TypeInferrer<'c> {
             ordered.push(var);
         }
 
-        // Which type the call chose for each parameter is inference's answer,
-        // and expansion needs it to pick an implementation. Recorded now,
-        // stamped once the variables resolve.
+        // Which type the call chose for each parameter is what expansion
+        // needs to pick an implementation: recorded now, stamped once the
+        // variables resolve.
         if !ordered.is_empty()
             && let Some(result) = op.try_first_result()
         {
             self.instances.insert(result.id(), ordered);
         }
 
-        for (subject, r#trait) in &signature.bounds {
+        for (subject, trait_) in &signature.bounds {
             if let Some(&var) = bindings.get(subject) {
                 self.pending.push(PendingBound {
                     var,
-                    r#trait,
+                    trait_,
                     callee,
                     location: op.location(),
                 });
@@ -486,8 +501,8 @@ impl<'c> TypeInferrer<'c> {
     }
 
     /// A declared type with this instance's parameters swapped in.
-    fn substitute(&self, ty: Type<'c>, bindings: &HashMap<&'c str, usize>) -> Term<'c> {
-        if let Some(param) = yuzu_mlir::ParamType::from_type(ty)
+    fn substitute(&self, ty: Type<'c>, bindings: &HashMap<&'c str, TypeVar>) -> Term<'c> {
+        if let Some(param) = ParamType::from_type(ty)
             && let Some(&var) = bindings.get(param.name())
         {
             return Term::Var(var);
@@ -496,45 +511,26 @@ impl<'c> TypeInferrer<'c> {
         Term::Concrete(ty)
     }
 
-    /// Every instantiation owes its bounds once its type is known.
     fn check_pending_bounds(&mut self) {
-        for index in 0..self.pending.len() {
-            let bound = &self.pending[index];
-            let (var, r#trait, callee, location) =
-                (bound.var, bound.r#trait, bound.callee, bound.location);
-            let Some(resolved) = self.resolve(Term::Var(var)) else {
+        for bound in mem::take(&mut self.pending) {
+            let Some(resolved) = self.resolve(Term::Var(bound.var)) else {
                 continue;
             };
 
-            let Some(name) = self.type_name(resolved) else {
+            let Some(name) = types::scalar_name(self.context, resolved) else {
                 continue;
             };
 
-            if !self.impls.contains(&(r#trait, name)) {
-                yuzu_mlir::diagnostics::emit_error(
-                    location,
-                    &format!("`{name}` does not implement `{trait}`, required by `{callee}`"),
+            if !self.declared.impls.contains(&(bound.trait_, name)) {
+                emit_error(
+                    bound.location,
+                    &format!(
+                        "`{name}` does not implement `{}`, required by `{}`",
+                        bound.trait_, bound.callee
+                    ),
                 );
             }
         }
-    }
-
-    /// The name an `impl` would target this type by.
-    fn type_name(&self, ty: Type<'c>) -> Option<&'static str> {
-        if ty == types::int64(self.context) {
-            return Some("int64");
-        }
-        if ty == types::float64(self.context) {
-            return Some("float64");
-        }
-        if ty == types::boolean(self.context) {
-            return Some("bool");
-        }
-        if ty == types::str(self.context) {
-            return Some("str");
-        }
-
-        None
     }
 
     fn operand_term(&mut self, op: OperationRef<'c, '_>, index: usize) -> Term<'c> {
@@ -544,55 +540,65 @@ impl<'c> TypeInferrer<'c> {
         }
     }
 
-    /// The aggregate builtins are polymorphic; these are the old
-    /// `resolve_agg_ty` rules over terms.
+    /// The builtins are polymorphic, so each carries its own typing rule.
+    /// The registry says which builtin a name is, as it did when resolution
+    /// bound the call.
     fn resolve_builtin_ty(&mut self, op: OperationRef<'c, '_>, callee: &str) {
+        let Some(entry) = self
+            .registry
+            .entries()
+            .iter()
+            .find(|entry| entry.name == callee)
+        else {
+            return;
+        };
+
+        let int64 = Term::Concrete(types::int64(self.context));
+        let boolean = Term::Concrete(types::boolean(self.context));
         let out = self.term_of(op.first_result());
-        match callee {
-            "count" | "count_distinct" => {
-                self.unify(op, out, Term::Concrete(types::int64(self.context)));
+        match entry.func {
+            BuiltinFunc::Aggregate(AggFunc::Count | AggFunc::CountDistinct) => {
+                self.unify(op, out, int64);
             }
-            "sum" => {
+            BuiltinFunc::Aggregate(AggFunc::Sum) => {
                 if let Some(argument) = op.try_first_operand() {
                     let term = self.term_of(argument);
                     if let Some(ty) = self.resolve(term) {
                         let result = if ty == types::float64(self.context) {
-                            types::float64(self.context)
+                            Term::Concrete(ty)
                         } else {
-                            types::int64(self.context)
+                            int64
                         };
 
-                        self.unify(op, out, Term::Concrete(result));
+                        self.unify(op, out, result);
                     }
                 }
             }
-            "in" => {
-                let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
-                let inner = self.fresh();
-                self.unify(op, Term::List(inner), rhs);
-                self.unify(op, lhs, Term::Var(inner));
-                self.unify(op, out, Term::Concrete(types::boolean(self.context)));
-            }
-            "min" | "max" | "avg" => {
+            BuiltinFunc::Aggregate(AggFunc::Min | AggFunc::Max | AggFunc::Avg) => {
                 if let Some(argument) = op.try_first_operand() {
                     let term = self.term_of(argument);
                     self.unify(op, out, term);
                 }
             }
-            // The scalar builtins the parser lowers operators to: `**` keeps
-            // its operands' type, the shifts are integer-only.
-            "pow" => {
+            BuiltinFunc::Scalar(Func::In) => {
+                let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
+                let inner = self.fresh();
+                self.unify(op, Term::List(inner), rhs);
+                self.unify(op, lhs, Term::Var(inner));
+                self.unify(op, out, boolean);
+            }
+            BuiltinFunc::Scalar(Func::Power) => {
                 let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
                 self.unify(op, lhs, rhs);
                 self.unify(op, lhs, out);
             }
-            "shift_left" | "shift_right" => {
+            BuiltinFunc::Scalar(Func::ShiftLeft | Func::ShiftRight) => {
                 let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
-                self.unify(op, lhs, Term::Concrete(types::int64(self.context)));
-                self.unify(op, rhs, Term::Concrete(types::int64(self.context)));
-                self.unify(op, out, Term::Concrete(types::int64(self.context)));
+                self.unify(op, lhs, int64);
+                self.unify(op, rhs, int64);
+                self.unify(op, out, int64);
             }
-            _ => {}
+            BuiltinFunc::Aggregate(AggFunc::External(_)) | BuiltinFunc::Scalar(_) => {}
         }
     }
 
@@ -602,10 +608,7 @@ impl<'c> TypeInferrer<'c> {
     fn infer_regions(&mut self, op: OperationRef<'c, '_>, columns: &Row<'c>, params: &[Type<'c>]) {
         for region in op.regions() {
             for block in region.blocks() {
-                for index in 0..block.argument_count() {
-                    let argument = block
-                        .argument(index)
-                        .expect("the argument index is in range");
+                for (index, argument) in block.arguments().enumerate() {
                     let term = self.term_of(argument.into());
                     if let Some(&column) = columns.get(index) {
                         self.unify(op, term, column);
@@ -614,12 +617,10 @@ impl<'c> TypeInferrer<'c> {
                     }
                 }
 
-                self.infer_block(block, columns, params);
+                self.infer_block(block);
             }
         }
     }
-
-    // --- rows and yields ---
 
     fn input_row(&mut self, op: OperationRef<'c, '_>) -> Row<'c> {
         op.try_first_operand()
@@ -654,19 +655,14 @@ impl<'c> TypeInferrer<'c> {
         }
     }
 
-    /// Inference's answers, written onto the values themselves. `!yzl.var` is
-    /// this pass's construct, so no later pass should meet one: a value that
-    /// resolved takes the type it resolved to, and one that did not is
-    /// reported here, where the expression that stayed open is still in hand.
+    /// Inference's answers, written onto the values themselves. A value that
+    /// resolved takes the type it resolved to; one that did not is reported
+    /// here, where the expression that stayed open is still in hand. A
+    /// column or parameter is only ever as open as the expressions reading
+    /// it, so an unresolved one is left for them to report.
     fn stamp_block(&mut self, block: BlockRef<'c, '_>) {
-        for index in 0..block.argument_count() {
-            let argument = block
-                .argument(index)
-                .expect("the argument index is in range");
+        for argument in block.arguments() {
             let term = self.term_of(argument.into());
-            // A column or parameter is only ever as open as the expressions
-            // reading it, and those are what the program wrote — so an
-            // unresolved one is left for them to report.
             if let Some(ty) = self.resolve(term) {
                 argument.set_type(ty);
             }
@@ -689,9 +685,9 @@ impl<'c> TypeInferrer<'c> {
                 // A hole stands for an expression the program never got to
                 // write, and the parse error above it already said so.
                 None if matches!(op.as_yzl(), Some(YzlOp::Missing(_))) => {}
-                None => self.error_at(
+                None => emit_error(
                     op.location(),
-                    "the type of this expression could not be inferred".to_string(),
+                    "the type of this expression could not be inferred",
                 ),
             }
 
@@ -702,8 +698,8 @@ impl<'c> TypeInferrer<'c> {
     /// The types a generic call settled on, in declaration order. A partial
     /// answer is worse than none, so a call whose parameters did not all
     /// resolve is left unstamped for expansion to report.
-    fn stamp_type_args(&mut self, op: &mut OperationRefMut<'c, '_>, result: usize) {
-        let Some(vars) = self.instances.get(&result).cloned() else {
+    fn stamp_type_args(&mut self, op: &mut OperationRefMut<'c, '_>, result: ValueId) {
+        let Some(vars) = self.instances.remove(&result) else {
             return;
         };
 
@@ -720,12 +716,17 @@ impl<'c> TypeInferrer<'c> {
         }
     }
 
-    fn error(&mut self, op: OperationRef<'c, '_>, message: String) {
-        self.error_at(op.location(), message);
+    fn report(&self, op: OperationRef<'c, '_>, message: &str) {
+        emit_error(op.location(), message);
     }
+}
 
-    fn error_at(&mut self, location: Location<'c>, message: String) {
-        yuzu_mlir::diagnostics::emit_error(location, &message);
+/// The term a list's elements have, when the term is a list at all.
+fn element(term: Term<'_>) -> Option<Term<'_>> {
+    match term {
+        Term::List(inner) => Some(Term::Var(inner)),
+        Term::Concrete(ty) => ListType::from_type(ty).map(|list| Term::Concrete(list.inner())),
+        Term::Var(_) => None,
     }
 }
 
@@ -733,7 +734,7 @@ fn last_region_op<'c, 'a>(op: OperationRef<'c, 'a>) -> Option<OperationRef<'c, '
     op.regions().next()?.first_block()?.last_operation()
 }
 
-fn parse_signature<'c>(function: &yuzu_mlir::ops::yzl::FnOp<'c, '_>) -> Option<Signature<'c>> {
+fn parse_signature<'c>(function: &FnOp<'c, '_>) -> Option<Signature<'c>> {
     let signature = FunctionType::try_from(function.signature().value()).ok()?;
     let params = (0..signature.input_count())
         .filter_map(|index| signature.input(index).ok())
@@ -758,28 +759,6 @@ fn parse_signature<'c>(function: &yuzu_mlir::ops::yzl::FnOp<'c, '_>) -> Option<S
     })
 }
 
-/// The indices an optional stamp carries.
-pub(crate) fn indices(stamp: Option<melior::ir::attribute::ArrayAttribute>) -> Vec<usize> {
-    stamp
-        .map(|array| {
-            array
-                .elements()
-                .filter_map(|element| IntegerAttribute::try_from(element).ok())
-                .map(|index| index.value() as usize)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// The field types of a struct declaration's `types` array.
-fn field_row<'c>(types: melior::ir::attribute::ArrayAttribute<'c>) -> Row<'c> {
-    types
-        .elements()
-        .filter_map(|element| TypeAttribute::try_from(element).ok())
-        .map(|ty| Term::Concrete(ty.value()))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use expect_test::{Expect, expect};
@@ -791,7 +770,8 @@ mod tests {
         test_support::check(
             source,
             |context, module| {
-                infer_types(context, module);
+                infer_types(context, module, &yuzu_types::Builtins);
+                module.as_operation().to_string()
             },
             expected,
         );
@@ -846,10 +826,9 @@ from t
         );
     }
 
-    /// Each call to a generic function solves its own instance, so one
-    /// declaration serves both column types — and each call carries what it
-    /// settled on, which is how expansion later knows `@id` at `int64` wants
-    /// the `int64` implementation.
+    /// Each call to a generic function solves its own instance, and each
+    /// call carries what it settled on, which is how expansion later knows
+    /// `@id` at `int64` wants the `int64` implementation.
     #[test]
     fn instantiates_a_generic_call_per_site() {
         check(
@@ -913,8 +892,6 @@ from t
         );
     }
 
-    /// An external has no body, but it has a signature, and a call only ever
-    /// needed that. Skipping it left the call's own type unsolved.
     #[test]
     fn an_external_call_takes_its_declared_type() {
         check(
@@ -945,7 +922,6 @@ from t
         );
     }
 
-    /// A bound is owed by the instance, and reported where the call is.
     #[test]
     fn reports_an_unsatisfied_bound() {
         check(
@@ -1089,8 +1065,6 @@ from t
         );
     }
 
-    /// The stage a value is yielded to is what says what it must be, so the
-    /// complaint names the predicate rather than a type variable.
     #[test]
     fn a_stage_names_what_it_expected() {
         check(
@@ -1156,8 +1130,7 @@ from t
     }
 
     /// Nothing says what an empty list holds, and the language has no way to
-    /// write it down. Inference owns `!yzl.var`, so it says so here rather
-    /// than handing a later pass a type it cannot read.
+    /// write it down.
     #[test]
     fn reports_an_expression_nothing_pinned_down() {
         check(
@@ -1180,8 +1153,6 @@ from t
         );
     }
 
-    /// The same list, given an element to take its type from, resolves — and
-    /// the answer is on the value, not beside it.
     #[test]
     fn a_list_takes_the_type_of_its_elements() {
         check(

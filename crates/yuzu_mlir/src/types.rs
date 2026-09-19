@@ -26,6 +26,32 @@ singleton!(
     "`!yzl.query`, a relation before its schema is known"
 );
 
+/// A scalar type's spelling in source, and the lookup returning it.
+type Scalar = (&'static str, fn(&Context) -> Type<'_>);
+
+const SCALARS: [Scalar; 4] = [
+    ("int64", int64),
+    ("float64", float64),
+    ("bool", boolean),
+    ("str", str),
+];
+
+/// The scalar type a name stands for, when it names one.
+pub fn scalar<'c>(context: &'c Context, name: &str) -> Option<Type<'c>> {
+    SCALARS
+        .iter()
+        .find(|(spelling, _)| *spelling == name)
+        .map(|(_, get)| get(context))
+}
+
+/// How source spells a scalar type, when it is one.
+pub fn scalar_name(context: &Context, ty: Type<'_>) -> Option<&'static str> {
+    SCALARS
+        .iter()
+        .find(|(_, get)| get(context) == ty)
+        .map(|(spelling, _)| *spelling)
+}
+
 /// How a type is written in source, for a diagnostic: a reader wrote
 /// `int64` and `List[int64]`, not `!yz.int64` and `!yz.list<!yz.int64>`.
 /// The MLIR spelling is the fallback, so a type with no source syntax still
@@ -43,16 +69,8 @@ pub fn name(context: &Context, ty: Type<'_>) -> String {
         return param.name().to_string();
     }
 
-    for (scalar, spelling) in [
-        (int64(context), "int64"),
-        (float64(context), "float64"),
-        (boolean(context), "bool"),
-        (str(context), "str"),
-    ] {
-        if ty == scalar {
-            return spelling.to_string();
-        }
+    match scalar_name(context, ty) {
+        Some(scalar) => scalar.to_string(),
+        None => ty.to_string(),
     }
-
-    ty.to_string()
 }

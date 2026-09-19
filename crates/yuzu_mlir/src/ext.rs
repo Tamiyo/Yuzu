@@ -3,29 +3,36 @@
 
 use melior::Context;
 use melior::ir::attribute::{
-    ArrayAttribute, FlatSymbolRefAttribute, IntegerAttribute, StringAttribute,
+    ArrayAttribute, FlatSymbolRefAttribute, IntegerAttribute, StringAttribute, TypeAttribute,
 };
+use melior::ir::block::BlockArgument;
 use melior::ir::operation::{OperationLike, OperationMutLike, OperationRef, OperationRefMut};
 use melior::ir::r#type::IntegerType;
-use melior::ir::{Attribute, BlockLike, BlockRef, RegionLike, Value, ValueLike};
+use melior::ir::{Attribute, BlockLike, BlockRef, RegionLike, Type, Value, ValueLike};
 
-/// Identity for the maps a pass keys by value.
+/// The identity of a value for the lifetime of its context: what the maps a
+/// pass keys by value are keyed by. Values wrap uniqued, arena-owned
+/// pointers, so the pointer is a stable identity — MLIR values are not arena
+/// indices we could use instead.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct ValueId(usize);
+
 pub trait ValueExt<'c>: ValueLike<'c> {
-    /// A key identifying this value for the lifetime of its context. Values
-    /// wrap uniqued, arena-owned pointers, so the pointer is a stable
-    /// identity — MLIR values are not arena indices we could use instead.
-    fn id(&self) -> usize {
-        self.to_raw().ptr as usize
+    fn id(&self) -> ValueId {
+        ValueId(self.to_raw().ptr as usize)
     }
 }
 
 impl<'c, T: ValueLike<'c>> ValueExt<'c> for T {}
 
-/// Element access for array attributes.
+/// Element access for array attributes. Strings are borrowed: attribute
+/// strings are context-uniqued, so they outlive any pass reading them.
 pub trait ArrayAttributeExt<'c> {
     fn elements(&self) -> impl Iterator<Item = Attribute<'c>>;
     fn strings(&self) -> Vec<&'c str>;
     fn symbols(&self) -> Vec<&'c str>;
+    fn types(&self) -> Vec<Type<'c>>;
+    fn indices(&self) -> Vec<usize>;
 }
 
 impl<'c> ArrayAttributeExt<'c> for ArrayAttribute<'c> {
@@ -35,8 +42,6 @@ impl<'c> ArrayAttributeExt<'c> for ArrayAttribute<'c> {
             .map(move |index| array.element(index).expect("the element index is in range"))
     }
 
-    /// Borrowed: attribute strings are context-uniqued, so they outlive any
-    /// pass reading them.
     fn strings(&self) -> Vec<&'c str> {
         self.elements()
             .filter_map(|element| StringAttribute::try_from(element).ok())
@@ -50,16 +55,38 @@ impl<'c> ArrayAttributeExt<'c> for ArrayAttribute<'c> {
             .map(|symbol| symbol.value())
             .collect()
     }
+
+    fn types(&self) -> Vec<Type<'c>> {
+        self.elements()
+            .filter_map(|element| TypeAttribute::try_from(element).ok())
+            .map(|attribute| attribute.value())
+            .collect()
+    }
+
+    fn indices(&self) -> Vec<usize> {
+        self.elements()
+            .filter_map(|element| IntegerAttribute::try_from(element).ok())
+            .map(|index| index.value() as usize)
+            .collect()
+    }
 }
 
-/// Iteration over a block's operations.
+/// Iteration over a block's arguments and operations.
 pub trait BlockExt<'c: 'a, 'a> {
+    fn arguments(&self) -> impl Iterator<Item = BlockArgument<'c, 'a>>;
     fn operations(&self) -> impl Iterator<Item = OperationRef<'c, 'a>>;
     fn operations_mut(&self) -> impl Iterator<Item = OperationRefMut<'c, 'a>>;
     fn last_operation(&self) -> Option<OperationRef<'c, 'a>>;
 }
 
 impl<'c: 'a, 'a, T: BlockLike<'c, 'a>> BlockExt<'c, 'a> for T {
+    fn arguments(&self) -> impl Iterator<Item = BlockArgument<'c, 'a>> {
+        (0..self.argument_count()).map(|index| {
+            self.argument(index)
+                .expect("the argument index is in range")
+        })
+    }
+
     fn operations(&self) -> impl Iterator<Item = OperationRef<'c, 'a>> {
         std::iter::successors(self.first_operation(), |op| op.next_in_block())
     }
@@ -84,8 +111,7 @@ impl<'c: 'a, 'a, T: RegionLike<'c, 'a>> RegionExt<'c, 'a> for T {
     }
 }
 
-/// Typed reads of the attributes ops carry outside their ODS arguments,
-/// such as the indices the passes stamp.
+/// Reads over an operation's results, operands and attributes.
 pub trait OperationExt<'c: 'a, 'a>: OperationLike<'c, 'a> {
     /// The op's single result, as a value. Every op the passes build has
     /// one; a terminator has none and must not be asked.
@@ -116,43 +142,12 @@ pub trait OperationExt<'c: 'a, 'a>: OperationLike<'c, 'a> {
             .ok()
             .map(|string| string.value().to_string())
     }
-
-    /// An index-valued attribute, by name.
-    fn index_attribute(&self, name: &str) -> Option<usize> {
-        let attribute = self.attribute(name).ok()?;
-        IntegerAttribute::try_from(attribute)
-            .ok()
-            .map(|index| index.value() as usize)
-    }
-
-    /// An array of indices, by name.
-    fn index_array_attribute(&self, name: &str) -> Vec<usize> {
-        let Some(array) = self
-            .attribute(name)
-            .ok()
-            .and_then(|attribute| ArrayAttribute::try_from(attribute).ok())
-        else {
-            return Vec::new();
-        };
-
-        array
-            .elements()
-            .filter_map(|element| IntegerAttribute::try_from(element).ok())
-            .map(|index| index.value() as usize)
-            .collect()
-    }
 }
 
 impl<'c: 'a, 'a, T: OperationLike<'c, 'a>> OperationExt<'c, 'a> for T {}
 
 /// Stamping the answers passes record, as attributes.
 pub trait OperationMutExt<'c: 'a, 'a>: OperationMutLike<'c, 'a> {
-    /// Stamps an index-valued attribute.
-    fn set_index_attribute(&mut self, context: &'c Context, name: &str, index: usize) {
-        let i64 = IntegerType::new(context, 64).into();
-        self.set_attribute(name, IntegerAttribute::new(i64, index as i64).into());
-    }
-
     /// Stamps an array of indices.
     fn set_index_array_attribute(&mut self, context: &'c Context, name: &str, indices: &[usize]) {
         let i64 = IntegerType::new(context, 64).into();

@@ -1,20 +1,22 @@
-//! The stages: each becomes the `yzr` op that means the same thing, and
-//! the ones yzr has no op for become the ops it does have. A stage the
-//! lowering does not carry is reported rather than skipped.
+//! The stages: each becomes the `yzr` op that means the same thing, and the
+//! ones yzr has no op for become the ops it does have.
+
 use melior::ir::attribute::{DenseI64ArrayAttribute, StringAttribute};
 use melior::ir::operation::{OperationLike, OperationRef};
-use melior::ir::{Block, BlockLike, BlockRef, Location, Region, RegionLike, Type, Value};
+use melior::ir::{BlockLike, BlockRef, Region, RegionLike, Value};
 use yuzu_mlir::SymbolTable;
 use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationCast, OperationExt, ValueExt};
 use yuzu_mlir::ods::{yz, yzr};
-use yuzu_mlir::ops::yzl as yzl_ops;
-use yuzu_mlir::ops::yzl::YzlOp;
+use yuzu_mlir::ops::yzl::{
+    AggregateOp, DropOp, ExtendOp, FromOp, JoinOp, LetOp, LimitOp, RenameOp, SelectOp, SetOp,
+    StructOp, WhereOp, YzlOp,
+};
 use yuzu_mlir::types;
 
-use crate::lower_yzl_to_yzr::{Schema, Yielded, YzlToYzr, op_name, struct_fields};
+use crate::lower_yzl_to_yzr::{Row, Yielded, YzlToYzr, op_name, struct_fields};
 
 impl<'c, 'a> YzlToYzr<'c, 'a> {
-    pub(super) fn lower_op(
+    pub(super) fn convert_op(
         &mut self,
         op: OperationRef<'c, '_>,
         target: BlockRef<'c, 'a>,
@@ -22,89 +24,70 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         symbols: &mut SymbolTable<'c, '_>,
     ) {
         match op.as_yzl() {
-            Some(YzlOp::Struct(item)) => self.lower_struct(symbols, &item),
-            Some(YzlOp::From(from)) => self.lower_from(op, target, source, symbols, &from),
-            Some(YzlOp::Let(binding)) => self.lower_let(op, target, source, symbols, &binding),
-            Some(YzlOp::Where(stage)) => self.lower_where(op, target, &stage),
-            Some(YzlOp::Select(stage)) => self.lower_select(op, target, symbols, &stage),
-            Some(YzlOp::Extend(stage)) => self.lower_extend(op, target, symbols, &stage),
-            Some(YzlOp::Aggregate(stage)) => self.lower_aggregate(op, target, symbols, &stage),
-            Some(YzlOp::Join(stage)) => self.lower_join(op, target, source, symbols, &stage),
-            Some(YzlOp::Limit(stage)) => self.lower_limit(op, target, &stage),
-            Some(YzlOp::Alias(_)) => self.lower_alias(op),
-            Some(YzlOp::Distinct(_)) => self.lower_distinct(op, target, symbols),
-            Some(YzlOp::Drop(stage)) => self.lower_drop(op, target, symbols, &stage),
-            Some(YzlOp::Set(stage)) => self.lower_set(op, target, symbols, &stage),
-            Some(YzlOp::Rename(stage)) => self.lower_rename(op, target, symbols, &stage),
-            Some(YzlOp::Output(_)) => self.lower_output(op, target),
-            // A table declaration says nothing yzr needs: `yzr.table` names
-            // the relation and carries its row as the result type.
+            Some(YzlOp::Struct(item)) => self.convert_struct(symbols, &item),
+            Some(YzlOp::From(from)) => self.convert_from(op, target, source, symbols, &from),
+            Some(YzlOp::Let(binding)) => self.convert_let(op, target, source, symbols, &binding),
+            Some(YzlOp::Where(stage)) => self.convert_where(op, target, &stage),
+            Some(YzlOp::Select(stage)) => self.convert_select(op, target, symbols, &stage),
+            Some(YzlOp::Extend(stage)) => self.convert_extend(op, target, symbols, &stage),
+            Some(YzlOp::Aggregate(stage)) => self.convert_aggregate(op, target, symbols, &stage),
+            Some(YzlOp::Join(stage)) => self.convert_join(op, target, source, symbols, &stage),
+            Some(YzlOp::Limit(stage)) => self.convert_limit(op, target, &stage),
+            Some(YzlOp::Alias(_)) => self.convert_alias(op),
+            Some(YzlOp::Distinct(_)) => self.convert_distinct(op, target, symbols),
+            Some(YzlOp::Drop(stage)) => self.convert_drop(op, target, symbols, &stage),
+            Some(YzlOp::Set(stage)) => self.convert_set(op, target, symbols, &stage),
+            Some(YzlOp::Rename(stage)) => self.convert_rename(op, target, symbols, &stage),
+            Some(YzlOp::Output(_)) => self.convert_output(op, target),
+            // `yzr.table` names the relation and carries its row as the
+            // result type, so the declaration says nothing yzr needs.
             Some(YzlOp::Table(_)) => {}
-            // Expansion removes these once every call is gone, so one
-            // reaching here means expansion did not finish — the reason is
-            // already reported, and this says which declaration outlived it.
-            Some(YzlOp::Fn(_) | YzlOp::Trait(_) | YzlOp::Impl(_)) => self.error(
+            // Expansion removes these once every call is gone; one reaching
+            // here means it did not finish, which it has already reported.
+            Some(YzlOp::Fn(_) | YzlOp::Trait(_) | YzlOp::Impl(_)) => self.report(
                 op,
-                format!("`{}` was not expanded before lowering", op_name(op)),
+                &format!("`{}` was not expanded before lowering", op_name(op)),
             ),
-            Some(YzlOp::Missing(_)) => self.error(op, "this part of the query is missing"),
-            // Declarations yzr does not need, and the terminators a region
-            // owns rather than the module.
+            Some(YzlOp::Missing(_)) => self.report(op, "this part of the query is missing"),
             Some(YzlOp::Call(_) | YzlOp::List(_) | YzlOp::Yield(_) | YzlOp::Return(_)) | None => {}
         }
     }
 
-    fn lower_output(&mut self, op: OperationRef<'c, '_>, target: BlockRef<'c, 'a>) {
-        let Some((query, _)) = self.input_stage(op) else {
-            return;
-        };
-
-        target.append_operation(yzr::output(self.context, query, op.location()).into());
+    fn convert_struct(&mut self, symbols: &mut SymbolTable<'c, '_>, item: &StructOp<'c, '_>) {
+        self.declare_struct(item.sym_name().value(), &struct_fields(item), symbols);
     }
 
-    fn lower_struct(
-        &mut self,
-        symbols: &mut SymbolTable<'c, '_>,
-        item: &yzl_ops::StructOp<'c, '_>,
-    ) {
-        let fields = struct_fields(item);
-        self.declare_struct(item.sym_name().value(), &fields, symbols);
-    }
-
-    fn lower_from(
+    fn convert_from(
         &mut self,
         op: OperationRef<'c, '_>,
         target: BlockRef<'c, 'a>,
         source: &SymbolTable<'c, '_>,
         symbols: &mut SymbolTable<'c, '_>,
-        from: &yzl_ops::FromOp<'c, '_>,
+        from: &FromOp<'c, '_>,
     ) {
         let relation = from.source().value();
-        let Some((rows, schema)) =
+        if let Some((rows, row)) =
             self.relation_input(relation, source, target, symbols, op.location())
-        else {
-            self.error(op, format!("`{relation}` has no row shape to scan"));
-            return;
-        };
-
-        self.record_stage(op, rows, schema);
+        {
+            self.record_stage(op, rows, row);
+        }
     }
 
-    fn lower_let(
+    fn convert_let(
         &mut self,
         op: OperationRef<'c, '_>,
         target: BlockRef<'c, 'a>,
         source: &SymbolTable<'c, '_>,
         symbols: &mut SymbolTable<'c, '_>,
-        binding: &yzl_ops::LetOp<'c, '_>,
+        binding: &LetOp<'c, '_>,
     ) {
         let Some(block) = binding.body().first_block() else {
-            self.error(op, "`let` has no body to bind");
+            self.report(op, "`let` has no body to bind");
             return;
         };
 
         for inner in block.operations() {
-            self.lower_op(inner, target, source, symbols);
+            self.convert_op(inner, target, source, symbols);
         }
 
         let bound = block
@@ -116,88 +99,87 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             Some(rows) => {
                 self.bindings.insert(binding.sym_name().value(), rows);
             }
-            None => self.error(op, "only a query can be bound by `let`"),
+            None => self.report(op, "only a query can be bound by `let`"),
         }
     }
 
-    fn lower_where(
+    fn convert_where(
         &mut self,
         op: OperationRef<'c, '_>,
         target: BlockRef<'c, 'a>,
-        stage: &yzl_ops::WhereOp<'c, '_>,
+        stage: &WhereOp<'c, '_>,
     ) {
-        let Some((input, schema)) = self.input_stage(op) else {
+        let Some((input, row)) = self.input_stage(op) else {
             return;
         };
 
-        let (region, _) = self.lower_region(stage.body(), &schema, op.location(), Yielded::Body);
+        let (region, _) = self.convert_region(stage.body(), &row, op.location(), Yielded::Body);
         let filtered =
             target.append_operation(yzr::filter(self.context, input, region, op.location()).into());
 
-        self.record_stage(op, filtered.first_result(), schema);
+        self.record_stage(op, filtered.first_result(), row);
     }
 
-    fn lower_select(
+    fn convert_select(
         &mut self,
         op: OperationRef<'c, '_>,
         target: BlockRef<'c, 'a>,
         symbols: &mut SymbolTable<'c, '_>,
-        stage: &yzl_ops::SelectOp<'c, '_>,
+        stage: &SelectOp<'c, '_>,
     ) {
-        let Some((input, schema)) = self.input_stage(op) else {
+        let Some((input, row)) = self.input_stage(op) else {
             return;
         };
 
         let (region, yielded) =
-            self.lower_region(stage.body(), &schema, op.location(), Yielded::Body);
-        let produced = self.named_row(stage.names().strings(), yielded);
-        let row = self.row_type(&produced, symbols);
-        let projected = target
-            .append_operation(yzr::project(self.context, row, input, region, op.location()).into());
-
-        self.record_stage(op, projected.first_result(), produced);
+            self.convert_region(stage.body(), &row, op.location(), Yielded::Body);
+        let produced = stage.names().strings().into_iter().zip(yielded).collect();
+        self.project(op, target, symbols, input, region, produced);
     }
 
-    fn lower_extend(
+    fn convert_extend(
         &mut self,
         op: OperationRef<'c, '_>,
         target: BlockRef<'c, 'a>,
         symbols: &mut SymbolTable<'c, '_>,
-        stage: &yzl_ops::ExtendOp<'c, '_>,
+        stage: &ExtendOp<'c, '_>,
     ) {
-        let Some((input, mut schema)) = self.input_stage(op) else {
+        let Some((input, mut row)) = self.input_stage(op) else {
             return;
         };
 
         let (region, yielded) =
-            self.lower_region(stage.body(), &schema, op.location(), Yielded::Body);
-        schema.extend(self.named_row(stage.names().strings(), yielded));
-        let row = self.row_type(&schema, symbols);
+            self.convert_region(stage.body(), &row, op.location(), Yielded::Body);
+        row.extend(stage.names().strings().into_iter().zip(yielded));
+        let ty = self.row_type(&row, symbols);
         let extended = target
-            .append_operation(yzr::extend(self.context, row, input, region, op.location()).into());
+            .append_operation(yzr::extend(self.context, ty, input, region, op.location()).into());
 
-        self.record_stage(op, extended.first_result(), schema);
+        self.record_stage(op, extended.first_result(), row);
     }
 
-    fn lower_aggregate(
+    fn convert_aggregate(
         &mut self,
         op: OperationRef<'c, '_>,
         target: BlockRef<'c, 'a>,
         symbols: &mut SymbolTable<'c, '_>,
-        stage: &yzl_ops::AggregateOp<'c, '_>,
+        stage: &AggregateOp<'c, '_>,
     ) {
-        let Some((input, schema)) = self.input_stage(op) else {
+        let Some((input, row)) = self.input_stage(op) else {
             return;
         };
 
-        let keys = crate::infer_types::indices(stage.key_cols());
-        let grouping = self.lower_grouping(stage.body(), &schema, &keys, op.location());
+        let keys = stage
+            .key_cols()
+            .map(|keys| keys.indices())
+            .unwrap_or_default();
+        let grouping = self.convert_grouping(stage.body(), &row, &keys, op.location());
 
         // The keys the grouping carries out, named as the stage named them.
-        let carried: Schema<'c> = keys
+        let carried: Row<'c> = keys
             .iter()
             .zip(stage.group_by().strings())
-            .filter_map(|(&index, name)| schema.get(index).map(|&(_, ty)| (name, ty)))
+            .filter_map(|(&index, name)| row.get(index).map(|&(_, ty)| (name, ty)))
             .collect();
 
         // Without a projection the grouping's own output is the row; with
@@ -206,23 +188,28 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         let names = stage.names().strings();
         let mut grouped = carried.clone();
         match &grouping.items {
-            // The raw measures are a row the source never named, and the
-            // projection reads them by position anyway.
-            Some(_) => {
-                for (index, &ty) in grouping.measure_types.iter().enumerate() {
-                    grouped.push((self.intern(&format!("measure{index}")), ty));
-                }
-            }
-            None => grouped.extend(self.named_row(names.clone(), grouping.measure_types.clone())),
+            Some(_) => grouped.extend(
+                grouping
+                    .measure_types
+                    .iter()
+                    .enumerate()
+                    .map(|(index, &ty)| (self.intern(&format!("measure{index}")), ty)),
+            ),
+            None => grouped.extend(
+                names
+                    .iter()
+                    .copied()
+                    .zip(grouping.measure_types.iter().copied()),
+            ),
         }
 
-        let row = self.row_type(&grouped, symbols);
+        let ty = self.row_type(&grouped, symbols);
         let indices: Vec<i64> = keys.iter().map(|&index| index as i64).collect();
         let aggregated = target
             .append_operation(
                 yzr::aggregate(
                     self.context,
-                    row,
+                    ty,
                     input,
                     grouping.measures,
                     DenseI64ArrayAttribute::new(self.context, &indices).into(),
@@ -238,56 +225,49 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         };
 
         let mut produced = carried;
-        produced.extend(self.named_row(names, types[keys.len()..].to_vec()));
-        let row = self.row_type(&produced, symbols);
-        let projected = target.append_operation(
-            yzr::project(self.context, row, aggregated, items, op.location()).into(),
-        );
-
-        self.record_stage(op, projected.first_result(), produced);
+        produced.extend(names.into_iter().zip(types[keys.len()..].iter().copied()));
+        self.project(op, target, symbols, aggregated, items, produced);
     }
 
-    fn lower_join(
+    fn convert_join(
         &mut self,
         op: OperationRef<'c, '_>,
         target: BlockRef<'c, 'a>,
         source: &SymbolTable<'c, '_>,
         symbols: &mut SymbolTable<'c, '_>,
-        stage: &yzl_ops::JoinOp<'c, '_>,
+        stage: &JoinOp<'c, '_>,
     ) {
-        let Some((lhs, mut schema)) = self.input_stage(op) else {
+        let Some((lhs, mut row)) = self.input_stage(op) else {
             return;
         };
 
-        // The one stage that has to conjure an input: yzl names the
-        // right side, yzr joins two relations.
+        // The one stage that has to conjure an input: yzl names the right
+        // side, yzr joins two relations.
         let relation = stage.rhs().value();
         let Some((rows, right)) =
             self.relation_input(relation, source, target, symbols, op.location())
         else {
-            self.error(op, format!("`{relation}` has no row shape to scan"));
             return;
         };
 
         // Both sides carry through, and the `on` region's names were
-        // resolved against exactly this concatenation — a qualifier
-        // only ever chose a column, so it is spent by now.
-        let left_width = schema.len();
-        schema.extend(right.iter().copied());
+        // resolved against exactly this concatenation.
+        let left_width = row.len();
+        row.extend(right.iter().copied());
 
         let region = match stage.using_columns() {
-            Some(columns) => self.join_keys(op, &columns.strings(), left_width, &schema),
+            Some(columns) => self.join_keys(op, &columns.strings(), left_width, &row),
             None => {
-                self.lower_region(stage.on(), &schema, op.location(), Yielded::Body)
+                self.convert_region(stage.on(), &row, op.location(), Yielded::Body)
                     .0
             }
         };
 
-        let row = self.row_type(&schema, symbols);
+        let ty = self.row_type(&row, symbols);
         let joined = target.append_operation(
             yzr::join(
                 self.context,
-                row,
+                ty,
                 lhs,
                 rows,
                 region,
@@ -297,16 +277,16 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             .into(),
         );
 
-        self.record_stage(op, joined.first_result(), schema);
+        self.record_stage(op, joined.first_result(), row);
     }
 
-    fn lower_limit(
+    fn convert_limit(
         &mut self,
         op: OperationRef<'c, '_>,
         target: BlockRef<'c, 'a>,
-        stage: &yzl_ops::LimitOp<'c, '_>,
+        stage: &LimitOp<'c, '_>,
     ) {
-        let Some((input, schema)) = self.input_stage(op) else {
+        let Some((input, row)) = self.input_stage(op) else {
             return;
         };
 
@@ -318,34 +298,37 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         }
 
         let limited = target.append_operation(builder.build().into());
-        self.record_stage(op, limited.first_result(), schema);
+        self.record_stage(op, limited.first_result(), row);
     }
 
-    fn lower_alias(&mut self, op: OperationRef<'c, '_>) {
-        let Some((input, schema)) = self.input_stage(op) else {
+    /// `alias` only qualifies names, and resolution has already used them.
+    fn convert_alias(&mut self, op: OperationRef<'c, '_>) {
+        let Some((input, row)) = self.input_stage(op) else {
             return;
         };
 
-        self.record_stage(op, input, schema);
+        self.record_stage(op, input, row);
     }
 
-    fn lower_distinct(
+    /// yzr has no distinct: it is a group keyed on every column, measuring
+    /// nothing.
+    fn convert_distinct(
         &mut self,
         op: OperationRef<'c, '_>,
         target: BlockRef<'c, 'a>,
         symbols: &mut SymbolTable<'c, '_>,
     ) {
-        let Some((input, schema)) = self.input_stage(op) else {
+        let Some((input, row)) = self.input_stage(op) else {
             return;
         };
 
-        let keys: Vec<i64> = (0..schema.len() as i64).collect();
-        let region = self.column_region(&schema, &[], op.location());
-        let row = self.row_type(&schema, symbols);
+        let keys: Vec<i64> = (0..row.len() as i64).collect();
+        let region = self.column_region(&row, &[], op.location());
+        let ty = self.row_type(&row, symbols);
         let grouped = target.append_operation(
             yzr::aggregate(
                 self.context,
-                row,
+                ty,
                 input,
                 region,
                 DenseI64ArrayAttribute::new(self.context, &keys).into(),
@@ -354,90 +337,115 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             .into(),
         );
 
-        self.record_stage(op, grouped.first_result(), schema);
+        self.record_stage(op, grouped.first_result(), row);
     }
 
-    fn lower_drop(
+    fn convert_drop(
         &mut self,
         op: OperationRef<'c, '_>,
         target: BlockRef<'c, 'a>,
         symbols: &mut SymbolTable<'c, '_>,
-        stage: &yzl_ops::DropOp<'c, '_>,
+        stage: &DropOp<'c, '_>,
     ) {
-        let Some((input, schema)) = self.input_stage(op) else {
+        let Some((input, row)) = self.input_stage(op) else {
             return;
         };
 
-        let Some(kept) = self.kept_columns(op, &stage.columns().strings(), &schema) else {
+        let Some(kept) = self.kept_columns(op, &stage.columns().strings(), &row) else {
             return;
         };
 
-        let region = self.column_region(&schema, &kept, op.location());
-        let produced: Schema<'c> = kept.iter().map(|&index| schema[index]).collect();
-        let row = self.row_type(&produced, symbols);
-        let projected = target
-            .append_operation(yzr::project(self.context, row, input, region, op.location()).into());
-
-        self.record_stage(op, projected.first_result(), produced);
+        let region = self.column_region(&row, &kept, op.location());
+        let produced = kept.iter().map(|&index| row[index]).collect();
+        self.project(op, target, symbols, input, region, produced);
     }
 
-    fn lower_set(
+    /// The body computes replacements, not a new row: every column it does
+    /// not name carries through in place.
+    fn convert_set(
         &mut self,
         op: OperationRef<'c, '_>,
         target: BlockRef<'c, 'a>,
         symbols: &mut SymbolTable<'c, '_>,
-        stage: &yzl_ops::SetOp<'c, '_>,
+        stage: &SetOp<'c, '_>,
     ) {
-        let Some((input, mut schema)) = self.input_stage(op) else {
+        let Some((input, mut row)) = self.input_stage(op) else {
             return;
         };
 
-        // The body computes replacements, not a new row: every column
-        // it does not name carries through in place.
-        let columns = crate::infer_types::indices(stage.set_cols());
-        let (region, yielded) =
-            self.lower_region(stage.body(), &schema, op.location(), Yielded::Row(&columns));
-
-        for (column, ty) in schema.iter_mut().zip(&yielded) {
+        let columns = stage
+            .set_cols()
+            .map(|columns| columns.indices())
+            .unwrap_or_default();
+        let (region, yielded) = self.convert_region(
+            stage.body(),
+            &row,
+            op.location(),
+            Yielded::Substituted(&columns),
+        );
+        for (column, ty) in row.iter_mut().zip(&yielded) {
             column.1 = *ty;
         }
 
-        let row = self.row_type(&schema, symbols);
-        let projected = target
-            .append_operation(yzr::project(self.context, row, input, region, op.location()).into());
-
-        self.record_stage(op, projected.first_result(), schema);
+        self.project(op, target, symbols, input, region, row);
     }
 
-    fn lower_rename(
+    /// A rename moves names, not values, but yzr rows are typed by their
+    /// struct, so the new names need a projection to live on.
+    fn convert_rename(
         &mut self,
         op: OperationRef<'c, '_>,
         target: BlockRef<'c, 'a>,
         symbols: &mut SymbolTable<'c, '_>,
-        stage: &yzl_ops::RenameOp<'c, '_>,
+        stage: &RenameOp<'c, '_>,
     ) {
-        let Some((input, mut schema)) = self.input_stage(op) else {
+        let Some((input, mut row)) = self.input_stage(op) else {
             return;
         };
 
-        let columns = crate::infer_types::indices(stage.rename_cols());
+        let columns = stage
+            .rename_cols()
+            .map(|columns| columns.indices())
+            .unwrap_or_default();
         for (&index, name) in columns.iter().zip(stage.to().strings()) {
-            match schema.get_mut(index) {
+            match row.get_mut(index) {
                 Some(column) => column.0 = name,
                 None => {
-                    self.error(op, format!("column {index} is not in the row"));
+                    self.report(op, &format!("column {index} is not in the row"));
                     return;
                 }
             }
         }
 
-        let all: Vec<usize> = (0..schema.len()).collect();
-        let region = self.column_region(&schema, &all, op.location());
-        let row = self.row_type(&schema, symbols);
-        let projected = target
-            .append_operation(yzr::project(self.context, row, input, region, op.location()).into());
+        let all: Vec<usize> = (0..row.len()).collect();
+        let region = self.column_region(&row, &all, op.location());
+        self.project(op, target, symbols, input, region, row);
+    }
 
-        self.record_stage(op, projected.first_result(), schema);
+    fn convert_output(&mut self, op: OperationRef<'c, '_>, target: BlockRef<'c, 'a>) {
+        let Some((query, _)) = self.input_stage(op) else {
+            return;
+        };
+
+        target.append_operation(yzr::output(self.context, query, op.location()).into());
+    }
+
+    /// A projection onto the row it produces, recorded as what the stage
+    /// became.
+    fn project(
+        &mut self,
+        op: OperationRef<'c, '_>,
+        target: BlockRef<'c, 'a>,
+        symbols: &mut SymbolTable<'c, '_>,
+        input: Value<'c, 'a>,
+        region: Region<'c>,
+        produced: Row<'c>,
+    ) {
+        let ty = self.row_type(&produced, symbols);
+        let projected = target
+            .append_operation(yzr::project(self.context, ty, input, region, op.location()).into());
+
+        self.record_stage(op, projected.first_result(), produced);
     }
 
     /// `using [a, b]` is sugar: yzr has only an on-region, so the columns
@@ -447,27 +455,23 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         op: OperationRef<'c, '_>,
         columns: &[&str],
         left_width: usize,
-        schema: &Schema<'c>,
+        row: &Row<'c>,
     ) -> Region<'c> {
         let location = op.location();
         let region = Region::new();
-        let arguments: Vec<(Type<'c>, Location<'c>)> = schema
-            .iter()
-            .map(|(_, column)| (*column, location))
-            .collect();
-        let body = region.append_block(Block::new(&arguments));
+        let body = self.row_block(&region, row, location);
 
         let mut condition: Option<Value<'c, '_>> = None;
         for column in columns {
-            let left = schema[..left_width]
+            let left = row[..left_width]
                 .iter()
                 .position(|(name, _)| name == column);
-            let right = schema[left_width..]
+            let right = row[left_width..]
                 .iter()
                 .position(|(name, _)| name == column)
                 .map(|index| index + left_width);
             let (Some(left), Some(right)) = (left, right) else {
-                self.error(op, format!("`{column}` is not present in both relations"));
+                self.report(op, &format!("`{column}` is not present in both relations"));
                 continue;
             };
 
@@ -512,16 +516,16 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 
     /// The columns that survive a `drop`, in order. Resolution removes the
     /// first column each name matches, so dropping one name twice drops two
-    /// columns — the lowering has to agree with it exactly.
+    /// columns, and the lowering has to agree with it exactly.
     fn kept_columns(
         &self,
         op: OperationRef<'c, '_>,
         columns: &[&str],
-        schema: &Schema<'c>,
+        row: &Row<'c>,
     ) -> Option<Vec<usize>> {
         let mut dropped: Vec<usize> = Vec::new();
         for column in columns {
-            let found = schema
+            let found = row
                 .iter()
                 .enumerate()
                 .find(|(index, (name, _))| name == column && !dropped.contains(index))
@@ -530,14 +534,14 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             match found {
                 Some(index) => dropped.push(index),
                 None => {
-                    self.error(op, format!("`{column}` is not in the row"));
+                    self.report(op, &format!("`{column}` is not in the row"));
                     return None;
                 }
             }
         }
 
         Some(
-            (0..schema.len())
+            (0..row.len())
                 .filter(|index| !dropped.contains(index))
                 .collect(),
         )
@@ -548,13 +552,12 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 mod tests {
     use expect_test::expect;
 
-    use crate::test_support::check_lowered;
+    use crate::test_support::check_yzr;
 
-    /// The stages that name columns declare the row they produce, and a
-    /// shape nobody declared is interned under a name of its own.
+    /// A shape nobody declared is interned under a name of its own.
     #[test]
     fn named_stages_declare_the_row_they_produce() {
-        check_lowered(
+        check_yzr(
             r#"
 struct Row { a: int64, b: int64 }
 table t = Row
@@ -586,11 +589,9 @@ from t
         );
     }
 
-    /// The one stage with two inputs: the named right side becomes a scan,
-    /// and the `on` region sees both rows' columns as one block.
     #[test]
     fn join_materialises_its_right_side() {
-        check_lowered(
+        check_yzr(
             r#"
 struct Row { id: int64, dept_id: int64 }
 table t = Row
@@ -618,11 +619,9 @@ from t
         );
     }
 
-    /// `using` is sugar for the equality it asks for; both sides' columns
-    /// carry through, as they do for `on`.
     #[test]
     fn using_becomes_the_equality_it_means() {
-        check_lowered(
+        check_yzr(
             r#"
 struct Row { id: int64, tag: str, part: int64 }
 table t = Row
@@ -652,11 +651,9 @@ from t
         );
     }
 
-    /// `alias` only qualifies names, and resolution has already used them
-    /// to choose columns: nothing is left for yzr to represent.
     #[test]
     fn alias_leaves_no_trace() {
-        check_lowered(
+        check_yzr(
             r#"
 struct Row { a: int64, b: int64 }
 table t = Row
@@ -681,11 +678,9 @@ from t
         );
     }
 
-    /// yzr has no distinct: it is a group keyed on every column, measuring
-    /// nothing.
     #[test]
     fn distinct_groups_on_every_column() {
-        check_lowered(
+        check_yzr(
             r#"
 struct Row { a: int64, b: str }
 table t = Row
@@ -707,10 +702,9 @@ from t
         );
     }
 
-    /// `drop` names what leaves; the projection yields what stays.
     #[test]
     fn drop_projects_the_columns_that_stay() {
-        check_lowered(
+        check_yzr(
             r#"
 struct Row { a: int64, b: str, c: int64 }
 table t = Row
@@ -733,11 +727,9 @@ from t
         );
     }
 
-    /// `set` replaces columns in place, so the projection has to yield the
-    /// columns it did not name as well.
     #[test]
     fn set_yields_the_untouched_columns_too() {
-        check_lowered(
+        check_yzr(
             r#"
 struct Row { a: int64, b: int64, c: int64 }
 table t = Row
@@ -761,11 +753,11 @@ from t
         );
     }
 
-    /// A binding is a name for rows that already exist: two uses share the
-    /// one scan rather than each producing their own.
+    /// Two uses of a binding share the one scan rather than each producing
+    /// their own.
     #[test]
     fn a_binding_is_reused_not_rescanned() {
-        check_lowered(
+        check_yzr(
             r#"
 struct Row { a: int64, b: int64 }
 table t = Row
@@ -797,11 +789,9 @@ from big
         );
     }
 
-    /// Binding something that is not a query is not carried yet, and a gap
-    /// is an error rather than a silently dropped binding.
     #[test]
     fn reports_a_binding_that_is_not_a_query() {
-        check_lowered(
+        check_yzr(
             r#"
 struct Row { a: int64 }
 table t = Row
@@ -820,11 +810,9 @@ from t
         );
     }
 
-    /// A rename moves names, not values, but yzr rows are typed by their
-    /// struct — so the new names need a projection to live on.
     #[test]
     fn rename_projects_under_the_new_names() {
-        check_lowered(
+        check_yzr(
             r#"
 struct Row { a: int64, b: str }
 table t = Row
@@ -851,7 +839,7 @@ from t
     /// a qualified rename after a join renames one side rather than guessing.
     #[test]
     fn rename_follows_the_stamped_column() {
-        check_lowered(
+        check_yzr(
             r#"
 struct Row { id: int64 }
 table l = Row
@@ -886,10 +874,9 @@ from l
         );
     }
 
-    /// A stage the lowering does not carry yet is an error, not a silent gap.
     #[test]
-    fn reports_a_stage_that_is_not_lowered() {
-        check_lowered(
+    fn a_single_rename_projects_too() {
+        check_yzr(
             r#"
 struct Row { a: int64 }
 table t = Row

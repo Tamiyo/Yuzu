@@ -1,11 +1,6 @@
 use substrait::proto::{
     Expression, FunctionArgument,
-    expression::{
-        FieldReference, Literal, ReferenceSegment, RexType, ScalarFunction, SingularOrList,
-        field_reference::{ReferenceType, RootReference, RootType},
-        literal::LiteralType,
-        reference_segment,
-    },
+    expression::{RexType, ScalarFunction, SingularOrList, literal::LiteralType},
     function_argument::ArgType,
 };
 use yuzu_plan::{Const, Expr, ExprId, Func};
@@ -13,31 +8,7 @@ use yuzu_plan::{Const, Expr, ExprId, Func};
 use crate::emitter::types::{emit_type, type_code};
 use crate::emitter::{GraphEmitter, Unsupported};
 use crate::extensions::function_target;
-
-pub(crate) fn selection(index: i32) -> Expression {
-    Expression {
-        rex_type: Some(RexType::Selection(Box::new(FieldReference {
-            reference_type: Some(ReferenceType::DirectReference(ReferenceSegment {
-                reference_type: Some(reference_segment::ReferenceType::StructField(Box::new(
-                    reference_segment::StructField {
-                        field: index,
-                        child: None,
-                    },
-                ))),
-            })),
-            root_type: Some(RootType::RootReference(RootReference {})),
-        }))),
-    }
-}
-
-pub(crate) fn literal(value: LiteralType) -> Expression {
-    Expression {
-        rex_type: Some(RexType::Literal(Literal {
-            literal_type: Some(value),
-            ..Default::default()
-        })),
-    }
-}
+use crate::proto::{literal, selection};
 
 impl GraphEmitter<'_> {
     pub(crate) fn emit_expr(&mut self, id: ExprId) -> Result<Expression, Unsupported> {

@@ -1,42 +1,36 @@
-//! InlineCalls: Substrait has no user-defined functions, so a call to one has
-//! to be gone before emission — this is a requirement of the target, not an
-//! optimization, and a call left standing is an error rather than a missed
-//! opportunity. Builtins and externals stay: both name something the engine
-//! already has.
+//! Substrait has no user-defined functions, so a call to one is replaced by
+//! the body it names before emission, and a call left standing is an error.
+//! Builtins and externals stay: both name something the engine already has.
 //!
-//! A call is replaced by its function's body, with each parameter reference
-//! standing for the argument the call supplied. Bodies are copied from the
-//! declaration every time rather than consumed, so one function serves every
-//! call site, and a body carrying its own calls simply expands again on the
-//! next round.
-//!
-//! Expansion is bounded rather than refused. A call that reduces fully is
-//! fine however it got there, so nothing here asks whether a function reaches
-//! itself; the budget is what stops one that never finishes.
+//! Bodies are copied from the declaration at every call site, so a body
+//! carrying its own calls expands again on the next round. Nothing asks
+//! whether a function reaches itself: a call that reduces is fine however it
+//! got there, and the budget stops one that never finishes.
 
 use std::collections::HashMap;
 
-use melior::Context;
-use melior::ir::ValueLike;
 use melior::ir::attribute::TypeAttribute;
 use melior::ir::operation::{OperationBuilder, OperationLike, OperationRef};
-use melior::ir::{Attribute, BlockLike, BlockRef, Identifier, Module, RegionLike, Type, Value};
-use melior::{IrRewriter, RewriterBase, ir::Location};
-use yuzu_mlir::attributes::CalleeKind;
-use yuzu_mlir::ext::{
-    ArrayAttributeExt, BlockExt, OperationCast, OperationExt, RegionExt, ValueExt,
+use melior::ir::{
+    Attribute, BlockLike, BlockRef, Identifier, Location, Module, RegionLike, Type, Value,
+    ValueLike,
 };
-use yuzu_mlir::ops::yzl::YzlOp;
+use melior::{Context, IrRewriter, RewriterBase};
+use yuzu_mlir::attributes::CalleeKind;
+use yuzu_mlir::diagnostics::emit_error;
+use yuzu_mlir::ext::{
+    ArrayAttributeExt, BlockExt, OperationCast, OperationExt, RegionExt, ValueExt, ValueId,
+};
+use yuzu_mlir::ops::yzl::{CallOp, FnOp, LetOp, YzlOp};
 use yuzu_mlir::types;
 use yuzu_mlir::{ParamType, SymbolTable};
 
-/// How many calls one program may expand. A program whose calls reduce needs
-/// far fewer than this; one that does not would never stop on its own.
+/// How many calls one program may expand.
 const BUDGET: usize = 1000;
 
-/// Expects a resolved, inferred module. Rewrites it in place. Diagnostics go
-/// through MLIR — run this inside `yuzu_mlir::diagnostics::capture`.
-pub fn inline_calls(context: &Context, module: &Module) {
+/// Expects a resolved, inferred module and rewrites it in place. Diagnostics
+/// go through MLIR: run this inside `yuzu_mlir::diagnostics::capture`.
+pub fn inline_calls(context: &Context, module: &mut Module) {
     let rewriter = IrRewriter::new(context);
     let rewriter = rewriter.as_rewriter_base();
     let symbols = SymbolTable::new(module);
@@ -56,7 +50,7 @@ pub fn inline_calls(context: &Context, module: &Module) {
 
         spent += calls.len();
         for call in calls {
-            if !expand(&rewriter, call, &symbols) {
+            if expand(&rewriter, call, &symbols).is_none() {
                 return;
             }
         }
@@ -66,14 +60,11 @@ pub fn inline_calls(context: &Context, module: &Module) {
 }
 
 /// The calls that have to go, innermost first. Declarations are skipped: a
-/// body is a template, and expanding one in place would work through a
-/// function that reaches itself without a call site ever asking.
+/// body is a template, expanded only where a call site asks.
 fn collect_calls<'c, 'a>(block: BlockRef<'c, 'a>, out: &mut Vec<OperationRef<'c, 'a>>) {
     for op in block.operations() {
         match op.as_yzl() {
-            Some(YzlOp::Fn(_) | YzlOp::Trait(_) | YzlOp::Impl(_)) => {
-                continue;
-            }
+            Some(YzlOp::Fn(_) | YzlOp::Trait(_) | YzlOp::Impl(_)) => {}
             Some(YzlOp::Call(call)) => {
                 if matches!(
                     call.callee_kind(),
@@ -93,57 +84,39 @@ fn collect_calls<'c, 'a>(block: BlockRef<'c, 'a>, out: &mut Vec<OperationRef<'c,
     }
 }
 
-/// Copies one function body over one call, answering whether it worked.
+/// Copies one function body over one call, or reports why it could not.
 fn expand<'c, 'a>(
     rewriter: &'a RewriterBase<'c, 'a>,
     call: OperationRef<'c, '_>,
     symbols: &SymbolTable<'c, '_>,
-) -> bool {
+) -> Option<()> {
     let Some(YzlOp::Call(site)) = call.as_yzl() else {
         return error(call.location(), "expected a call to expand");
     };
 
     let callee = site.callee().value();
-    let Some(declaration) = symbols.lookup(callee) else {
-        return error(call.location(), &format!("unknown function `{callee}`"));
-    };
+    let declaration = symbols
+        .lookup(callee)
+        .or_else(|| error(call.location(), &format!("unknown function `{callee}`")))?;
 
     // A `let` is a body with no parameters; it expands exactly as a
     // function does, and yields where a function returns.
-    let (body, arguments_types) = match declaration.as_yzl() {
-        Some(YzlOp::Fn(function)) => {
-            let Some(body) = function.body().first_block() else {
-                return error(
-                    call.location(),
-                    &format!("`{callee}` has no body to expand here"),
-                );
-            };
-
-            let Some(types) = type_arguments(&function, &site, call.location(), callee) else {
-                return false;
-            };
-
-            (body, types)
-        }
-        Some(YzlOp::Let(binding)) => {
-            let Some(body) = binding.body().first_block() else {
-                return error(
-                    call.location(),
-                    &format!("`{callee}` has no body to expand here"),
-                );
-            };
-
-            (body, HashMap::new())
-        }
+    let (body, types) = match declaration.as_yzl() {
+        Some(YzlOp::Fn(function)) => (
+            function.body().first_block(),
+            type_arguments(&function, &site, call.location(), callee)?,
+        ),
+        Some(YzlOp::Let(binding)) => (binding.body().first_block(), HashMap::new()),
         _ => return error(call.location(), &format!("`{callee}` is not a function")),
     };
+    let body = body.or_else(|| {
+        error(
+            call.location(),
+            &format!("`{callee}` has no body to expand here"),
+        )
+    })?;
 
     let arguments: Vec<Value> = call.operands().collect();
-    rewriter.set_insertion_point_before(call);
-
-    // The body's block arguments are its parameters; each stands for the
-    // argument the call supplied, so a use of one copies as a use of that.
-    let mut values: HashMap<usize, Value> = HashMap::new();
     if body.argument_count() != arguments.len() {
         return error(
             call.location(),
@@ -155,13 +128,15 @@ fn expand<'c, 'a>(
         );
     }
 
-    for (index, &argument) in arguments.iter().enumerate() {
-        let parameter = body
-            .argument(index)
-            .expect("the argument index is in range");
-        values.insert(parameter.id(), argument);
-    }
+    rewriter.set_insertion_point_before(call);
 
+    // The body's block arguments are its parameters; each stands for the
+    // argument the call supplied, so a use of one copies as a use of that.
+    let mut values: HashMap<ValueId, Value> = body
+        .arguments()
+        .map(|parameter| parameter.id())
+        .zip(arguments)
+        .collect();
     let mut returned = None;
     for op in body.operations() {
         match op.as_yzl() {
@@ -178,13 +153,12 @@ fn expand<'c, 'a>(
                     );
                 }
 
-                let Some(copied) = copy(rewriter, op, &values, &arguments_types) else {
-                    return error(
+                let copied = copy(rewriter, op, &values, &types).or_else(|| {
+                    error(
                         op.location(),
                         &format!("`{callee}` has a body that did not copy"),
-                    );
-                };
-
+                    )
+                })?;
                 if let Some(result) = op.try_first_result() {
                     values.insert(result.id(), copied);
                 }
@@ -192,23 +166,22 @@ fn expand<'c, 'a>(
         }
     }
 
-    let Some(returned) = returned else {
-        return error(
+    let returned = returned.or_else(|| {
+        error(
             call.location(),
             &format!("`{callee}` does not return a value to use here"),
-        );
-    };
-
+        )
+    })?;
     rewriter.replace_all_op_uses_with_values(call, &[returned]);
     rewriter.erase_op(call);
-    true
+    Some(())
 }
 
 /// One body operation, rebuilt against the values its operands became.
 fn copy<'c, 'a>(
     rewriter: &'a RewriterBase<'c, 'a>,
     op: OperationRef<'c, '_>,
-    values: &HashMap<usize, Value<'c, 'a>>,
+    values: &HashMap<ValueId, Value<'c, 'a>>,
     types: &HashMap<&str, Type<'c>>,
 ) -> Option<Value<'c, 'a>> {
     let operands: Vec<Value> = op
@@ -257,12 +230,11 @@ fn copy<'c, 'a>(
 }
 
 /// What the call chose for each of the function's type parameters. A generic
-/// call inference never settled carries no stamp, and expansion is where that
-/// can be said usefully — the body would otherwise be copied with a parameter
-/// standing in for a type.
+/// call inference never settled carries no stamp, and expansion is where
+/// that can be said usefully.
 fn type_arguments<'c>(
-    function: &yuzu_mlir::ops::yzl::FnOp<'c, '_>,
-    site: &yuzu_mlir::ops::yzl::CallOp<'c, '_>,
+    function: &FnOp<'c, '_>,
+    site: &CallOp<'c, '_>,
     location: Location<'c>,
     callee: &str,
 ) -> Option<HashMap<&'c str, Type<'c>>> {
@@ -271,25 +243,20 @@ fn type_arguments<'c>(
     };
 
     let parameters = parameters.strings();
-    let Some(arguments) = site.type_args() else {
-        return error(
-            location,
-            &format!("`{callee}` is generic and this call's types were never settled"),
-        )
-        .then(HashMap::new);
-    };
-
-    let arguments: Vec<Type<'c>> = arguments
-        .elements()
-        .filter_map(|element| TypeAttribute::try_from(element).ok())
-        .map(|attribute| attribute.value())
-        .collect();
+    let arguments = site
+        .type_args()
+        .or_else(|| {
+            error(
+                location,
+                &format!("`{callee}` is generic and this call's types were never settled"),
+            )
+        })?
+        .types();
     if arguments.len() != parameters.len() {
         return error(
             location,
             &format!("`{callee}` takes {} type parameters", parameters.len()),
-        )
-        .then(HashMap::new);
+        );
     }
 
     Some(parameters.into_iter().zip(arguments).collect())
@@ -323,7 +290,7 @@ fn discard_declarations(context: &Context, rewriter: &RewriterBase, block: Block
     }
 }
 
-fn binds_query(context: &Context, binding: &yuzu_mlir::ops::yzl::LetOp) -> bool {
+fn binds_query(context: &Context, binding: &LetOp) -> bool {
     binding
         .body()
         .first_block()
@@ -343,7 +310,7 @@ fn report_budget(calls: &[OperationRef]) {
         _ => "a function",
     };
 
-    error(
+    emit_error(
         call.location(),
         &format!(
             "expanding `{name}` did not finish within {BUDGET} calls; \
@@ -352,9 +319,9 @@ fn report_budget(calls: &[OperationRef]) {
     );
 }
 
-fn error(location: Location, message: &str) -> bool {
-    yuzu_mlir::diagnostics::emit_error(location, message);
-    false
+fn error<T>(location: Location, message: &str) -> Option<T> {
+    emit_error(location, message);
+    None
 }
 
 #[cfg(test)]
@@ -363,8 +330,6 @@ mod tests {
 
     use crate::test_support::check_simplified;
 
-    /// Substrait has no user-defined functions, so the call has to become the
-    /// body it names.
     #[test]
     fn a_call_becomes_the_body_it_names() {
         check_simplified(
@@ -394,8 +359,6 @@ from t
         );
     }
 
-    /// A body carrying its own calls expands again on the next round, so
-    /// nesting needs no special handling.
     #[test]
     fn a_nested_call_expands_too() {
         check_simplified(
@@ -427,7 +390,6 @@ from t
         );
     }
 
-    /// A builtin names something the engine already has, so it stays a call.
     #[test]
     fn a_builtin_call_is_left_alone() {
         check_simplified(
@@ -455,9 +417,6 @@ from t
         );
     }
 
-    /// Nothing here asks whether a function reaches itself — a call that
-    /// reduces is fine however it got there. What stops one that cannot is
-    /// the budget, and the error says so where the program stopped.
     #[test]
     fn a_call_that_never_reduces_exhausts_the_budget() {
         check_simplified(
@@ -492,9 +451,8 @@ from t
         );
     }
 
-    /// A generic body is copied per call site with the types that call
-    /// settled on, so one declaration serves both columns — monomorphizing
-    /// falls out of expanding rather than needing a pass of its own.
+    /// Monomorphizing falls out of expanding: a generic body is copied per
+    /// call site with the types that call settled on.
     #[test]
     fn a_generic_body_takes_the_types_of_its_call() {
         check_simplified(
@@ -524,9 +482,8 @@ from t
         );
     }
 
-    /// Dispatch is the piece that is not written: a trait's methods live in
-    /// its implementations, and choosing between them needs the concrete
-    /// `Self`. The gap says so rather than claiming the method is unknown.
+    /// Dispatch is the piece that is not written: choosing between a trait's
+    /// implementations needs the concrete `Self`.
     #[test]
     fn reports_a_trait_method_it_cannot_dispatch() {
         check_simplified(
@@ -563,8 +520,6 @@ from t
         );
     }
 
-    /// A scalar `let` is a body with no parameters: its uses expand like
-    /// calls, and the binding goes with the functions.
     #[test]
     fn a_scalar_let_is_expanded_and_discarded() {
         check_simplified(
