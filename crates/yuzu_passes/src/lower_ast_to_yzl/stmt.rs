@@ -51,7 +51,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 | ast::Stmt::AssignStmt(_)
                 | ast::Stmt::ReturnStmt(_)
                 | ast::Stmt::ImportStmt(_)
-                | ast::Stmt::FromImportStmt(_) => {}
+                | ast::Stmt::FromImportStmt(_)
+                | ast::Stmt::ModStmt(_) => {}
             }
         }
 
@@ -189,6 +190,18 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     let name = self.ident(import.alias()).unwrap_or(last);
                     let path = self.intern(&path);
                     self.declare(import, name, Kind::Module { path }, Visibility::Private);
+                }
+                // A submodule of this one, named under this file's path.
+                ast::Stmt::ModStmt(decl) => {
+                    let Some(name) = self.ident(decl.name()) else {
+                        continue;
+                    };
+
+                    let path = match &self.module {
+                        Some(module) => self.intern(&format!("{module}.{name}")),
+                        None => name,
+                    };
+                    self.declare(decl, name, Kind::Module { path }, decl.visibility());
                 }
                 _ => continue,
             }
@@ -362,8 +375,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             ast::Stmt::ReturnStmt(stmt) => {
                 self.error(stmt, "a return is not a top-level statement")
             }
-            // Both bound what they name before the file converted.
-            ast::Stmt::ImportStmt(_) | ast::Stmt::FromImportStmt(_) => {}
+            // All three bound what they name before the file converted.
+            ast::Stmt::ImportStmt(_) | ast::Stmt::FromImportStmt(_) | ast::Stmt::ModStmt(_) => {}
         }
     }
 
@@ -760,9 +773,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             | ast::Stmt::TableStmt(_) => {
                 self.error(stmt, "declarations inside functions are not supported yet");
             }
-            // A file says what it imports, not a function inside it.
-            ast::Stmt::ImportStmt(_) | ast::Stmt::FromImportStmt(_) => {
-                self.error(stmt, "an import belongs at the top of the file");
+            // A file says what it imports and what it holds, not a function
+            // inside it.
+            ast::Stmt::ImportStmt(_) | ast::Stmt::FromImportStmt(_) | ast::Stmt::ModStmt(_) => {
+                self.error(stmt, "this belongs at the top of the file");
             }
         }
     }

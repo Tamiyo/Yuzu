@@ -74,27 +74,26 @@ mod support {
     }
 }
 
-/// The visibility a node's own tokens declare. `mod` only appears inside the
-/// parentheses that narrow a `pub`, so finding one is enough to tell the two
-/// public forms apart.
+/// The visibility a node's own tokens declare. What narrows a `pub` is the
+/// parenthesis right after it, not the `mod` inside: a module declaration
+/// carries a `mod` of its own, and looking for that alone read every
+/// `pub mod` as narrowed.
 fn visibility_of(syntax: &SyntaxNode) -> Visibility {
-    let mut public = false;
-    let mut narrowed = false;
-    for token in syntax
+    let mut tokens = syntax
         .children_with_tokens()
         .filter_map(SyntaxElement::into_token)
+        .filter(|token| !token.kind().is_trivia());
+
+    if tokens
+        .find(|token| token.kind() == SyntaxKind::PubKw)
+        .is_none()
     {
-        match token.kind() {
-            SyntaxKind::PubKw => public = true,
-            SyntaxKind::ModKw => narrowed = true,
-            _ => {}
-        }
+        return Visibility::Private;
     }
 
-    match (public, narrowed) {
-        (true, true) => Visibility::Module,
-        (true, false) => Visibility::Public,
-        (false, _) => Visibility::Private,
+    match tokens.next().map(|token| token.kind()) {
+        Some(SyntaxKind::LeftParen) => Visibility::Module,
+        _ => Visibility::Public,
     }
 }
 
@@ -262,6 +261,7 @@ ast_enum!(Stmt, {
     ExprStmt,
     ImportStmt,
     FromImportStmt,
+    ModStmt,
 });
 
 ast_node!(ModulePath);
@@ -270,6 +270,20 @@ impl ModulePath {
     /// more name the path through the modules holding it.
     pub fn segments(&self) -> impl Iterator<Item = Ident> + use<> {
         support::children(self.syntax())
+    }
+}
+
+ast_node!(ModStmt);
+impl ModStmt {
+    /// Whether another file may name this. Private unless `pub` says so, so
+    /// forgetting to export is a complaint from the importer rather than a
+    /// name that quietly became API.
+    pub fn visibility(&self) -> Visibility {
+        visibility_of(self.syntax())
+    }
+
+    pub fn name(&self) -> Option<Ident> {
+        support::child(self.syntax())
     }
 }
 
@@ -1066,6 +1080,24 @@ mod tests {
         let fields: Vec<StructField> = structs[0].fields().collect();
         assert_eq!(fields[0].visibility(), Visibility::Public);
         assert_eq!(fields[1].visibility(), Visibility::Private);
+    }
+
+    /// A module declaration carries a `mod` of its own, so the narrowing has
+    /// to be recognised by the parenthesis after `pub` rather than by the
+    /// word inside it. Looking for the word alone read every `pub mod` as
+    /// narrowed, which kept every public submodule out of reach.
+    #[test]
+    fn a_public_module_is_not_a_narrowed_one() {
+        let syntax = parsed("mod internal\npub mod math\npub(mod) mod shared\n");
+        let reaches: Vec<Visibility> = syntax
+            .descendants()
+            .filter_map(ModStmt::cast)
+            .map(|decl| decl.visibility())
+            .collect();
+        assert_eq!(
+            reaches,
+            [Visibility::Private, Visibility::Public, Visibility::Module]
+        );
     }
 
     #[test]

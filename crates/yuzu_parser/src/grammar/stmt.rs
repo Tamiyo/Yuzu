@@ -39,6 +39,9 @@ pub(crate) fn parse_stmt(p: &mut Parser) -> CompletedMarker {
     if p.at(TokenKind::TableKw) {
         return parse_table_stmt(p);
     }
+    if p.at(TokenKind::ModKw) {
+        return parse_mod_stmt(p);
+    }
     if p.at(TokenKind::ImportKw) {
         return parse_import_stmt(p);
     }
@@ -66,6 +69,7 @@ fn parse_public_stmt(p: &mut Parser) -> CompletedMarker {
         Some(TokenKind::LetKw) => parse_let_stmt(p),
         Some(TokenKind::StructKw) => parse_struct_stmt(p),
         Some(TokenKind::TableKw) => parse_table_stmt(p),
+        Some(TokenKind::ModKw) => parse_mod_stmt(p),
         _ => {
             let m = p.start();
             p.bump();
@@ -112,6 +116,17 @@ fn at_from_import(p: &mut Parser) -> bool {
             _ => return false,
         }
     }
+}
+
+/// `mod name`: a submodule of this one, which is what makes it part of the
+/// program. A directory's files are declared rather than discovered, so a
+/// file nobody declares is not compiled and cannot be named.
+fn parse_mod_stmt(p: &mut Parser) -> CompletedMarker {
+    let m = p.start();
+    parse_visibility(p);
+    p.expect(TokenKind::ModKw);
+    parse_ident(p);
+    p.complete(m, SyntaxKind::ModStmt)
 }
 
 /// `import a.b`, optionally renamed by `as`.
@@ -1076,6 +1091,34 @@ mod tests {
                     Space@40..41 " "
                     RightCurly@41..42 "}"
             "#]],
+        );
+    }
+
+    /// A submodule is declared rather than discovered, and carries its own
+    /// reach like any other declaration.
+    #[test]
+    fn parse_module_declarations() {
+        check(
+            "mod internal",
+            expect![[r#"
+            ModStmt@0..12
+              ModKw@0..3 "mod"
+              Space@3..4 " "
+              Ident@4..12
+                Identifier@4..12 "internal"
+        "#]],
+        );
+        check(
+            "pub mod math",
+            expect![[r#"
+            ModStmt@0..12
+              PubKw@0..3 "pub"
+              Space@3..4 " "
+              ModKw@4..7 "mod"
+              Space@7..8 " "
+              Ident@8..12
+                Identifier@8..12 "math"
+        "#]],
         );
     }
 

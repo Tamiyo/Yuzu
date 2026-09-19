@@ -107,6 +107,7 @@ pub enum SyntaxKind {
     AssignStmt,
     ReturnStmt,
     ExprStmt,
+    ModStmt,
     ImportStmt,
     FromImportStmt,
     ModulePath,
