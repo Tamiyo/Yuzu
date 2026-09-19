@@ -150,17 +150,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .emit(DiagnosticBuilder::error(span, message));
     }
 
-    /// Reports with a note under the snippet — for what the reader would
-    /// otherwise have to go and look up: the columns actually in the row,
-    /// the declaration a name already has.
     fn error_at_noting(&mut self, range: text_size::TextRange, message: &str, note: String) {
         let span = self.span(range);
         self.diagnostics
             .emit(DiagnosticBuilder::error(span, message).note(note));
     }
 
-    /// Reports a column reference the row could not answer, noting what the
-    /// row does carry.
     fn unresolved_column(&mut self, node: &impl AstNode, message: &str) {
         let range = node.syntax().text_range();
         match self.row_note() {
@@ -184,6 +179,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .take(SHOWN)
             .map(|reference| format!("`{reference}`"))
             .collect();
+
         if row.len() > SHOWN {
             names.push(format!("and {} more", row.len() - SHOWN));
         }
@@ -191,13 +187,11 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         Some(format!("the row carries {}", names.join(", ")))
     }
 
-    /// Where a range starts, as the printer would show it.
     fn position(&self, range: text_size::TextRange) -> String {
         let (line, column) = self.line_col(range.start().into());
         format!("{}:{line}:{column}", self.name())
     }
 
-    /// Reports and stands a `yzl.missing` value in for the hole.
     fn missing<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
@@ -556,6 +550,51 @@ mod tests {
         assert!(
             module.contains("yzl.call @helpers.double"),
             "the rename reaches the same declaration:\n{module}"
+        );
+    }
+
+    /// Naming a module binds the name, not what is inside it, and a
+    /// qualified call reaches through it for one thing at a time.
+    #[test]
+    fn a_named_module_answers_for_one_name_at_a_time() {
+        let module = converted_program(&[
+            (
+                "helpers.yz",
+                Some("helpers"),
+                "pub def double(x: int64) -> int64 { return x * 2 }\n",
+            ),
+            (
+                "main.yz",
+                None,
+                "import helpers as h\n\nstruct Row { a: int64 }\ntable t = Row\n\nfrom t |> select h.double(a) as v\n",
+            ),
+        ]);
+        assert!(
+            module.contains("yzl.call @helpers.double"),
+            "the qualified call reaches the declaration:\n{module}"
+        );
+    }
+
+    /// A column qualified by a relation alias is the same syntax as a name
+    /// qualified by a module, and the row is checked first, so an alias
+    /// taking a module's name hides the module rather than colliding.
+    #[test]
+    fn a_relation_alias_wins_over_a_module_of_the_same_name() {
+        let module = converted_program(&[
+            (
+                "helpers.yz",
+                Some("helpers"),
+                "pub def double(x: int64) -> int64 { return x * 2 }\n",
+            ),
+            (
+                "main.yz",
+                None,
+                "import helpers\n\nstruct Row { a: int64 }\ntable t = Row\n\nfrom t as helpers |> select helpers.a as v\n",
+            ),
+        ]);
+        assert!(
+            !module.contains("yzl.call"),
+            "the column resolved, with no call to the module:\n{module}"
         );
     }
 

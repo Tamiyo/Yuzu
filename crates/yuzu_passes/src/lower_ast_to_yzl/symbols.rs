@@ -196,6 +196,12 @@ pub(super) enum Kind<'c> {
     Let {
         symbol: &'c str,
     },
+    /// A module this file named, by the path it was loaded under. What it
+    /// declares is not in this scope: a qualified reference asks the module
+    /// for it, one name at a time.
+    Module {
+        path: &'c str,
+    },
 }
 
 impl Kind<'_> {
@@ -207,6 +213,7 @@ impl Kind<'_> {
             Kind::Func(_) => "function",
             Kind::Trait { .. } => "trait",
             Kind::Let { .. } => "binding",
+            Kind::Module { .. } => "module",
         }
     }
 }
@@ -331,7 +338,11 @@ impl<'c> SymbolTable<'c> {
     pub(super) fn is_method(&self, name: &str) -> bool {
         self.module().values().any(|binding| match &binding.kind {
             Kind::Trait { methods, .. } => methods.contains(&name),
-            Kind::Struct { .. } | Kind::Relation { .. } | Kind::Func(_) | Kind::Let { .. } => false,
+            Kind::Struct { .. }
+            | Kind::Relation { .. }
+            | Kind::Func(_)
+            | Kind::Let { .. }
+            | Kind::Module { .. } => false,
         })
     }
 
@@ -340,7 +351,28 @@ impl<'c> SymbolTable<'c> {
     pub(super) fn struct_symbol(&self, name: &str) -> Option<&'c str> {
         match self.kind(name) {
             Some(Kind::Struct { symbol, .. }) => Some(symbol),
-            Some(Kind::Relation { .. } | Kind::Func(_) | Kind::Trait { .. } | Kind::Let { .. })
+            Some(
+                Kind::Relation { .. }
+                | Kind::Func(_)
+                | Kind::Trait { .. }
+                | Kind::Let { .. }
+                | Kind::Module { .. },
+            )
+            | None => None,
+        }
+    }
+
+    /// The module a name stands for, by the path it was loaded under.
+    pub(super) fn module_of(&self, name: &str) -> Option<&'c str> {
+        match self.kind(name) {
+            Some(Kind::Module { path }) => Some(path),
+            Some(
+                Kind::Struct { .. }
+                | Kind::Relation { .. }
+                | Kind::Func(_)
+                | Kind::Trait { .. }
+                | Kind::Let { .. },
+            )
             | None => None,
         }
     }
@@ -350,7 +382,11 @@ impl<'c> SymbolTable<'c> {
         match self.kind(name) {
             Some(Kind::Trait { symbol, .. }) => Some(symbol),
             Some(
-                Kind::Struct { .. } | Kind::Relation { .. } | Kind::Func(_) | Kind::Let { .. },
+                Kind::Struct { .. }
+                | Kind::Relation { .. }
+                | Kind::Func(_)
+                | Kind::Let { .. }
+                | Kind::Module { .. },
             )
             | None => None,
         }
@@ -392,7 +428,13 @@ impl<'c> SymbolTable<'c> {
                     agg: false,
                 });
             }
-            Some(Kind::Struct { .. } | Kind::Relation { .. } | Kind::Trait { .. }) | None => {}
+            Some(
+                Kind::Struct { .. }
+                | Kind::Relation { .. }
+                | Kind::Trait { .. }
+                | Kind::Module { .. },
+            )
+            | None => {}
         }
 
         self.builtin(name, registry)
@@ -411,7 +453,11 @@ impl<'c> SymbolTable<'c> {
         match self.kind(name) {
             Some(Kind::Func(callable)) => Some(*callable),
             Some(
-                Kind::Let { .. } | Kind::Struct { .. } | Kind::Relation { .. } | Kind::Trait { .. },
+                Kind::Let { .. }
+                | Kind::Struct { .. }
+                | Kind::Relation { .. }
+                | Kind::Trait { .. }
+                | Kind::Module { .. },
             )
             | None => self.builtin(name, registry),
         }

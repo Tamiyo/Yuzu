@@ -165,54 +165,85 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     /// declarations do.
     pub(super) fn bind_imports(&mut self, root: &ast::Root) {
         for stmt in root.stmts() {
-            let ast::Stmt::FromImportStmt(import) = &stmt else {
-                continue;
-            };
+            match &stmt {
+                ast::Stmt::FromImportStmt(import) => {
+                    let Some(path) = import.path().map(|path| self.module_path(&path)) else {
+                        continue;
+                    };
 
-            let Some(path) = import.path().map(|path| self.module_path(&path)) else {
-                continue;
-            };
+                    for item in import.items() {
+                        self.bind_import(&path, &item);
+                    }
+                }
+                // Naming a whole module binds the name, not what is inside:
+                // a reference reaches through it one name at a time.
+                ast::Stmt::ImportStmt(import) => {
+                    let Some(path) = import.path().map(|path| self.module_path(&path)) else {
+                        continue;
+                    };
 
-            for item in import.items() {
-                self.bind_import(&path, &item);
+                    let Some(last) = path.rsplit('.').next().map(|last| self.intern(last)) else {
+                        continue;
+                    };
+
+                    let name = self.ident(import.alias()).unwrap_or(last);
+                    let path = self.intern(&path);
+                    self.declare(import, name, Kind::Module { path }, Visibility::Private);
+                }
+                _ => continue,
             }
         }
     }
 
     /// One name out of a module. The module is converted before this file, so
-    /// what it declared is already recorded; a name it does not declare, or
-    /// declares but does not export, is reported here.
+    /// what it declared is already recorded.
     fn bind_import(&mut self, path: &str, item: &ast::ImportItem) {
         let Some(name) = self.ident(item.name()) else {
             self.error(item, "import item is missing its name");
             return;
         };
 
-        let Some(module) = self.exports.get(path) else {
-            self.error(item, &format!("`{path}` is not a module this file reads"));
+        let Some(binding) = self.exported(item, path, name) else {
             return;
         };
-
-        let Some(binding) = module.get(name).cloned() else {
-            self.error(item, &format!("`{path}` does not declare `{name}`"));
-            return;
-        };
-
-        // `pub(mod)` reaches the files of the enclosing module. Until modules
-        // hold more than one file, that is this file alone, so an importer is
-        // never one of them.
-        if binding.visibility != Visibility::Public {
-            self.error(
-                item,
-                &format!("`{name}` is not public; `{path}` keeps it to itself"),
-            );
-            return;
-        }
 
         // The name this file calls it, bound to the symbol the module holds
         // it under, so everything downstream reaches the declaration itself.
         let local = self.ident(item.alias()).unwrap_or(name);
         self.declare_imported(item, local, binding);
+    }
+
+    /// What a module offers under a name. A name it never declared, or one it
+    /// keeps to itself, is reported against whatever asked for it.
+    ///
+    /// `pub(mod)` reaches the files of the enclosing module. Until a module
+    /// holds more than one file, that is the declaring file alone, so nobody
+    /// asking from outside is one of them.
+    pub(super) fn exported(
+        &mut self,
+        at: &impl AstNode,
+        path: &str,
+        name: &str,
+    ) -> Option<Binding<'c>> {
+        let Some(module) = self.exports.get(path) else {
+            self.error(at, &format!("`{path}` is not a module this file reads"));
+            return None;
+        };
+
+        let Some(binding) = module.get(name).cloned() else {
+            self.error(at, &format!("`{path}` does not declare `{name}`"));
+            return None;
+        };
+
+        if binding.visibility != Visibility::Public {
+            self.error(
+                at,
+                &format!("`{name}` is not public; `{path}` keeps it to itself"),
+            );
+            return None;
+        }
+
+        Some(binding)
     }
 
     fn declare_imported(&mut self, node: &impl AstNode, name: &'c str, binding: Binding<'c>) {
@@ -331,13 +362,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             ast::Stmt::ReturnStmt(stmt) => {
                 self.error(stmt, "a return is not a top-level statement")
             }
-            // `from … import …` bound its names before the file converted.
-            // Naming a whole module is what has no answer yet.
-            ast::Stmt::ImportStmt(stmt) => self.error(
-                stmt,
-                "naming a whole module is not supported yet; import the names you use",
-            ),
-            ast::Stmt::FromImportStmt(_) => {}
+            // Both bound what they name before the file converted.
+            ast::Stmt::ImportStmt(_) | ast::Stmt::FromImportStmt(_) => {}
         }
     }
 
@@ -1157,30 +1183,22 @@ external def upper(s: str) -> str
         ));
     }
 
-    /// The syntax is in and nothing acts on it, so an import says that
-    /// rather than resolving to a name that is not there.
+    /// The loader resolves what a file imports before the conversion runs,
+    /// so a module missing here means the two disagreed. It says so rather
+    /// than binding a name to nothing.
     #[test]
-    fn an_import_is_not_supported_yet() {
+    fn an_import_of_an_unloaded_module_is_reported() {
         use crate::lower_ast_to_yzl::test_support::reported;
 
         let context = yuzu_mlir::context();
         expect![[r#"
             error: `helpers` is not a module this file reads
-             --> test.yz:2:21
+             --> test.yz:1:21
               |
-            2 | from helpers import spread
+            1 | from helpers import spread
               |                     ^^^^^^
-
-            error: naming a whole module is not supported yet; import the names you use
-             --> test.yz:1:1
-              |
-            1 | import helpers
-              | ^^^^^^^^^^^^^^
         "#]]
-        .assert_eq(&reported(
-            &context,
-            "import helpers\nfrom helpers import spread\n",
-        ));
+        .assert_eq(&reported(&context, "from helpers import spread\n"));
     }
 
     /// A `let` may take a name an earlier one holds. Both declarations stay,

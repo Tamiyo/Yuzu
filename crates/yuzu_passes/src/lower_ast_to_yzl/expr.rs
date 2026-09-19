@@ -9,7 +9,7 @@ use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 use melior::ir::r#type::IntegerType;
 use yuzu_mlir::attributes::{CalleeKind, CmpPredicate};
 
-use crate::lower_ast_to_yzl::symbols::{Callable, Lookup, Reference};
+use crate::lower_ast_to_yzl::symbols::{Callable, Kind, Lookup, Reference};
 use yuzu_mlir::ext::OperationExt;
 use yuzu_mlir::types;
 
@@ -180,6 +180,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     );
                 }
             },
+            // `helpers.double(a)` names a module and then one thing in it.
+            // A column qualified by a relation alias is the same syntax, and
+            // the row is checked first, so a column wins.
+            Some(ast::Expr::FieldAccessExpr(access)) => {
+                return self.convert_module_call(block, locals, call, &access, loc);
+            }
             Some(_) => {
                 return self.missing(
                     block,
@@ -219,6 +225,63 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         };
 
         self.check_arity(call, callee, callable, operands.len());
+        self.call(block, callable, &operands, loc)
+    }
+
+    /// A call through a module: the base names the module, the field names
+    /// what is being called, and the module answers for its own visibility.
+    fn convert_module_call<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        locals: &Locals<'c, 'a>,
+        call: &ast::CallExpr,
+        access: &ast::FieldAccessExpr,
+        loc: Location<'c>,
+    ) -> Value<'c, 'a> {
+        let base = match access.base() {
+            Some(ast::Expr::IdentExpr(ident)) => self.ident(ident.name()),
+            Some(_) | None => None,
+        };
+
+        let (Some(base), Some(name)) = (base, self.ident(access.field())) else {
+            return self.missing(
+                block,
+                call,
+                "calling an expression is not supported yet",
+                types::var(self.context),
+            );
+        };
+
+        let Some(path) = self.symbols.module_of(base) else {
+            return self.missing(
+                block,
+                call,
+                &format!("`{base}` is not a module"),
+                types::var(self.context),
+            );
+        };
+
+        let operands: Vec<Value> = call
+            .args()
+            .into_iter()
+            .flat_map(|args| args.args())
+            .map(|arg| self.convert_expr(block, locals, &arg))
+            .collect();
+
+        let Some(binding) = self.exported(call, path, name) else {
+            return self.hole(block, call.syntax().text_range(), types::var(self.context));
+        };
+
+        let Kind::Func(callable) = binding.kind else {
+            return self.missing(
+                block,
+                call,
+                &format!("`{name}` is a {}, not a function", binding.kind.what()),
+                types::var(self.context),
+            );
+        };
+
+        self.check_arity(call, name, callable, operands.len());
         self.call(block, callable, &operands, loc)
     }
 
