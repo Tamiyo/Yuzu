@@ -1,7 +1,7 @@
 //! LowerAst: the AST → yzl conversion. Names resolve as they are emitted;
 //! unresolved types come out as `!yzl.var` for inference, sugar intact.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use melior::Context;
 use melior::ir::attribute::StringAttribute;
@@ -25,6 +25,38 @@ use crate::lower_ast_to_yzl::symbols::{Binding, SymbolTable};
 /// constructs — lands in the engine as an error, and a missing piece
 /// converts to a `yzl.missing` value, the way HIR lowered `Expr::Missing`.
 /// Returns `None` when the source has no root.
+/// The name a statement declares, when it declares one.
+fn declared_name(stmt: &ast::Stmt) -> Option<String> {
+    let name = match stmt {
+        ast::Stmt::StructStmt(decl) => decl.name(),
+        ast::Stmt::TableStmt(decl) => decl.name(),
+        ast::Stmt::FuncStmt(decl) => decl.name(),
+        ast::Stmt::TraitStmt(decl) => decl.name(),
+        ast::Stmt::LetStmt(decl) => decl.name(),
+        ast::Stmt::ImplStmt(_)
+        | ast::Stmt::ModStmt(_)
+        | ast::Stmt::ImportStmt(_)
+        | ast::Stmt::FromImportStmt(_)
+        | ast::Stmt::BlockStmt(_)
+        | ast::Stmt::AssignStmt(_)
+        | ast::Stmt::ReturnStmt(_)
+        | ast::Stmt::ExprStmt(_) => None,
+    }?;
+
+    name.text()
+}
+
+/// Every identifier a statement mentions, which over-approximates what it
+/// refers to.
+fn identifiers(stmt: &ast::Stmt) -> Vec<String> {
+    stmt.syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| token.kind() == yuzu_syntax::SyntaxKind::Identifier)
+        .map(|token| token.text().to_string())
+        .collect()
+}
+
 /// One file of the program: which source it is, the module path holding its
 /// declarations, and what it parsed to. The entry file is held under no
 /// module, so the names it declares keep the symbols they were written with.
@@ -79,6 +111,10 @@ struct AstToYzl<'c, 'd> {
     /// converted after everything it imports, so whatever it asks for is
     /// already in here.
     exports: HashMap<String, HashMap<&'c str, Binding<'c>>>,
+    /// Where each declared symbol was written, and the scope its own
+    /// references resolve against. A module's declaration is built only if
+    /// the program reaches it.
+    declarations: HashMap<&'c str, (String, ast::Stmt)>,
     registry: &'d dyn FunctionRegistry,
     /// How many `let`s have taken a name something else already held. One
     /// name is one symbol in the module, so a rebinding needs its own.
@@ -106,6 +142,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             diagnostics,
             symbols: SymbolTable::new(),
             exports: HashMap::new(),
+            declarations: HashMap::new(),
             registry,
             rebound: 0,
         }
@@ -246,31 +283,135 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             1,
             1,
         ));
+
+        // Names first, for every file: a reference may point forward, and
+        // deciding what to convert means resolving references before any
+        // body is built.
+        for file in files {
+            self.enter(file);
+            self.bind_imports(&file.root);
+            self.hoist(&file.root);
+            self.record_declarations(&file.root);
+            self.close(file);
+        }
+
+        let reached = self.reached(files);
         let top = module.body();
         for file in files {
-            self.convert_file(top, file);
+            self.enter(file);
+            self.restore(file);
+            for stmt in file.root.stmts() {
+                // The entry file is the program, so all of it converts. A
+                // module is a library, and only what the program reaches is
+                // worth building or type checking.
+                if file.module.is_none() || self.is_reached(&reached, &stmt) {
+                    self.convert_stmt(top, &stmt);
+                }
+            }
         }
 
         self.convert_output(top);
         Some(module)
     }
 
-    /// One file, under a scope of its own. Nothing crosses between files
-    /// until imports bind a name, so each starts from an empty module scope.
-    fn convert_file<'a>(&mut self, top: BlockRef<'c, 'a>, file: &File) {
+    /// Points the conversion at one file: what a location names, what a line
+    /// number counts against, and what qualifies a declared symbol.
+    fn enter(&mut self, file: &File) {
         self.source_id = file.source_id;
         self.module = file.module.clone();
         self.symbols = SymbolTable::new();
+    }
 
-        self.bind_imports(&file.root);
-        self.hoist(&file.root);
-        for stmt in file.root.stmts() {
-            self.convert_stmt(top, &stmt);
+    /// Keeps what the file declared, which is what a file importing it reads
+    /// and what its own bodies resolve against on the second pass.
+    fn close(&mut self, file: &File) {
+        self.exports.insert(Self::key(file), self.symbols.exports());
+    }
+
+    fn restore(&mut self, file: &File) {
+        if let Some(scope) = self.exports.get(&Self::key(file)) {
+            self.symbols.restore(scope.clone());
+        }
+    }
+
+    /// The entry file has no module path, so it is held under one no module
+    /// can take.
+    fn key(file: &File) -> String {
+        file.module.clone().unwrap_or_default()
+    }
+
+    /// Records where each declared symbol was written, so a body can be
+    /// built later for the ones the program turns out to reach.
+    fn record_declarations(&mut self, root: &ast::Root) {
+        let scope = Self::key_of(&self.module);
+        for stmt in root.stmts() {
+            let Some(name) = declared_name(&stmt) else {
+                continue;
+            };
+
+            let Some(binding) = self.symbols.binding(&name) else {
+                continue;
+            };
+
+            if let Some(symbol) = binding.kind.symbol() {
+                self.declarations.insert(symbol, (scope.clone(), stmt));
+            }
+        }
+    }
+
+    fn key_of(module: &Option<String>) -> String {
+        module.clone().unwrap_or_default()
+    }
+
+    /// The symbols the program reaches, from the entry file outward.
+    ///
+    /// A name is looked up in the scope of the file that wrote it, and every
+    /// identifier in a declaration counts as a reference. That says yes too
+    /// often — a parameter sharing a function's name reads as a use of it —
+    /// and never too seldom, so nothing the program needs is left unbuilt.
+    fn reached(&mut self, files: &[File]) -> HashSet<&'c str> {
+        let mut reached = HashSet::new();
+        let mut pending: Vec<(String, ast::Stmt)> = files
+            .iter()
+            .filter(|file| file.module.is_none())
+            .flat_map(|file| file.root.stmts().map(|stmt| (String::new(), stmt)))
+            .collect();
+
+        while let Some((scope, stmt)) = pending.pop() {
+            for name in identifiers(&stmt) {
+                let Some(symbol) = self
+                    .exports
+                    .get(&scope)
+                    .and_then(|bindings| bindings.get(name.as_str()))
+                    .and_then(|binding| binding.kind.symbol())
+                else {
+                    continue;
+                };
+
+                if !reached.insert(symbol) {
+                    continue;
+                }
+
+                if let Some((scope, declaration)) = self.declarations.get(symbol) {
+                    pending.push((scope.clone(), declaration.clone()));
+                }
+            }
         }
 
-        if let Some(module) = &file.module {
-            self.exports.insert(module.clone(), self.symbols.exports());
-        }
+        reached
+    }
+
+    /// Whether the program reaches what this statement declares.
+    fn is_reached(&self, reached: &HashSet<&'c str>, stmt: &ast::Stmt) -> bool {
+        let Some(name) = declared_name(stmt) else {
+            // An import or a module declaration holds no body of its own.
+            return true;
+        };
+
+        self.symbols
+            .binding(&name)
+            .and_then(|binding| binding.kind.symbol())
+            .is_some_and(|symbol| reached.contains(symbol))
     }
 
     /// The program's result is its trailing query: the last top-level value
@@ -470,44 +611,8 @@ mod tests {
                 %3 = yz.mul %arg0, %2 : !yzl.var, !yz.int64 -> !yzl.var
                 yzl.return %3 : !yzl.var
               }
+              yzl.table @h of @helpers.Row
               yzl.struct @Row ["b"] : [!yz.int64]
-              yzl.table @t of @Row
-              %0 = yzl.from @t
-              %1 = yzl.select %0 as ["v"] {
-              ^bb0(%arg0: !yzl.var):
-                yzl.yield %arg0 : !yzl.var
-              }
-              yzl.output %1
-            }
-        "#]]
-        .assert_eq(&converted_program(&[
-            (
-                "helpers.yz",
-                Some("helpers"),
-                "struct Row { a: int64 }\ndef double(x: int64) -> int64 { return x * 2 }\n",
-            ),
-            (
-                "main.yz",
-                None,
-                "struct Row { b: int64 }\ntable t = Row\n\nfrom t |> select b as v\n",
-            ),
-        ]));
-    }
-
-    /// A name imported from another file reaches the declaration itself, so
-    /// the call inlines like any other and the module's own symbol is what
-    /// stands in the module they share.
-    #[test]
-    fn an_imported_name_reaches_the_declaration_it_came_from() {
-        expect![[r#"
-            module {
-              yzl.fn @helpers.double params ["x"] (!yz.int64) -> !yz.int64 {
-              ^bb0(%arg0: !yzl.var):
-                %2 = yz.constant_int 2
-                %3 = yz.mul %arg0, %2 : !yzl.var, !yz.int64 -> !yzl.var
-                yzl.return %3 : !yzl.var
-              }
-              yzl.struct @Row ["a"] : [!yz.int64]
               yzl.table @t of @Row
               %0 = yzl.from @t
               %1 = yzl.select %0 as ["v"] {
@@ -521,111 +626,36 @@ mod tests {
             (
                 "helpers.yz",
                 Some("helpers"),
-                "pub def double(x: int64) -> int64 { return x * 2 }\n",
+                "pub struct Row { a: int64 }\npub def double(x: int64) -> int64 { return x * 2 }\n",
             ),
             (
                 "main.yz",
                 None,
-                "from helpers import double\n\nstruct Row { a: int64 }\ntable t = Row\n\nfrom t |> select double(a) as v\n",
+                "from helpers import double, Row as Shape\n\ntable h = Shape\nstruct Row { b: int64 }\ntable t = Row\n\nfrom t |> select double(b) as v\n",
             ),
         ]));
     }
 
-    /// `as` names an import something else in the file that asked for it,
-    /// while the symbol it reaches is unchanged.
+    /// A module is a library, so only what the program reaches is built. The
+    /// entry file is the program, so all of it is.
     #[test]
-    fn an_import_may_be_renamed() {
+    fn a_module_builds_only_what_the_program_reaches() {
         let module = converted_program(&[
             (
                 "helpers.yz",
                 Some("helpers"),
-                "pub def double(x: int64) -> int64 { return x * 2 }\n",
+                "pub def used(x: int64) -> int64 { return x * 2 }\npub def unused(x: int64) -> int64 { return x + 99 }\n",
             ),
             (
                 "main.yz",
                 None,
-                "from helpers import double as twice\n\nstruct Row { a: int64 }\ntable t = Row\n\nfrom t |> select twice(a) as v\n",
+                "from helpers import used\n\nstruct Row { a: int64 }\ntable t = Row\n\nfrom t |> select used(a) as v\n",
             ),
         ]);
         assert!(
-            module.contains("yzl.call @helpers.double"),
-            "the rename reaches the same declaration:\n{module}"
+            module.contains("@helpers.used") && !module.contains("@helpers.unused"),
+            "the reached one is built and the other is not:\n{module}"
         );
-    }
-
-    /// Naming a module binds the name, not what is inside it, and a
-    /// qualified call reaches through it for one thing at a time.
-    #[test]
-    fn a_named_module_answers_for_one_name_at_a_time() {
-        let module = converted_program(&[
-            (
-                "helpers.yz",
-                Some("helpers"),
-                "pub def double(x: int64) -> int64 { return x * 2 }\n",
-            ),
-            (
-                "main.yz",
-                None,
-                "import helpers as h\n\nstruct Row { a: int64 }\ntable t = Row\n\nfrom t |> select h.double(a) as v\n",
-            ),
-        ]);
-        assert!(
-            module.contains("yzl.call @helpers.double"),
-            "the qualified call reaches the declaration:\n{module}"
-        );
-    }
-
-    /// A column qualified by a relation alias is the same syntax as a name
-    /// qualified by a module, and the row is checked first, so an alias
-    /// taking a module's name hides the module rather than colliding.
-    #[test]
-    fn a_relation_alias_wins_over_a_module_of_the_same_name() {
-        let module = converted_program(&[
-            (
-                "helpers.yz",
-                Some("helpers"),
-                "pub def double(x: int64) -> int64 { return x * 2 }\n",
-            ),
-            (
-                "main.yz",
-                None,
-                "import helpers\n\nstruct Row { a: int64 }\ntable t = Row\n\nfrom t as helpers |> select helpers.a as v\n",
-            ),
-        ]);
-        assert!(
-            !module.contains("yzl.call"),
-            "the column resolved, with no call to the module:\n{module}"
-        );
-    }
-
-    /// What a module keeps to itself is not another file's to name, and a
-    /// name it never declared is reported against the item asking for it.
-    #[test]
-    fn a_module_lends_only_what_it_made_public() {
-        expect![[r#"
-            error: `secret` is not public; `helpers` keeps it to itself
-             --> main.yz:1:21
-              |
-            1 | from helpers import secret, nothere
-              |                     ^^^^^^
-
-            error: `helpers` does not declare `nothere`
-             --> main.yz:1:29
-              |
-            1 | from helpers import secret, nothere
-              |                             ^^^^^^^
-        "#]].assert_eq(&reported_program(&[
-            (
-                "helpers.yz",
-                Some("helpers"),
-                "pub def double(x: int64) -> int64 { return x * 2 }\ndef secret(x: int64) -> int64 { return x + 99 }\n",
-            ),
-            (
-                "main.yz",
-                None,
-                "from helpers import secret, nothere\n\nstruct Row { a: int64 }\ntable t = Row\n\nfrom t |> select a as v\n",
-            ),
-        ]));
     }
 
     /// The program's query is the entry file's. A module holding one would

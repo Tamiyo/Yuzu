@@ -414,7 +414,13 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             return;
         }
 
-        let row = match self.ident(decl.row_struct()) {
+        // The row names the struct's own symbol, not the name this file
+        // calls it: an imported struct is held under the module that
+        // declared it, whatever an `as` renamed it to here.
+        let row = match self
+            .ident(decl.row_struct())
+            .map(|row| self.symbols.struct_symbol(row).unwrap_or(row))
+        {
             Some(row) => row,
             None => {
                 let row = self.intern(&format!("{name}_row"));

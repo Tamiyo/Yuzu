@@ -204,7 +204,20 @@ pub(super) enum Kind<'c> {
     },
 }
 
-impl Kind<'_> {
+impl<'c> Kind<'c> {
+    /// The symbol the module holds this declaration under. A module is not
+    /// one: it names a file rather than something the module declares.
+    pub(super) fn symbol(&self) -> Option<&'c str> {
+        match self {
+            Kind::Struct { symbol, .. }
+            | Kind::Relation { symbol, .. }
+            | Kind::Trait { symbol, .. }
+            | Kind::Let { symbol } => Some(symbol),
+            Kind::Func(callable) => Some(callable.symbol),
+            Kind::Module { .. } => None,
+        }
+    }
+
     /// What the name is, for a diagnostic about using it as something else.
     pub(super) fn what(&self) -> &'static str {
         match self {
@@ -317,6 +330,17 @@ impl<'c> SymbolTable<'c> {
 
     pub(super) fn binding(&self, name: &str) -> Option<&Binding<'c>> {
         self.module().get(name)
+    }
+
+    /// Puts back a module scope recorded earlier, so a second pass over the
+    /// same file resolves against the names it already bound.
+    pub(super) fn restore(&mut self, bindings: HashMap<&'c str, Binding<'c>>) {
+        match self.scopes.first_mut() {
+            Some(Scope::Module(scope)) => *scope = bindings,
+            Some(Scope::Function { .. } | Scope::Block { .. } | Scope::Relation { .. }) | None => {
+                unreachable!("the module scope is the bottom of the stack")
+            }
+        }
     }
 
     /// Everything the file being converted declared, which is what another
