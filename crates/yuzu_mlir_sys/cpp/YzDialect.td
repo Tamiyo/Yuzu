@@ -139,6 +139,13 @@ class Yz_ArithBinaryOp<string mnemonic, list<Trait> traits = []>
 
 def Yz_AddOp : Yz_ArithBinaryOp<"add", [Commutative]> {
   let summary = "addition";
+  let description = [{
+    Canonicalizes `(x + c1) + c2` to `x + (c1 + c2)`, which is what lets one
+    constant reach another through the value between them. Only when the two
+    constants share a sign: mixed signs can make an intermediate overflow
+    that the reassociated form does not, and overflow belongs to the engine.
+  }];
+  let hasCanonicalizer = 1;
 }
 
 def Yz_SubOp : Yz_ArithBinaryOp<"sub"> {

@@ -5,6 +5,7 @@
 #include <optional>
 
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -118,6 +119,56 @@ mlir::OpFoldResult AddOp::fold(FoldAdaptor adaptor) {
         return result;
       },
       [](double lhs, double rhs) { return lhs + rhs; });
+}
+
+namespace {
+
+// `(x + c1) + c2` computes the same as `x + (c1 + c2)` only while no
+// intermediate overflows differently, and this dialect leaves overflow to the
+// engine rather than deciding it. Two constants of the same sign are safe:
+// the intermediate sum lies between `x` and the final one, so it overflows
+// only when the final one does. Mixed signs are not, since `x + 1 - 1` can
+// overflow at the first step and not at all when reassociated.
+struct ReassociateAdd : public mlir::OpRewritePattern<AddOp> {
+  using OpRewritePattern<AddOp>::OpRewritePattern;
+
+  mlir::LogicalResult
+  matchAndRewrite(AddOp op, mlir::PatternRewriter &rewriter) const override {
+    auto outer = op.getRhs().getDefiningOp<ConstantIntOp>();
+    if (!outer)
+      return mlir::failure();
+
+    auto inner = op.getLhs().getDefiningOp<AddOp>();
+    if (!inner)
+      return mlir::failure();
+
+    auto held = inner.getRhs().getDefiningOp<ConstantIntOp>();
+    if (!held)
+      return mlir::failure();
+
+    int64_t left = static_cast<int64_t>(held.getValue());
+    int64_t right = static_cast<int64_t>(outer.getValue());
+    if ((left < 0) != (right < 0))
+      return mlir::failure();
+
+    int64_t total;
+    if (llvm::AddOverflow(left, right, total))
+      return mlir::failure();
+
+    auto folded = rewriter.create<ConstantIntOp>(
+        op.getLoc(), outer.getType(),
+        mlir::IntegerAttr::get(held.getValueAttr().getType(), total));
+    rewriter.replaceOpWithNewOp<AddOp>(op, op.getType(), inner.getLhs(),
+                                       folded);
+    return mlir::success();
+  }
+};
+
+} // namespace
+
+void AddOp::getCanonicalizationPatterns(mlir::RewritePatternSet &patterns,
+                                        mlir::MLIRContext *context) {
+  patterns.add<ReassociateAdd>(context);
 }
 
 mlir::OpFoldResult SubOp::fold(FoldAdaptor adaptor) {

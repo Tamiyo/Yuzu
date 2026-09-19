@@ -158,6 +158,108 @@ from t
         );
     }
 
+    /// A constant reaches another through the value between them, so a
+    /// chain of additions collapses to one. Folding alone cannot do this,
+    /// because neither operand of the inner add is constant.
+    #[test]
+    fn constants_reach_each_other_through_a_value() {
+        check_simplified(
+            r#"
+struct Row { a: int64 }
+table t = Row
+
+def f(x: int64) -> int64 { return x + 1 + 2 }
+
+from t
+|> select f(a) as v
+"#,
+            expect![[r#"
+                module {
+                  yz.struct @Row ["a"] : [!yz.int64]
+                  %0 = yzr.table @t : !yz.struct<@Row>
+                  yz.struct @row ["v"] : [!yz.int64]
+                  %1 = yzr.project %0 {
+                  ^bb0(%arg0: !yz.int64):
+                    %2 = yz.constant_int 3
+                    %3 = yz.add %arg0, %2 : !yz.int64, !yz.int64 -> !yz.int64
+                    yzr.yield %3 : !yz.int64
+                  } : !yz.struct<@Row> -> !yz.struct<@row>
+                  yzr.output %1 : !yz.struct<@row>
+                }
+            "#]],
+        );
+    }
+
+    /// Two constants whose sum has no representable answer do not
+    /// reassociate, for the same reason a sum of two constants does not
+    /// fold: the query keeps the shape it was written in rather than one
+    /// the engine might answer differently.
+    #[test]
+    fn an_unrepresentable_sum_keeps_its_order() {
+        check_simplified(
+            r#"
+struct Row { a: int64 }
+table t = Row
+
+def f(x: int64) -> int64 { return x + 9223372036854775807 + 1 }
+
+from t
+|> select f(a) as v
+"#,
+            expect![[r#"
+                module {
+                  yz.struct @Row ["a"] : [!yz.int64]
+                  %0 = yzr.table @t : !yz.struct<@Row>
+                  yz.struct @row ["v"] : [!yz.int64]
+                  %1 = yzr.project %0 {
+                  ^bb0(%arg0: !yz.int64):
+                    %2 = yz.constant_int 1
+                    %3 = yz.constant_int 9223372036854775807
+                    %4 = yz.add %arg0, %3 : !yz.int64, !yz.int64 -> !yz.int64
+                    %5 = yz.add %4, %2 : !yz.int64, !yz.int64 -> !yz.int64
+                    yzr.yield %5 : !yz.int64
+                  } : !yz.struct<@Row> -> !yz.struct<@row>
+                  yzr.output %1 : !yz.struct<@row>
+                }
+            "#]],
+        );
+    }
+
+    /// Constants of opposite sign do not reassociate. The intermediate can
+    /// overflow where the reassociated form does not, so the two shapes are
+    /// the same answer only while nothing overflows, and overflow belongs to
+    /// the engine.
+    #[test]
+    fn opposite_signs_keep_the_order_they_were_written_in() {
+        check_simplified(
+            r#"
+struct Row { a: int64 }
+table t = Row
+
+def f(x: int64) -> int64 { return x + 1 + -1 }
+
+from t
+|> select f(a) as v
+"#,
+            expect![[r#"
+                module {
+                  yz.struct @Row ["a"] : [!yz.int64]
+                  %0 = yzr.table @t : !yz.struct<@Row>
+                  yz.struct @row ["v"] : [!yz.int64]
+                  %1 = yzr.project %0 {
+                  ^bb0(%arg0: !yz.int64):
+                    %2 = yz.constant_int -1
+                    %3 = yz.constant_int 1
+                    %4 = yz.add %arg0, %3 : !yz.int64, !yz.int64 -> !yz.int64
+                    %5 = yz.add %4, %2 : !yz.int64, !yz.int64 -> !yz.int64
+                    yzr.yield %5 : !yz.int64
+                  } : !yz.struct<@Row> -> !yz.struct<@row>
+                  yzr.output %1 : !yz.struct<@row>
+                }
+            "#]],
+        );
+    }
+
     /// A sum with no representable answer declines to fold: what overflow
     /// does is the engine's to say, and a wrong constant would not even fail.
     #[test]
