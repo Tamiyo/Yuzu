@@ -1,7 +1,6 @@
-//! The placement rules for aggregate functions. An aggregate call lives
-//! only in an `aggregate` item or an `agg fn` body, never in another
-//! aggregate's arguments, and an `agg fn` must use an aggregate without
-//! calling itself.
+//! An aggregate call lives only in an `aggregate` item or an `agg fn` body,
+//! never in another aggregate's arguments, and an `agg fn` must use an
+//! aggregate without calling itself.
 
 use std::collections::{HashMap, HashSet};
 use std::mem;
@@ -12,9 +11,6 @@ use yuzu_mlir::diagnostics::emit_error;
 use yuzu_mlir::ext::{BlockExt, OperationCast, OperationExt, RegionExt, ValueExt, ValueId};
 use yuzu_mlir::ops::yzl::YzlOp;
 
-/// Expects a resolved module: callees are classified by their stamped
-/// `callee_kind`. Diagnostics go through MLIR: run this inside
-/// `yuzu_mlir::diagnostics::capture` to collect them.
 pub fn check_aggregates(module: &Module) {
     let mut checker = AggregateChecker {
         group_values: HashMap::new(),
@@ -26,13 +22,11 @@ pub fn check_aggregates(module: &Module) {
     checker.check_block(module.body(), None);
 }
 
-/// Where an aggregate call may appear. Outside either, in row context, it
-/// may not.
+/// Where an aggregate call may appear.
 #[derive(Clone, Copy)]
 enum Grouping<'c> {
-    /// An `aggregate` item region.
     Item,
-    /// An `agg fn` body, named to catch self-calls.
+    /// Named to catch self-calls.
     FnBody(&'c str),
 }
 
@@ -41,9 +35,7 @@ struct AggregateChecker<'c> {
     group_values: HashMap<ValueId, Vec<ValueId>>,
     /// The location and callee of each aggregate call, by its result.
     aggregate_calls: HashMap<ValueId, (Location<'c>, &'c str)>,
-    /// Calls already reported as nested, so each reports once.
     nested: HashSet<ValueId>,
-    /// Whether the current `agg fn` body used an aggregate.
     saw_aggregate: bool,
 }
 
@@ -144,7 +136,6 @@ impl<'c> AggregateChecker<'c> {
         }
     }
 
-    /// A value computed from group-level values is group-level too.
     fn propagate_group_values(&mut self, op: OperationRef<'c, '_>) {
         let calls = self.operand_aggregates(op);
         if calls.is_empty() {
@@ -156,7 +147,6 @@ impl<'c> AggregateChecker<'c> {
         }
     }
 
-    /// The aggregate calls flowing into an op's operands.
     fn operand_aggregates(&self, op: OperationRef<'c, '_>) -> Vec<ValueId> {
         let mut calls = Vec::new();
         for operand in op.operands() {
@@ -172,8 +162,6 @@ impl<'c> AggregateChecker<'c> {
         calls
     }
 
-    /// The expression a function body returns: what to blame when an
-    /// `agg fn` never aggregates.
     fn returned_location<'m>(op: &impl OperationLike<'c, 'm>) -> Option<Location<'c>>
     where
         'c: 'm,
@@ -242,13 +230,13 @@ from t
                  --> test.yz:5:40
                   |
                 5 | def double(x: int64) -> int64 { return sum(x) }
-                  |                                        ^
+                  |                                        ^^^^^^
 
                 error: aggregate function `sum` can only be used in an `aggregate` item
                  --> test.yz:8:10
                   |
                 8 | |> where sum(a) > 1
-                  |          ^
+                  |          ^^^^^^
             "#]],
         );
     }
@@ -286,7 +274,7 @@ from t
                  --> test.yz:8:20
                   |
                 8 | |> inner join u on sum(a) == b
-                  |                    ^
+                  |                    ^^^^^^
             "#]],
         );
     }
@@ -302,11 +290,11 @@ from t
 |> aggregate sum(min(a) + 1) as s group by a
     "#,
             expect![[r#"
-            error: aggregate function `min` cannot be nested in another aggregate
-             --> test.yz:6:18
-              |
-            6 | |> aggregate sum(min(a) + 1) as s group by a
-              |                  ^
+                error: aggregate function `min` cannot be nested in another aggregate
+                 --> test.yz:6:18
+                  |
+                6 | |> aggregate sum(min(a) + 1) as s group by a
+                  |                  ^^^^^^
             "#]],
         );
     }
@@ -328,7 +316,7 @@ from t
                  --> test.yz:5:48
                   |
                 5 | agg def spread(x: float64) -> float64 { return spread(x) }
-                  |                                                ^
+                  |                                                ^^^^^^^^^
             "#]],
         );
     }
@@ -350,7 +338,7 @@ from t
                  --> test.yz:5:1
                   |
                 5 | agg def spread(x: float64) -> float64 { return x }
-                  | ^
+                  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
             "#]],
         );
     }

@@ -76,6 +76,5 @@ fn main() -> ExitCode {
         return yuzu_driver::compile_mlir(&name, &source, &options, &resolver);
     }
 
-    compile(&name, &source, &options);
-    ExitCode::SUCCESS
+    compile(&name, &source, &options)
 }

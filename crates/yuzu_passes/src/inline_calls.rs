@@ -1,11 +1,7 @@
 //! Substrait has no user-defined functions, so a call to one is replaced by
-//! the body it names before emission, and a call left standing is an error.
-//! Builtins and externals stay: both name something the engine already has.
-//!
-//! Bodies are copied from the declaration at every call site, so a body
-//! carrying its own calls expands again on the next round. Nothing asks
-//! whether a function reaches itself: a call that reduces is fine however it
-//! got there, and the budget stops one that never finishes.
+//! the body it names, and a call left standing is an error. Nothing asks
+//! whether a function reaches itself: a call that reduces is fine, and the
+//! budget stops one that never finishes.
 
 use std::collections::HashMap;
 
@@ -25,11 +21,8 @@ use yuzu_mlir::ops::yzl::{CallOp, FnOp, LetOp, YzlOp};
 use yuzu_mlir::types;
 use yuzu_mlir::{ParamType, SymbolTable};
 
-/// How many calls one program may expand.
 const BUDGET: usize = 1000;
 
-/// Expects a resolved, inferred module and rewrites it in place. Diagnostics
-/// go through MLIR: run this inside `yuzu_mlir::diagnostics::capture`.
 pub fn inline_calls(context: &Context, module: &mut Module) {
     let rewriter = IrRewriter::new(context);
     let rewriter = rewriter.as_rewriter_base();
@@ -59,8 +52,6 @@ pub fn inline_calls(context: &Context, module: &mut Module) {
     discard_declarations(context, &rewriter, module.body());
 }
 
-/// The calls that have to go, innermost first. Declarations are skipped: a
-/// body is a template, expanded only where a call site asks.
 fn collect_calls<'c, 'a>(block: BlockRef<'c, 'a>, out: &mut Vec<OperationRef<'c, 'a>>) {
     for op in block.operations() {
         match op.as_yzl() {
@@ -84,7 +75,6 @@ fn collect_calls<'c, 'a>(block: BlockRef<'c, 'a>, out: &mut Vec<OperationRef<'c,
     }
 }
 
-/// Copies one function body over one call, or reports why it could not.
 fn expand<'c, 'a>(
     rewriter: &'a RewriterBase<'c, 'a>,
     call: OperationRef<'c, '_>,
@@ -99,8 +89,6 @@ fn expand<'c, 'a>(
         .lookup(callee)
         .or_else(|| error(call.location(), &format!("unknown function `{callee}`")))?;
 
-    // A `let` is a body with no parameters; it expands exactly as a
-    // function does, and yields where a function returns.
     let (body, types) = match declaration.as_yzl() {
         Some(YzlOp::Fn(function)) => (
             function.body().first_block(),
@@ -130,8 +118,6 @@ fn expand<'c, 'a>(
 
     rewriter.set_insertion_point_before(call);
 
-    // The body's block arguments are its parameters; each stands for the
-    // argument the call supplied, so a use of one copies as a use of that.
     let mut values: HashMap<ValueId, Value> = body
         .arguments()
         .map(|parameter| parameter.id())
@@ -177,7 +163,6 @@ fn expand<'c, 'a>(
     Some(())
 }
 
-/// One body operation, rebuilt against the values its operands became.
 fn copy<'c, 'a>(
     rewriter: &'a RewriterBase<'c, 'a>,
     op: OperationRef<'c, '_>,
@@ -229,9 +214,6 @@ fn copy<'c, 'a>(
     inserted.try_first_result()
 }
 
-/// What the call chose for each of the function's type parameters. A generic
-/// call inference never settled carries no stamp, and expansion is where
-/// that can be said usefully.
 fn type_arguments<'c>(
     function: &FnOp<'c, '_>,
     site: &CallOp<'c, '_>,
@@ -262,16 +244,13 @@ fn type_arguments<'c>(
     Some(parameters.into_iter().zip(arguments).collect())
 }
 
-/// A parameter in type position becomes the type the call chose for it.
 fn substitute<'c>(ty: Type<'c>, types: &HashMap<&str, Type<'c>>) -> Type<'c> {
     ParamType::from_type(ty)
         .and_then(|param| types.get(param.name()).copied())
         .unwrap_or(ty)
 }
 
-/// Once every call is expanded the declarations describe nothing the module
-/// still contains. An external keeps its name on the call rather than here,
-/// and a `let` bound to a query stays: its stages are rows other queries name.
+/// A `let` bound to a query stays: its stages are rows other queries name.
 fn discard_declarations(context: &Context, rewriter: &RewriterBase, block: BlockRef) {
     let mut declarations = Vec::new();
     for op in block.operations() {
@@ -299,8 +278,6 @@ fn binds_query(context: &Context, binding: &LetOp) -> bool {
         .is_some_and(|value| value.r#type() == types::query(context))
 }
 
-/// The budget is spent where the program stopped reducing, so the calls still
-/// standing are the ones to name.
 fn report_budget(calls: &[OperationRef]) {
     let call = calls
         .first()
@@ -434,25 +411,23 @@ from t
                  --> test.yz:5:41
                   |
                 5 | def forever(x: int64) -> int64 { return forever(x) }
-                  |                                         ^
+                  |                                         ^^^^^^^^^^
 
                 error: `yzl.fn` was not expanded before lowering
                  --> test.yz:5:1
                   |
                 5 | def forever(x: int64) -> int64 { return forever(x) }
-                  | ^
+                  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
                 error: `forever` was not expanded before lowering
                  --> test.yz:5:41
                   |
                 5 | def forever(x: int64) -> int64 { return forever(x) }
-                  |                                         ^
+                  |                                         ^^^^^^^^^^
             "#]],
         );
     }
 
-    /// Monomorphizing falls out of expanding: a generic body is copied per
-    /// call site with the types that call settled on.
     #[test]
     fn a_generic_body_takes_the_types_of_its_call() {
         check_simplified(
@@ -482,8 +457,6 @@ from t
         );
     }
 
-    /// Dispatch is the piece that is not written: choosing between a trait's
-    /// implementations needs the concrete `Self`.
     #[test]
     fn reports_a_trait_method_it_cannot_dispatch() {
         check_simplified(
@@ -515,7 +488,7 @@ from t
                  --> test.yz:10:48
                    |
                 10 | def shift[T](x: T) -> T where T: Zero { return zero(x) }
-                   |                                                ^
+                   |                                                ^^^^^^^
             "#]],
         );
     }

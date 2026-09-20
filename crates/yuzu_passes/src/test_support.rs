@@ -1,6 +1,3 @@
-//! What a pass test needs: a program lowered to yzl, and what came out of
-//! it rendered for `expect_test`.
-
 use expect_test::Expect;
 use melior::Context;
 use melior::ir::Module;
@@ -21,7 +18,6 @@ pub(crate) struct Lowered<'c> {
     pub(crate) module: Module<'c>,
     pub(crate) sources: SourceMap,
     pub(crate) diagnostics: DiagnosticsEngine,
-    pub(crate) entry: SourceId,
 }
 
 pub(crate) fn parsed(
@@ -48,7 +44,6 @@ pub(crate) fn lower<'c>(context: &'c Context, program: &Program) -> Lowered<'c> 
             }
         })
         .collect();
-    let entry = files.last().expect("a program has an entry file").source_id;
     let module = crate::lower_ast_to_yzl(
         context,
         &sources,
@@ -62,7 +57,6 @@ pub(crate) fn lower<'c>(context: &'c Context, program: &Program) -> Lowered<'c> 
         module,
         sources,
         diagnostics,
-        entry,
     }
 }
 
@@ -76,7 +70,6 @@ pub(crate) fn rendered(sources: &SourceMap, diagnostics: &DiagnosticsEngine) -> 
         .join("\n")
 }
 
-/// The module a clean lowering produces.
 pub(crate) fn lowered_program(program: &Program) -> String {
     let context = yuzu_mlir::context();
     let lowered = lower(&context, program);
@@ -94,7 +87,6 @@ pub(crate) fn lowered(source: &str) -> String {
     lowered_program(&[("test.yz", None, source)])
 }
 
-/// What a lowering reported, rendered with its snippets.
 pub(crate) fn reported_program(program: &Program) -> String {
     let context = yuzu_mlir::context();
     let lowered = lower(&context, program);
@@ -105,8 +97,6 @@ pub(crate) fn reported(source: &str) -> String {
     reported_program(&[("test.yz", None, source)])
 }
 
-/// Runs the passes over a lowered source and compares what they rendered,
-/// or the diagnostics when the source did not get that far.
 pub(crate) fn check(
     source: &str,
     passes: impl for<'c> FnOnce(&'c Context, &mut Module<'c>) -> String,
@@ -117,12 +107,11 @@ pub(crate) fn check(
         mut module,
         sources,
         mut diagnostics,
-        entry,
+        ..
     } = lower(&context, &[("test.yz", None, source)]);
-    let output =
-        yuzu_mlir::diagnostics::capture(&context, &sources, entry, &mut diagnostics, || {
-            passes(&context, &mut module)
-        });
+    let output = yuzu_mlir::diagnostics::capture(&context, &sources, &mut diagnostics, || {
+        passes(&context, &mut module)
+    });
     let reported = rendered(&sources, &diagnostics);
     expected.assert_eq(if reported.is_empty() {
         &output

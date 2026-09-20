@@ -17,6 +17,21 @@ impl DiagnosticBuilder {
         Self::new(Severity::Remark, span, message.into())
     }
 
+    /// An error with no place in the source, such as one about the program
+    /// as a whole. It prints as its message alone, the way a compiler
+    /// reports a file it could not read.
+    pub fn error_without_span(message: impl Into<String>) -> Self {
+        Self {
+            diagnostic: Diagnostic {
+                severity: Severity::Error,
+                code: String::new(),
+                message: message.into(),
+                labels: Vec::new(),
+                notes: Vec::new(),
+            },
+        }
+    }
+
     fn new(severity: Severity, span: Span, message: String) -> Self {
         Self {
             diagnostic: Diagnostic {
@@ -97,6 +112,15 @@ mod tests {
         assert!(diagnostic.notes.is_empty());
         assert_eq!(diagnostic.labels.len(), 1);
         assert!(matches!(diagnostic.labels[0].style, LabelStyle::Primary));
+    }
+
+    #[test]
+    fn an_error_without_a_span_carries_no_label() {
+        let diagnostic = DiagnosticBuilder::error_without_span("boom").build();
+
+        assert_eq!(diagnostic.severity, Severity::Error);
+        assert_eq!(diagnostic.message, "boom");
+        assert!(diagnostic.labels.is_empty());
     }
 
     #[test]

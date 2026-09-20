@@ -316,7 +316,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     );
                 }
             },
-            // `helpers.double(a)` names a module and then one thing in it.
             Some(ast::Expr::FieldAccessExpr(access)) => {
                 return self.convert_module_call(block, locals, call, &access, loc);
             }
@@ -359,8 +358,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         self.call(block, callable, &operands, loc)
     }
 
-    /// A call through a module: the base names the module, the field names
-    /// what is being called, and the module answers for its own visibility.
     fn convert_module_call<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
@@ -434,8 +431,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .first_result()
     }
 
-    /// A column or parameter is a block argument; a module-level `let` is a
-    /// call for expansion to inline, since a stage region is isolated.
+    /// A module-level `let` becomes a call for expansion to inline, since a
+    /// stage region is isolated.
     fn name_ref<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
@@ -493,8 +490,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .first_result()
     }
 
-    /// An operator is sugar for a call to a name the language offers under
-    /// that name, so it resolves the way a written call resolves.
     fn operator<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
@@ -538,8 +533,6 @@ mod tests {
 
     use crate::test_support::{lower, lowered, rendered, reported};
 
-    /// The row a reference was resolved against is the one thing the source
-    /// does not show.
     #[test]
     fn a_column_reference_says_what_the_row_carries() {
         expect![[r#"
@@ -586,8 +579,6 @@ from t
         ));
     }
 
-    /// A declaration of an operator's name stands for the operator too, so
-    /// `a << b` and `shift_left(a, b)` are the same expression.
     #[test]
     fn an_operator_and_its_name_resolve_together() {
         expect![[r#"
@@ -644,8 +635,6 @@ from t
         );
     }
 
-    /// A hole in the parse lowers to a reported diagnostic and a
-    /// `yzl.missing` value.
     #[test]
     fn reports_missing_pieces() {
         let context = yuzu_mlir::context();

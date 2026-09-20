@@ -15,9 +15,8 @@ use yuzu_mlir::{ListType, ParamType, StructType};
 use crate::lower_ast_to_yzl::symbols::{Binding, Callable, Kind, Lookup, Reference, Row};
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 
-/// Where a `fn` is written. A trait and its implementations declare `Self`
-/// implicitly, and a trait's methods are the one kind that stands as a
-/// signature with nothing to run.
+/// Where a `fn` is written, which decides the generics its surroundings
+/// supply and whether it needs a body.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Declared {
     AtModule,
@@ -35,9 +34,8 @@ impl Declared {
 }
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
-    /// Binds what this file's imports ask for, before its own declarations,
-    /// so a name it declares and a name it imports collide the way two
-    /// declarations do.
+    /// Imports bind before the file's own declarations, so the two collide
+    /// the way two declarations do.
     pub(super) fn bind_imports(&mut self, root: &ast::Root) {
         for stmt in root.stmts() {
             match &stmt {
@@ -50,8 +48,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                         self.bind_import(&path, &item);
                     }
                 }
-                // Naming a whole module binds the name, not what is inside:
-                // a reference reaches through it one name at a time.
                 ast::Stmt::ImportStmt(import) => {
                     let Some(path) = import.path().map(|path| self.module_path(&path)) else {
                         continue;
@@ -65,7 +61,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     let path = self.intern(&path);
                     self.declare(import, name, Kind::Module { path }, Visibility::Private);
                 }
-                // A submodule of this one, named under this file's path.
                 ast::Stmt::ModStmt(decl) => {
                     let Some(name) = self.ident(decl.name()) else {
                         continue;
@@ -79,8 +74,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
     }
 
-    /// One name out of a module, bound to the symbol the module holds it
-    /// under so everything downstream reaches the declaration itself.
     fn bind_import(&mut self, path: &str, item: &ast::ImportItem) {
         let Some(name) = self.ident(item.name()) else {
             self.report(item, "import item is missing its name");
@@ -95,12 +88,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         self.declare_imported(item, local, binding);
     }
 
-    /// What a module offers under a name. A name it never declared, or one it
-    /// keeps to itself, is reported against whatever asked for it.
-    ///
-    /// `pub(mod)` reaches the files of the enclosing module. Until a module
-    /// holds more than one file, that is the declaring file alone, so nobody
-    /// asking from outside is one of them.
+    /// `pub(mod)` reaches the enclosing module's files. Until a module holds
+    /// more than one file, nobody asking from outside is one of them.
     pub(super) fn exported(
         &mut self,
         at: &impl AstNode,
@@ -150,10 +139,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .join(".")
     }
 
-    /// Registers every declaration up front so references can be forward. A
-    /// `let` binds in order instead, once its body is emitted. Structs go in
-    /// before tables, because a table's row is the fields of the struct it
-    /// names.
+    /// A `let` binds in order instead, once its body is emitted. Structs go
+    /// in before tables, because a table's row is its struct's fields.
     pub(super) fn hoist(&mut self, root: &ast::Root) {
         for stmt in root.stmts() {
             match &stmt {
@@ -191,8 +178,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             return;
         };
 
-        // An inline table declares its row shape in place; a named one
-        // names a struct the program declares.
         let row = if decl.inline_fields().next().is_some() {
             Row::from(
                 decl.inline_fields()
@@ -269,9 +254,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         );
     }
 
-    /// Binds a module-level name. A second declaration of one is reported
-    /// and then left alone: the name goes on meaning the declaration that
-    /// took it, so everything written against that one still resolves.
     fn declare(
         &mut self,
         node: &impl AstNode,
@@ -320,8 +302,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             ast::Stmt::ImplStmt(decl) => self.convert_impl(block, decl),
             ast::Stmt::LetStmt(decl) => self.convert_let(block, decl),
             ast::Stmt::ExprStmt(stmt) => {
-                // The program's query is the entry file's: a module holding
-                // one would leave two.
                 if self.module.is_some() && matches!(stmt.expr(), Some(ast::Expr::Rel(_))) {
                     self.report(stmt, "a module cannot hold a query");
                     return;
@@ -338,7 +318,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             ast::Stmt::ReturnStmt(stmt) => {
                 self.report(stmt, "a return is not a top-level statement")
             }
-            // All three bound what they name before the file lowered.
             ast::Stmt::ImportStmt(_) | ast::Stmt::FromImportStmt(_) | ast::Stmt::ModStmt(_) => {}
         }
     }
@@ -367,9 +346,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             return;
         }
 
-        // The row names the struct's own symbol, not the name this file
-        // calls it: an imported struct is held under the module that
-        // declared it, whatever an `as` renamed it to here.
+        // An imported struct is held under the module that declared it,
+        // whatever an `as` renamed it to here.
         let row = match self.ident(decl.row_struct()) {
             Some(row) => self.symbols.struct_symbol(row).unwrap_or(row),
             None => {
@@ -412,8 +390,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     }
 
     fn convert_fn<'a>(&mut self, block: BlockRef<'c, 'a>, decl: &ast::FuncStmt) {
-        // A nameless one still lowers, so that the missing name is what
-        // gets reported rather than this.
+        // A nameless `fn` still lowers, so the missing name is what gets
+        // reported.
         if let Some(name) = self.ident(decl.name())
             && !self.declares(decl, name)
         {
@@ -423,8 +401,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         self.convert_method(block, decl, Declared::AtModule);
     }
 
-    /// A function, and where it is written: that decides the type parameters
-    /// its surroundings supply, and whether it needs a body.
     fn convert_method<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
@@ -436,9 +412,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             return;
         };
 
-        // `external` says the target has the function, so there is nothing
-        // to write; everything else is a definition, except a trait's
-        // methods, which are the signatures its implementations supply.
         match (decl.is_external(), decl.body().is_some()) {
             (true, true) => self.report(decl, "an external function cannot have a body"),
             (false, false) if declared != Declared::InTrait => {
@@ -496,7 +469,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
 
         // A trait or an implementation is a symbol table of its own, so a
-        // method inside one is already scoped by it and keeps its bare name.
+        // method keeps its bare name.
         let symbol = match declared {
             Declared::AtModule => self.symbol_for(name),
             Declared::InTrait | Declared::InImpl => name,
@@ -529,8 +502,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         block.append_operation(builder.build().into());
     }
 
-    /// One entry per (parameter, trait) pair, each checked against what is
-    /// declared.
+    /// One entry per `(parameter, trait)` pair.
     fn bound_attrs(
         &mut self,
         decl: &ast::FuncStmt,
@@ -658,7 +630,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .map(|annotation| self.annotation_type(annotation, &[]));
         let region = Region::new();
         let body = region.append_block(Block::new(&[]));
-        // A query binds its row, for `from`; a value binds its name.
         let value = match &expr {
             ast::Expr::Rel(rel) => {
                 let value = self.convert_rel(body, rel);
@@ -699,10 +670,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         block.append_operation(builder.build().into());
     }
 
-    /// The symbol a `let` declares under: the written name while that name
-    /// is free. A `let` taking a name something else already holds gets one
-    /// of its own, because the code between the two declarations reads the
-    /// earlier one and both have to stay in the module.
+    /// A `let` taking a name something else already holds gets a symbol of
+    /// its own: the code between the two reads the earlier one, and both
+    /// stay in the module.
     fn rebound_symbol(&mut self, name: &'c str) -> &'c str {
         if self.symbols.binding(name).is_none() {
             return self.symbol_for(name);
@@ -713,8 +683,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         self.symbol_for(taken)
     }
 
-    /// A lexical block is a scope of its own: its `let`s bind for as long as
-    /// it lasts.
     fn convert_block<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
@@ -802,9 +770,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
     }
 
-    /// Whether an assignment may write this name. Assignment writes a
-    /// binding that is already there: a second `let` shadows and needs no
-    /// permission, while writing the one already bound needs `mut`.
     fn assignable(&mut self, node: &impl AstNode, name: &'c str) -> bool {
         let message = match self.symbols.lookup(Reference::bare(name)) {
             Lookup::Local {
@@ -829,8 +794,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         false
     }
 
-    /// The value goes in the traversal's stack, and the name goes in the
-    /// scope, pointing at the slot it landed in.
     fn bind_local<'a>(
         &mut self,
         locals: &mut Locals<'c, 'a>,
@@ -842,9 +805,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         locals.push(value);
     }
 
-    /// Whether this node is the declaration holding the name. The second
-    /// declaration of a name is reported by the hoist and then left out of
-    /// the module, so one name stays one symbol.
+    /// The second declaration of a name is reported by the hoist and left
+    /// out of the module, so one name stays one symbol.
     fn declares(&self, node: &impl AstNode, name: &str) -> bool {
         self.symbols
             .binding(name)
@@ -986,8 +948,6 @@ external def upper(s: str) -> str
         ));
     }
 
-    /// `Self` is the parameter a trait declares implicitly, and an `impl`'s
-    /// target is a name for resolution to bind.
     #[test]
     fn converts_traits_and_generics() {
         expect![[r#"
@@ -1042,8 +1002,6 @@ external def upper(s: str) -> str
         .assert_eq(&lowered("let ids: List[int64] = [1, 3]\n"));
     }
 
-    /// The note says where the other declaration is: the printer underlines
-    /// one line, and the first declaration is rarely on it.
     #[test]
     fn a_redeclaration_says_where_the_other_one_is() {
         expect![[r#"
@@ -1057,8 +1015,6 @@ external def upper(s: str) -> str
         .assert_eq(&reported("struct Row { a: int64 }\n\ntable Row = Row\n"));
     }
 
-    /// The name goes on meaning the declaration that took it, so a column of
-    /// the first struct still resolves and one mistake reads as one error.
     #[test]
     fn a_redeclaration_leaves_the_first_one_standing() {
         expect![[r#"
@@ -1110,8 +1066,6 @@ external def upper(s: str) -> str
         ));
     }
 
-    /// The loader resolves what a file imports before the conversion runs,
-    /// so a module missing here means the two disagreed.
     #[test]
     fn an_import_of_an_unloaded_module_is_reported() {
         expect![[r#"
@@ -1124,8 +1078,6 @@ external def upper(s: str) -> str
         .assert_eq(&reported("from helpers import spread\n"));
     }
 
-    /// Both declarations stay, under symbols of their own, because the code
-    /// between them reads the earlier one.
     #[test]
     fn a_let_may_take_a_name_an_earlier_one_holds() {
         expect![[r#"
@@ -1235,8 +1187,6 @@ external def upper(s: str) -> str
             "external def upper(s: str) -> str { return s }\ndef lower(s: str) -> str\n",
         ));
 
-        // A trait's methods are signatures, and an implementation of one is
-        // a definition like any other.
         expect![[r#"
             error: function is missing its body
              --> test.yz:5:23

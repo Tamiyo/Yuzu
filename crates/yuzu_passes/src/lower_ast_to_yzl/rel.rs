@@ -15,8 +15,7 @@ use yuzu_mlir::types;
 use crate::lower_ast_to_yzl::symbols::{ColumnLookup, Reference, Row};
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 
-/// A stage item as every kind of stage presents one: its name, its
-/// expression, and where it was written.
+/// A stage item: its alias, its expression, and where it was written.
 type Item = (Option<ast::Ident>, Option<ast::Expr>, TextRange);
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
@@ -48,7 +47,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         from: &ast::FromExpr,
         at: TextRange,
     ) -> Value<'c, 'a> {
-        let loc = self.location_at(at.start().into());
+        let loc = self.location_at(at);
         let Some(source) = self.ident(from.relation()) else {
             return self.missing(
                 block,
@@ -71,7 +70,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         stage: &ast::WhereExpr,
         at: TextRange,
     ) -> Value<'c, 'a> {
-        let loc = self.location_at(at.start().into());
+        let loc = self.location_at(at);
         let input = self.convert_input(block, stage, "`where`", stage.input());
         let region = Region::new();
         let body = self.stage_block(&region, loc);
@@ -99,7 +98,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         stage: &ast::SelectExpr,
         at: TextRange,
     ) -> Value<'c, 'a> {
-        let loc = self.location_at(at.start().into());
+        let loc = self.location_at(at);
         let input = self.convert_input(block, stage, "`select`", stage.input());
         let items = stage
             .items()
@@ -128,7 +127,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         stage: &ast::ExtendExpr,
         at: TextRange,
     ) -> Value<'c, 'a> {
-        let loc = self.location_at(at.start().into());
+        let loc = self.location_at(at);
         let input = self.convert_input(block, stage, "`extend`", stage.input());
         let items = stage
             .items()
@@ -157,7 +156,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         stage: &ast::AggregateExpr,
         at: TextRange,
     ) -> Value<'c, 'a> {
-        let loc = self.location_at(at.start().into());
+        let loc = self.location_at(at);
         let input = self.convert_input(block, stage, "`aggregate`", stage.input());
         let mut keys = Vec::new();
         let mut key_names: Vec<&'c str> = Vec::new();
@@ -183,7 +182,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let (names, region) = self.convert_items(items, "aggregate item", loc);
         let group_by = self.string_attrs(&key_names);
         let measures = self.string_attrs(&names);
-        // A grouping's row is its keys, in order, then its measures.
         key_names.extend(names);
         self.symbols.replace(key_names);
 
@@ -207,7 +205,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         stage: &ast::LimitExpr,
         at: TextRange,
     ) -> Value<'c, 'a> {
-        let loc = self.location_at(at.start().into());
+        let loc = self.location_at(at);
         let input = self.convert_input(block, stage, "`limit`", stage.input());
         let count = match stage.count() {
             Some(count) => self.int_literal(&count),
@@ -238,7 +236,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         stage: &ast::RenameExpr,
         at: TextRange,
     ) -> Value<'c, 'a> {
-        let loc = self.location_at(at.start().into());
+        let loc = self.location_at(at);
         let input = self.convert_input(block, stage, "`rename`", stage.input());
         let mut from: Vec<&'c str> = Vec::new();
         let mut to: Vec<&'c str> = Vec::new();
@@ -281,7 +279,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         stage: &ast::AliasExpr,
         at: TextRange,
     ) -> Value<'c, 'a> {
-        let loc = self.location_at(at.start().into());
+        let loc = self.location_at(at);
         let input = self.convert_input(block, stage, "`as`", stage.input());
         let Some(alias) = self.ident(stage.alias()) else {
             self.report_at(at, "`as` is missing its alias");
@@ -297,7 +295,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         stage: &ast::JoinExpr,
         at: TextRange,
     ) -> Value<'c, 'a> {
-        let loc = self.location_at(at.start().into());
+        let loc = self.location_at(at);
         let lhs = self.convert_input(block, stage, "`join`", stage.input());
         let kind = match stage.kind() {
             Some(ast::JoinKind::Left) => JoinKind::Left,
@@ -386,7 +384,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         stage: &ast::SetExpr,
         at: TextRange,
     ) -> Value<'c, 'a> {
-        let loc = self.location_at(at.start().into());
+        let loc = self.location_at(at);
         let input = self.convert_input(block, stage, "`set`", stage.input());
         let items: Vec<ast::SetItem> = stage.items().collect();
         let mut columns = Vec::new();
@@ -425,7 +423,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         stage: &ast::DistinctExpr,
         at: TextRange,
     ) -> Value<'c, 'a> {
-        let loc = self.location_at(at.start().into());
+        let loc = self.location_at(at);
         let input = self.convert_input(block, stage, "`distinct`", stage.input());
         block
             .append_operation(
@@ -440,7 +438,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         stage: &ast::DropExpr,
         at: TextRange,
     ) -> Value<'c, 'a> {
-        let loc = self.location_at(at.start().into());
+        let loc = self.location_at(at);
         let input = self.convert_input(block, stage, "`drop`", stage.input());
         let mut names: Vec<&'c str> = Vec::new();
         for column in stage.columns() {
@@ -482,8 +480,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
     }
 
-    /// A query nobody can name a row for is still lowered, against an
-    /// empty row, so the stages after it are checked too.
+    /// An unknown relation scans an empty row, so the stages after it are
+    /// still checked.
     fn scan<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
@@ -535,8 +533,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .first_result()
     }
 
-    /// A stage's region takes the row's columns as block arguments, typed by
-    /// inference later.
+    /// The row's columns are the block arguments, typed by inference later.
     fn stage_block<'r>(&self, region: &'r Region<'c>, loc: Location<'c>) -> BlockRef<'c, 'r> {
         let width = self.symbols.row().len();
         let arguments: Vec<(Type<'c>, Location<'c>)> = (0..width)
@@ -582,8 +579,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
     }
 
-    /// The column a stage item names, reported against the item when the row
-    /// does not have exactly one of them.
     fn column(
         &mut self,
         node: &impl AstNode,
@@ -605,8 +600,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         None
     }
 
-    /// The names a stage's items produce, and the region computing them. An
-    /// item with no name of its own is named by position.
     fn convert_items(
         &mut self,
         items: impl Iterator<Item = Item>,
@@ -649,7 +642,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     }
 }
 
-/// The relation a stage reads. `from` reads none: it starts the pipeline.
 fn stage_input(rel: &ast::Rel) -> Option<ast::Expr> {
     match rel {
         ast::Rel::FromExpr(_) => None,
@@ -667,10 +659,8 @@ fn stage_input(rel: &ast::Rel) -> Option<ast::Expr> {
     }
 }
 
-/// A stage's own range. Its node covers everything piped into it, so the
-/// node starts where the pipeline starts, which is not what a complaint
-/// about the stage should point at: the stage begins at the first token
-/// after the input it reads.
+/// A stage's node covers everything piped into it, so a complaint about the
+/// stage points at the first token after its input instead.
 fn stage_range(rel: &ast::Rel) -> TextRange {
     let node = rel.syntax();
     let Some(input) = stage_input(rel) else {

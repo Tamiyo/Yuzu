@@ -1,7 +1,3 @@
-//! A program of files into one module. A module is a scope rather than a
-//! nesting: what a file declares is qualified by its path and lowered
-//! alongside everything else, and only what the program reaches is built.
-
 use std::collections::HashSet;
 
 use melior::ir::operation::OperationLike;
@@ -16,10 +12,7 @@ use yuzu_syntax::SyntaxKind;
 use crate::lower_ast_to_yzl::AstToYzl;
 use crate::lower_ast_to_yzl::symbols::SymbolTable;
 
-/// One file of the program: which source it is, the module path holding its
-/// declarations, and what it parsed to. The entry file is held under no
-/// module. The root comes in parsed, because whoever resolved the imports
-/// had to parse the file to find them.
+/// One file of the program; the entry file has no module.
 #[derive(Clone)]
 pub struct File {
     pub source_id: SourceId,
@@ -38,8 +31,6 @@ impl File {
 }
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
-    /// Every file into one module, in the order the caller resolved them,
-    /// with the entry last.
     pub(super) fn lower(&mut self, files: &[File], entry: &File) -> Module<'c> {
         let module = Module::new(Location::new(
             self.context,
@@ -48,8 +39,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             1,
         ));
 
-        // Names first, for every file: a reference may point forward, and
-        // which bodies to build depends on what the references reach.
+        // Names first, for every file: a reference may point forward.
         for file in files {
             self.enter(file);
             self.bind_imports(&file.root);
@@ -67,8 +57,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 self.symbols.restore(scope.clone());
             }
 
-            // The entry file is the program, so all of it lowers; a module
-            // is a library, and only what the program reaches is built.
             for stmt in file.root.stmts() {
                 if file.module.is_none() || self.is_reached(&reached, &stmt) {
                     self.convert_stmt(top, &stmt);
@@ -100,10 +88,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
     }
 
-    /// The symbols the program reaches, from the entry file outward. Every
-    /// identifier in a declaration counts as a reference, looked up in the
-    /// scope of the file that wrote it. That says yes too often and never
-    /// too seldom.
+    /// The symbols the program reaches. Every identifier in a declaration
+    /// counts as a reference, which says yes too often and never too seldom.
     fn reached(&self, files: &[File]) -> HashSet<&'c str> {
         let mut reached = HashSet::new();
         let mut pending: Vec<(Option<&'c str>, ast::Stmt)> = files
@@ -139,8 +125,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         reached
     }
 
-    /// Whether the program reaches what this statement declares. An import
-    /// or a module declaration holds no body of its own.
     fn is_reached(&self, reached: &HashSet<&'c str>, stmt: &ast::Stmt) -> bool {
         let Some(name) = self.ident(declared_name(stmt)) else {
             return true;
@@ -152,8 +136,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .is_some_and(|symbol| reached.contains(symbol))
     }
 
-    /// The program's result is its trailing query: the last top-level value
-    /// of type `!yzl.query` anchors the module's `yzl.output`.
+    /// The program's result is its last top-level query.
     fn convert_output<'a>(&mut self, top: BlockRef<'c, 'a>) {
         let query = top
             .operations()
@@ -185,8 +168,6 @@ mod tests {
 
     use crate::test_support::{lowered_program, reported_program};
 
-    /// Two modules each declaring `Row` is two declarations, not a
-    /// collision, which is what qualification buys.
     #[test]
     fn a_program_of_several_files_becomes_one_module() {
         expect![[r#"

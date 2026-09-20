@@ -143,20 +143,14 @@ pub(crate) mod test_support {
         )
         .expect("the source lowers");
 
-        let plan = yuzu_mlir::diagnostics::capture(
-            &context,
-            &sources,
-            source_id,
-            &mut diagnostics,
-            || {
-                yuzu_passes::infer_types(&context, &mut module, &yuzu_types::Builtins);
-                yuzu_passes::check_aggregates(&module);
-                yuzu_passes::inline_calls(&context, &mut module);
-                let mut lowered = yuzu_passes::lower_yzl_to_yzr(&context, &module);
-                yuzu_passes::simplify_yzr(&context, &mut lowered);
-                super::translate(&context, &lowered)
-            },
-        );
+        let plan = yuzu_mlir::diagnostics::capture(&context, &sources, &mut diagnostics, || {
+            yuzu_passes::infer_types(&context, &mut module, &yuzu_types::Builtins);
+            yuzu_passes::check_aggregates(&module);
+            yuzu_passes::inline_calls(&context, &mut module);
+            let mut lowered = yuzu_passes::lower_yzl_to_yzr(&context, &module);
+            yuzu_passes::simplify_yzr(&context, &mut lowered);
+            super::translate(&context, &lowered)
+        });
 
         let printer = DiagnosticPrinter::new(&sources);
         let reported: Vec<String> = diagnostics
@@ -435,7 +429,7 @@ mod tests {
                  --> test.yz:3:18
                   |
                 3 | from t |> select a ** 2 as p
-                  |                  ^
+                  |                  ^^^^^^
             "#]],
         );
     }

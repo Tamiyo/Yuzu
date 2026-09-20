@@ -27,7 +27,9 @@ pub struct CompileOptions {
     pub target: Option<String>,
 }
 
-pub fn compile(name: &str, source: &str, options: &CompileOptions) {
+/// Reports what it found and says whether the program compiled, so a caller
+/// can tell a clean run from a failed one.
+pub fn compile(name: &str, source: &str, options: &CompileOptions) -> std::process::ExitCode {
     let mut diagnostics = DiagnosticsEngine::new();
     let mut sources = SourceMap::new();
     let source_id = sources.add(name.to_string(), source.to_string());
@@ -53,7 +55,7 @@ pub fn compile(name: &str, source: &str, options: &CompileOptions) {
 
     let Some(root) = Root::cast(syntax) else {
         print_diagnostics(&diagnostics, &sources);
-        return;
+        return std::process::ExitCode::FAILURE;
     };
 
     let mut hir = HirCtx::new();
@@ -160,6 +162,11 @@ pub fn compile(name: &str, source: &str, options: &CompileOptions) {
         phases.print();
     }
     print_diagnostics(&diagnostics, &sources);
+    if has_errors(&diagnostics) {
+        return std::process::ExitCode::FAILURE;
+    }
+
+    std::process::ExitCode::SUCCESS
 }
 
 /// Compiles through the MLIR pipeline, printing what each stage asked for.
@@ -230,15 +237,14 @@ fn plan_through_mlir(
         &yuzu_types::Builtins,
     )?;
 
-    let verified =
-        yuzu_mlir::diagnostics::capture(&context, sources, source_id, diagnostics, || {
-            module.as_operation().verify()
-        });
+    let verified = yuzu_mlir::diagnostics::capture(&context, sources, diagnostics, || {
+        module.as_operation().verify()
+    });
     if !verified || has_errors(diagnostics) {
         return None;
     }
 
-    yuzu_mlir::diagnostics::capture(&context, sources, source_id, diagnostics, || {
+    yuzu_mlir::diagnostics::capture(&context, sources, diagnostics, || {
         yuzu_passes::infer_types(&context, &mut module, &yuzu_types::Builtins);
         yuzu_passes::check_aggregates(&module);
     });
@@ -249,14 +255,14 @@ fn plan_through_mlir(
     // Expansion runs after the aggregate rules, which read an `agg fn` body
     // while it is still a body, and before the lowering, which has no way to
     // carry a function across.
-    yuzu_mlir::diagnostics::capture(&context, sources, source_id, diagnostics, || {
+    yuzu_mlir::diagnostics::capture(&context, sources, diagnostics, || {
         yuzu_passes::inline_calls(&context, &mut module);
     });
     if has_errors(diagnostics) {
         return None;
     }
 
-    yuzu_mlir::diagnostics::capture(&context, sources, source_id, diagnostics, || {
+    yuzu_mlir::diagnostics::capture(&context, sources, diagnostics, || {
         let mut lowered = yuzu_passes::lower_yzl_to_yzr(&context, &module);
         yuzu_passes::simplify_yzr(&context, &mut lowered);
         if options.debug_plan {

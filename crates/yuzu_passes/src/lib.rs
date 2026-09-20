@@ -1,5 +1,3 @@
-//! The passes that carry a program from its AST to yzr.
-
 mod check_aggregates;
 mod infer_types;
 mod inline_calls;

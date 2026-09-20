@@ -14,7 +14,7 @@ use text_size::{TextRange, TextSize};
 use yuzu_diagnostics::diagnostics::Span;
 use yuzu_diagnostics::diagnostics::builder::DiagnosticBuilder;
 use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
-use yuzu_diagnostics::source_map::{SourceId, SourceMap};
+use yuzu_diagnostics::source_map::SourceMap;
 
 /// Emits an error against a location, into whichever handler is attached.
 pub fn emit_error(location: Location, message: &str) {
@@ -26,12 +26,9 @@ pub fn emit_error(location: Location, message: &str) {
 ///
 /// A location names the file it came from, so every source the compile read
 /// is offered here and each diagnostic lands in the one it belongs to.
-/// `unnamed` is where a location naming nothing goes, which is the file the
-/// user asked about.
 pub fn capture<T>(
     context: &Context,
     sources: &SourceMap,
-    unnamed: SourceId,
     engine: &mut DiagnosticsEngine,
     f: impl FnOnce() -> T,
 ) -> T {
@@ -45,7 +42,7 @@ pub fn capture<T>(
     let result = f();
     context.detach_diagnostic_handler(handler);
     for reported in collected.take() {
-        engine.emit(reported.build(sources, unnamed));
+        engine.emit(reported.build(sources));
     }
 
     result
@@ -56,16 +53,45 @@ pub fn capture<T>(
 /// It writes down what MLIR said, and the span is worked out afterwards.
 struct Reported {
     message: String,
-    location: String,
+    position: Option<Position>,
     severity: DiagnosticSeverity,
     notes: Vec<String>,
+}
+
+/// Where a location says its diagnostic belongs. Read inside the handler,
+/// because a location borrows the context and the handler outlives the call.
+struct Position {
+    file: String,
+    start_line: usize,
+    start_column: usize,
+    end_line: usize,
+    end_column: usize,
+}
+
+impl Position {
+    /// `None` for a location naming no place: an unknown one, or a fused one
+    /// standing for several.
+    fn of(location: &Location) -> Option<Self> {
+        location.is_file_line_col_range().then(|| Self {
+            file: location
+                .file_line_col_range_filename()
+                .as_string_ref()
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+            start_line: location.file_line_col_range_start_line(),
+            start_column: location.file_line_col_range_start_column(),
+            end_line: location.file_line_col_range_end_line(),
+            end_column: location.file_line_col_range_end_column(),
+        })
+    }
 }
 
 impl Reported {
     fn of(diagnostic: &Diagnostic) -> Self {
         Self {
             message: diagnostic.to_string(),
-            location: diagnostic.location().to_string(),
+            position: Position::of(&diagnostic.location()),
             severity: diagnostic.severity(),
             notes: (0..diagnostic.note_count())
                 .filter_map(|index| diagnostic.note(index).ok())
@@ -74,14 +100,16 @@ impl Reported {
         }
     }
 
-    fn build(self, sources: &SourceMap, unnamed: SourceId) -> DiagnosticBuilder {
-        let span = span_of(sources, unnamed, &self.location);
-        let mut builder = match self.severity {
-            DiagnosticSeverity::Error => DiagnosticBuilder::error(span, self.message),
-            DiagnosticSeverity::Warning => DiagnosticBuilder::warning(span, self.message),
-            DiagnosticSeverity::Note | DiagnosticSeverity::Remark => {
+    fn build(self, sources: &SourceMap) -> DiagnosticBuilder {
+        let mut builder = match (span_of(sources, self.position.as_ref()), self.severity) {
+            (Some(span), DiagnosticSeverity::Error) => DiagnosticBuilder::error(span, self.message),
+            (Some(span), DiagnosticSeverity::Warning) => {
+                DiagnosticBuilder::warning(span, self.message)
+            }
+            (Some(span), DiagnosticSeverity::Note | DiagnosticSeverity::Remark) => {
                 DiagnosticBuilder::remark(span, self.message)
             }
+            (None, _) => DiagnosticBuilder::error_without_span(self.message),
         };
 
         for note in self.notes {
@@ -92,48 +120,24 @@ impl Reported {
     }
 }
 
-/// The span a location names. Locations print as `loc("name":line:col)`,
-/// where the name is the one the file was read under. Anything else — an
-/// unknown location, a fused one, or a name no source was added under —
-/// lands at the start of the file the user asked about, which is where a
-/// reader looks first.
-fn span_of(sources: &SourceMap, unnamed: SourceId, printed: &str) -> Span {
-    let Some((name, line, column)) = position(printed) else {
-        return start_of(sources, unnamed);
-    };
-
-    let Some(id) = sources.id(name) else {
-        return start_of(sources, unnamed);
-    };
-
-    match sources.offset(id, line, column) {
-        Some(offset) => one_character(sources, id, offset),
-        None => start_of(sources, id),
-    }
-}
-
-/// The name, line and column a printed location carries. The name is taken
-/// between the first quote and the last one before the numbers, so a path
-/// holding a colon of its own survives the split.
-fn position(printed: &str) -> Option<(&str, usize, usize)> {
-    let (_, quoted) = printed.split_once('"')?;
-    let (name, tail) = quoted.rsplit_once("\":")?;
-    let (line, column) = tail.strip_suffix(')')?.split_once(':')?;
-    Some((name, line.parse().ok()?, column.parse().ok()?))
-}
-
-/// One character from the offset: the printer underlines a span, and a
-/// location is a point rather than a range.
-fn one_character(sources: &SourceMap, source_id: SourceId, offset: usize) -> Span {
-    let end = (offset + 1).min(sources.text(source_id).len());
-    Span {
+/// The span a position names.
+///
+/// `None` when it names no place we can point at: no position at all, or a
+/// file no source was added under. Such a diagnostic prints as its message
+/// alone. Pointing it at some other file would send the reader somewhere
+/// the problem is not.
+fn span_of(sources: &SourceMap, position: Option<&Position>) -> Option<Span> {
+    let position = position?;
+    let source_id = sources.id(&position.file)?;
+    let start = sources.offset(source_id, position.start_line, position.start_column)?;
+    let end = sources.offset(source_id, position.end_line, position.end_column)?;
+    Some(Span {
         source_id,
-        range: TextRange::new(TextSize::new(offset as u32), TextSize::new(end as u32)),
-    }
-}
-
-fn start_of(sources: &SourceMap, source_id: SourceId) -> Span {
-    one_character(sources, source_id, 0)
+        range: TextRange::new(
+            TextSize::new(start as u32),
+            TextSize::new(end.max(start) as u32),
+        ),
+    })
 }
 
 #[cfg(test)]
@@ -151,10 +155,10 @@ mod tests {
         let context = crate::context();
         let source = "from t\n";
         let mut sources = SourceMap::new();
-        let source_id = sources.add("test.yz".to_string(), source.to_string());
+        sources.add("test.yz".to_string(), source.to_string());
         let mut diagnostics = DiagnosticsEngine::new();
 
-        capture(&context, &sources, source_id, &mut diagnostics, || {
+        capture(&context, &sources, &mut diagnostics, || {
             let location = Location::new(&context, "test.yz", 1, 6);
             emit_error(location, "unknown relation `t`");
         });
@@ -186,10 +190,10 @@ mod tests {
             "prelude.yz".to_string(),
             "external def pow(a: int64, b: int64) -> int64\n".to_string(),
         );
-        let query = sources.add("query.yz".to_string(), "from t\n".to_string());
+        sources.add("query.yz".to_string(), "from t\n".to_string());
         let mut diagnostics = DiagnosticsEngine::new();
 
-        capture(&context, &sources, query, &mut diagnostics, || {
+        capture(&context, &sources, &mut diagnostics, || {
             emit_error(
                 Location::new(&context, "query.yz", 1, 6),
                 "unknown relation `t`",
@@ -198,8 +202,8 @@ mod tests {
                 Location::new(&context, "prelude.yz", 1, 13),
                 "`pow` is declared twice",
             );
-            // A location naming no source of ours lands in the file the user
-            // asked about rather than nowhere.
+            // A location naming no place prints as its message alone, rather
+            // than pointing at a file the problem is not in.
             emit_error(Location::unknown(&context), "the query could not be built");
         });
 
@@ -223,10 +227,6 @@ mod tests {
               |             ^
 
             error: the query could not be built
-             --> query.yz:1:1
-              |
-            1 | from t
-              | ^
         "#]]
         .assert_eq(&rendered.join("\n"));
     }
@@ -239,7 +239,7 @@ mod tests {
         let context = crate::context();
         let source = "from t\n";
         let mut sources = SourceMap::new();
-        let source_id = sources.add("test.yz".to_string(), source.to_string());
+        sources.add("test.yz".to_string(), source.to_string());
         let mut diagnostics = DiagnosticsEngine::new();
 
         // A yz.add whose result is not a numeric type — the ODS verifier rejects
@@ -247,7 +247,7 @@ mod tests {
         let location = Location::new(&context, "test.yz", 1, 1);
         let module = Module::new(location);
         let boolean = Type::parse(&context, "!yz.bool").expect("!yz.bool parses");
-        let verified = capture(&context, &sources, source_id, &mut diagnostics, || {
+        let verified = capture(&context, &sources, &mut diagnostics, || {
             let constant = module.body().append_operation(
                 OperationBuilder::new("yz.constant_bool", location)
                     .add_attributes(&[(

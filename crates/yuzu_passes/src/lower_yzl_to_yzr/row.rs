@@ -1,7 +1,3 @@
-//! Rows: what a relation's columns are, and the struct symbol standing for
-//! a shape. A shape nobody declared is declared once, and the symbol
-//! table's renaming of a collision is what interns it.
-
 use melior::ir::attribute::{
     ArrayAttribute, FlatSymbolRefAttribute, StringAttribute, TypeAttribute,
 };
@@ -15,8 +11,7 @@ use yuzu_mlir::{StructType, SymbolTable};
 use crate::lower_yzl_to_yzr::{Row, YzlToYzr, struct_fields};
 
 impl<'c, 'a> YzlToYzr<'c, 'a> {
-    /// Seeds the shape index with what the program declared, so a stage
-    /// whose row matches a declared struct reuses its name.
+    /// A stage whose row matches a declared struct reuses its name.
     pub(super) fn intern_declared_shapes(&mut self, block: BlockRef<'c, '_>) {
         for op in block.operations() {
             if let Some(YzlOp::Struct(item)) = op.as_yzl() {
@@ -27,8 +22,6 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         }
     }
 
-    /// The row a relation's rows have: the table names its struct, and the
-    /// struct carries its fields.
     fn relation_row(&self, name: &str, source: &SymbolTable<'c, '_>) -> Option<Row<'c>> {
         let table = source.lookup(name)?;
         let YzlOp::Table(table) = table.as_yzl()? else {
@@ -43,27 +36,27 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         Some(struct_fields(&item))
     }
 
-    /// The type standing for a row, declaring the shape when nothing has.
     pub(super) fn row_type(
         &mut self,
         row: &Row<'c>,
         symbols: &mut SymbolTable<'c, '_>,
+        location: Location<'c>,
     ) -> Type<'c> {
         if let Some(&name) = self.shapes.get(row) {
             return StructType::new(self.context, name).into();
         }
 
-        let name = self.declare_struct("row", row, symbols);
+        let name = self.declare_struct("row", row, symbols, location);
         self.shapes.insert(row.clone(), name);
         StructType::new(self.context, name).into()
     }
 
-    /// Declares a struct in the lowered module, returning the name it got.
     pub(super) fn declare_struct(
         &self,
         name: &str,
         fields: &Row<'c>,
         symbols: &mut SymbolTable<'c, '_>,
+        location: Location<'c>,
     ) -> &'c str {
         let names: Vec<Attribute<'c>> = fields
             .iter()
@@ -79,7 +72,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             StringAttribute::new(self.context, name),
             ArrayAttribute::new(self.context, &names),
             ArrayAttribute::new(self.context, &types),
-            Location::unknown(self.context),
+            location,
         );
 
         let assigned = symbols.insert(declaration.into());
@@ -88,8 +81,8 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             .value()
     }
 
-    /// The rows a relation name stands for: a `let` has already produced
-    /// them, and a table is scanned where it is used.
+    /// A `let` has already produced its rows; a table is scanned where it is
+    /// used.
     pub(super) fn relation_input(
         &mut self,
         name: &str,
@@ -107,7 +100,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             return None;
         };
 
-        let ty = self.row_type(&row, symbols);
+        let ty = self.row_type(&row, symbols, location);
         let scanned = target.append_operation(
             yzr::table(
                 self.context,

@@ -1,7 +1,6 @@
-//! Unification over MLIR values. Every `!yzl.var`-typed value is a type
-//! variable; op semantics, function signatures, and the field types flowing
-//! through the stages fill the substitutions. The answers are written onto
-//! the values themselves, so `!yzl.var` is gone by the end.
+//! Unification over the values of a verified module. Every `!yzl.var` value
+//! is a type variable, and the answers are written onto the values, so
+//! `!yzl.var` is gone by the end.
 
 use std::collections::{HashMap, HashSet};
 use std::mem;
@@ -22,9 +21,6 @@ use yuzu_mlir::types;
 use yuzu_mlir::{ListType, ParamType};
 use yuzu_types::{AggFunc, BuiltinFunc, Func, FunctionRegistry};
 
-/// Expects a verified module and writes the types it infers onto it. The
-/// registry says how each builtin is typed. Diagnostics go through MLIR:
-/// run this inside `yuzu_mlir::diagnostics::capture` to collect them.
 pub fn infer_types<'c>(
     context: &'c Context,
     module: &mut Module<'c>,
@@ -48,12 +44,10 @@ pub fn infer_types<'c>(
     inferrer.stamp_block(module.body());
 }
 
-/// A type variable: a slot in the substitution table.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct TypeVar(usize);
 
-/// A type either known or still being solved for: a concrete type, a type
-/// variable, or a list whose inner type is the variable's.
+/// `List` holds the variable of its element type.
 #[derive(Clone, Copy)]
 enum Term<'c> {
     Concrete(Type<'c>),
@@ -63,8 +57,6 @@ enum Term<'c> {
 
 type Row<'c> = Vec<Term<'c>>;
 
-/// A function's declared shape: the types as written, the parameters a call
-/// instantiates, and the bounds those parameters carry.
 struct Signature<'c> {
     params: Vec<Type<'c>>,
     result: Type<'c>,
@@ -72,14 +64,11 @@ struct Signature<'c> {
     bounds: Vec<(&'c str, &'c str)>,
 }
 
-/// What the module declares, gathered before inference and never written by
-/// it.
 #[derive(Default)]
 struct Declarations<'c> {
     signatures: HashMap<&'c str, Signature<'c>>,
     /// The `(trait, type)` pairs the implementations supply.
     impls: HashSet<(&'c str, &'c str)>,
-    /// The row each struct and table carries.
     rows: HashMap<&'c str, Row<'c>>,
 }
 
@@ -125,8 +114,7 @@ impl<'c> Declarations<'c> {
     }
 }
 
-/// A bound one instantiation owes, checked once the variable standing for
-/// its parameter resolves.
+/// A bound checked once the variable standing for its parameter resolves.
 #[derive(Clone, Copy)]
 struct PendingBound<'c> {
     var: TypeVar,
@@ -142,21 +130,15 @@ struct TypeInferrer<'c, 'd> {
     /// One slot per type variable: unbound, substituted by another variable,
     /// or filled with its concrete type.
     filled: Vec<Option<Term<'c>>>,
-    /// The type variable of each `!yzl.var` value.
     vars: HashMap<ValueId, TypeVar>,
-    /// The row of column terms flowing out of each stage value.
     rows: HashMap<ValueId, Row<'c>>,
-    /// The row each `let` yielded.
     bindings: HashMap<&'c str, Row<'c>>,
     pending: Vec<PendingBound<'c>>,
-    /// The type variables a generic call minted, in declaration order, by
-    /// the call's result.
+    /// The type variables each generic call minted, in declaration order.
     instances: HashMap<ValueId, Vec<TypeVar>>,
 }
 
 impl<'c, 'd> TypeInferrer<'c, 'd> {
-    /// The term of a value: its concrete type, or the type variable minted
-    /// for it.
     fn term_of(&mut self, value: Value<'c, '_>) -> Term<'c> {
         let ty = value.r#type();
         if ty != types::var(self.context) {
@@ -178,8 +160,6 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
         TypeVar(self.filled.len() - 1)
     }
 
-    /// Follows the substitution chain to a variable's root, compressing the
-    /// chain on the way.
     fn find(&mut self, var: TypeVar) -> TypeVar {
         match self.filled[var.0] {
             Some(Term::Var(next)) => {
@@ -191,7 +171,6 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
         }
     }
 
-    /// The root of a variable's chain, or what the root is filled with.
     fn shallow(&mut self, term: Term<'c>) -> Term<'c> {
         match term {
             Term::Var(var) => {
@@ -226,9 +205,8 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
         self.report(op, &format!("expected `{expected}`, found `{found}`"));
     }
 
-    /// The value a stage's region yields, held to the type the stage needs.
-    /// Whatever it settled on is named for the reader, so the complaint is
-    /// about the predicate they wrote rather than about a type variable.
+    /// Names the stage in the complaint, rather than reporting a bare
+    /// mismatch.
     fn expect_yield(&mut self, op: OperationRef<'c, '_>, expected: Type<'c>, what: &str) {
         let Some(value) = last_region_op(op).and_then(|end| end.try_first_operand()) else {
             return;
@@ -262,8 +240,6 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
         }
     }
 
-    /// A term as the program would have written it, with `_` where nothing
-    /// is known yet.
     fn display(&mut self, term: Term<'c>) -> String {
         match self.shallow(term) {
             Term::Concrete(ty) => types::name(self.context, ty),
@@ -295,8 +271,6 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
                             self.unify(op, term, yielded);
                         }
                     }
-                    // An external has no body, but a call only needs the
-                    // signature.
                     Some(CalleeKind::Fn | CalleeKind::AggFn | CalleeKind::External) | None => {
                         let Some(signature) = declared.signatures.get(callee) else {
                             return;
@@ -411,13 +385,10 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
             Some(YzlOp::Join(_)) => {
                 let row = self.input_row(op);
                 self.infer_regions(op, &row, &[]);
-                // `using` names its columns instead, and leaves no region.
                 let boolean = types::boolean(self.context);
                 self.expect_yield(op, boolean, "`on` condition");
                 self.record_row(op, row);
             }
-            // A trait or an implementation holds functions, each typed by
-            // its own signature; the body itself carries no row.
             Some(_) => self.infer_regions(op, &Row::new(), &[]),
             None => self.infer_yz_op(op),
         }
@@ -460,9 +431,8 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
         }
     }
 
-    /// Mints one fresh variable per type parameter, so every call to a
-    /// generic function solves its own instance, and records the bounds that
-    /// instance owes.
+    /// One fresh variable per type parameter, so every call solves its own
+    /// instance.
     fn instantiate(
         &mut self,
         op: OperationRef<'c, '_>,
@@ -477,9 +447,6 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
             ordered.push(var);
         }
 
-        // Which type the call chose for each parameter is what expansion
-        // needs to pick an implementation: recorded now, stamped once the
-        // variables resolve.
         if !ordered.is_empty()
             && let Some(result) = op.try_first_result()
         {
@@ -500,7 +467,6 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
         bindings
     }
 
-    /// A declared type with this instance's parameters swapped in.
     fn substitute(&self, ty: Type<'c>, bindings: &HashMap<&'c str, TypeVar>) -> Term<'c> {
         if let Some(param) = ParamType::from_type(ty)
             && let Some(&var) = bindings.get(param.name())
@@ -541,8 +507,6 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
     }
 
     /// The builtins are polymorphic, so each carries its own typing rule.
-    /// The registry says which builtin a name is, as it did when resolution
-    /// bound the call.
     fn resolve_builtin_ty(&mut self, op: OperationRef<'c, '_>, callee: &str) {
         let Some(entry) = self
             .registry
@@ -602,9 +566,8 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
         }
     }
 
-    /// A region's block arguments are the row's columns or the function's
-    /// parameters, by position; each takes that term before the body is
-    /// inferred against it.
+    /// The block arguments are the row's columns or the function's
+    /// parameters, by position.
     fn infer_regions(&mut self, op: OperationRef<'c, '_>, columns: &Row<'c>, params: &[Type<'c>]) {
         for region in op.regions() {
             for block in region.blocks() {
@@ -655,11 +618,8 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
         }
     }
 
-    /// Inference's answers, written onto the values themselves. A value that
-    /// resolved takes the type it resolved to; one that did not is reported
-    /// here, where the expression that stayed open is still in hand. A
-    /// column or parameter is only ever as open as the expressions reading
-    /// it, so an unresolved one is left for them to report.
+    /// A column or parameter is only as open as the expressions reading it,
+    /// so an unresolved one is left for them to report.
     fn stamp_block(&mut self, block: BlockRef<'c, '_>) {
         for argument in block.arguments() {
             let term = self.term_of(argument.into());
@@ -682,8 +642,7 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
             let term = self.term_of(result);
             match self.resolve(term) {
                 Some(ty) => result.set_type(ty),
-                // A hole stands for an expression the program never got to
-                // write, and the parse error above it already said so.
+                // A hole was already reported by the parse.
                 None if matches!(op.as_yzl(), Some(YzlOp::Missing(_))) => {}
                 None => emit_error(
                     op.location(),
@@ -695,9 +654,8 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
         }
     }
 
-    /// The types a generic call settled on, in declaration order. A partial
-    /// answer is worse than none, so a call whose parameters did not all
-    /// resolve is left unstamped for expansion to report.
+    /// A partial answer is worse than none, so a call whose parameters did
+    /// not all resolve is left unstamped.
     fn stamp_type_args(&mut self, op: &mut OperationRefMut<'c, '_>, result: ValueId) {
         let Some(vars) = self.instances.remove(&result) else {
             return;
@@ -721,7 +679,6 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
     }
 }
 
-/// The term a list's elements have, when the term is a list at all.
 fn element(term: Term<'_>) -> Option<Term<'_>> {
     match term {
         Term::List(inner) => Some(Term::Var(inner)),
@@ -826,9 +783,6 @@ from t
         );
     }
 
-    /// Each call to a generic function solves its own instance, and each
-    /// call carries what it settled on, which is how expansion later knows
-    /// `@id` at `int64` wants the `int64` implementation.
     #[test]
     fn instantiates_a_generic_call_per_site() {
         check(
@@ -947,7 +901,7 @@ from t
                  --> test.yz:16:11
                    |
                 16 | |> extend id(name) as n
-                   |           ^
+                   |           ^^^^^^^^
             "#]],
         );
     }
@@ -967,7 +921,7 @@ from t
                  --> test.yz:6:10
                   |
                 6 | |> where name == 1
-                  |          ^
+                  |          ^^^^^^^^^
             "#]],
         );
     }
@@ -989,7 +943,7 @@ from t
                  --> test.yz:5:27
                   |
                 5 | def f(x: int64) -> bool { return x }
-                  |                           ^
+                  |                           ^^^^^^^^
             "#]],
         );
     }
@@ -1009,7 +963,7 @@ from t
                  --> test.yz:6:1
                   |
                 6 | |> set level = "high"
-                  | ^
+                  | ^^^^^^^^^^^^^^^^^^^^^
             "#]],
         );
     }
@@ -1060,7 +1014,7 @@ from t
                  --> test.yz:5:1
                   |
                 5 | let ids: List[str] = [1, 3]
-                  | ^
+                  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
             "#]],
         );
     }
@@ -1082,7 +1036,7 @@ from t
                  --> test.yz:8:1
                   |
                 8 | |> where level
-                  | ^
+                  | ^^^^^^^^^^^^^^
             "#]],
         );
     }
@@ -1104,7 +1058,7 @@ from t as e
                  --> test.yz:8:1
                   |
                 8 | |> inner join depts as d on e.level
-                  | ^
+                  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
             "#]],
         );
     }
@@ -1124,13 +1078,11 @@ from t
                  --> test.yz:6:10
                   |
                 6 | |> where a in 1
-                  |          ^
+                  |          ^^^^^^
             "#]],
         );
     }
 
-    /// Nothing says what an empty list holds, and the language has no way to
-    /// write it down.
     #[test]
     fn reports_an_expression_nothing_pinned_down() {
         check(
@@ -1148,7 +1100,7 @@ from t
                  --> test.yz:5:10
                   |
                 5 | let xs = []
-                  |          ^
+                  |          ^^
             "#]],
         );
     }

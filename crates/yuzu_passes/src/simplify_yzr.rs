@@ -1,15 +1,12 @@
-//! The work a query does not need to carry. The `yz` ops declare their own
-//! folders, so this is MLIR's canonicalizer and CSE rather than a rewrite of
-//! our own. Stage regions are `IsolatedFromAbove`, so what a fold leaves
-//! behind stays inside the region that becomes a Substrait expression.
+//! MLIR's canonicalizer and CSE; the `yz` ops declare their own folders.
+//! Stage regions are `IsolatedFromAbove`, so what a fold leaves behind stays
+//! inside the region that becomes a Substrait expression.
 
 use melior::Context;
 use melior::ir::Module;
 use melior::ir::operation::OperationLike;
 use melior::pass::{PassManager, transform};
 
-/// Expects a lowered yzr module. Diagnostics go through MLIR: run this
-/// inside `yuzu_mlir::diagnostics::capture` to collect them.
 pub fn simplify_yzr(context: &Context, module: &mut Module) {
     let passes = PassManager::new(context);
     passes.add_pass(transform::create_canonicalizer());
@@ -171,8 +168,6 @@ from t
         );
     }
 
-    /// The query keeps the shape it was written in when the reassociated
-    /// form has no representable answer.
     #[test]
     fn an_unrepresentable_sum_keeps_its_order() {
         check_simplified(
@@ -204,8 +199,6 @@ from t
         );
     }
 
-    /// The intermediate can overflow where the reassociated form does not,
-    /// and overflow belongs to the engine.
     #[test]
     fn opposite_signs_keep_the_order_they_were_written_in() {
         check_simplified(
@@ -265,7 +258,6 @@ from t
         );
     }
 
-    /// The range is asymmetric, so the least integer has no negation.
     #[test]
     fn the_least_integer_is_left_to_the_engine() {
         check_simplified(
@@ -321,9 +313,8 @@ from t
         );
     }
 
-    /// The stage ops are `Pure`, so a binding the output never reaches is
-    /// dropped whole. The struct it declared outlives it: a symbol is not
-    /// an operation, and nothing yet collects the ones no type names.
+    /// The struct it declared outlives it: nothing yet collects a symbol no
+    /// type names.
     #[test]
     fn a_relation_the_output_never_reads_is_dropped() {
         check_simplified(
@@ -352,9 +343,8 @@ from t
         );
     }
 
-    /// No column of `u` is read, but the join decides which rows exist and
-    /// how many. Column pruning must not conclude from unread columns alone
-    /// that a relation is dead.
+    /// The join decides which rows exist, so column pruning must not take
+    /// an unread side for a dead one.
     #[test]
     fn a_join_survives_when_nothing_reads_its_right_side() {
         check_simplified(

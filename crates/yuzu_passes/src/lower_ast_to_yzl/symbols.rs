@@ -1,12 +1,3 @@
-//! The names a program can use, and what each means where it is used.
-//!
-//! The module's declarations, and a stack of the scopes inside them: a
-//! function's parameters, a block's `let`s, the row a relation carries. A
-//! lookup walks the stack from the top and falls back to the declarations,
-//! so the innermost scope holding a name decides what it means. Answers are
-//! bindings and positions, never IR — a column is the index of a block
-//! argument — so nothing here depends on the builder.
-
 use std::collections::HashMap;
 use std::fmt;
 use std::mem;
@@ -17,8 +8,6 @@ use yuzu_ast::ast::Mutability;
 use yuzu_mlir::attributes::CalleeKind;
 use yuzu_types::FunctionRegistry;
 
-/// A column as the program refers to it: a bare name, or one qualified by
-/// the alias of the side it came from.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct Reference<'c> {
     pub(super) qualifier: Option<&'c str>,
@@ -33,8 +22,6 @@ impl<'c> Reference<'c> {
         }
     }
 
-    /// Whether a reference names this column: the name must match, and a
-    /// qualified reference must name the side this column came from.
     fn matches(self, reference: Reference<'_>) -> bool {
         self.name == reference.name
             && reference
@@ -52,9 +39,8 @@ impl fmt::Display for Reference<'_> {
     }
 }
 
-/// The columns a relation carries, in order. Two of them may share a name —
-/// a join concatenates both sides — so a column is addressed by position,
-/// and a name matching more than one is ambiguous until a qualifier picks.
+/// Two columns may share a name, since a join concatenates both sides, so a
+/// column is addressed by position.
 #[derive(Clone, Default, PartialEq, Eq, Debug)]
 pub(super) struct Row<'c> {
     columns: Vec<Reference<'c>>,
@@ -94,8 +80,6 @@ impl<'c> Row<'c> {
         !matches!(self.column(reference), ColumnLookup::Absent)
     }
 
-    /// Names every column through one alias: what `as` does to the row, and
-    /// what `join … as d` does to the side it names.
     pub(super) fn qualify(&mut self, alias: &'c str) {
         for column in &mut self.columns {
             column.qualifier = Some(alias);
@@ -123,7 +107,6 @@ impl<'c> From<Vec<&'c str>> for Row<'c> {
     }
 }
 
-/// What a module-level name was declared as, where, and how far it reaches.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(super) struct Binding<'c> {
     pub(super) kind: Kind<'c>,
@@ -131,8 +114,6 @@ pub(super) struct Binding<'c> {
     pub(super) visibility: Visibility,
 }
 
-/// The symbol a declaration carries is what the module holds it under: the
-/// written name, qualified by the module, unless a later `let` took the name.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(super) enum Kind<'c> {
     Struct {
@@ -145,29 +126,23 @@ pub(super) enum Kind<'c> {
         symbol: &'c str,
     },
     Func(Callable<'c>),
-    /// A trait and the methods it declares. The methods are not names of
-    /// their own — choosing an implementation is dispatch, which nothing
-    /// does yet — so they hang off the trait rather than sit in the scope.
+    /// The methods are not names of their own: dispatch is not written yet.
     Trait {
         methods: Vec<&'c str>,
         symbol: &'c str,
     },
-    /// A `let` bound to a value: a callable of no arguments, which the
-    /// inliner expands wherever the name is used.
+    /// A `let` bound to a value; the inliner expands it where it is used.
     Let {
         symbol: &'c str,
     },
-    /// A module this file named, by the path it was loaded under. What it
-    /// declares is not in this scope: a qualified reference asks the module
-    /// for it, one name at a time.
+    /// A module this file named; what it declares is not in this scope.
     Module {
         path: &'c str,
     },
 }
 
 impl<'c> Kind<'c> {
-    /// The symbol the module holds this declaration under. A module is not
-    /// one: it names a file rather than something the module declares.
+    /// `None` for a module, which names a file rather than a declaration.
     pub(super) fn symbol(&self) -> Option<&'c str> {
         match self {
             Kind::Struct { symbol, .. }
@@ -179,7 +154,6 @@ impl<'c> Kind<'c> {
         }
     }
 
-    /// What the name is, for a diagnostic about using it as something else.
     pub(super) fn what(&self) -> &'static str {
         match self {
             Kind::Struct { .. } => "struct",
@@ -192,8 +166,6 @@ impl<'c> Kind<'c> {
     }
 }
 
-/// A `let` in a function body: the name it binds, the slot the traversal put
-/// its value in, and whether an assignment may write it again.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct Local<'c> {
     pub(super) name: &'c str,
@@ -201,22 +173,18 @@ pub(super) struct Local<'c> {
     pub(super) mutability: Mutability,
 }
 
-/// A callee's kind, and the argument counts it takes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct Callable<'c> {
     pub(super) symbol: &'c str,
     pub(super) kind: CalleeKind,
     pub(super) min_args: usize,
     pub(super) max_args: usize,
-    /// Whether the callee aggregates, which is not the same question as
-    /// what kind of callee it is: a builtin, an `agg fn` and an
-    /// `external agg fn` are three kinds and all three aggregate.
+    /// Not the same question as `kind`: a builtin, an `agg fn` and an
+    /// `external agg fn` all aggregate.
     pub(super) is_agg: bool,
 }
 
 impl<'c> Callable<'c> {
-    /// A `let` is a callable of no arguments, expanded wherever the name is
-    /// used.
     pub(super) fn let_binding(symbol: &'c str) -> Self {
         Self {
             symbol,
@@ -228,29 +196,18 @@ impl<'c> Callable<'c> {
     }
 }
 
-/// What a name in expression position means.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Lookup<'c> {
-    /// A column of the enclosing relation's row, by position.
     Column(usize),
-    /// A parameter of the enclosing function, by position.
     Param(usize),
-    /// A `let` in the enclosing function body, by the slot the traversal put
-    /// its value in.
-    Local {
-        slot: usize,
-        mutability: Mutability,
-    },
+    Local { slot: usize, mutability: Mutability },
     Let(&'c str),
     Ambiguous,
-    /// The relation carried the column until a stage stopped carrying it.
     NarrowedAway,
-    /// Declared, but not as something a value can be read from.
     NotAValue(&'static str),
     Unknown,
 }
 
-/// Which column of a row a stage item names.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum ColumnLookup {
     Unique(usize),
@@ -262,14 +219,11 @@ enum Scope<'c> {
     Function {
         params: Vec<&'c str>,
     },
-    /// A lexical block inside a function body, and the `let`s it binds.
     Block {
         locals: Vec<Local<'c>>,
     },
-    /// A relation and the row it carries. Its stages replace that row as
-    /// they run, and `narrowed` is the names they stopped carrying: a column
-    /// the program lost track of deserves a different diagnostic from a name
-    /// it never declared.
+    /// `narrowed` is the names earlier stages stopped carrying, which get a
+    /// diagnostic of their own.
     Relation {
         row: Row<'c>,
         narrowed: Vec<&'c str>,
@@ -277,8 +231,7 @@ enum Scope<'c> {
 }
 
 pub(super) struct SymbolTable<'c> {
-    /// What the file declares, imports included: the symbols every lookup
-    /// falls back to and every declaration accessor reads.
+    /// What the file declares, imports included; lookups fall back to it.
     module: HashMap<&'c str, Binding<'c>>,
     scopes: Vec<Scope<'c>>,
 }
@@ -301,19 +254,14 @@ impl<'c> SymbolTable<'c> {
         self.module.get(name)
     }
 
-    /// Puts back the declarations taken earlier, so a second pass over the
-    /// same file resolves against the names it already bound.
     pub(super) fn restore(&mut self, bindings: HashMap<&'c str, Binding<'c>>) {
         self.module = bindings;
     }
 
-    /// Everything the file being lowered declared, which is what another
-    /// file importing it may ask for.
     pub(super) fn take_exports(&mut self) -> HashMap<&'c str, Binding<'c>> {
         mem::take(&mut self.module)
     }
 
-    /// Whether some trait declares this method.
     pub(super) fn is_method(&self, name: &str) -> bool {
         self.module.values().any(|binding| {
             matches!(&binding.kind, Kind::Trait { methods, .. } if methods.contains(&name))
@@ -345,8 +293,6 @@ impl<'c> SymbolTable<'c> {
         self.binding(name).map(|binding| &binding.kind)
     }
 
-    /// A relation's symbol and its row, seen through the alias it is named
-    /// by.
     pub(super) fn relation(
         &self,
         name: &str,
@@ -364,7 +310,6 @@ impl<'c> SymbolTable<'c> {
         Some((symbol, row))
     }
 
-    /// A callee by name, from the module's declarations or the registry.
     pub(super) fn callable(
         &self,
         name: &str,
@@ -377,9 +322,7 @@ impl<'c> SymbolTable<'c> {
         }
     }
 
-    /// The function an operator stands for. An operator is sugar for a call
-    /// to a name the registry offers, so a function declared under that name
-    /// stands for it too; a value or a type sharing the name does not.
+    /// Like `callable`, except a `let` sharing the name does not stand in.
     pub(super) fn operator(
         &self,
         name: &str,
@@ -412,8 +355,8 @@ impl<'c> SymbolTable<'c> {
         self.scopes.push(Scope::Block { locals: Vec::new() });
     }
 
-    /// Binds a `let` in the innermost block. Binding a name twice shadows
-    /// it, which is what a second `let` and an assignment both do.
+    /// Binding a name twice shadows it: a second `let` and an assignment
+    /// both do.
     pub(super) fn bind_local(&mut self, name: &'c str, slot: usize, mutability: Mutability) {
         let Some(Scope::Block { locals }) = self.scopes.last_mut() else {
             panic!("a local is being bound outside a block")
@@ -451,11 +394,9 @@ impl<'c> SymbolTable<'c> {
 
     // --- lookups ---
 
-    /// What a name means here. The walk stops at the first isolated scope:
-    /// a function body and a stage's region are both `IsolatedFromAbove`, so
-    /// no value bound outside one is in reach from inside it. The module's
-    /// declarations answer from any depth — those are symbols, not values —
-    /// so the walk falls back to them however it ends.
+    /// The walk stops at the first isolated scope: a function body and a
+    /// stage's region are both `IsolatedFromAbove`. The module's declarations
+    /// are symbols, not values, so they answer from any depth.
     pub(super) fn lookup(&self, reference: Reference<'_>) -> Lookup<'c> {
         for scope in self.scopes.iter().rev() {
             match scope {
@@ -512,7 +453,6 @@ impl<'c> SymbolTable<'c> {
         }
     }
 
-    /// The column of the current row a stage item names.
     pub(super) fn column(&self, reference: Reference<'_>) -> ColumnLookup {
         self.row().column(reference)
     }
@@ -541,7 +481,6 @@ impl<'c> SymbolTable<'c> {
         row.qualify(alias);
     }
 
-    /// What `select` and `aggregate` do: the row becomes what they name.
     pub(super) fn replace(&mut self, names: Vec<&'c str>) {
         self.replace_row(Row::from(names));
     }
@@ -583,7 +522,6 @@ mod tests {
 
     use super::{Binding, Callable, ColumnLookup, Kind, Lookup, Reference, Row, SymbolTable};
 
-    /// A module declaring `struct Row` and a table `t` over it.
     fn symbols() -> SymbolTable<'static> {
         let mut symbols = SymbolTable::new();
         symbols.bind(
@@ -657,8 +595,6 @@ mod tests {
         assert_eq!(symbols.lookup(bare("nope")), Lookup::Unknown);
     }
 
-    /// A qualifier is spent choosing between two columns of one name; once
-    /// it has, only the position remains.
     #[test]
     fn a_qualifier_picks_between_same_named_columns() {
         let mut symbols = symbols();
@@ -711,9 +647,6 @@ mod tests {
         assert_eq!(symbols.lookup(bare("id")), Lookup::Column(0));
     }
 
-    /// A stage's region and a function body are both `IsolatedFromAbove`, so
-    /// a lookup inside one reaches the module's declarations and nothing
-    /// between.
     #[test]
     fn an_isolated_scope_reaches_the_module_and_nothing_between() {
         let mut symbols = symbols();
@@ -843,7 +776,6 @@ mod tests {
             Some(CalleeKind::Builtin)
         );
 
-        // A trait's methods are the trait's, not the module's.
         assert_eq!(symbols.callable("zero", registry), None);
         assert!(symbols.is_method("zero"));
         assert_eq!(symbols.callable("Zero", registry), None);

@@ -1,6 +1,3 @@
-//! The stages: each becomes the `yzr` op that means the same thing, and the
-//! ones yzr has no op for become the ops it does have.
-
 use melior::ir::attribute::{DenseI64ArrayAttribute, StringAttribute};
 use melior::ir::operation::{OperationLike, OperationRef};
 use melior::ir::{BlockLike, BlockRef, Region, RegionLike, Value};
@@ -39,11 +36,9 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             Some(YzlOp::Set(stage)) => self.convert_set(op, target, symbols, &stage),
             Some(YzlOp::Rename(stage)) => self.convert_rename(op, target, symbols, &stage),
             Some(YzlOp::Output(_)) => self.convert_output(op, target),
-            // `yzr.table` names the relation and carries its row as the
-            // result type, so the declaration says nothing yzr needs.
+            // `yzr.table` carries the row as its type, so the declaration is
+            // not needed.
             Some(YzlOp::Table(_)) => {}
-            // Expansion removes these once every call is gone; one reaching
-            // here means it did not finish, which it has already reported.
             Some(YzlOp::Fn(_) | YzlOp::Trait(_) | YzlOp::Impl(_)) => self.report(
                 op,
                 &format!("`{}` was not expanded before lowering", op_name(op)),
@@ -54,7 +49,12 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
     }
 
     fn convert_struct(&mut self, symbols: &mut SymbolTable<'c, '_>, item: &StructOp<'c, '_>) {
-        self.declare_struct(item.sym_name().value(), &struct_fields(item), symbols);
+        self.declare_struct(
+            item.sym_name().value(),
+            &struct_fields(item),
+            symbols,
+            item.operation().location(),
+        );
     }
 
     fn convert_from(
@@ -151,7 +151,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         let (region, yielded) =
             self.convert_region(stage.body(), &row, op.location(), Yielded::Body);
         row.extend(stage.names().strings().into_iter().zip(yielded));
-        let ty = self.row_type(&row, symbols);
+        let ty = self.row_type(&row, symbols, op.location());
         let extended = target
             .append_operation(yzr::extend(self.context, ty, input, region, op.location()).into());
 
@@ -175,16 +175,14 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             .unwrap_or_default();
         let grouping = self.convert_grouping(stage.body(), &row, &keys, op.location());
 
-        // The keys the grouping carries out, named as the stage named them.
         let carried: Row<'c> = keys
             .iter()
             .zip(stage.group_by().strings())
             .filter_map(|(&index, name)| row.get(index).map(|&(_, ty)| (name, ty)))
             .collect();
 
-        // Without a projection the grouping's own output is the row; with
-        // one it is the keys and the raw measures, which the projection then
-        // computes the items from.
+        // Without a projection the grouping's output is the row; with one it
+        // is the keys and the raw measures the projection computes from.
         let names = stage.names().strings();
         let mut grouped = carried.clone();
         match &grouping.items {
@@ -203,7 +201,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             ),
         }
 
-        let ty = self.row_type(&grouped, symbols);
+        let ty = self.row_type(&grouped, symbols, op.location());
         let indices: Vec<i64> = keys.iter().map(|&index| index as i64).collect();
         let aggregated = target
             .append_operation(
@@ -241,8 +239,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             return;
         };
 
-        // The one stage that has to conjure an input: yzl names the right
-        // side, yzr joins two relations.
+        // yzl names the right side; yzr joins two relations.
         let relation = stage.rhs().value();
         let Some((rows, right)) =
             self.relation_input(relation, source, target, symbols, op.location())
@@ -250,8 +247,6 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             return;
         };
 
-        // Both sides carry through, and the `on` region's names were
-        // resolved against exactly this concatenation.
         let left_width = row.len();
         row.extend(right.iter().copied());
 
@@ -263,7 +258,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             }
         };
 
-        let ty = self.row_type(&row, symbols);
+        let ty = self.row_type(&row, symbols, op.location());
         let joined = target.append_operation(
             yzr::join(
                 self.context,
@@ -310,8 +305,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         self.record_stage(op, input, row);
     }
 
-    /// yzr has no distinct: it is a group keyed on every column, measuring
-    /// nothing.
+    /// yzr has no distinct: a group keyed on every column, measuring nothing.
     fn convert_distinct(
         &mut self,
         op: OperationRef<'c, '_>,
@@ -324,7 +318,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 
         let keys: Vec<i64> = (0..row.len() as i64).collect();
         let region = self.column_region(&row, &[], op.location());
-        let ty = self.row_type(&row, symbols);
+        let ty = self.row_type(&row, symbols, op.location());
         let grouped = target.append_operation(
             yzr::aggregate(
                 self.context,
@@ -360,8 +354,6 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         self.project(op, target, symbols, input, region, produced);
     }
 
-    /// The body computes replacements, not a new row: every column it does
-    /// not name carries through in place.
     fn convert_set(
         &mut self,
         op: OperationRef<'c, '_>,
@@ -390,8 +382,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         self.project(op, target, symbols, input, region, row);
     }
 
-    /// A rename moves names, not values, but yzr rows are typed by their
-    /// struct, so the new names need a projection to live on.
+    /// yzr rows are typed by their struct, so new names need a projection.
     fn convert_rename(
         &mut self,
         op: OperationRef<'c, '_>,
@@ -430,8 +421,6 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         target.append_operation(yzr::output(self.context, query, op.location()).into());
     }
 
-    /// A projection onto the row it produces, recorded as what the stage
-    /// became.
     fn project(
         &mut self,
         op: OperationRef<'c, '_>,
@@ -441,15 +430,15 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         region: Region<'c>,
         produced: Row<'c>,
     ) {
-        let ty = self.row_type(&produced, symbols);
+        let ty = self.row_type(&produced, symbols, op.location());
         let projected = target
             .append_operation(yzr::project(self.context, ty, input, region, op.location()).into());
 
         self.record_stage(op, projected.first_result(), produced);
     }
 
-    /// `using [a, b]` is sugar: yzr has only an on-region, so the columns
-    /// become the equality the join was asking for.
+    /// yzr has only an `on` region, so `using` becomes the equalities it
+    /// means.
     fn join_keys(
         &mut self,
         op: OperationRef<'c, '_>,
@@ -514,9 +503,8 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         region
     }
 
-    /// The columns that survive a `drop`, in order. Resolution removes the
-    /// first column each name matches, so dropping one name twice drops two
-    /// columns, and the lowering has to agree with it exactly.
+    /// Resolution removes the first column each name matches, so dropping
+    /// one name twice drops two columns, and this has to agree exactly.
     fn kept_columns(
         &self,
         op: OperationRef<'c, '_>,
@@ -554,7 +542,6 @@ mod tests {
 
     use crate::test_support::check_yzr;
 
-    /// A shape nobody declared is interned under a name of its own.
     #[test]
     fn named_stages_declare_the_row_they_produce() {
         check_yzr(
@@ -753,8 +740,6 @@ from t
         );
     }
 
-    /// Two uses of a binding share the one scan rather than each producing
-    /// their own.
     #[test]
     fn a_binding_is_reused_not_rescanned() {
         check_yzr(
@@ -805,7 +790,7 @@ from t
                  --> test.yz:5:1
                   |
                 5 | let n = 1 + 2
-                  | ^
+                  | ^^^^^^^^^^^^^
             "#]],
         );
     }
@@ -835,8 +820,6 @@ from t
         );
     }
 
-    /// The stamp resolution left says which column each name applies to, so
-    /// a qualified rename after a join renames one side rather than guessing.
     #[test]
     fn rename_follows_the_stamped_column() {
         check_yzr(

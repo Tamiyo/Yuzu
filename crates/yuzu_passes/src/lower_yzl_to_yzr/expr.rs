@@ -1,7 +1,3 @@
-//! The expressions inside a stage's region. A `yz` op carries over with the
-//! type inference gave it; a call becomes a measure, an external call, or a
-//! plain one, depending on what resolution decided it names.
-
 use std::collections::HashMap;
 
 use melior::ir::attribute::{FlatSymbolRefAttribute, StringAttribute};
@@ -16,7 +12,6 @@ use yuzu_mlir::ops::yzl::YzlOp;
 use crate::lower_yzl_to_yzr::{YzlToYzr, op_name};
 
 impl<'c, 'a> YzlToYzr<'c, 'a> {
-    /// An expression op, rebuilt against the values its operands became.
     pub(super) fn convert_expression<'b>(
         &mut self,
         op: OperationRef<'c, '_>,
@@ -40,9 +35,6 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 
                 let ty = op.first_result().r#type();
                 let kind = call.callee_kind();
-                // Expansion removes every call to a function or let; one
-                // reaching here means it did not finish, which it has
-                // already reported.
                 if matches!(
                     kind,
                     Some(CalleeKind::Fn | CalleeKind::AggFn | CalleeKind::Let)
@@ -91,8 +83,6 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                     .append_operation(yz::list(self.context, ty, &operands, op.location()).into());
                 values.insert(op.first_result().id(), appended.first_result());
             }
-            // A `yz` op is structurally unchanged: the operands it was given,
-            // and the type inference stamped on it.
             None => {
                 let Some(operands) = lowered_operands(op, values) else {
                     return;
@@ -102,8 +92,6 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                     values.insert(op.first_result().id(), rebuilt);
                 }
             }
-            // The parse error above it already said what went wrong; this
-            // says the query cannot be built from what is left.
             Some(YzlOp::Missing(_)) => self.report(op, "this part of the query is missing"),
             Some(
                 YzlOp::From(_)
@@ -180,12 +168,9 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
     }
 }
 
-/// What an op's operands became. The region is rebuilt from the top, so every
-/// operand has been lowered by the time its user is reached, and the stage
-/// regions are `IsolatedFromAbove` so none can come from outside. An operand
-/// with nothing to stand for it therefore means its producer failed and has
-/// already reported, so this declines to build the op rather than build one
-/// of the wrong shape.
+/// The region is rebuilt from the top and is `IsolatedFromAbove`, so an
+/// operand with nothing standing for it means its producer failed and has
+/// already reported.
 fn lowered_operands<'c, 'b>(
     op: OperationRef<'c, '_>,
     values: &HashMap<ValueId, Value<'c, 'b>>,
@@ -255,7 +240,7 @@ from t
                  --> test.yz:6:10
                   |
                 6 | |> where a >
-                  |          ^
+                  |          ^^^
             "#]],
         );
     }

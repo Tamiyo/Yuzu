@@ -1,6 +1,3 @@
-//! Regions, rebuilt so the row's columns are block arguments, which is what
-//! turns a column reference into an SSA use.
-
 use std::collections::{HashMap, HashSet};
 
 use melior::ir::operation::{OperationLike, OperationResult};
@@ -13,9 +10,8 @@ use yuzu_mlir::ops::yzl::YzlOp;
 
 use crate::lower_yzl_to_yzr::{Row, Yielded, YzlToYzr};
 
-/// What a grouping becomes: an aggregation computing its measures over the
-/// input row, and, only when an item is more than a bare measure, a
-/// projection computing the items over the keys and those measures.
+/// An aggregation over the input row and, when an item is more than a bare
+/// measure, a projection over the keys and measures.
 pub(super) struct Grouping<'c> {
     pub(super) measures: Region<'c>,
     pub(super) measure_types: Vec<Type<'c>>,
@@ -23,8 +19,6 @@ pub(super) struct Grouping<'c> {
 }
 
 impl<'c, 'a> YzlToYzr<'c, 'a> {
-    /// A stage's region, rebuilt with the input row's columns as block
-    /// arguments.
     pub(super) fn convert_region(
         &mut self,
         source: RegionRef<'c, '_>,
@@ -56,10 +50,8 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         (region, types)
     }
 
-    /// A `yzl.aggregate` groups and projects at once: each item is an
-    /// expression that may compute over its own measures. Substrait's
-    /// aggregation cannot, its output being the keys and the measures, so an
-    /// item that is more than a bare measure becomes a projection after the
+    /// A `yzl.aggregate` item may compute over its own measures. Substrait's
+    /// aggregation cannot, so such an item becomes a projection after the
     /// grouping.
     pub(super) fn convert_grouping(
         &mut self,
@@ -85,14 +77,12 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             &HashSet::new(),
         );
 
-        // The aggregation: the measures, and whatever they rest on.
         let region = Region::new();
         let body = self.row_block(&region, row, location);
         let mut row_values = argument_map(block, body);
 
-        // Two items may name the same measure. It is one column of the
-        // grouping's output either way, and a target that derives a column
-        // name from the measure will not take the same one twice.
+        // Two items naming the same measure share one column: a target that
+        // names columns after measures will not take the same one twice.
         let mut columns: HashMap<ValueId, usize> = HashMap::new();
         let mut distinct: HashMap<(&'c str, Vec<ValueId>), usize> = HashMap::new();
         let mut measured: Vec<Value<'c, '_>> = Vec::new();
@@ -112,8 +102,6 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                 }
             };
 
-            // Two measures are the same measure when they apply the same
-            // function to the same values.
             let arguments: Option<Vec<ValueId>> = op
                 .operands()
                 .map(|operand| row_values.get(&operand.id()).map(|value| value.id()))
@@ -152,8 +140,6 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         }
     }
 
-    /// The items, over the keys and the measures. `None` when every item is
-    /// a bare measure, which is the grouping's own output already.
     fn convert_grouped_items(
         &mut self,
         block: BlockRef<'c, '_>,
@@ -178,7 +164,6 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             return None;
         }
 
-        // The row the projection reads is what the grouping produced.
         let mut grouped: Row<'c> = keys
             .iter()
             .filter_map(|&index| row.get(index).copied())
@@ -231,7 +216,6 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         Some((region, types))
     }
 
-    /// A block whose arguments are a row's columns.
     pub(super) fn row_block<'r>(
         &self,
         region: &'r Region<'c>,
@@ -243,8 +227,6 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         region.append_block(Block::new(&arguments))
     }
 
-    /// The whole row, with each replaced column taking the value the body
-    /// computed for it: what `set` means, against a yzr that only projects.
     fn substituted_row<'b>(
         body: BlockRef<'c, 'b>,
         width: usize,
@@ -266,9 +248,6 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             .collect()
     }
 
-    /// A region yielding the row's own columns, in the order given: what the
-    /// stages that only move names become, since yzr has no op for a change
-    /// of name alone.
     pub(super) fn column_region(
         &self,
         row: &Row<'c>,
@@ -291,8 +270,6 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
     }
 }
 
-/// The target block's arguments keyed by the source block's: both are the
-/// row's columns, at the same positions.
 fn argument_map<'c, 'b>(
     source: BlockRef<'c, '_>,
     target: BlockRef<'c, 'b>,
@@ -304,10 +281,8 @@ fn argument_map<'c, 'b>(
         .collect()
 }
 
-/// The values an expression rests on: every operation result it reaches
-/// walking back through the operands, stopping where the caller already has
-/// the value in hand. A block argument produces nothing, so the walk ends
-/// there on its own.
+/// Every operation result the roots reach through their operands, stopping
+/// at values the caller already holds.
 fn rests_on<'c: 'a, 'a>(
     roots: impl IntoIterator<Item = Value<'c, 'a>>,
     held: &HashSet<ValueId>,

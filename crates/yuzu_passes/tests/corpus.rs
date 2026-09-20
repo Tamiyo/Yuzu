@@ -1,5 +1,4 @@
-//! Every query the end-to-end suites compile must lower cleanly: no
-//! unsupported constructs, and a module that verifies.
+//! Every query the end-to-end suites compile must lower cleanly and verify.
 
 use melior::ir::operation::OperationLike;
 use yuzu_ast::AstNode;
@@ -11,8 +10,7 @@ use yuzu_passes::{File, lower_ast_to_yzl};
 
 const CORPUS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../python/tests");
 
-/// The chunks of a Python test file that hold Yuzu source: the contents of
-/// its triple-quoted strings, when they pipe from a relation or declare.
+/// The triple-quoted strings of a Python test file that hold Yuzu source.
 fn yuzu_chunks(source: &str) -> impl Iterator<Item = (&str, Option<&str>)> {
     let parts: Vec<&str> = source.split(r#"""""#).collect();
     parts
@@ -36,8 +34,7 @@ fn the_correctness_corpus_lowers() {
         }
     }
 
-    // The harness compiles `schema + query`; the schema is the one
-    // triple-quoted chunk of support.py that declares the tables.
+    // The harness compiles `schema + query`.
     let schema = sources[0]
         .split(r#"""""#)
         .find(|chunk| chunk.contains("struct Employee"))
@@ -50,10 +47,8 @@ fn the_correctness_corpus_lowers() {
     for source in &sources {
         for (chunk, after) in yuzu_chunks(source) {
             queries += 1;
-            // The harness wraps a query it expects to fail in `error_of(...)`
-            // in the code after the string, and such a query lowering
-            // cleanly is the failure here — except when the rejection is the
-            // target's, which is decided at emission.
+            // A query wrapped in `error_of(...)` is expected to fail, unless
+            // the rejection is the target's, which is decided at emission.
             let expects_error = after.is_some_and(|after| {
                 after.contains("error_of(") && !after.contains("not supported by the")
             });

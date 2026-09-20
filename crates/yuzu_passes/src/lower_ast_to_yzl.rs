@@ -1,5 +1,5 @@
-//! The AST → yzl conversion. Names resolve as they are emitted; unresolved
-//! types come out as `!yzl.var` for inference, sugar intact.
+//! Names resolve as they are emitted, and a type the source does not write
+//! comes out as `!yzl.var` for inference.
 
 use std::collections::HashMap;
 
@@ -26,6 +26,7 @@ mod symbols;
 
 pub use program::File;
 
+/// `files` is in the order the imports were resolved, the entry file last.
 pub fn lower_ast_to_yzl<'c>(
     context: &'c Context,
     sources: &SourceMap,
@@ -53,33 +54,25 @@ pub fn lower_ast_to_yzl<'c>(
 struct AstToYzl<'c, 'd> {
     context: &'c Context,
     sources: &'d SourceMap,
-    /// The file being lowered: what a location names and a diagnostic
-    /// lands in.
     source_id: SourceId,
-    /// The module path qualifying what the file being lowered declares,
-    /// or none for the entry file.
+    /// The path of the file being lowered; `None` for the entry file.
     module: Option<&'c str>,
     diagnostics: &'d mut DiagnosticsEngine,
     symbols: SymbolTable<'c>,
-    /// What each module declared, by its path. A file is lowered after
-    /// everything it imports, so whatever it asks for is already here.
+    /// What each module declared, by path.
     exports: HashMap<Option<&'c str>, HashMap<&'c str, Binding<'c>>>,
-    /// Where each declared symbol was written, and the module its own
-    /// references resolve in.
+    /// Where each symbol was declared, and the module it was declared in.
     declarations: HashMap<&'c str, (Option<&'c str>, ast::Stmt)>,
     registry: &'d dyn FunctionRegistry,
     /// How many `let`s have taken a name something else already held.
     rebound: usize,
 }
 
-/// The values a function body's `let`s bound, in the order they bound them.
-/// The symbol table says which slot a name resolves to; the values can only
-/// live here, since each borrows the block being built.
+/// The values a function body's `let`s bound, by slot. They live apart from
+/// the symbol table because each borrows the block being built.
 type Locals<'c, 'a> = Vec<Value<'c, 'a>>;
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
-    /// The symbol a declared name is held under: qualified by the module, so
-    /// two modules may each declare `Row`.
     fn symbol_for(&self, name: &'c str) -> &'c str {
         match self.module {
             Some(module) => self.intern(&format!("{module}.{name}")),
@@ -87,8 +80,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
     }
 
-    /// The context uniques attribute strings for as long as it lives, so
-    /// every name is held as the `&'c str` its attribute hands back.
+    /// An attribute string lives as long as the context, so a name is held
+    /// as one.
     fn intern(&self, name: &str) -> &'c str {
         StringAttribute::new(self.context, name).value()
     }
@@ -116,8 +109,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         self.diagnostics.emit(diagnostic);
     }
 
-    /// A column reference that did not land, with the row it was resolved
-    /// against as the note.
     fn unresolved_column(&mut self, node: &impl AstNode, message: &str) {
         let mut diagnostic = self.diagnostic(node.syntax().text_range(), message);
         if let Some(note) = self.row_note() {
@@ -165,19 +156,29 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     }
 
     fn hole<'a>(&self, block: BlockRef<'c, 'a>, range: TextRange, ty: Type<'c>) -> Value<'c, 'a> {
-        let loc = self.location_at(range.start().into());
+        let loc = self.location_at(range);
         block
             .append_operation(yzl::missing(self.context, ty, loc).into())
             .first_result()
     }
 
     fn location(&self, node: &impl AstNode) -> Location<'c> {
-        self.location_at(node.syntax().text_range().start().into())
+        self.location_at(node.syntax().text_range())
     }
 
-    fn location_at(&self, offset: usize) -> Location<'c> {
-        let (line, column) = self.line_col(offset);
-        Location::new(self.context, self.name(), line, column)
+    /// A location carries the whole range, so a pass reporting against the
+    /// op underlines what the program wrote rather than one character of it.
+    fn location_at(&self, range: TextRange) -> Location<'c> {
+        let (start_line, start_column) = self.line_col(range.start().into());
+        let (end_line, end_column) = self.line_col(range.end().into());
+        Location::file_line_col_range(
+            self.context,
+            self.name(),
+            start_line,
+            start_column,
+            end_line,
+            end_column,
+        )
     }
 
     fn line_col(&self, offset: usize) -> (usize, usize) {

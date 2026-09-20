@@ -1,8 +1,7 @@
-//! The yzl → yzr conversion, done as one rebuild. Names become block
-//! arguments, declarations move to the dialect that owns their type, and
-//! stage ops become `yzr`, after which `yzl` is illegal. A new module is
-//! built rather than rewriting in place, so no operand is remapped under its
-//! own use.
+//! Expects a resolved, inferred module and builds the `yz` + `yzr` module
+//! it lowers to; anything it cannot lower is reported and left out. A new
+//! module is built rather than rewritten in place, so no operand is
+//! remapped under its own use.
 
 use std::collections::HashMap;
 
@@ -20,8 +19,6 @@ mod region;
 mod rel;
 mod row;
 
-/// Expects a resolved, inferred module. Returns the `yz` + `yzr` module it
-/// lowers to; anything it cannot lower is reported and left out.
 pub fn lower_yzl_to_yzr<'c>(context: &'c Context, module: &Module<'c>) -> Module<'c> {
     let lowered = Module::new(Location::unknown(context));
     {
@@ -42,11 +39,10 @@ pub fn lower_yzl_to_yzr<'c>(context: &'c Context, module: &Module<'c>) -> Module
     lowered
 }
 
-/// A row: the columns flowing out of a stage, in order.
 type Row<'c> = Vec<(&'c str, Type<'c>)>;
 
-/// What a lowered region yields: the values its body computed, or the whole
-/// row with those values substituted into the columns they replace.
+/// What a region yields: what its body computed, or the whole row with
+/// those values substituted in.
 enum Yielded<'k> {
     Body,
     Substituted(&'k [usize]),
@@ -54,12 +50,10 @@ enum Yielded<'k> {
 
 struct YzlToYzr<'c, 'a> {
     context: &'c Context,
-    /// What each yzl stage value became, and the row it carries.
     stages: HashMap<ValueId, (Value<'c, 'a>, Row<'c>)>,
-    /// The symbol declaring each distinct row shape, so a shape nobody
-    /// declared is declared once.
+    /// The struct declaring each row shape; one nobody declared is declared
+    /// once.
     shapes: HashMap<Row<'c>, &'c str>,
-    /// The rows each `let` name stands for, already produced.
     bindings: HashMap<&'c str, (Value<'c, 'a>, Row<'c>)>,
 }
 
@@ -104,7 +98,6 @@ fn op_name<'c>(op: OperationRef<'c, '_>) -> String {
         .to_string()
 }
 
-/// The fields a struct declaration carries, in order.
 fn struct_fields<'c>(item: &StructOp<'c, '_>) -> Row<'c> {
     item.names()
         .strings()
