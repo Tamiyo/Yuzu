@@ -14,6 +14,7 @@ use yuzu_mlir::{ListType, ParamType, StructType};
 
 use crate::lower_ast_to_yzl::symbols::{Binding, Callable, Kind, Lookup, Reference, Row};
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
+use yuzu_mlir::SymbolTable as MlirSymbolTable;
 
 /// Where a `fn` is written, which decides the generics its surroundings
 /// supply and whether it needs a body.
@@ -293,14 +294,19 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         self.diagnostics.emit(diagnostic);
     }
 
-    pub(super) fn convert_stmt<'a>(&mut self, block: BlockRef<'c, 'a>, stmt: &ast::Stmt) {
+    pub(super) fn convert_stmt<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        stmt: &ast::Stmt,
+        symbols: &mut MlirSymbolTable<'c, '_>,
+    ) {
         match stmt {
             ast::Stmt::StructStmt(decl) => self.convert_struct(block, decl),
             ast::Stmt::TableStmt(decl) => self.convert_table(block, decl),
             ast::Stmt::FuncStmt(decl) => self.convert_fn(block, decl),
             ast::Stmt::TraitStmt(decl) => self.convert_trait(block, decl),
             ast::Stmt::ImplStmt(decl) => self.convert_impl(block, decl),
-            ast::Stmt::LetStmt(decl) => self.convert_let(block, decl),
+            ast::Stmt::LetStmt(decl) => self.convert_let(decl, symbols),
             ast::Stmt::ExprStmt(stmt) => {
                 if self.module.is_some() && matches!(stmt.expr(), Some(ast::Expr::Rel(_))) {
                     self.report(stmt, "a module cannot hold a query");
@@ -613,7 +619,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         );
     }
 
-    fn convert_let<'a>(&mut self, block: BlockRef<'c, 'a>, decl: &ast::LetStmt) {
+    /// The symbol table places the operation, so this takes no block.
+    fn convert_let(&mut self, decl: &ast::LetStmt, symbols: &mut MlirSymbolTable<'c, '_>) {
         let Some(name) = self.ident(decl.name()) else {
             self.report(decl, "let binding is missing its name");
             return;
@@ -624,63 +631,50 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             return;
         };
 
-        let symbol = self.rebound_symbol(name);
         let annotation = decl
             .type_annotation()
             .map(|annotation| self.annotation_type(annotation, &[]));
         let region = Region::new();
         let body = region.append_block(Block::new(&[]));
-        let value = match &expr {
+        // A query's row has to be taken before its scope is left.
+        let (value, row) = match &expr {
             ast::Expr::Rel(rel) => {
                 let value = self.convert_rel(body, rel);
                 let row = self.symbols.row().clone();
                 self.symbols.leave();
-                self.symbols.bind(
-                    name,
-                    Binding {
-                        kind: Kind::Relation { row, symbol },
-                        declared: decl.syntax().text_range(),
-                        visibility: decl.visibility(),
-                    },
-                );
-                value
+                (value, Some(row))
             }
-            _ => {
-                let value = self.convert_expr(body, &Locals::new(), &expr);
-                self.symbols.bind(
-                    name,
-                    Binding {
-                        kind: Kind::Let { symbol },
-                        declared: decl.syntax().text_range(),
-                        visibility: decl.visibility(),
-                    },
-                );
-                value
-            }
+            _ => (self.convert_expr(body, &Locals::new(), &expr), None),
         };
 
         body.append_operation(yzl::r#yield(self.context, &[value], self.location(decl)).into());
         let mut builder = yzl::LetOperationBuilder::new(self.context, self.location(decl))
-            .sym_name(StringAttribute::new(self.context, symbol))
+            .sym_name(StringAttribute::new(self.context, self.symbol_for(name)))
             .body(region);
         if let Some(annotation) = annotation {
             builder = builder.annotation(TypeAttribute::new(annotation));
         }
 
-        block.append_operation(builder.build().into());
-    }
-
-    /// A `let` taking a name something else already holds gets a symbol of
-    /// its own: the code between the two reads the earlier one, and both
-    /// stay in the module.
-    fn rebound_symbol(&mut self, name: &'c str) -> &'c str {
-        if self.symbols.binding(name).is_none() {
-            return self.symbol_for(name);
-        }
-
-        self.rebound += 1;
-        let taken = self.intern(&format!("{name}.{}", self.rebound));
-        self.symbol_for(taken)
+        // A `let` may take a name something else already holds: the code
+        // between the two reads the earlier one, so both stay in the module
+        // and the symbol table renames the second. What it assigned is what
+        // the binding reaches.
+        let assigned = symbols.insert(builder.build().into());
+        let symbol = StringAttribute::try_from(assigned)
+            .expect("a symbol name is a string")
+            .value();
+        let kind = match row {
+            Some(row) => Kind::Relation { row, symbol },
+            None => Kind::Let { symbol },
+        };
+        self.symbols.bind(
+            name,
+            Binding {
+                kind,
+                declared: decl.syntax().text_range(),
+                visibility: decl.visibility(),
+            },
+        );
     }
 
     fn convert_block<'a>(
@@ -1094,14 +1088,14 @@ external def upper(s: str) -> str
                 %4 = yz.add %2, %3 : !yzl.var, !yz.int64 -> !yzl.var
                 yzl.yield %4 : !yzl.var
               }
-              yzl.let @cap.1 {
+              yzl.let @cap_0 {
                 %2 = yz.constant_int 2
                 yzl.yield %2 : !yz.int64
               }
               %0 = yzl.from @t
               %1 = yzl.where %0 {
               ^bb0(%arg0: !yzl.var):
-                %2 = yzl.call @cap.1() : () -> !yzl.var {callee_kind = "let"}
+                %2 = yzl.call @cap_0() : () -> !yzl.var {callee_kind = "let"}
                 %3 = yz.cmp "gt", %arg0, %2 : !yzl.var, !yzl.var -> !yzl.var
                 yzl.yield %3 : !yzl.var
               }
@@ -1119,7 +1113,7 @@ external def upper(s: str) -> str
             "struct Row { a: int64 }\ntable t = Row\n\nlet base = from t\nlet base = from t |> where a > 1\n\nfrom base\n|> select a as out\n",
         );
         assert!(
-            module.contains("yzl.let @base.1") && module.contains("yzl.from @base.1"),
+            module.contains("yzl.let @base_0") && module.contains("yzl.from @base_0"),
             "`from` names the rebinding:\n{module}"
         );
     }

@@ -235,7 +235,7 @@ fn plan_through_mlir(
         &files,
         diagnostics,
         &yuzu_types::Builtins,
-    )?;
+    );
 
     let verified = yuzu_mlir::diagnostics::capture(&context, sources, diagnostics, || {
         module.as_operation().verify()

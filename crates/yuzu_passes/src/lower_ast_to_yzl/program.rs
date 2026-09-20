@@ -4,6 +4,7 @@ use melior::ir::operation::OperationLike;
 use melior::ir::{BlockLike, BlockRef, Location, Module, ValueLike};
 use yuzu_ast::{AstNode, ast};
 use yuzu_diagnostics::source_map::SourceId;
+use yuzu_mlir::SymbolTable as MlirSymbolTable;
 use yuzu_mlir::ext::{BlockExt, OperationExt};
 use yuzu_mlir::ods::yzl;
 use yuzu_mlir::types;
@@ -45,22 +46,24 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             self.bind_imports(&file.root);
             self.hoist(&file.root);
             self.record_declarations(&file.root);
-            self.exports
-                .insert(self.module, self.symbols.take_exports());
+            self.leave();
         }
 
         let reached = self.reached(files);
         let top = module.body();
-        for file in files {
-            self.enter(file);
-            if let Some(scope) = self.exports.get(&self.module) {
-                self.symbols.restore(scope.clone());
-            }
-
-            for stmt in file.root.stmts() {
-                if file.module.is_none() || self.is_reached(&reached, &stmt) {
-                    self.convert_stmt(top, &stmt);
+        {
+            // The module's own symbol table renames a name taken twice, so a
+            // second `let` under one gets a symbol without us minting it.
+            let mut symbols = MlirSymbolTable::new(&module);
+            for file in files {
+                self.enter(file);
+                for stmt in file.root.stmts() {
+                    if file.module.is_none() || self.is_reached(&reached, &stmt) {
+                        self.convert_stmt(top, &stmt, &mut symbols);
+                    }
                 }
+
+                self.leave();
             }
         }
 
@@ -68,10 +71,18 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         module
     }
 
+    /// Moves what the file declared out of `exports` and into the table the
+    /// walk resolves against. `leave` moves it back, so one of the two holds
+    /// it at a time.
     fn enter(&mut self, file: &File) {
         self.source_id = file.source_id;
         self.module = file.module.as_deref().map(|module| self.intern(module));
-        self.symbols = SymbolTable::new();
+        let declarations = self.exports.remove(&self.module).unwrap_or_default();
+        self.symbols = SymbolTable::over(declarations);
+    }
+
+    fn leave(&mut self) {
+        self.exports.insert(self.module, self.symbols.take_module());
     }
 
     fn record_declarations(&mut self, root: &ast::Root) {

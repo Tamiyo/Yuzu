@@ -28,18 +28,20 @@ mod functions;
 mod rel;
 mod types;
 
-/// Translates the module's query. `None` when the module has none, or when
-/// it holds something Substrait cannot express — which is reported against
-/// the operation that holds it, so run this inside
-/// `yuzu_mlir::diagnostics::capture`.
+/// Translates the module's query. `None` once it has reported why it could
+/// not, so run this inside `yuzu_mlir::diagnostics::capture`.
 pub fn translate<'c>(context: &'c Context, module: &Module<'c>) -> Option<Plan> {
     let symbols = SymbolTable::new(module);
     let body = module.body();
-    let query = body
+    let Some(output) = body
         .operations()
         .find(|op| matches!(op.as_yzr(), Some(YzrOp::Output(_))))
-        .and_then(|output| output.try_first_operand())?;
+    else {
+        emit_error(module.as_operation().location(), "the program has no query");
+        return None;
+    };
 
+    let query = output.try_first_operand()?;
     let mut translator = Translator {
         context,
         symbols: &symbols,
@@ -50,12 +52,12 @@ pub fn translate<'c>(context: &'c Context, module: &Module<'c>) -> Option<Plan> 
     // The relation first: translating it is what registers the functions the
     // plan has to declare.
     let relation = translator.translate_rel(query)?;
-    let names = translator
-        .row(query.r#type())?
-        .0
-        .iter()
-        .map(|name| name.to_string())
-        .collect();
+    let Some((columns, _)) = translator.row(query.r#type()) else {
+        emit_error(output.location(), "the query has no row shape to name");
+        return None;
+    };
+
+    let names = columns.iter().map(|name| name.to_string()).collect();
 
     Some(Plan {
         version: Some(version::version_with_producer("yuzu")),
@@ -140,8 +142,7 @@ pub(crate) mod test_support {
             &[yuzu_passes::File::entry(source_id, root)],
             &mut diagnostics,
             &yuzu_types::Builtins,
-        )
-        .expect("the source lowers");
+        );
 
         let plan = yuzu_mlir::diagnostics::capture(&context, &sources, &mut diagnostics, || {
             yuzu_passes::infer_types(&context, &mut module, &yuzu_types::Builtins);
@@ -420,6 +421,19 @@ mod tests {
     }
 
     /// `**` has no Substrait function, and the target is what says so.
+    /// A file of declarations and no query produces nothing, which is worth
+    /// saying. It is about the program rather than a place in it, so it
+    /// prints as its message alone.
+    #[test]
+    fn reports_a_program_with_no_query() {
+        check_error(
+            "struct Row { a: int64 }\ntable t = Row\n",
+            expect![[r#"
+                error: the program has no query
+            "#]],
+        );
+    }
+
     #[test]
     fn reports_an_operator_the_target_does_not_have() {
         check_error(

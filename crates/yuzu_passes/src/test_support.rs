@@ -50,8 +50,7 @@ pub(crate) fn lower<'c>(context: &'c Context, program: &Program) -> Lowered<'c> 
         &files,
         &mut diagnostics,
         &yuzu_types::Builtins,
-    )
-    .expect("a program with files lowers");
+    );
 
     Lowered {
         module,

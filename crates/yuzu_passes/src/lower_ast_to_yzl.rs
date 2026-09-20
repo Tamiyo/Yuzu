@@ -26,47 +26,56 @@ mod symbols;
 
 pub use program::File;
 
-/// `files` is in the order the imports were resolved, the entry file last.
+/// `files` is in the order the imports were resolved, the entry file last,
+/// and holds at least that one.
+///
+/// What it could not lower it reports, and stands a `yzl.missing` hole in
+/// the place, so the module it returns may hold holes. Whether the program
+/// compiled is the engine's answer, not this one's.
 pub fn lower_ast_to_yzl<'c>(
     context: &'c Context,
     sources: &SourceMap,
     files: &[File],
     diagnostics: &mut DiagnosticsEngine,
     registry: &dyn FunctionRegistry,
-) -> Option<Module<'c>> {
-    let entry = files.last()?;
+) -> Module<'c> {
+    let entry = files.last().expect("a program has an entry file");
     let mut lowerer = AstToYzl {
         context,
         sources,
+        diagnostics,
+        registry,
         source_id: entry.source_id,
         module: None,
-        diagnostics,
-        symbols: SymbolTable::new(),
         exports: HashMap::new(),
         declarations: HashMap::new(),
-        registry,
-        rebound: 0,
+        symbols: SymbolTable::new(),
     };
 
-    Some(lowerer.lower(files, entry))
+    lowerer.lower(files, entry)
 }
 
 struct AstToYzl<'c, 'd> {
+    // What the whole run is given.
     context: &'c Context,
     sources: &'d SourceMap,
-    source_id: SourceId,
-    /// The path of the file being lowered; `None` for the entry file.
-    module: Option<&'c str>,
     diagnostics: &'d mut DiagnosticsEngine,
-    symbols: SymbolTable<'c>,
-    /// What each module declared, by path.
-    exports: HashMap<Option<&'c str>, HashMap<&'c str, Binding<'c>>>,
-    /// Where each symbol was declared, and the module it was declared in.
-    declarations: HashMap<&'c str, (Option<&'c str>, ast::Stmt)>,
     registry: &'d dyn FunctionRegistry,
-    /// How many `let`s have taken a name something else already held.
-    rebound: usize,
+
+    // Which file is being lowered. `module` is its path, `None` for the
+    // entry file.
+    source_id: SourceId,
+    module: Option<&'c str>,
+
+    // What the program declares. `enter` moves a module's own declarations
+    // into `symbols` and `leave` moves them back, so one side holds them.
+    exports: Exports<'c>,
+    declarations: HashMap<&'c str, (Option<&'c str>, ast::Stmt)>,
+    symbols: SymbolTable<'c>,
 }
+
+/// What each module declared, by path.
+type Exports<'c> = HashMap<Option<&'c str>, HashMap<&'c str, Binding<'c>>>;
 
 /// The values a function body's `let`s bound, by slot. They live apart from
 /// the symbol table because each borrows the block being built.

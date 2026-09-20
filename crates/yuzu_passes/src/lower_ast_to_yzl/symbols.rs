@@ -254,11 +254,18 @@ impl<'c> SymbolTable<'c> {
         self.module.get(name)
     }
 
-    pub(super) fn restore(&mut self, bindings: HashMap<&'c str, Binding<'c>>) {
-        self.module = bindings;
+    /// A table over a module's declarations, which the caller holds between
+    /// the walks over its file.
+    pub(super) fn over(module: HashMap<&'c str, Binding<'c>>) -> Self {
+        Self {
+            module,
+            scopes: Vec::new(),
+        }
     }
 
-    pub(super) fn take_exports(&mut self) -> HashMap<&'c str, Binding<'c>> {
+    /// Gives the declarations back, leaving the table empty. One side holds
+    /// them at a time, so the two cannot drift apart.
+    pub(super) fn take_module(&mut self) -> HashMap<&'c str, Binding<'c>> {
         mem::take(&mut self.module)
     }
 

@@ -70,8 +70,7 @@ fn the_correctness_corpus_lowers() {
                 &[File::entry(source_id, root)],
                 &mut diagnostics,
                 &yuzu_types::Builtins,
-            )
-            .expect("an entry file lowers");
+            );
             let messages: Vec<&str> = diagnostics
                 .diagnostics()
                 .iter()
