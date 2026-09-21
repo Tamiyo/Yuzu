@@ -246,7 +246,7 @@ def Yzl_CallOp : Yzl_Op<"call", [Pure]> {
     at the point the call is built, so nothing downstream asks again.
   }];
   let arguments = (ins FlatSymbolRefAttr:$callee, Variadic<AnyType>:$operands,
-                       OptionalAttr<StrAttr>:$callee_kind,
+                       OptionalAttr<StrAttr>:$callee_source,
                        OptionalAttr<TypeArrayAttr>:$type_args, UnitAttr:$agg);
   let results = (outs AnyType:$result);
   let assemblyFormat =

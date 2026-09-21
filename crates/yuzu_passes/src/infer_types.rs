@@ -10,7 +10,7 @@ use melior::ir::attribute::{ArrayAttribute, TypeAttribute};
 use melior::ir::operation::{OperationLike, OperationMutLike, OperationRef, OperationRefMut};
 use melior::ir::r#type::FunctionType;
 use melior::ir::{Attribute, BlockRef, Location, Module, RegionLike, Type, Value, ValueLike};
-use yuzu_mlir::attributes::CalleeKind;
+use yuzu_mlir::attributes::CalleeSource;
 use yuzu_mlir::diagnostics::emit_error;
 use yuzu_mlir::ext::{
     ArrayAttributeExt, BlockExt, OperationCast, OperationExt, RegionExt, ValueExt, ValueId,
@@ -259,9 +259,9 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
         match op.as_yzl() {
             Some(YzlOp::Call(call)) => {
                 let callee = call.callee().value();
-                match call.callee_kind() {
-                    Some(CalleeKind::Builtin) => self.resolve_builtin_ty(op, callee),
-                    Some(CalleeKind::Let) => {
+                match call.callee_source() {
+                    Some(CalleeSource::Builtin) => self.resolve_builtin_ty(op, callee),
+                    Some(CalleeSource::Let) => {
                         let yielded = self
                             .bindings
                             .get(callee)
@@ -271,7 +271,7 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
                             self.unify(op, term, yielded);
                         }
                     }
-                    Some(CalleeKind::Fn | CalleeKind::AggFn | CalleeKind::External) | None => {
+                    Some(CalleeSource::Fn | CalleeSource::External) | None => {
                         let Some(signature) = declared.signatures.get(callee) else {
                             return;
                         };
@@ -750,14 +750,14 @@ from t
     "#,
             expect![[r#"
                 module {
-                  yzl.struct @Row ["a", "b", "rating"] : [!yz.int64, !yz.int64, !yz.float64]
-                  yzl.table @t of @Row
+                  yzl.struct @Row ["a", "b", "rating"] : [!yz.int64, !yz.int64, !yz.float64] {sym_visibility = "private"}
+                  yzl.table @t of @Row {sym_visibility = "private"}
                   yzl.fn @f params ["x"] (!yz.int64) -> !yz.int64 {
                   ^bb0(%arg0: !yz.int64):
                     %4 = yz.constant_int 3
                     %5 = yz.mul %arg0, %4 : !yz.int64, !yz.int64 -> !yz.int64
                     yzl.return %5 : !yz.int64
-                  }
+                  } {sym_visibility = "private"}
                   %0 = yzl.from @t
                   %1 = yzl.where %0 {
                   ^bb0(%arg0: !yz.int64, %arg1: !yz.int64, %arg2: !yz.float64):
@@ -767,14 +767,14 @@ from t
                   }
                   %2 = yzl.extend %1 as ["e"] {
                   ^bb0(%arg0: !yz.int64, %arg1: !yz.int64, %arg2: !yz.float64):
-                    %4 = yzl.call @f(%arg0) : (!yz.int64) -> !yz.int64 {callee_kind = "fn"}
+                    %4 = yzl.call @f(%arg0) : (!yz.int64) -> !yz.int64 {callee_source = "fn"}
                     %5 = yz.add %4, %arg1 : !yz.int64, !yz.int64 -> !yz.int64
                     yzl.yield %5 : !yz.int64
                   }
                   %3 = yzl.aggregate %2 group_by ["b"] as ["s", "r"] {
                   ^bb0(%arg0: !yz.int64, %arg1: !yz.int64, %arg2: !yz.float64, %arg3: !yz.int64):
-                    %4 = yzl.call @sum(%arg3) : (!yz.int64) -> !yz.int64 {agg, callee_kind = "builtin"}
-                    %5 = yzl.call @avg(%arg2) : (!yz.float64) -> !yz.float64 {agg, callee_kind = "builtin"}
+                    %4 = yzl.call @sum(%arg3) : (!yz.int64) -> !yz.int64 {agg, callee_source = "builtin"}
+                    %5 = yzl.call @avg(%arg2) : (!yz.float64) -> !yz.float64 {agg, callee_source = "builtin"}
                     yzl.yield %4, %5 : !yz.int64, !yz.float64
                   } {key_cols = [1]}
                   yzl.output %3
@@ -812,7 +812,7 @@ from t
                   yzl.trait @Numeric {
                     yzl.fn @zero generics ["Self"] params ["x"] (!yzl.param<"Self">) -> !yzl.param<"Self"> {
                     }
-                  }
+                  } {sym_visibility = "private"}
                   yzl.impl @Numeric for @int64 {
                     yzl.fn @zero generics ["Self"] params ["x"] (!yz.int64) -> !yz.int64 {
                     ^bb0(%arg0: !yzl.var):
@@ -830,14 +830,14 @@ from t
                   yzl.fn @id generics ["T"] where ["T"] : [@Numeric] params ["x"] (!yzl.param<"T">) -> !yzl.param<"T"> {
                   ^bb0(%arg0: !yzl.param<"T">):
                     yzl.return %arg0 : !yzl.param<"T">
-                  }
-                  yzl.struct @Row ["a", "r"] : [!yz.int64, !yz.float64]
-                  yzl.table @t of @Row
+                  } {sym_visibility = "private"}
+                  yzl.struct @Row ["a", "r"] : [!yz.int64, !yz.float64] {sym_visibility = "private"}
+                  yzl.table @t of @Row {sym_visibility = "private"}
                   %0 = yzl.from @t
                   %1 = yzl.extend %0 as ["m", "n"] {
                   ^bb0(%arg0: !yz.int64, %arg1: !yz.float64):
-                    %2 = yzl.call @id(%arg0) : (!yz.int64) -> !yz.int64 {callee_kind = "fn", type_args = [!yz.int64]}
-                    %3 = yzl.call @id(%arg1) : (!yz.float64) -> !yz.float64 {callee_kind = "fn", type_args = [!yz.float64]}
+                    %2 = yzl.call @id(%arg0) : (!yz.int64) -> !yz.int64 {callee_source = "fn", type_args = [!yz.int64]}
+                    %3 = yzl.call @id(%arg1) : (!yz.float64) -> !yz.float64 {callee_source = "fn", type_args = [!yz.float64]}
                     yzl.yield %2, %3 : !yz.int64, !yz.float64
                   }
                   yzl.output %1
@@ -861,13 +861,13 @@ from t
             expect![[r#"
                 module {
                   yzl.fn @median params ["x"] (!yz.float64) -> !yz.float64 external {
-                  }
-                  yzl.struct @Row ["rating"] : [!yz.float64]
-                  yzl.table @t of @Row
+                  } {sym_visibility = "private"}
+                  yzl.struct @Row ["rating"] : [!yz.float64] {sym_visibility = "private"}
+                  yzl.table @t of @Row {sym_visibility = "private"}
                   %0 = yzl.from @t
                   %1 = yzl.extend %0 as ["m"] {
                   ^bb0(%arg0: !yz.float64):
-                    %2 = yzl.call @median(%arg0) : (!yz.float64) -> !yz.float64 {callee_kind = "external"}
+                    %2 = yzl.call @median(%arg0) : (!yz.float64) -> !yz.float64 {callee_source = "external"}
                     yzl.yield %2 : !yz.float64
                   }
                   yzl.output %1
@@ -980,15 +980,15 @@ from t
 "#,
             expect![[r#"
                 module {
-                  yzl.struct @Row ["a"] : [!yz.int64]
-                  yzl.table @t of @Row
+                  yzl.struct @Row ["a"] : [!yz.int64] {sym_visibility = "private"}
+                  yzl.table @t of @Row {sym_visibility = "private"}
                   %0 = yzl.from @t
                   %1 = yzl.where %0 {
                   ^bb0(%arg0: !yz.int64):
                     %2 = yz.constant_int 1
                     %3 = yz.constant_int 3
                     %4 = yzl.list[%2, %3] : (!yz.int64, !yz.int64) -> !yz.list<!yz.int64>
-                    %5 = yzl.call @in(%arg0, %4) : (!yz.int64, !yz.list<!yz.int64>) -> !yz.bool {callee_kind = "builtin"}
+                    %5 = yzl.call @in(%arg0, %4) : (!yz.int64, !yz.list<!yz.int64>) -> !yz.bool {callee_source = "builtin"}
                     yzl.yield %5 : !yz.bool
                   }
                   yzl.output %1
@@ -1119,14 +1119,14 @@ from t
 "#,
             expect![[r#"
                 module {
-                  yzl.struct @Row ["a"] : [!yz.int64]
-                  yzl.table @t of @Row
+                  yzl.struct @Row ["a"] : [!yz.int64] {sym_visibility = "private"}
+                  yzl.table @t of @Row {sym_visibility = "private"}
                   yzl.let @xs {
                     %2 = yz.constant_int 1
                     %3 = yz.constant_int 2
                     %4 = yzl.list[%2, %3] : (!yz.int64, !yz.int64) -> !yz.list<!yz.int64>
                     yzl.yield %4 : !yz.list<!yz.int64>
-                  }
+                  } {sym_visibility = "private"}
                   %0 = yzl.from @t
                   %1 = yzl.where %0 {
                   ^bb0(%arg0: !yz.int64):

@@ -11,11 +11,10 @@ use crate::ops::yzl::CallOp;
 /// so the attribute is a plain string. The spellings live here rather than at
 /// each site that tests one, and the enum is what the passes match on.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum CalleeKind {
-    /// A function the program declared. Expansion replaces the call.
+pub enum CalleeSource {
+    /// A function the program declared, scalar or aggregate. Expansion
+    /// replaces the call.
     Fn,
-    /// An `agg fn`: declared, and aggregating. Expansion replaces it too.
-    AggFn,
     /// A function the registry supplies, scalar or aggregate.
     Builtin,
     /// Declared without a body: the engine is promised to have it, and the
@@ -27,12 +26,11 @@ pub enum CalleeKind {
     Let,
 }
 
-impl CalleeKind {
+impl CalleeSource {
     /// The spelling the attribute carries.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Fn => "fn",
-            Self::AggFn => "agg_fn",
             Self::Builtin => "builtin",
             Self::External => "external",
             Self::Let => "let",
@@ -41,47 +39,41 @@ impl CalleeKind {
 }
 
 impl CallOp<'_, '_> {
-    /// What this call resolved to, or `None` on one that resolution has not
-    /// reached. This stands in for the generated accessor — `build.rs` leaves
-    /// `callee_kind` out of the view so the attribute reads back as what it
-    /// means rather than as the string it is stored in.
-    pub fn callee_kind(&self) -> Option<CalleeKind> {
-        let attribute = self.operation().attribute("callee_kind").ok()?;
+    pub fn callee_source(&self) -> Option<CalleeSource> {
+        let attribute = self.operation().attribute("callee_source").ok()?;
         let text = StringAttribute::try_from(attribute)
-            .expect("`callee_kind` on `yzl.call` is a string attribute");
+            .expect("`callee_source` on `yzl.call` is a string attribute");
+
         match text.value() {
-            "fn" => Some(CalleeKind::Fn),
-            "agg_fn" => Some(CalleeKind::AggFn),
-            "builtin" => Some(CalleeKind::Builtin),
-            "external" => Some(CalleeKind::External),
-            "let" => Some(CalleeKind::Let),
-            other => panic!("`{other}` is not a callee kind resolution writes"),
+            "fn" => Some(CalleeSource::Fn),
+            "builtin" => Some(CalleeSource::Builtin),
+            "external" => Some(CalleeSource::External),
+            "let" => Some(CalleeSource::Let),
+            other => panic!("`{other}` is not a callee source resolution writes"),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::CalleeKind;
+    use super::CalleeSource;
 
     /// The spelling and the reading are one pair, so a kind that goes onto an
     /// op comes back as itself.
     #[test]
     fn every_kind_spells_itself() {
         for kind in [
-            CalleeKind::Fn,
-            CalleeKind::AggFn,
-            CalleeKind::Builtin,
-            CalleeKind::External,
-            CalleeKind::Let,
+            CalleeSource::Fn,
+            CalleeSource::Builtin,
+            CalleeSource::External,
+            CalleeSource::Let,
         ] {
             let spelled = kind.as_str();
             let read = match spelled {
-                "fn" => CalleeKind::Fn,
-                "agg_fn" => CalleeKind::AggFn,
-                "builtin" => CalleeKind::Builtin,
-                "external" => CalleeKind::External,
-                "let" => CalleeKind::Let,
+                "fn" => CalleeSource::Fn,
+                "builtin" => CalleeSource::Builtin,
+                "external" => CalleeSource::External,
+                "let" => CalleeSource::Let,
                 other => panic!("`{other}` is not a kind this reads back"),
             };
 

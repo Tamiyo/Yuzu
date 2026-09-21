@@ -313,8 +313,7 @@ from t
         );
     }
 
-    /// The struct it declared outlives it: nothing yet collects a symbol no
-    /// type names.
+    /// Symbol DCE takes the struct it declared along with it.
     #[test]
     fn a_relation_the_output_never_reads_is_dropped() {
         check_simplified(
@@ -330,14 +329,13 @@ from t
             expect![[r#"
                 module {
                   yz.struct @Row ["a", "b"] : [!yz.int64, !yz.int64]
-                  yz.struct @row ["a", "b", "c"] : [!yz.int64, !yz.int64, !yz.int64]
                   %0 = yzr.table @t : !yz.struct<@Row>
-                  yz.struct @row_0 ["x"] : [!yz.int64]
+                  yz.struct @row ["x"] : [!yz.int64]
                   %1 = yzr.project %0 {
                   ^bb0(%arg0: !yz.int64, %arg1: !yz.int64):
                     yzr.yield %arg0 : !yz.int64
-                  } : !yz.struct<@Row> -> !yz.struct<@row_0>
-                  yzr.output %1 : !yz.struct<@row_0>
+                  } : !yz.struct<@Row> -> !yz.struct<@row>
+                  yzr.output %1 : !yz.struct<@row>
                 }
             "#]],
         );

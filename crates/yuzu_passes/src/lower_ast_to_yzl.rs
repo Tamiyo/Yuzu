@@ -1,8 +1,6 @@
 //! Names resolve as they are emitted, and a type the source does not write
 //! comes out as `!yzl.var` for inference.
 
-use std::collections::HashMap;
-
 use melior::Context;
 use melior::ir::attribute::StringAttribute;
 use melior::ir::{BlockLike, BlockRef, Location, Module, Type, Value};
@@ -16,7 +14,7 @@ use yuzu_mlir::ext::OperationExt;
 use yuzu_mlir::ods::yzl;
 use yuzu_types::FunctionRegistry;
 
-use crate::lower_ast_to_yzl::symbols::{Binding, SymbolTable};
+use crate::lower_ast_to_yzl::symbols::SymbolTable;
 
 mod expr;
 mod program;
@@ -42,14 +40,11 @@ pub fn lower_ast_to_yzl<'c>(
     let entry = files.last().expect("a program has an entry file");
     let mut lowerer = AstToYzl {
         context,
-        sources,
-        diagnostics,
-        registry,
-        source_id: entry.source_id,
-        module: None,
-        exports: HashMap::new(),
-        declarations: HashMap::new(),
         symbols: SymbolTable::new(),
+        registry,
+        sources,
+        source_id: entry.source_id,
+        diagnostics,
     };
 
     lowerer.lower(files, entry)
@@ -58,50 +53,38 @@ pub fn lower_ast_to_yzl<'c>(
 struct AstToYzl<'c, 'd> {
     // What the whole run is given.
     context: &'c Context,
-    sources: &'d SourceMap,
-    diagnostics: &'d mut DiagnosticsEngine,
-    registry: &'d dyn FunctionRegistry,
-
-    // Which file is being lowered. `module` is its path, `None` for the
-    // entry file.
-    source_id: SourceId,
-    module: Option<&'c str>,
-
-    // What the program declares. `enter` moves a module's own declarations
-    // into `symbols` and `leave` moves them back, so one side holds them.
-    exports: Exports<'c>,
-    declarations: HashMap<&'c str, (Option<&'c str>, ast::Stmt)>,
     symbols: SymbolTable<'c>,
+    registry: &'d dyn FunctionRegistry,
+    sources: &'d SourceMap,
+    source_id: SourceId,
+    diagnostics: &'d mut DiagnosticsEngine,
 }
-
-/// What each module declared, by path.
-type Exports<'c> = HashMap<Option<&'c str>, HashMap<&'c str, Binding<'c>>>;
 
 /// The values a function body's `let`s bound, by slot. They live apart from
 /// the symbol table because each borrows the block being built.
 type Locals<'c, 'a> = Vec<Value<'c, 'a>>;
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
-    fn symbol_for(&self, name: &'c str) -> &'c str {
-        match self.module {
-            Some(module) => self.intern(&format!("{module}.{name}")),
-            None => name,
+    /// The name a declaration is built under: qualified by its module, or
+    /// bare in the entry file.
+    fn built_symbol(&self, name: &str) -> &'c str {
+        match self.symbols.module().qualify(name) {
+            Some(symbol) => self.intern(&symbol),
+            None => self.intern(name),
         }
     }
 
-    /// An attribute string lives as long as the context, so a name is held
-    /// as one.
     fn intern(&self, name: &str) -> &'c str {
         StringAttribute::new(self.context, name).value()
     }
 
-    fn ident(&self, ident: Option<ast::Ident>) -> Option<&'c str> {
+    fn read_name(&self, ident: Option<ast::Ident>) -> Option<&'c str> {
         ident
             .and_then(|ident| ident.text())
             .map(|text| self.intern(&text))
     }
 
-    fn diagnostic(&self, range: TextRange, message: &str) -> DiagnosticBuilder {
+    fn error_at(&self, range: TextRange, message: &str) -> DiagnosticBuilder {
         let span = Span {
             source_id: self.source_id,
             range,
@@ -114,12 +97,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     }
 
     fn report_at(&mut self, range: TextRange, message: &str) {
-        let diagnostic = self.diagnostic(range, message);
+        let diagnostic = self.error_at(range, message);
         self.diagnostics.emit(diagnostic);
     }
 
     fn unresolved_column(&mut self, node: &impl AstNode, message: &str) {
-        let mut diagnostic = self.diagnostic(node.syntax().text_range(), message);
+        let mut diagnostic = self.error_at(node.syntax().text_range(), message);
         if let Some(note) = self.row_note() {
             diagnostic = diagnostic.note(note);
         }
@@ -148,12 +131,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         Some(format!("the row carries {}", names.join(", ")))
     }
 
-    fn position(&self, range: TextRange) -> String {
+    fn position_text(&self, range: TextRange) -> String {
         let (line, column) = self.line_col(range.start().into());
         format!("{}:{line}:{column}", self.name())
     }
 
-    fn missing<'a>(
+    fn report_and_hole<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
         node: &impl AstNode,
@@ -161,10 +144,15 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         ty: Type<'c>,
     ) -> Value<'c, 'a> {
         self.report(node, message);
-        self.hole(block, node.syntax().text_range(), ty)
+        self.emit_hole(block, node.syntax().text_range(), ty)
     }
 
-    fn hole<'a>(&self, block: BlockRef<'c, 'a>, range: TextRange, ty: Type<'c>) -> Value<'c, 'a> {
+    fn emit_hole<'a>(
+        &self,
+        block: BlockRef<'c, 'a>,
+        range: TextRange,
+        ty: Type<'c>,
+    ) -> Value<'c, 'a> {
         let loc = self.location_at(range);
         block
             .append_operation(yzl::missing(self.context, ty, loc).into())

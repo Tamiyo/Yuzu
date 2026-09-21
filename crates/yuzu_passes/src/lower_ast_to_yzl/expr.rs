@@ -1,3 +1,6 @@
+//! Expressions: each becomes `yz` scalar ops, or a `yzl.call` when a name
+//! resolves to something callable.
+
 use melior::ir::attribute::{
     FlatSymbolRefAttribute, FloatAttribute, IntegerAttribute, StringAttribute,
 };
@@ -9,7 +12,7 @@ use yuzu_mlir::ext::OperationExt;
 use yuzu_mlir::ods::{yz, yzl};
 use yuzu_mlir::types;
 
-use crate::lower_ast_to_yzl::symbols::{Callable, Kind, Lookup, Reference};
+use crate::lower_ast_to_yzl::symbols::{BindingKind, Callable, FunctionKind, Lookup, Reference};
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
@@ -32,7 +35,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             ast::Expr::ListExpr(list) => self.convert_list(block, locals, list, loc),
             ast::Expr::ParenExpr(paren) => match paren.expr() {
                 Some(inner) => self.convert_expr(block, locals, &inner),
-                None => self.missing(
+                None => self.report_and_hole(
                     block,
                     paren,
                     "parenthesized expression is missing its inner expression",
@@ -45,7 +48,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 self.symbols.leave();
                 value
             }
-            ast::Expr::StructExpr(literal) => self.missing(
+            ast::Expr::StructExpr(literal) => self.report_and_hole(
                 block,
                 literal,
                 "struct literals are not supported yet",
@@ -116,8 +119,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         ident: &ast::IdentExpr,
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
-        let Some(name) = self.ident(ident.name()) else {
-            return self.missing(
+        let Some(name) = self.read_name(ident.name()) else {
+            return self.report_and_hole(
                 block,
                 ident,
                 "identifier expression is missing its name",
@@ -137,9 +140,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         let base = match access.base() {
-            Some(ast::Expr::IdentExpr(ident)) => self.ident(ident.name()),
+            Some(ast::Expr::IdentExpr(ident)) => self.read_name(ident.name()),
             Some(_) => {
-                return self.missing(
+                return self.report_and_hole(
                     block,
                     access,
                     "field access on an expression is not supported yet",
@@ -150,7 +153,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         };
 
         let Some(base) = base else {
-            return self.missing(
+            return self.report_and_hole(
                 block,
                 access,
                 "field access is missing its base",
@@ -158,8 +161,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             );
         };
 
-        let Some(field) = self.ident(access.field()) else {
-            return self.missing(
+        let Some(field) = self.read_name(access.field()) else {
+            return self.report_and_hole(
                 block,
                 access,
                 "field access is missing its field",
@@ -184,7 +187,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let lhs = match binary.lhs() {
             Some(expr) => self.convert_expr(block, locals, &expr),
             None => {
-                return self.missing(
+                return self.report_and_hole(
                     block,
                     binary,
                     "binary expression is missing its left operand",
@@ -196,7 +199,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let rhs = match binary.rhs() {
             Some(expr) => self.convert_expr(block, locals, &expr),
             None => {
-                return self.missing(
+                return self.report_and_hole(
                     block,
                     binary,
                     "binary expression is missing its right operand",
@@ -245,7 +248,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 yz::not(context, var, contains, loc).into()
             }
             None => {
-                return self.missing(
+                return self.report_and_hole(
                     block,
                     binary,
                     "binary expression is missing its operator",
@@ -267,7 +270,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let value = match unary.expr() {
             Some(expr) => self.convert_expr(block, locals, &expr),
             None => {
-                return self.missing(
+                return self.report_and_hole(
                     block,
                     unary,
                     "unary expression is missing its operand",
@@ -285,7 +288,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             }
             Some(UnaryOp::Pos) => return value,
             None => {
-                return self.missing(
+                return self.report_and_hole(
                     block,
                     unary,
                     "unary expression is missing its operator",
@@ -305,10 +308,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         let callee = match call.callee() {
-            Some(ast::Expr::IdentExpr(ident)) => match self.ident(ident.name()) {
+            Some(ast::Expr::IdentExpr(ident)) => match self.read_name(ident.name()) {
                 Some(callee) => callee,
                 None => {
-                    return self.missing(
+                    return self.report_and_hole(
                         block,
                         call,
                         "call is missing its callee",
@@ -320,7 +323,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 return self.convert_module_call(block, locals, call, &access, loc);
             }
             Some(_) => {
-                return self.missing(
+                return self.report_and_hole(
                     block,
                     call,
                     "calling an expression is not supported yet",
@@ -328,7 +331,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 );
             }
             None => {
-                return self.missing(
+                return self.report_and_hole(
                     block,
                     call,
                     "call is missing its callee",
@@ -351,7 +354,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 }
                 None => format!("unresolved identifier `{callee}`"),
             };
-            return self.missing(block, call, &message, types::var(self.context));
+            return self.report_and_hole(block, call, &message, types::var(self.context));
         };
 
         self.check_arity(call, callee, callable, operands.len());
@@ -367,12 +370,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         let base = match access.base() {
-            Some(ast::Expr::IdentExpr(ident)) => self.ident(ident.name()),
+            Some(ast::Expr::IdentExpr(ident)) => self.read_name(ident.name()),
             _ => None,
         };
 
-        let (Some(base), Some(name)) = (base, self.ident(access.field())) else {
-            return self.missing(
+        let (Some(base), Some(name)) = (base, self.read_name(access.field())) else {
+            return self.report_and_hole(
                 block,
                 call,
                 "calling an expression is not supported yet",
@@ -381,7 +384,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         };
 
         let Some(path) = self.symbols.module_of(base) else {
-            return self.missing(
+            return self.report_and_hole(
                 block,
                 call,
                 &format!("`{base}` is not a module"),
@@ -396,12 +399,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .map(|arg| self.convert_expr(block, locals, &arg))
             .collect();
 
-        let Some(binding) = self.exported(call, path, name) else {
-            return self.hole(block, call.syntax().text_range(), types::var(self.context));
+        let Some(binding) = self.read_export(call, path, name) else {
+            return self.emit_hole(block, call.syntax().text_range(), types::var(self.context));
         };
 
-        let Kind::Func(callable) = binding.kind else {
-            return self.missing(
+        let BindingKind::Func(callable) = binding.kind else {
+            return self.report_and_hole(
                 block,
                 call,
                 &format!("`{name}` is a {}, not a function", binding.kind.what()),
@@ -466,7 +469,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         };
 
         self.unresolved_column(node, &message);
-        self.hole(block, node.syntax().text_range(), types::var(self.context))
+        self.emit_hole(block, node.syntax().text_range(), types::var(self.context))
     }
 
     fn call<'a>(
@@ -480,8 +483,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .result(types::var(self.context))
             .operands(operands)
             .callee(FlatSymbolRefAttribute::new(self.context, callable.symbol))
-            .callee_kind(StringAttribute::new(self.context, callable.kind.as_str()));
-        if callable.is_agg {
+            .callee_source(StringAttribute::new(self.context, callable.source.as_str()));
+        if callable.kind == FunctionKind::Aggregate {
             builder = builder.agg(Attribute::unit(self.context));
         }
 
@@ -494,12 +497,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         node: &impl AstNode,
-        callee: &str,
+        callee: &'c str,
         operands: &[Value<'c, 'a>],
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         let Some(callable) = self.symbols.operator(callee, self.registry) else {
-            return self.missing(
+            return self.report_and_hole(
                 block,
                 node,
                 &format!("`{callee}` is not available"),
@@ -583,20 +586,20 @@ from t
     fn an_operator_and_its_name_resolve_together() {
         expect![[r#"
             module {
-              yzl.struct @Row ["a"] : [!yz.int64]
-              yzl.table @t of @Row
+              yzl.struct @Row ["a"] : [!yz.int64] {sym_visibility = "private"}
+              yzl.table @t of @Row {sym_visibility = "private"}
               yzl.fn @shift_left params ["x", "y"] (!yz.int64, !yz.int64) -> !yz.int64 {
               ^bb0(%arg0: !yzl.var, %arg1: !yzl.var):
                 %2 = yz.add %arg0, %arg1 : !yzl.var, !yzl.var -> !yzl.var
                 yzl.return %2 : !yzl.var
-              }
+              } {sym_visibility = "private"}
               %0 = yzl.from @t
               %1 = yzl.select %0 as ["named", "operator"] {
               ^bb0(%arg0: !yzl.var):
                 %2 = yz.constant_int 2
-                %3 = yzl.call @shift_left(%arg0, %2) : (!yzl.var, !yz.int64) -> !yzl.var {callee_kind = "fn"}
+                %3 = yzl.call @shift_left(%arg0, %2) : (!yzl.var, !yz.int64) -> !yzl.var {callee_source = "fn"}
                 %4 = yz.constant_int 2
-                %5 = yzl.call @shift_left(%arg0, %4) : (!yzl.var, !yz.int64) -> !yzl.var {callee_kind = "fn"}
+                %5 = yzl.call @shift_left(%arg0, %4) : (!yzl.var, !yz.int64) -> !yzl.var {callee_source = "fn"}
                 yzl.yield %3, %5 : !yzl.var, !yzl.var
               }
               yzl.output %1
@@ -630,7 +633,7 @@ from t
         );
         assert!(
             module.contains(r#"yzl.call @pow(%arg0, %2)"#)
-                && module.contains(r#"callee_kind = "builtin""#),
+                && module.contains(r#"callee_source = "builtin""#),
             "the operator still reaches the builtin:\n{module}"
         );
     }

@@ -12,7 +12,7 @@ use melior::ir::{
     ValueLike,
 };
 use melior::{Context, IrRewriter, RewriterBase};
-use yuzu_mlir::attributes::CalleeKind;
+use yuzu_mlir::attributes::CalleeSource;
 use yuzu_mlir::diagnostics::emit_error;
 use yuzu_mlir::ext::{
     ArrayAttributeExt, BlockExt, OperationCast, OperationExt, RegionExt, ValueExt, ValueId,
@@ -58,8 +58,8 @@ fn collect_calls<'c, 'a>(block: BlockRef<'c, 'a>, out: &mut Vec<OperationRef<'c,
             Some(YzlOp::Fn(_) | YzlOp::Trait(_) | YzlOp::Impl(_)) => {}
             Some(YzlOp::Call(call)) => {
                 if matches!(
-                    call.callee_kind(),
-                    Some(CalleeKind::Fn | CalleeKind::AggFn | CalleeKind::Let)
+                    call.callee_source(),
+                    Some(CalleeSource::Fn | CalleeSource::Let)
                 ) {
                     out.push(op);
                 }

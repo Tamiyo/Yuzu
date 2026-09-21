@@ -1,11 +1,13 @@
-use std::collections::HashMap;
+//! What a name means where it is written: every declaration in the
+//! program, the scopes open inside a file, and the lookups the walk asks.
+
+use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::mem;
 
 use text_size::TextRange;
 use yuzu_ast::Visibility;
 use yuzu_ast::ast::Mutability;
-use yuzu_mlir::attributes::CalleeKind;
+use yuzu_mlir::attributes::CalleeSource;
 use yuzu_types::FunctionRegistry;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -69,6 +71,7 @@ impl<'c> Row<'c> {
             .iter()
             .enumerate()
             .filter(|(_, column)| column.matches(reference));
+
         match (matches.next(), matches.next()) {
             (Some((index, _)), None) => ColumnLookup::Unique(index),
             (Some(_), Some(_)) => ColumnLookup::Ambiguous,
@@ -109,13 +112,13 @@ impl<'c> From<Vec<&'c str>> for Row<'c> {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(super) struct Binding<'c> {
-    pub(super) kind: Kind<'c>,
+    pub(super) kind: BindingKind<'c>,
     pub(super) declared: TextRange,
     pub(super) visibility: Visibility,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub(super) enum Kind<'c> {
+pub(super) enum BindingKind<'c> {
     Struct {
         fields: Vec<&'c str>,
         symbol: &'c str,
@@ -141,27 +144,15 @@ pub(super) enum Kind<'c> {
     },
 }
 
-impl<'c> Kind<'c> {
-    /// `None` for a module, which names a file rather than a declaration.
-    pub(super) fn symbol(&self) -> Option<&'c str> {
-        match self {
-            Kind::Struct { symbol, .. }
-            | Kind::Relation { symbol, .. }
-            | Kind::Trait { symbol, .. }
-            | Kind::Let { symbol } => Some(symbol),
-            Kind::Func(callable) => Some(callable.symbol),
-            Kind::Module { .. } => None,
-        }
-    }
-
+impl<'c> BindingKind<'c> {
     pub(super) fn what(&self) -> &'static str {
         match self {
-            Kind::Struct { .. } => "struct",
-            Kind::Relation { .. } => "relation",
-            Kind::Func(_) => "function",
-            Kind::Trait { .. } => "trait",
-            Kind::Let { .. } => "binding",
-            Kind::Module { .. } => "module",
+            BindingKind::Struct { .. } => "struct",
+            BindingKind::Relation { .. } => "relation",
+            BindingKind::Func(_) => "function",
+            BindingKind::Trait { .. } => "trait",
+            BindingKind::Let { .. } => "binding",
+            BindingKind::Module { .. } => "module",
         }
     }
 }
@@ -174,24 +165,28 @@ pub(super) struct Local<'c> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum FunctionKind {
+    Scalar,
+    Aggregate,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct Callable<'c> {
     pub(super) symbol: &'c str,
-    pub(super) kind: CalleeKind,
+    pub(super) source: CalleeSource,
+    pub(super) kind: FunctionKind,
     pub(super) min_args: usize,
     pub(super) max_args: usize,
-    /// Not the same question as `kind`: a builtin, an `agg fn` and an
-    /// `external agg fn` all aggregate.
-    pub(super) is_agg: bool,
 }
 
 impl<'c> Callable<'c> {
     pub(super) fn let_binding(symbol: &'c str) -> Self {
         Self {
             symbol,
-            kind: CalleeKind::Let,
+            source: CalleeSource::Let,
+            kind: FunctionKind::Scalar,
             min_args: 0,
             max_args: 0,
-            is_agg: false,
         }
     }
 }
@@ -230,82 +225,127 @@ enum Scope<'c> {
     },
 }
 
+/// Which module a declaration lives in. The entry file has no path, since
+/// nothing can import from it.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Debug)]
+pub(super) struct ModulePath<'c>(Option<&'c str>);
+
+impl<'c> ModulePath<'c> {
+    pub(super) fn entry() -> Self {
+        Self(None)
+    }
+
+    pub(super) fn of(path: &'c str) -> Self {
+        Self(Some(path))
+    }
+
+    pub(super) fn is_entry(self) -> bool {
+        self.0.is_none()
+    }
+
+    pub(super) fn qualify(self, name: &str) -> Option<String> {
+        self.0.map(|path| format!("{path}.{name}"))
+    }
+
+    pub(super) fn declares(self, name: &'c str) -> Declared<'c> {
+        Declared { module: self, name }
+    }
+}
+
+/// Where a declaration was written: which file, and the name written there.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(super) struct Declared<'c> {
+    pub(super) module: ModulePath<'c>,
+    pub(super) name: &'c str,
+}
+
 pub(super) struct SymbolTable<'c> {
-    /// What the file declares, imports included; lookups fall back to it.
-    module: HashMap<&'c str, Binding<'c>>,
+    /// Every name the program declares, for the whole run.
+    declarations: HashMap<Declared<'c>, Binding<'c>>,
+    modules: HashSet<ModulePath<'c>>,
+    module: ModulePath<'c>,
     scopes: Vec<Scope<'c>>,
 }
 
 impl<'c> SymbolTable<'c> {
     pub(super) fn new() -> Self {
         Self {
-            module: HashMap::new(),
+            declarations: HashMap::new(),
+            modules: HashSet::new(),
+            module: ModulePath::entry(),
             scopes: Vec::new(),
         }
     }
 
-    // --- the module's declarations ---
+    // --- modules ---
+
+    pub(super) fn module(&self) -> ModulePath<'c> {
+        self.module
+    }
+
+    pub(super) fn set_module(&mut self, module: ModulePath<'c>) {
+        self.module = module;
+        self.modules.insert(module);
+        self.scopes.clear();
+    }
+
+    pub(super) fn contains_module(&self, module: ModulePath<'c>) -> bool {
+        self.modules.contains(&module)
+    }
+
+    // --- what the program declares ---
 
     pub(super) fn bind(&mut self, name: &'c str, binding: Binding<'c>) {
-        self.module.insert(name, binding);
+        self.declarations
+            .insert(self.module.declares(name), binding);
     }
 
-    pub(super) fn binding(&self, name: &str) -> Option<&Binding<'c>> {
-        self.module.get(name)
+    pub(super) fn binding(&self, name: &'c str) -> Option<&Binding<'c>> {
+        self.declared(self.module.declares(name))
     }
 
-    /// A table over a module's declarations, which the caller holds between
-    /// the walks over its file.
-    pub(super) fn over(module: HashMap<&'c str, Binding<'c>>) -> Self {
-        Self {
-            module,
-            scopes: Vec::new(),
-        }
-    }
-
-    /// Gives the declarations back, leaving the table empty. One side holds
-    /// them at a time, so the two cannot drift apart.
-    pub(super) fn take_module(&mut self) -> HashMap<&'c str, Binding<'c>> {
-        mem::take(&mut self.module)
+    pub(super) fn declared(&self, at: Declared<'c>) -> Option<&Binding<'c>> {
+        self.declarations.get(&at)
     }
 
     pub(super) fn is_method(&self, name: &str) -> bool {
-        self.module.values().any(|binding| {
-            matches!(&binding.kind, Kind::Trait { methods, .. } if methods.contains(&name))
+        self.declarations.iter().any(|(at, binding)| {
+            at.module == self.module
+                && matches!(&binding.kind, BindingKind::Trait { methods, .. } if methods.contains(&name))
         })
     }
 
-    pub(super) fn struct_symbol(&self, name: &str) -> Option<&'c str> {
+    pub(super) fn struct_symbol(&self, name: &'c str) -> Option<&'c str> {
         match self.kind(name)? {
-            Kind::Struct { symbol, .. } => Some(symbol),
+            BindingKind::Struct { symbol, .. } => Some(symbol),
             _ => None,
         }
     }
 
-    pub(super) fn module_of(&self, name: &str) -> Option<&'c str> {
+    pub(super) fn module_of(&self, name: &'c str) -> Option<&'c str> {
         match self.kind(name)? {
-            Kind::Module { path } => Some(path),
+            BindingKind::Module { path } => Some(path),
             _ => None,
         }
     }
 
-    pub(super) fn trait_symbol(&self, name: &str) -> Option<&'c str> {
+    pub(super) fn trait_symbol(&self, name: &'c str) -> Option<&'c str> {
         match self.kind(name)? {
-            Kind::Trait { symbol, .. } => Some(symbol),
+            BindingKind::Trait { symbol, .. } => Some(symbol),
             _ => None,
         }
     }
 
-    pub(super) fn kind(&self, name: &str) -> Option<&Kind<'c>> {
+    pub(super) fn kind(&self, name: &'c str) -> Option<&BindingKind<'c>> {
         self.binding(name).map(|binding| &binding.kind)
     }
 
     pub(super) fn relation(
         &self,
-        name: &str,
+        name: &'c str,
         alias: Option<&'c str>,
     ) -> Option<(&'c str, Row<'c>)> {
-        let Kind::Relation { row, symbol } = self.kind(name)? else {
+        let BindingKind::Relation { row, symbol } = self.kind(name)? else {
             return None;
         };
 
@@ -319,12 +359,12 @@ impl<'c> SymbolTable<'c> {
 
     pub(super) fn callable(
         &self,
-        name: &str,
+        name: &'c str,
         registry: &dyn FunctionRegistry,
     ) -> Option<Callable<'c>> {
         match self.kind(name) {
-            Some(Kind::Func(callable)) => Some(*callable),
-            Some(Kind::Let { symbol }) => Some(Callable::let_binding(symbol)),
+            Some(BindingKind::Func(callable)) => Some(*callable),
+            Some(BindingKind::Let { symbol }) => Some(Callable::let_binding(symbol)),
             _ => self.builtin(name, registry),
         }
     }
@@ -332,11 +372,11 @@ impl<'c> SymbolTable<'c> {
     /// Like `callable`, except a `let` sharing the name does not stand in.
     pub(super) fn operator(
         &self,
-        name: &str,
+        name: &'c str,
         registry: &dyn FunctionRegistry,
     ) -> Option<Callable<'c>> {
         match self.kind(name) {
-            Some(Kind::Func(callable)) => Some(*callable),
+            Some(BindingKind::Func(callable)) => Some(*callable),
             _ => self.builtin(name, registry),
         }
     }
@@ -345,10 +385,13 @@ impl<'c> SymbolTable<'c> {
         let entry = registry.entries().iter().find(|entry| entry.name == name)?;
         Some(Callable {
             symbol: entry.name,
-            kind: CalleeKind::Builtin,
+            source: CalleeSource::Builtin,
+            kind: match entry.func {
+                yuzu_types::BuiltinFunc::Scalar(_) => FunctionKind::Scalar,
+                yuzu_types::BuiltinFunc::Aggregate(_) => FunctionKind::Aggregate,
+            },
             min_args: entry.min_args,
             max_args: entry.max_args,
-            is_agg: matches!(entry.func, yuzu_types::BuiltinFunc::Aggregate(_)),
         })
     }
 
@@ -404,7 +447,7 @@ impl<'c> SymbolTable<'c> {
     /// The walk stops at the first isolated scope: a function body and a
     /// stage's region are both `IsolatedFromAbove`. The module's declarations
     /// are symbols, not values, so they answer from any depth.
-    pub(super) fn lookup(&self, reference: Reference<'_>) -> Lookup<'c> {
+    pub(super) fn lookup(&self, reference: Reference<'c>) -> Lookup<'c> {
         for scope in self.scopes.iter().rev() {
             match scope {
                 Scope::Relation { row, narrowed } => {
@@ -448,13 +491,13 @@ impl<'c> SymbolTable<'c> {
         self.module_lookup(reference)
     }
 
-    fn module_lookup(&self, reference: Reference<'_>) -> Lookup<'c> {
+    fn module_lookup(&self, reference: Reference<'c>) -> Lookup<'c> {
         if reference.qualifier.is_some() {
             return Lookup::Unknown;
         }
 
         match self.kind(reference.name) {
-            Some(Kind::Let { symbol }) => Lookup::Let(symbol),
+            Some(BindingKind::Let { symbol }) => Lookup::Let(symbol),
             Some(kind) => Lookup::NotAValue(kind.what()),
             None => Lookup::Unknown,
         }
@@ -525,16 +568,19 @@ mod tests {
     use text_size::TextRange;
     use yuzu_ast::Visibility;
     use yuzu_ast::ast::Mutability;
-    use yuzu_mlir::attributes::CalleeKind;
+    use yuzu_mlir::attributes::CalleeSource;
 
-    use super::{Binding, Callable, ColumnLookup, Kind, Lookup, Reference, Row, SymbolTable};
+    use super::{
+        Binding, BindingKind, Callable, ColumnLookup, FunctionKind, Lookup, Reference, Row,
+        SymbolTable,
+    };
 
     fn symbols() -> SymbolTable<'static> {
         let mut symbols = SymbolTable::new();
         symbols.bind(
             "Row",
             Binding {
-                kind: Kind::Struct {
+                kind: BindingKind::Struct {
                     fields: vec!["id", "dept_id"],
                     symbol: "Row",
                 },
@@ -554,7 +600,7 @@ mod tests {
         symbols.bind(
             name,
             Binding {
-                kind: Kind::Relation {
+                kind: BindingKind::Relation {
                     row: Row::from(row),
                     symbol: name,
                 },
@@ -568,14 +614,14 @@ mod tests {
         symbols.bind(
             name,
             Binding {
-                kind: Kind::Let { symbol: name },
+                kind: BindingKind::Let { symbol: name },
                 declared: TextRange::default(),
                 visibility: Visibility::Private,
             },
         );
     }
 
-    fn enter_relation(symbols: &mut SymbolTable<'static>, relation: &str) {
+    fn enter_relation(symbols: &mut SymbolTable<'static>, relation: &'static str) {
         let (_, row) = symbols
             .relation(relation, None)
             .expect("the relation is declared");
@@ -683,7 +729,7 @@ mod tests {
         symbols.bind(
             "Row",
             Binding {
-                kind: Kind::Struct {
+                kind: BindingKind::Struct {
                     fields: vec!["a"],
                     symbol: "helpers.Row",
                 },
@@ -694,7 +740,7 @@ mod tests {
         symbols.bind(
             "Show",
             Binding {
-                kind: Kind::Trait {
+                kind: BindingKind::Trait {
                     methods: vec!["show"],
                     symbol: "helpers.Show",
                 },
@@ -705,12 +751,12 @@ mod tests {
         symbols.bind(
             "f",
             Binding {
-                kind: Kind::Func(Callable {
+                kind: BindingKind::Func(Callable {
                     symbol: "helpers.f",
-                    kind: CalleeKind::Fn,
+                    source: CalleeSource::Fn,
+                    kind: FunctionKind::Scalar,
                     min_args: 0,
                     max_args: 0,
-                    is_agg: false,
                 }),
                 declared: TextRange::default(),
                 visibility: Visibility::Private,
@@ -736,12 +782,12 @@ mod tests {
         symbols.bind(
             "f",
             Binding {
-                kind: Kind::Func(Callable {
+                kind: BindingKind::Func(Callable {
                     symbol: "f",
-                    kind: CalleeKind::Fn,
+                    source: CalleeSource::Fn,
+                    kind: FunctionKind::Scalar,
                     min_args: 2,
                     max_args: 2,
-                    is_agg: false,
                 }),
                 declared: TextRange::default(),
                 visibility: Visibility::Private,
@@ -750,7 +796,7 @@ mod tests {
         symbols.bind(
             "Zero",
             Binding {
-                kind: Kind::Trait {
+                kind: BindingKind::Trait {
                     methods: vec!["zero"],
                     symbol: "Zero",
                 },
@@ -763,24 +809,24 @@ mod tests {
         assert_eq!(
             symbols
                 .callable("cap", registry)
-                .map(|callable| callable.kind),
-            Some(CalleeKind::Let)
+                .map(|callable| callable.source),
+            Some(CalleeSource::Let)
         );
         assert_eq!(
             symbols.callable("f", registry),
             Some(Callable {
                 symbol: "f",
-                kind: CalleeKind::Fn,
+                source: CalleeSource::Fn,
+                kind: FunctionKind::Scalar,
                 min_args: 2,
                 max_args: 2,
-                is_agg: false
             })
         );
         assert_eq!(
             symbols
                 .callable("sum", registry)
-                .map(|callable| callable.kind),
-            Some(CalleeKind::Builtin)
+                .map(|callable| callable.source),
+            Some(CalleeSource::Builtin)
         );
 
         assert_eq!(symbols.callable("zero", registry), None);

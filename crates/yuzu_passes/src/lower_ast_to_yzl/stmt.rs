@@ -1,18 +1,24 @@
+//! Statements: imports, the hoist that registers every declaration, and
+//! the conversion of each declaration into its `yzl` op.
+
 use melior::ir::attribute::{
     ArrayAttribute, FlatSymbolRefAttribute, StringAttribute, TypeAttribute,
 };
 use melior::ir::r#type::FunctionType;
 use melior::ir::{
-    Attribute, Block, BlockLike, BlockRef, Location, Region, RegionLike, Type, Value,
+    Attribute, Block, BlockLike, BlockRef, Location, Operation, Region, RegionLike, Type, Value,
 };
 use yuzu_ast::ast::Mutability;
 use yuzu_ast::{AstNode, Visibility, ast};
-use yuzu_mlir::attributes::CalleeKind;
+use yuzu_mlir::attributes::CalleeSource;
+use yuzu_mlir::ext::OperationMutExt;
 use yuzu_mlir::ods::yzl;
 use yuzu_mlir::types;
 use yuzu_mlir::{ListType, ParamType, StructType};
 
-use crate::lower_ast_to_yzl::symbols::{Binding, Callable, Kind, Lookup, Reference, Row};
+use crate::lower_ast_to_yzl::symbols::{
+    Binding, BindingKind, Callable, FunctionKind, Lookup, ModulePath, Reference, Row,
+};
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 use yuzu_mlir::SymbolTable as MlirSymbolTable;
 
@@ -34,6 +40,21 @@ impl Declared {
     }
 }
 
+/// A function declaration, read and checked, before its op is built.
+struct Function<'c> {
+    symbol: &'c str,
+    declared: Declared,
+    generics: Vec<&'c str>,
+    params: Vec<&'c str>,
+    signature: FunctionType<'c>,
+    bound_params: Vec<Attribute<'c>>,
+    bound_traits: Vec<Attribute<'c>>,
+    kind: FunctionKind,
+    source: CalleeSource,
+    visibility: Visibility,
+    location: Location<'c>,
+}
+
 impl<'c, 'd> AstToYzl<'c, 'd> {
     /// Imports bind before the file's own declarations, so the two collide
     /// the way two declarations do.
@@ -41,7 +62,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         for stmt in root.stmts() {
             match &stmt {
                 ast::Stmt::FromImportStmt(import) => {
-                    let Some(path) = import.path().map(|path| self.module_path(&path)) else {
+                    let Some(path) = import.path().map(|path| self.path_text(&path)) else {
                         continue;
                     };
 
@@ -50,59 +71,143 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     }
                 }
                 ast::Stmt::ImportStmt(import) => {
-                    let Some(path) = import.path().map(|path| self.module_path(&path)) else {
+                    let Some(path) = import.path().map(|path| self.path_text(&path)) else {
                         continue;
                     };
 
-                    let Some(last) = path.rsplit('.').next().map(|last| self.intern(last)) else {
-                        continue;
-                    };
+                    let last = path
+                        .rsplit('.')
+                        .next()
+                        .expect("a split yields at least one piece");
+                    let last = self.intern(last);
 
-                    let name = self.ident(import.alias()).unwrap_or(last);
+                    let name = self.read_name(import.alias()).unwrap_or(last);
                     let path = self.intern(&path);
-                    self.declare(import, name, Kind::Module { path }, Visibility::Private);
+                    self.bind_or_report(
+                        import,
+                        name,
+                        BindingKind::Module { path },
+                        Visibility::Private,
+                    );
                 }
                 ast::Stmt::ModStmt(decl) => {
-                    let Some(name) = self.ident(decl.name()) else {
+                    let Some(name) = self.read_name(decl.name()) else {
+                        self.report(decl, "module declaration is missing its name");
                         continue;
                     };
 
-                    let path = self.symbol_for(name);
-                    self.declare(decl, name, Kind::Module { path }, decl.visibility());
+                    let path = self.built_symbol(name);
+                    self.bind_or_report(
+                        decl,
+                        name,
+                        BindingKind::Module { path },
+                        decl.visibility(),
+                    );
                 }
-                _ => {}
+                ast::Stmt::StructStmt(_)
+                | ast::Stmt::TableStmt(_)
+                | ast::Stmt::FuncStmt(_)
+                | ast::Stmt::TraitStmt(_)
+                | ast::Stmt::ImplStmt(_)
+                | ast::Stmt::LetStmt(_)
+                | ast::Stmt::ExprStmt(_)
+                | ast::Stmt::BlockStmt(_)
+                | ast::Stmt::AssignStmt(_)
+                | ast::Stmt::ReturnStmt(_) => {}
             }
         }
     }
 
-    fn bind_import(&mut self, path: &str, item: &ast::ImportItem) {
-        let Some(name) = self.ident(item.name()) else {
-            self.report(item, "import item is missing its name");
-            return;
-        };
+    pub(super) fn hoist_declarations(&mut self, root: &ast::Root) {
+        for stmt in root.stmts() {
+            match &stmt {
+                ast::Stmt::StructStmt(decl) => self.hoist_struct(decl),
+                ast::Stmt::TraitStmt(decl) => self.hoist_trait(decl),
+                ast::Stmt::FuncStmt(decl) => self.hoist_fn(decl),
+                ast::Stmt::TableStmt(_)
+                | ast::Stmt::ImplStmt(_)
+                | ast::Stmt::LetStmt(_)
+                | ast::Stmt::ExprStmt(_)
+                | ast::Stmt::BlockStmt(_)
+                | ast::Stmt::AssignStmt(_)
+                | ast::Stmt::ReturnStmt(_)
+                | ast::Stmt::ImportStmt(_)
+                | ast::Stmt::FromImportStmt(_)
+                | ast::Stmt::ModStmt(_) => {}
+            }
+        }
 
-        let Some(binding) = self.exported(item, path, name) else {
-            return;
-        };
+        // A table's row is its struct's fields, so tables go in last.
+        for stmt in root.stmts() {
+            match &stmt {
+                ast::Stmt::TableStmt(decl) => self.hoist_table(decl),
+                ast::Stmt::StructStmt(_)
+                | ast::Stmt::TraitStmt(_)
+                | ast::Stmt::FuncStmt(_)
+                | ast::Stmt::ImplStmt(_)
+                | ast::Stmt::LetStmt(_)
+                | ast::Stmt::ExprStmt(_)
+                | ast::Stmt::BlockStmt(_)
+                | ast::Stmt::AssignStmt(_)
+                | ast::Stmt::ReturnStmt(_)
+                | ast::Stmt::ImportStmt(_)
+                | ast::Stmt::FromImportStmt(_)
+                | ast::Stmt::ModStmt(_) => {}
+            }
+        }
+    }
 
-        let local = self.ident(item.alias()).unwrap_or(name);
-        self.declare_imported(item, local, binding);
+    pub(super) fn convert_stmt<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        stmt: &ast::Stmt,
+        mlir_symbols: &mut MlirSymbolTable<'c, '_>,
+    ) {
+        match stmt {
+            ast::Stmt::StructStmt(decl) => self.convert_struct(block, decl),
+            ast::Stmt::TableStmt(decl) => self.convert_table(block, decl),
+            ast::Stmt::FuncStmt(decl) => self.convert_fn(block, decl),
+            ast::Stmt::TraitStmt(decl) => self.convert_trait(block, decl),
+            ast::Stmt::ImplStmt(decl) => self.convert_impl(block, decl),
+            ast::Stmt::LetStmt(decl) => self.convert_let(decl, mlir_symbols),
+            ast::Stmt::ExprStmt(stmt) => {
+                if !self.symbols.module().is_entry()
+                    && matches!(stmt.expr(), Some(ast::Expr::Rel(_)))
+                {
+                    self.report(stmt, "a module cannot hold a query");
+                    return;
+                }
+
+                if let Some(expr) = stmt.expr() {
+                    self.convert_expr(block, &Locals::new(), &expr);
+                }
+            }
+            ast::Stmt::BlockStmt(stmt) => self.report(stmt, "a block is not a top-level statement"),
+            ast::Stmt::AssignStmt(stmt) => {
+                self.report(stmt, "an assignment is not a top-level statement")
+            }
+            ast::Stmt::ReturnStmt(stmt) => {
+                self.report(stmt, "a return is not a top-level statement")
+            }
+            ast::Stmt::ImportStmt(_) | ast::Stmt::FromImportStmt(_) | ast::Stmt::ModStmt(_) => {}
+        }
     }
 
     /// `pub(mod)` reaches the enclosing module's files. Until a module holds
     /// more than one file, nobody asking from outside is one of them.
-    pub(super) fn exported(
+    pub(super) fn read_export(
         &mut self,
         at: &impl AstNode,
         path: &str,
-        name: &str,
+        name: &'c str,
     ) -> Option<Binding<'c>> {
-        let Some(module) = self.exports.get(&Some(path)) else {
+        let module = ModulePath::of(self.intern(path));
+        if !self.symbols.contains_module(module) {
             self.report(at, &format!("`{path}` is not a module this file reads"));
             return None;
-        };
+        }
 
-        let Some(binding) = module.get(name).cloned() else {
+        let Some(binding) = self.symbols.declared(module.declares(name)).cloned() else {
             self.report(at, &format!("`{path}` does not declare `{name}`"));
             return None;
         };
@@ -116,6 +221,20 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
 
         Some(binding)
+    }
+
+    fn bind_import(&mut self, path: &str, item: &ast::ImportItem) {
+        let Some(name) = self.read_name(item.name()) else {
+            self.report(item, "import item is missing its name");
+            return;
+        };
+
+        let Some(binding) = self.read_export(item, path, name) else {
+            return;
+        };
+
+        let local = self.read_name(item.alias()).unwrap_or(name);
+        self.declare_imported(item, local, binding);
     }
 
     fn declare_imported(&mut self, node: &impl AstNode, name: &'c str, binding: Binding<'c>) {
@@ -133,65 +252,42 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         );
     }
 
-    fn module_path(&self, path: &ast::ModulePath) -> String {
-        path.segments()
-            .filter_map(|segment| segment.text())
-            .collect::<Vec<_>>()
-            .join(".")
-    }
-
-    /// A `let` binds in order instead, once its body is emitted. Structs go
-    /// in before tables, because a table's row is its struct's fields.
-    pub(super) fn hoist(&mut self, root: &ast::Root) {
-        for stmt in root.stmts() {
-            match &stmt {
-                ast::Stmt::StructStmt(decl) => self.hoist_struct(decl),
-                ast::Stmt::TraitStmt(decl) => self.hoist_trait(decl),
-                ast::Stmt::FuncStmt(decl) => self.hoist_fn(decl),
-                _ => {}
-            }
-        }
-
-        for stmt in root.stmts() {
-            if let ast::Stmt::TableStmt(decl) = &stmt {
-                self.hoist_table(decl);
-            }
-        }
-    }
-
     fn hoist_struct(&mut self, decl: &ast::StructStmt) {
-        let Some(name) = self.ident(decl.name()) else {
+        let Some(name) = self.read_name(decl.name()) else {
             return;
         };
 
-        let fields = decl.fields().filter_map(|f| self.ident(f.name())).collect();
-        let symbol = self.symbol_for(name);
-        self.declare(
+        let fields = decl
+            .fields()
+            .filter_map(|f| self.read_name(f.name()))
+            .collect();
+        let symbol = self.built_symbol(name);
+        self.bind_or_report(
             decl,
             name,
-            Kind::Struct { fields, symbol },
+            BindingKind::Struct { fields, symbol },
             decl.visibility(),
         );
     }
 
     fn hoist_table(&mut self, decl: &ast::TableStmt) {
-        let Some(name) = self.ident(decl.name()) else {
+        let Some(name) = self.read_name(decl.name()) else {
             return;
         };
 
         let row = if decl.inline_fields().next().is_some() {
             Row::from(
                 decl.inline_fields()
-                    .filter_map(|field| self.ident(field.name()))
+                    .filter_map(|field| self.read_name(field.name()))
                     .collect::<Vec<_>>(),
             )
         } else {
-            let Some(declared) = self.ident(decl.row_struct()) else {
+            let Some(declared) = self.read_name(decl.row_struct()) else {
                 return;
             };
 
             match self.symbols.kind(declared) {
-                Some(Kind::Struct { fields, .. }) => Row::from(fields.clone()),
+                Some(BindingKind::Struct { fields, .. }) => Row::from(fields.clone()),
                 _ => {
                     self.report(decl, &format!("`{declared}` is not a struct"));
                     return;
@@ -199,67 +295,70 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             }
         };
 
-        let symbol = self.symbol_for(name);
-        self.declare(
+        let symbol = self.built_symbol(name);
+        self.bind_or_report(
             decl,
             name,
-            Kind::Relation { row, symbol },
+            BindingKind::Relation { row, symbol },
             decl.visibility(),
         );
     }
 
     fn hoist_trait(&mut self, decl: &ast::TraitStmt) {
-        let Some(name) = self.ident(decl.name()) else {
+        let Some(name) = self.read_name(decl.name()) else {
             return;
         };
 
         let methods = decl
             .methods()
-            .filter_map(|m| self.ident(m.name()))
+            .filter_map(|m| self.read_name(m.name()))
             .collect();
-        let symbol = self.symbol_for(name);
-        self.declare(
+        let symbol = self.built_symbol(name);
+        self.bind_or_report(
             decl,
             name,
-            Kind::Trait { methods, symbol },
+            BindingKind::Trait { methods, symbol },
             decl.visibility(),
         );
     }
 
     fn hoist_fn(&mut self, decl: &ast::FuncStmt) {
-        let Some(name) = self.ident(decl.name()) else {
+        let Some(name) = self.read_name(decl.name()) else {
             return;
         };
 
-        let kind = if decl.is_external() {
-            CalleeKind::External
-        } else if decl.is_agg() {
-            CalleeKind::AggFn
+        let source = if decl.is_external() {
+            CalleeSource::External
         } else {
-            CalleeKind::Fn
+            CalleeSource::Fn
+        };
+        let kind = if decl.is_agg() {
+            FunctionKind::Aggregate
+        } else {
+            FunctionKind::Scalar
         };
 
         let arity = decl.params().count();
-        let symbol = self.symbol_for(name);
-        self.declare(
+        let symbol = self.built_symbol(name);
+        self.bind_or_report(
             decl,
             name,
-            Kind::Func(Callable {
+            BindingKind::Func(Callable {
                 symbol,
+                source,
                 kind,
                 min_args: arity,
                 max_args: arity,
-                is_agg: decl.is_agg(),
             }),
             decl.visibility(),
         );
     }
 
-    fn declare(
+    fn bind_or_report(
         &mut self,
         node: &impl AstNode,
         name: &'c str,
-        kind: Kind<'c>,
+        kind: BindingKind<'c>,
         visibility: Visibility,
     ) {
         if self.symbols.binding(name).is_some() {
@@ -280,13 +379,15 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     /// The note says where the other declaration is rather than which came
     /// first: hoisting takes the declarations out of source order.
     fn check_duplicate(&mut self, node: &impl AstNode, what: &str, name: &str) {
-        let Some(declared) = self.symbols.binding(name).map(|binding| binding.declared) else {
-            return;
-        };
+        let declared = self
+            .symbols
+            .binding(name)
+            .expect("a duplicate is checked against a bound name")
+            .declared;
 
-        let other = self.position(declared);
+        let other = self.position_text(declared);
         let diagnostic = self
-            .diagnostic(
+            .error_at(
                 node.syntax().text_range(),
                 &format!("the {what} `{name}` is already defined"),
             )
@@ -294,112 +395,70 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         self.diagnostics.emit(diagnostic);
     }
 
-    pub(super) fn convert_stmt<'a>(
-        &mut self,
-        block: BlockRef<'c, 'a>,
-        stmt: &ast::Stmt,
-        symbols: &mut MlirSymbolTable<'c, '_>,
-    ) {
-        match stmt {
-            ast::Stmt::StructStmt(decl) => self.convert_struct(block, decl),
-            ast::Stmt::TableStmt(decl) => self.convert_table(block, decl),
-            ast::Stmt::FuncStmt(decl) => self.convert_fn(block, decl),
-            ast::Stmt::TraitStmt(decl) => self.convert_trait(block, decl),
-            ast::Stmt::ImplStmt(decl) => self.convert_impl(block, decl),
-            ast::Stmt::LetStmt(decl) => self.convert_let(decl, symbols),
-            ast::Stmt::ExprStmt(stmt) => {
-                if self.module.is_some() && matches!(stmt.expr(), Some(ast::Expr::Rel(_))) {
-                    self.report(stmt, "a module cannot hold a query");
-                    return;
-                }
-
-                if let Some(expr) = stmt.expr() {
-                    self.convert_expr(block, &Locals::new(), &expr);
-                }
-            }
-            ast::Stmt::BlockStmt(stmt) => self.report(stmt, "a block is not a top-level statement"),
-            ast::Stmt::AssignStmt(stmt) => {
-                self.report(stmt, "an assignment is not a top-level statement")
-            }
-            ast::Stmt::ReturnStmt(stmt) => {
-                self.report(stmt, "a return is not a top-level statement")
-            }
-            ast::Stmt::ImportStmt(_) | ast::Stmt::FromImportStmt(_) | ast::Stmt::ModStmt(_) => {}
-        }
-    }
-
     fn convert_struct<'a>(&mut self, block: BlockRef<'c, 'a>, decl: &ast::StructStmt) {
-        let Some(name) = self.ident(decl.name()) else {
+        let Some(name) = self.read_name(decl.name()) else {
             self.report(decl, "struct is missing its name");
             return;
         };
 
-        if !self.declares(decl, name) {
+        if !self.is_declaration_of(decl, name) {
+            debug_assert!(
+                self.diagnostics.has_errors(),
+                "`{name}` was not bound by the hoist and nothing reported why"
+            );
             return;
         }
 
-        let symbol = self.symbol_for(name);
-        self.append_struct(block, symbol, decl.fields(), self.location(decl));
+        let symbol = self.built_symbol(name);
+        self.emit_struct(
+            block,
+            symbol,
+            decl.fields(),
+            decl.visibility(),
+            self.location(decl),
+        );
     }
 
     fn convert_table<'a>(&mut self, block: BlockRef<'c, 'a>, decl: &ast::TableStmt) {
-        let Some(name) = self.ident(decl.name()) else {
+        let Some(name) = self.read_name(decl.name()) else {
             self.report(decl, "table is missing its name");
             return;
         };
 
-        if !self.declares(decl, name) {
+        if !self.is_declaration_of(decl, name) {
+            debug_assert!(
+                self.diagnostics.has_errors(),
+                "`{name}` was not bound by the hoist and nothing reported why"
+            );
             return;
         }
 
         // An imported struct is held under the module that declared it,
         // whatever an `as` renamed it to here.
-        let row = match self.ident(decl.row_struct()) {
+        let row = match self.read_name(decl.row_struct()) {
             Some(row) => self.symbols.struct_symbol(row).unwrap_or(row),
             None => {
-                let row = self.symbol_for(self.intern(&format!("{name}_row")));
-                self.append_struct(block, row, decl.inline_fields(), self.location(decl));
+                let row = self.built_symbol(&format!("{name}_row"));
+                self.emit_struct(
+                    block,
+                    row,
+                    decl.inline_fields(),
+                    decl.visibility(),
+                    self.location(decl),
+                );
                 row
             }
         };
 
-        let symbol = self.symbol_for(name);
-        block.append_operation(
-            yzl::table(
-                self.context,
-                StringAttribute::new(self.context, symbol),
-                FlatSymbolRefAttribute::new(self.context, row),
-                self.location(decl),
-            )
-            .into(),
-        );
-    }
-
-    fn append_struct<'a>(
-        &mut self,
-        block: BlockRef<'c, 'a>,
-        symbol: &'c str,
-        fields: impl Iterator<Item = ast::StructField>,
-        loc: Location<'c>,
-    ) {
-        let (names, types) = self.field_attrs(fields);
-        block.append_operation(
-            yzl::r#struct(
-                self.context,
-                StringAttribute::new(self.context, symbol),
-                names,
-                types,
-                loc,
-            )
-            .into(),
-        );
+        let symbol = self.built_symbol(name);
+        self.emit_table(block, symbol, row, decl.visibility(), self.location(decl));
     }
 
     fn convert_fn<'a>(&mut self, block: BlockRef<'c, 'a>, decl: &ast::FuncStmt) {
         // A nameless `fn` still lowers, so the missing name is what gets
         // reported.
-        if let Some(name) = self.ident(decl.name())
-            && !self.declares(decl, name)
+        if let Some(name) = self.read_name(decl.name())
+            && !self.is_declaration_of(decl, name)
         {
             return;
         }
@@ -413,9 +472,18 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         decl: &ast::FuncStmt,
         declared: Declared,
     ) {
-        let Some(name) = self.ident(decl.name()) else {
-            self.report(decl, "function is missing its name");
+        let Some(function) = self.read_function(decl, declared) else {
             return;
+        };
+
+        let body = self.convert_function_body(&function, decl.body());
+        block.append_operation(self.emit_function(&function, body));
+    }
+
+    fn read_function(&mut self, decl: &ast::FuncStmt, declared: Declared) -> Option<Function<'c>> {
+        let Some(name) = self.read_name(decl.name()) else {
+            self.report(decl, "function is missing its name");
+            return None;
         };
 
         match (decl.is_external(), decl.body().is_some()) {
@@ -432,20 +500,20 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .copied()
             .chain(
                 decl.type_params()
-                    .filter_map(|param| self.ident(param.name())),
+                    .filter_map(|param| self.read_name(param.name())),
             )
             .collect();
 
-        let mut names = Vec::new();
+        let mut params: Vec<&'c str> = Vec::new();
         let mut param_types = Vec::new();
         for param in decl.params() {
-            match self.ident(param.name()) {
-                Some(name) => names.push(name),
+            match self.read_name(param.name()) {
+                Some(name) => params.push(name),
                 None => self.report(&param, "parameter is missing its name"),
             }
 
             param_types.push(match param.ty() {
-                Some(ty) => self.annotation_type(ty, &generics),
+                Some(ty) => self.read_type(ty, &generics),
                 None => {
                     self.report(&param, "parameter is missing its type");
                     types::var(self.context)
@@ -454,103 +522,108 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
 
         let result = match decl.result() {
-            Some(result) => self.annotation_type(result, &generics),
+            Some(result) => self.read_type(result, &generics),
             None => types::var(self.context),
         };
         let signature = FunctionType::new(self.context, &param_types, &[result]);
-        let (subjects, traits) = self.bound_attrs(decl, &generics);
-        let params = ArrayAttribute::new(self.context, &self.string_attrs(&names));
-
-        let region = Region::new();
-        if let Some(body) = decl.body() {
-            let loc = self.location(decl);
-            let arguments: Vec<(Type<'c>, Location<'c>)> = param_types
-                .iter()
-                .map(|_| (types::var(self.context), loc))
-                .collect();
-            let entry = region.append_block(Block::new(&arguments));
-            self.symbols.enter_function(names);
-            self.convert_block(entry, &mut Locals::new(), &body);
-            self.symbols.leave();
-        }
+        let (bound_params, bound_traits) = self.read_bounds(decl, &generics);
 
         // A trait or an implementation is a symbol table of its own, so a
         // method keeps its bare name.
         let symbol = match declared {
-            Declared::AtModule => self.symbol_for(name),
+            Declared::AtModule => self.built_symbol(name),
             Declared::InTrait | Declared::InImpl => name,
         };
-        let mut builder = yzl::FnOperationBuilder::new(self.context, self.location(decl))
-            .sym_name(StringAttribute::new(self.context, symbol))
-            .params(params)
-            .signature(TypeAttribute::new(signature.into()))
-            .body(region);
 
-        if decl.is_agg() {
+        Some(Function {
+            symbol,
+            declared,
+            generics,
+            params,
+            signature,
+            bound_params,
+            bound_traits,
+            kind: if decl.is_agg() {
+                FunctionKind::Aggregate
+            } else {
+                FunctionKind::Scalar
+            },
+            source: if decl.is_external() {
+                CalleeSource::External
+            } else {
+                CalleeSource::Fn
+            },
+            visibility: decl.visibility(),
+            location: self.location(decl),
+        })
+    }
+
+    fn convert_function_body(
+        &mut self,
+        function: &Function<'c>,
+        body: Option<ast::BlockStmt>,
+    ) -> Region<'c> {
+        let region = Region::new();
+        let Some(body) = body else {
+            return region;
+        };
+
+        let arguments: Vec<(Type<'c>, Location<'c>)> = (0..function.signature.input_count())
+            .map(|_| (types::var(self.context), function.location))
+            .collect();
+        let entry = region.append_block(Block::new(&arguments));
+        self.symbols.enter_function(function.params.clone());
+        self.convert_block(entry, &mut Locals::new(), &body);
+        self.symbols.leave();
+        region
+    }
+
+    fn emit_function(&self, function: &Function<'c>, body: Region<'c>) -> Operation<'c> {
+        let params = ArrayAttribute::new(self.context, &self.string_attributes(&function.params));
+        let mut builder = yzl::FnOperationBuilder::new(self.context, function.location)
+            .sym_name(StringAttribute::new(self.context, function.symbol))
+            .params(params)
+            .signature(TypeAttribute::new(function.signature.into()))
+            .body(body);
+
+        if function.kind == FunctionKind::Aggregate {
             builder = builder.agg(Attribute::unit(self.context));
         }
 
-        if decl.is_external() {
+        if function.source == CalleeSource::External {
             builder = builder.external(Attribute::unit(self.context));
         }
 
-        if !generics.is_empty() {
-            let names = self.string_attrs(&generics);
+        if !function.generics.is_empty() {
+            let names = self.string_attributes(&function.generics);
             builder = builder.type_params(ArrayAttribute::new(self.context, &names));
         }
 
-        if !subjects.is_empty() {
+        if !function.bound_params.is_empty() {
             builder = builder
-                .bound_params(ArrayAttribute::new(self.context, &subjects))
-                .bound_traits(ArrayAttribute::new(self.context, &traits));
+                .bound_params(ArrayAttribute::new(self.context, &function.bound_params))
+                .bound_traits(ArrayAttribute::new(self.context, &function.bound_traits));
         }
 
-        block.append_operation(builder.build().into());
-    }
-
-    /// One entry per `(parameter, trait)` pair.
-    fn bound_attrs(
-        &mut self,
-        decl: &ast::FuncStmt,
-        generics: &[&'c str],
-    ) -> (Vec<Attribute<'c>>, Vec<Attribute<'c>>) {
-        let mut subjects = Vec::new();
-        let mut traits = Vec::new();
-        for bound in decl.bounds() {
-            let Some(subject) = self.ident(bound.subject()) else {
-                self.report(&bound, "type bound is missing its subject");
-                continue;
-            };
-
-            if !generics.contains(&subject) {
-                self.report(&bound, &format!("unknown type parameter `{subject}`"));
-            }
-
-            for trait_ref in bound.traits() {
-                let Some(name) = self.ident(trait_ref.name()) else {
-                    self.report(&trait_ref, "trait reference is missing its name");
-                    continue;
-                };
-
-                if self.symbols.trait_symbol(name).is_none() {
-                    self.report(&trait_ref, &format!("unknown trait `{name}`"));
-                }
-
-                subjects.push(StringAttribute::new(self.context, subject).into());
-                traits.push(FlatSymbolRefAttribute::new(self.context, name).into());
-            }
+        let mut op: Operation<'c> = builder.build().into();
+        if function.declared == Declared::AtModule && function.visibility != Visibility::Public {
+            op.set_private(self.context);
         }
 
-        (subjects, traits)
+        op
     }
 
     fn convert_trait<'a>(&mut self, block: BlockRef<'c, 'a>, decl: &ast::TraitStmt) {
-        let Some(name) = self.ident(decl.name()) else {
+        let Some(name) = self.read_name(decl.name()) else {
             self.report(decl, "trait is missing its name");
             return;
         };
 
-        if !self.declares(decl, name) {
+        if !self.is_declaration_of(decl, name) {
+            debug_assert!(
+                self.diagnostics.has_errors(),
+                "`{name}` was not bound by the hoist and nothing reported why"
+            );
             return;
         }
 
@@ -560,26 +633,29 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             self.convert_method(body, &method, Declared::InTrait);
         }
 
-        let symbol = self.symbol_for(name);
-        block.append_operation(
+        let symbol = self.built_symbol(name);
+        let mut r#trait: Operation<'c> =
             yzl::TraitOperationBuilder::new(self.context, self.location(decl))
                 .sym_name(StringAttribute::new(self.context, symbol))
                 .body(region)
                 .build()
-                .into(),
-        );
+                .into();
+        if decl.visibility() != Visibility::Public {
+            r#trait.set_private(self.context);
+        }
+        block.append_operation(r#trait);
     }
 
     fn convert_impl<'a>(&mut self, block: BlockRef<'c, 'a>, decl: &ast::ImplStmt) {
         let Some(trait_name) = decl
             .trait_()
-            .and_then(|trait_ref| self.ident(trait_ref.name()))
+            .and_then(|trait_ref| self.read_name(trait_ref.name()))
         else {
             self.report(decl, "`impl` is missing its trait");
             return;
         };
 
-        let Some(target) = self.ident(decl.ty()) else {
+        let Some(target) = self.read_name(decl.ty()) else {
             self.report(decl, "`impl` is missing its type name");
             return;
         };
@@ -620,8 +696,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     }
 
     /// The symbol table places the operation, so this takes no block.
-    fn convert_let(&mut self, decl: &ast::LetStmt, symbols: &mut MlirSymbolTable<'c, '_>) {
-        let Some(name) = self.ident(decl.name()) else {
+    fn convert_let(&mut self, decl: &ast::LetStmt, mlir_symbols: &mut MlirSymbolTable<'c, '_>) {
+        let Some(name) = self.read_name(decl.name()) else {
             self.report(decl, "let binding is missing its name");
             return;
         };
@@ -633,39 +709,21 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
         let annotation = decl
             .type_annotation()
-            .map(|annotation| self.annotation_type(annotation, &[]));
-        let region = Region::new();
-        let body = region.append_block(Block::new(&[]));
-        // A query's row has to be taken before its scope is left.
-        let (value, row) = match &expr {
-            ast::Expr::Rel(rel) => {
-                let value = self.convert_rel(body, rel);
-                let row = self.symbols.row().clone();
-                self.symbols.leave();
-                (value, Some(row))
-            }
-            _ => (self.convert_expr(body, &Locals::new(), &expr), None),
-        };
+            .map(|annotation| self.read_type(annotation, &[]));
+        let location = self.location(decl);
+        let (body, row) = self.convert_let_body(&expr, location);
+        let symbol = self.emit_let(
+            mlir_symbols,
+            self.built_symbol(name),
+            annotation,
+            body,
+            decl.visibility(),
+            location,
+        );
 
-        body.append_operation(yzl::r#yield(self.context, &[value], self.location(decl)).into());
-        let mut builder = yzl::LetOperationBuilder::new(self.context, self.location(decl))
-            .sym_name(StringAttribute::new(self.context, self.symbol_for(name)))
-            .body(region);
-        if let Some(annotation) = annotation {
-            builder = builder.annotation(TypeAttribute::new(annotation));
-        }
-
-        // A `let` may take a name something else already holds: the code
-        // between the two reads the earlier one, so both stay in the module
-        // and the symbol table renames the second. What it assigned is what
-        // the binding reaches.
-        let assigned = symbols.insert(builder.build().into());
-        let symbol = StringAttribute::try_from(assigned)
-            .expect("a symbol name is a string")
-            .value();
         let kind = match row {
-            Some(row) => Kind::Relation { row, symbol },
-            None => Kind::Let { symbol },
+            Some(row) => BindingKind::Relation { row, symbol },
+            None => BindingKind::Let { symbol },
         };
         self.symbols.bind(
             name,
@@ -675,6 +733,60 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 visibility: decl.visibility(),
             },
         );
+    }
+
+    /// The region, and the row when the expression is a query. A query's
+    /// row has to be taken before its scope is left.
+    fn convert_let_body(
+        &mut self,
+        expr: &ast::Expr,
+        location: Location<'c>,
+    ) -> (Region<'c>, Option<Row<'c>>) {
+        let region = Region::new();
+        let body = region.append_block(Block::new(&[]));
+        let (value, row) = match expr {
+            ast::Expr::Rel(rel) => {
+                let value = self.convert_rel(body, rel);
+                let row = self.symbols.row().clone();
+                self.symbols.leave();
+                (value, Some(row))
+            }
+            _ => (self.convert_expr(body, &Locals::new(), expr), None),
+        };
+
+        body.append_operation(yzl::r#yield(self.context, &[value], location).into());
+        (region, row)
+    }
+
+    /// A `let` may take a name something else already holds: the code
+    /// between the two reads the earlier one, so both stay in the module and
+    /// the symbol table renames the second. What it assigned is returned,
+    /// since that is what the binding reaches.
+    fn emit_let(
+        &self,
+        mlir_symbols: &mut MlirSymbolTable<'c, '_>,
+        symbol: &'c str,
+        annotation: Option<Type<'c>>,
+        body: Region<'c>,
+        visibility: Visibility,
+        location: Location<'c>,
+    ) -> &'c str {
+        let mut builder = yzl::LetOperationBuilder::new(self.context, location)
+            .sym_name(StringAttribute::new(self.context, symbol))
+            .body(body);
+        if let Some(annotation) = annotation {
+            builder = builder.annotation(TypeAttribute::new(annotation));
+        }
+
+        let mut r#let: Operation<'c> = builder.build().into();
+        if visibility != Visibility::Public {
+            r#let.set_private(self.context);
+        }
+
+        let assigned = mlir_symbols.insert(r#let);
+        StringAttribute::try_from(assigned)
+            .expect("a symbol name is a string")
+            .value()
     }
 
     fn convert_block<'a>(
@@ -699,7 +811,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     ) {
         match stmt {
             ast::Stmt::LetStmt(binding) => {
-                let Some(name) = self.ident(binding.name()) else {
+                let Some(name) = self.read_name(binding.name()) else {
                     self.report(binding, "let binding is missing its name");
                     return;
                 };
@@ -714,7 +826,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             }
             ast::Stmt::AssignStmt(assign) => {
                 let target = assign.target().and_then(|target| match target {
-                    ast::Expr::IdentExpr(ident) => self.ident(ident.name()),
+                    ast::Expr::IdentExpr(ident) => self.read_name(ident.name()),
                     _ => None,
                 });
 
@@ -728,7 +840,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     return;
                 };
 
-                if !self.assignable(assign, name) {
+                if !self.check_assignable(assign, name) {
                     return;
                 }
 
@@ -764,7 +876,153 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
     }
 
-    fn assignable(&mut self, node: &impl AstNode, name: &'c str) -> bool {
+    /// One entry per `(parameter, trait)` pair.
+    fn read_bounds(
+        &mut self,
+        decl: &ast::FuncStmt,
+        generics: &[&'c str],
+    ) -> (Vec<Attribute<'c>>, Vec<Attribute<'c>>) {
+        let mut subjects = Vec::new();
+        let mut traits = Vec::new();
+        for bound in decl.bounds() {
+            let Some(subject) = self.read_name(bound.subject()) else {
+                self.report(&bound, "type bound is missing its subject");
+                continue;
+            };
+
+            if !generics.contains(&subject) {
+                self.report(&bound, &format!("unknown type parameter `{subject}`"));
+            }
+
+            for trait_ref in bound.traits() {
+                let Some(name) = self.read_name(trait_ref.name()) else {
+                    self.report(&trait_ref, "trait reference is missing its name");
+                    continue;
+                };
+
+                if self.symbols.trait_symbol(name).is_none() {
+                    self.report(&trait_ref, &format!("unknown trait `{name}`"));
+                }
+
+                subjects.push(StringAttribute::new(self.context, subject).into());
+                traits.push(FlatSymbolRefAttribute::new(self.context, name).into());
+            }
+        }
+
+        (subjects, traits)
+    }
+
+    fn read_fields(
+        &mut self,
+        fields: impl Iterator<Item = ast::StructField>,
+    ) -> (ArrayAttribute<'c>, ArrayAttribute<'c>) {
+        let mut names = Vec::new();
+        let mut types = Vec::new();
+        for field in fields {
+            let (Some(name), Some(ty)) = (self.read_name(field.name()), field.ty()) else {
+                self.report(&field, "struct field is incomplete");
+                continue;
+            };
+
+            names.push(StringAttribute::new(self.context, name).into());
+            types.push(TypeAttribute::new(self.read_type(ty, &[])).into());
+        }
+
+        (
+            ArrayAttribute::new(self.context, &names),
+            ArrayAttribute::new(self.context, &types),
+        )
+    }
+
+    fn read_type(&mut self, annotation: ast::TypeAnnotation, generics: &[&'c str]) -> Type<'c> {
+        let named = match annotation {
+            ast::TypeAnnotation::NamedTypeAnnotation(named) => named,
+            ast::TypeAnnotation::FuncTypeAnnotation(func) => {
+                self.report(&func, "function types are not supported yet");
+                return types::var(self.context);
+            }
+        };
+
+        let Some(name) = self.read_name(named.name()) else {
+            self.report(&named, "type is missing its name");
+            return types::var(self.context);
+        };
+
+        if generics.contains(&name) {
+            return ParamType::new(self.context, name).into();
+        }
+
+        if name == "List" {
+            let mut args = named.args();
+            let (Some(inner), None) = (args.next(), args.next()) else {
+                self.report(&named, "`List` takes exactly one type argument");
+                return types::var(self.context);
+            };
+
+            let inner = self.read_type(inner, generics);
+            return ListType::new(self.context, inner).into();
+        }
+
+        if let Some(scalar) = types::scalar(self.context, name) {
+            return scalar;
+        }
+
+        if let Some(symbol) = self.symbols.struct_symbol(name) {
+            return StructType::new(self.context, symbol).into();
+        }
+
+        self.report(&named, &format!("unknown type `{name}`"));
+        types::var(self.context)
+    }
+
+    fn emit_struct<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        symbol: &'c str,
+        fields: impl Iterator<Item = ast::StructField>,
+        visibility: Visibility,
+        loc: Location<'c>,
+    ) {
+        let (names, types) = self.read_fields(fields);
+        let mut r#struct: Operation<'c> = yzl::r#struct(
+            self.context,
+            StringAttribute::new(self.context, symbol),
+            names,
+            types,
+            loc,
+        )
+        .into();
+
+        if visibility != Visibility::Public {
+            r#struct.set_private(self.context);
+        }
+
+        block.append_operation(r#struct);
+    }
+
+    fn emit_table<'a>(
+        &self,
+        block: BlockRef<'c, 'a>,
+        symbol: &'c str,
+        row: &'c str,
+        visibility: Visibility,
+        location: Location<'c>,
+    ) {
+        let mut table: Operation<'c> = yzl::table(
+            self.context,
+            StringAttribute::new(self.context, symbol),
+            FlatSymbolRefAttribute::new(self.context, row),
+            location,
+        )
+        .into();
+        if visibility != Visibility::Public {
+            table.set_private(self.context);
+        }
+
+        block.append_operation(table);
+    }
+
+    fn check_assignable(&mut self, node: &impl AstNode, name: &'c str) -> bool {
         let message = match self.symbols.lookup(Reference::bare(name)) {
             Lookup::Local {
                 mutability: Mutability::Mutable,
@@ -801,77 +1059,17 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
     /// The second declaration of a name is reported by the hoist and left
     /// out of the module, so one name stays one symbol.
-    fn declares(&self, node: &impl AstNode, name: &str) -> bool {
+    fn is_declaration_of(&self, node: &impl AstNode, name: &str) -> bool {
         self.symbols
             .binding(name)
             .is_some_and(|binding| binding.declared == node.syntax().text_range())
     }
 
-    fn field_attrs(
-        &mut self,
-        fields: impl Iterator<Item = ast::StructField>,
-    ) -> (ArrayAttribute<'c>, ArrayAttribute<'c>) {
-        let mut names = Vec::new();
-        let mut types = Vec::new();
-        for field in fields {
-            let (Some(name), Some(ty)) = (self.ident(field.name()), field.ty()) else {
-                self.report(&field, "struct field is incomplete");
-                continue;
-            };
-
-            names.push(StringAttribute::new(self.context, name).into());
-            types.push(TypeAttribute::new(self.annotation_type(ty, &[])).into());
-        }
-
-        (
-            ArrayAttribute::new(self.context, &names),
-            ArrayAttribute::new(self.context, &types),
-        )
-    }
-
-    fn annotation_type(
-        &mut self,
-        annotation: ast::TypeAnnotation,
-        generics: &[&'c str],
-    ) -> Type<'c> {
-        let named = match annotation {
-            ast::TypeAnnotation::NamedTypeAnnotation(named) => named,
-            ast::TypeAnnotation::FuncTypeAnnotation(func) => {
-                self.report(&func, "function types are not supported yet");
-                return types::var(self.context);
-            }
-        };
-
-        let Some(name) = self.ident(named.name()) else {
-            self.report(&named, "type is missing its name");
-            return types::var(self.context);
-        };
-
-        if generics.contains(&name) {
-            return ParamType::new(self.context, name).into();
-        }
-
-        if name == "List" {
-            let mut args = named.args();
-            let (Some(inner), None) = (args.next(), args.next()) else {
-                self.report(&named, "`List` takes exactly one type argument");
-                return types::var(self.context);
-            };
-
-            let inner = self.annotation_type(inner, generics);
-            return ListType::new(self.context, inner).into();
-        }
-
-        if let Some(scalar) = types::scalar(self.context, name) {
-            return scalar;
-        }
-
-        if let Some(symbol) = self.symbols.struct_symbol(name) {
-            return StructType::new(self.context, symbol).into();
-        }
-
-        self.report(&named, &format!("unknown type `{name}`"));
-        types::var(self.context)
+    fn path_text(&self, path: &ast::ModulePath) -> String {
+        path.segments()
+            .filter_map(|segment| segment.text())
+            .collect::<Vec<_>>()
+            .join(".")
     }
 }
 
@@ -892,16 +1090,16 @@ mod tests {
                 %2 = yz.constant_int 1
                 %3 = yz.add %1, %2 : !yzl.var, !yz.int64 -> !yzl.var
                 yzl.return %3 : !yzl.var
-              }
+              } {sym_visibility = "private"}
               yzl.fn @spread params ["x"] (!yz.int64) -> !yz.int64 agg {
               ^bb0(%arg0: !yzl.var):
-                %0 = yzl.call @max(%arg0) : (!yzl.var) -> !yzl.var {agg, callee_kind = "builtin"}
-                %1 = yzl.call @min(%arg0) : (!yzl.var) -> !yzl.var {agg, callee_kind = "builtin"}
+                %0 = yzl.call @max(%arg0) : (!yzl.var) -> !yzl.var {agg, callee_source = "builtin"}
+                %1 = yzl.call @min(%arg0) : (!yzl.var) -> !yzl.var {agg, callee_source = "builtin"}
                 %2 = yz.sub %0, %1 : !yzl.var, !yzl.var -> !yzl.var
                 yzl.return %2 : !yzl.var
-              }
+              } {sym_visibility = "private"}
               yzl.fn @upper params ["s"] (!yz.str) -> !yz.str external {
-              }
+              } {sym_visibility = "private"}
             }
         "#]]
         .assert_eq(&lowered(
@@ -924,8 +1122,8 @@ external def upper(s: str) -> str
     fn converts_expression_statements_in_bodies() {
         expect![[r#"
             module {
-              yzl.struct @Row ["a"] : [!yz.int64]
-              yzl.table @t of @Row
+              yzl.struct @Row ["a"] : [!yz.int64] {sym_visibility = "private"}
+              yzl.table @t of @Row {sym_visibility = "private"}
               yzl.fn @f params ["x"] (!yz.int64) -> !yz.int64 {
               ^bb0(%arg0: !yzl.var):
                 %1 = yz.constant_int 1
@@ -933,7 +1131,7 @@ external def upper(s: str) -> str
                 %3 = yz.constant_int 2
                 %4 = yz.mul %arg0, %3 : !yzl.var, !yz.int64 -> !yzl.var
                 yzl.return %4 : !yzl.var
-              }
+              } {sym_visibility = "private"}
               %0 = yzl.from @t
               yzl.output %0
             }
@@ -949,7 +1147,7 @@ external def upper(s: str) -> str
               yzl.trait @Add {
                 yzl.fn @add generics ["Self"] params ["x", "y"] (!yzl.param<"Self">, !yzl.param<"Self">) -> !yzl.param<"Self"> {
                 }
-              }
+              } {sym_visibility = "private"}
               yzl.impl @Add for @int64 {
                 yzl.fn @add generics ["Self"] params ["x", "y"] (!yz.int64, !yz.int64) -> !yz.int64 {
                 ^bb0(%arg0: !yzl.var, %arg1: !yzl.var):
@@ -960,7 +1158,7 @@ external def upper(s: str) -> str
               yzl.fn @id generics ["T"] where ["T"] : [@Add] params ["x"] (!yzl.param<"T">) -> !yzl.param<"T"> {
               ^bb0(%arg0: !yzl.var):
                 yzl.return %arg0 : !yzl.var
-              }
+              } {sym_visibility = "private"}
             }
         "#]].assert_eq(&lowered(
         "trait Add {\n    def add(x: Self, y: Self) -> Self\n}\n\nimpl Add for int64 {\n    def add(x: int64, y: int64) -> int64 { return x + y }\n}\n\ndef id[T](x: T) -> T where T: Add { return x }\n",
@@ -990,7 +1188,7 @@ external def upper(s: str) -> str
                 %1 = yz.constant_int 3
                 %2 = yzl.list[%0, %1] : (!yz.int64, !yz.int64) -> !yzl.var
                 yzl.yield %2 : !yzl.var
-              }
+              } {sym_visibility = "private"}
             }
         "#]]
         .assert_eq(&lowered("let ids: List[int64] = [1, 3]\n"));
@@ -1076,26 +1274,26 @@ external def upper(s: str) -> str
     fn a_let_may_take_a_name_an_earlier_one_holds() {
         expect![[r#"
             module {
-              yzl.struct @Row ["a"] : [!yz.int64]
-              yzl.table @t of @Row
+              yzl.struct @Row ["a"] : [!yz.int64] {sym_visibility = "private"}
+              yzl.table @t of @Row {sym_visibility = "private"}
               yzl.let @cap {
                 %2 = yz.constant_int 1
                 yzl.yield %2 : !yz.int64
-              }
+              } {sym_visibility = "private"}
               yzl.let @step {
-                %2 = yzl.call @cap() : () -> !yzl.var {callee_kind = "let"}
+                %2 = yzl.call @cap() : () -> !yzl.var {callee_source = "let"}
                 %3 = yz.constant_int 10
                 %4 = yz.add %2, %3 : !yzl.var, !yz.int64 -> !yzl.var
                 yzl.yield %4 : !yzl.var
-              }
+              } {sym_visibility = "private"}
               yzl.let @cap_0 {
                 %2 = yz.constant_int 2
                 yzl.yield %2 : !yz.int64
-              }
+              } {sym_visibility = "private"}
               %0 = yzl.from @t
               %1 = yzl.where %0 {
               ^bb0(%arg0: !yzl.var):
-                %2 = yzl.call @cap_0() : () -> !yzl.var {callee_kind = "let"}
+                %2 = yzl.call @cap_0() : () -> !yzl.var {callee_source = "let"}
                 %3 = yz.cmp "gt", %arg0, %2 : !yzl.var, !yzl.var -> !yzl.var
                 yzl.yield %3 : !yzl.var
               }
@@ -1147,8 +1345,8 @@ external def upper(s: str) -> str
     fn a_table_can_name_a_struct_declared_below_it() {
         expect![[r#"
             module {
-              yzl.table @t of @Row
-              yzl.struct @Row ["a"] : [!yz.int64]
+              yzl.table @t of @Row {sym_visibility = "private"}
+              yzl.struct @Row ["a"] : [!yz.int64] {sym_visibility = "private"}
               %0 = yzl.from @t
               %1 = yzl.select %0 as ["a"] {
               ^bb0(%arg0: !yzl.var):

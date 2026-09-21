@@ -4,7 +4,7 @@ use melior::ir::attribute::{FlatSymbolRefAttribute, StringAttribute};
 use melior::ir::operation::{OperationBuilder, OperationLike, OperationRef};
 use melior::ir::{Attribute, BlockLike, BlockRef, Identifier, Operation, Type, Value, ValueLike};
 use yuzu_mlir::ListType;
-use yuzu_mlir::attributes::CalleeKind;
+use yuzu_mlir::attributes::CalleeSource;
 use yuzu_mlir::ext::{OperationCast, OperationExt, ValueExt, ValueId};
 use yuzu_mlir::ods::{yz, yzr};
 use yuzu_mlir::ops::yzl::YzlOp;
@@ -34,18 +34,15 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                 };
 
                 let ty = op.first_result().r#type();
-                let kind = call.callee_kind();
-                if matches!(
-                    kind,
-                    Some(CalleeKind::Fn | CalleeKind::AggFn | CalleeKind::Let)
-                ) {
+                let kind = call.callee_source();
+                if matches!(kind, Some(CalleeSource::Fn | CalleeSource::Let)) {
                     self.report(op, &format!("`{callee}` was not expanded before lowering"));
                     return;
                 }
 
                 let lowered = if call.agg() {
                     self.convert_measure(op, callee, &operands, ty)
-                } else if kind == Some(CalleeKind::External) {
+                } else if kind == Some(CalleeSource::External) {
                     yz::extern_call(
                         self.context,
                         ty,

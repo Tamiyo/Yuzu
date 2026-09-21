@@ -9,10 +9,10 @@
 //! The sibling of `types`: that says what a yz type is in Rust, this says
 //! what an attribute's value is.
 
-mod callee_kind;
+mod callee_source;
 mod cmp_predicate;
 mod join_kind;
 
-pub use callee_kind::CalleeKind;
+pub use callee_source::CalleeSource;
 pub use cmp_predicate::CmpPredicate;
 pub use join_kind::JoinKind;

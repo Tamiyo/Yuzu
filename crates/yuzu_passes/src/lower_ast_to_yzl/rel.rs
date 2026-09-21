@@ -1,3 +1,6 @@
+//! Queries: each stage becomes one `yzl` relational op, with a region for
+//! the expressions it evaluates per row.
+
 use melior::ir::attribute::{
     ArrayAttribute, FlatSymbolRefAttribute, IntegerAttribute, StringAttribute,
 };
@@ -48,8 +51,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         at: TextRange,
     ) -> Value<'c, 'a> {
         let loc = self.location_at(at);
-        let Some(source) = self.ident(from.relation()) else {
-            return self.missing(
+        let Some(source) = self.read_name(from.relation()) else {
+            return self.report_and_hole(
                 block,
                 from,
                 "`from` is missing its relation",
@@ -58,7 +61,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         };
 
         let value = self.scan(block, from, source, loc);
-        match self.ident(from.alias()) {
+        match self.read_name(from.alias()) {
             Some(alias) => self.qualify(block, value, alias, loc),
             None => value,
         }
@@ -76,7 +79,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let body = self.stage_block(&region, loc);
         let predicate = match stage.predicate() {
             Some(expr) => self.convert_expr(body, &Locals::new(), &expr),
-            None => self.missing(
+            None => self.report_and_hole(
                 body,
                 stage,
                 "`where` is missing its predicate",
@@ -104,7 +107,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .items()
             .map(|item| (item.alias(), item.expr(), item.syntax().text_range()));
         let (names, region) = self.convert_items(items, "select item", loc);
-        let columns = self.string_attrs(&names);
+        let columns = self.string_attributes(&names);
         self.symbols.replace(names);
         block
             .append_operation(
@@ -133,7 +136,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .items()
             .map(|item| (item.alias(), item.expr(), item.syntax().text_range()));
         let (names, region) = self.convert_items(items, "extend item", loc);
-        let columns = self.string_attrs(&names);
+        let columns = self.string_attributes(&names);
         self.symbols.extend(names);
         block
             .append_operation(
@@ -161,18 +164,18 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let mut keys = Vec::new();
         let mut key_names: Vec<&'c str> = Vec::new();
         for item in stage.group_by().into_iter().flat_map(|group| group.items()) {
-            let Some(column) = self.ident(item.column()) else {
+            let Some(column) = self.read_name(item.column()) else {
                 self.report(&item, "group by key is missing its column");
                 continue;
             };
 
             let reference = Reference {
-                qualifier: self.ident(item.qualifier()),
+                qualifier: self.read_name(item.qualifier()),
                 name: column,
             };
             if let Some(index) = self.column(&item, "group key", reference) {
                 keys.push(index);
-                key_names.push(self.ident(item.alias()).unwrap_or(column));
+                key_names.push(self.read_name(item.alias()).unwrap_or(column));
             }
         }
 
@@ -180,8 +183,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .items()
             .map(|item| (item.alias(), item.expr(), item.syntax().text_range()));
         let (names, region) = self.convert_items(items, "aggregate item", loc);
-        let group_by = self.string_attrs(&key_names);
-        let measures = self.string_attrs(&names);
+        let group_by = self.string_attributes(&key_names);
+        let measures = self.string_attributes(&names);
         key_names.extend(names);
         self.symbols.replace(key_names);
 
@@ -242,13 +245,14 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let mut to: Vec<&'c str> = Vec::new();
         let mut renames = Vec::new();
         for item in stage.items() {
-            let (Some(old), Some(new)) = (self.ident(item.from()), self.ident(item.to())) else {
+            let (Some(old), Some(new)) = (self.read_name(item.from()), self.read_name(item.to()))
+            else {
                 self.report(&item, "rename item is missing a column name");
                 continue;
             };
 
             let reference = Reference {
-                qualifier: self.ident(item.qualifier()),
+                qualifier: self.read_name(item.qualifier()),
                 name: old,
             };
             if let Some(index) = self.column(&item, "column", reference) {
@@ -264,8 +268,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             self.context,
             types::query(self.context),
             input,
-            ArrayAttribute::new(self.context, &self.string_attrs(&from)),
-            ArrayAttribute::new(self.context, &self.string_attrs(&to)),
+            ArrayAttribute::new(self.context, &self.string_attributes(&from)),
+            ArrayAttribute::new(self.context, &self.string_attributes(&to)),
             loc,
         )
         .into();
@@ -281,7 +285,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     ) -> Value<'c, 'a> {
         let loc = self.location_at(at);
         let input = self.convert_input(block, stage, "`as`", stage.input());
-        let Some(alias) = self.ident(stage.alias()) else {
+        let Some(alias) = self.read_name(stage.alias()) else {
             self.report_at(at, "`as` is missing its alias");
             return input;
         };
@@ -303,8 +307,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             Some(ast::JoinKind::Full) => JoinKind::Full,
             Some(ast::JoinKind::Inner) | None => JoinKind::Inner,
         };
-        let Some(relation) = self.ident(stage.relation()) else {
-            return self.missing(
+        let Some(relation) = self.read_name(stage.relation()) else {
+            return self.report_and_hole(
                 block,
                 stage,
                 "`join` is missing its relation",
@@ -312,7 +316,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             );
         };
 
-        let alias = self.ident(stage.alias());
+        let alias = self.read_name(stage.alias());
         let (rhs_symbol, rhs) = match self.symbols.relation(relation, alias) {
             Some(found) => found,
             None => {
@@ -325,7 +329,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         if let Some(clause) = stage.using() {
             using = clause
                 .columns()
-                .filter_map(|column| self.ident(Some(column)))
+                .filter_map(|column| self.read_name(Some(column)))
                 .collect();
             if using.is_empty() {
                 self.report(&clause, "`using` needs at least one column");
@@ -369,7 +373,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             builder = builder.rhs_alias(StringAttribute::new(self.context, alias));
         }
         if !using.is_empty() {
-            let columns = self.string_attrs(&using);
+            let columns = self.string_attributes(&using);
             builder = builder.using_columns(ArrayAttribute::new(self.context, &columns));
         }
 
@@ -389,7 +393,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let items: Vec<ast::SetItem> = stage.items().collect();
         let mut columns = Vec::new();
         for item in &items {
-            let Some(name) = self.ident(item.column()) else {
+            let Some(name) = self.read_name(item.column()) else {
                 self.report(item, "set item is incomplete");
                 continue;
             };
@@ -403,7 +407,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .iter()
             .map(|item| (item.column(), item.value(), item.syntax().text_range()));
         let (names, region) = self.convert_items(items, "set item", loc);
-        let names = self.string_attrs(&names);
+        let names = self.string_attributes(&names);
         let mut op: Operation<'c> = yzl::set(
             self.context,
             types::query(self.context),
@@ -442,7 +446,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let input = self.convert_input(block, stage, "`drop`", stage.input());
         let mut names: Vec<&'c str> = Vec::new();
         for column in stage.columns() {
-            let Some(name) = self.ident(Some(column.clone())) else {
+            let Some(name) = self.read_name(Some(column.clone())) else {
                 continue;
             };
 
@@ -453,7 +457,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             names.push(name);
         }
 
-        let columns = self.string_attrs(&names);
+        let columns = self.string_attributes(&names);
         block
             .append_operation(
                 yzl::drop(
@@ -486,7 +490,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         node: &impl AstNode,
-        source: &str,
+        source: &'c str,
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         let (symbol, row) = match self.symbols.relation(source, None) {
@@ -552,8 +556,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         match input {
             Some(ast::Expr::Rel(rel)) => self.convert_rel(block, &rel),
             Some(ast::Expr::IdentExpr(ident)) => {
-                let Some(name) = self.ident(ident.name()) else {
-                    return self.missing(
+                let Some(name) = self.read_name(ident.name()) else {
+                    return self.report_and_hole(
                         block,
                         &ident,
                         &format!("{what} is missing its input relation"),
@@ -564,13 +568,13 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 let loc = self.location(&ident);
                 self.scan(block, &ident, name, loc)
             }
-            Some(other) => self.missing(
+            Some(other) => self.report_and_hole(
                 block,
                 &other,
                 "expected a relation as the pipe input",
                 types::query(self.context),
             ),
-            None => self.missing(
+            None => self.report_and_hole(
                 block,
                 stage,
                 &format!("{what} is missing its input relation"),
@@ -612,9 +616,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let mut values = Vec::new();
         for (index, (alias, expr, range)) in items.enumerate() {
             let name = self
-                .ident(alias)
+                .read_name(alias)
                 .or_else(|| match &expr {
-                    Some(ast::Expr::IdentExpr(ident)) => self.ident(ident.name()),
+                    Some(ast::Expr::IdentExpr(ident)) => self.read_name(ident.name()),
                     _ => None,
                 })
                 .unwrap_or_else(|| self.intern(&format!("column{index}")));
@@ -623,7 +627,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 Some(expr) => self.convert_expr(body, &Locals::new(), expr),
                 None => {
                     self.report_at(range, &format!("{what} is missing its expression"));
-                    self.hole(body, range, types::var(self.context))
+                    self.emit_hole(body, range, types::var(self.context))
                 }
             };
 
@@ -634,7 +638,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         (names, region)
     }
 
-    pub(super) fn string_attrs(&self, names: &[&'c str]) -> Vec<Attribute<'c>> {
+    pub(super) fn string_attributes(&self, names: &[&'c str]) -> Vec<Attribute<'c>> {
         names
             .iter()
             .map(|&name| StringAttribute::new(self.context, name).into())
@@ -687,12 +691,12 @@ mod tests {
     fn converts_the_canonical_pipeline() {
         expect![[r#"
             module {
-              yzl.struct @Row ["a", "b"] : [!yz.int64, !yz.int64]
-              yzl.table @t of @Row
+              yzl.struct @Row ["a", "b"] : [!yz.int64, !yz.int64] {sym_visibility = "private"}
+              yzl.table @t of @Row {sym_visibility = "private"}
               yzl.fn @f params ["x"] (!yz.int64) -> !yz.int64 {
               ^bb0(%arg0: !yzl.var):
                 yzl.return %arg0 : !yzl.var
-              }
+              } {sym_visibility = "private"}
               %0 = yzl.from @t
               %1 = yzl.where %0 {
               ^bb0(%arg0: !yzl.var, %arg1: !yzl.var):
@@ -702,13 +706,13 @@ mod tests {
               }
               %2 = yzl.extend %1 as ["e"] {
               ^bb0(%arg0: !yzl.var, %arg1: !yzl.var):
-                %5 = yzl.call @f(%arg0) : (!yzl.var) -> !yzl.var {callee_kind = "fn"}
+                %5 = yzl.call @f(%arg0) : (!yzl.var) -> !yzl.var {callee_source = "fn"}
                 %6 = yz.add %5, %arg1 : !yzl.var, !yzl.var -> !yzl.var
                 yzl.yield %6 : !yzl.var
               }
               %3 = yzl.aggregate %2 group_by ["b"] as ["s"] {
               ^bb0(%arg0: !yzl.var, %arg1: !yzl.var, %arg2: !yzl.var):
-                %5 = yzl.call @sum(%arg2) : (!yzl.var) -> !yzl.var {agg, callee_kind = "builtin"}
+                %5 = yzl.call @sum(%arg2) : (!yzl.var) -> !yzl.var {agg, callee_source = "builtin"}
                 yzl.yield %5 : !yzl.var
               } {key_cols = [1]}
               %4 = yzl.limit %3, 10 offset 2
@@ -734,10 +738,10 @@ from t
     fn converts_joins_sets_and_membership() {
         expect![[r#"
             module {
-              yzl.struct @Employee ["id", "dept_id", "level", "rating"] : [!yz.str, !yz.int64, !yz.int64, !yz.float64]
-              yzl.table @employees of @Employee
-              yzl.struct @Department ["id", "dept_id"] : [!yz.str, !yz.int64]
-              yzl.table @departments of @Department
+              yzl.struct @Employee ["id", "dept_id", "level", "rating"] : [!yz.str, !yz.int64, !yz.int64, !yz.float64] {sym_visibility = "private"}
+              yzl.table @employees of @Employee {sym_visibility = "private"}
+              yzl.struct @Department ["id", "dept_id"] : [!yz.str, !yz.int64] {sym_visibility = "private"}
+              yzl.table @departments of @Department {sym_visibility = "private"}
               %0 = yzl.from @employees
               %1 = yzl.alias %0 as "e"
               %2 = yzl.join "inner", %1, @departments as "d" {
@@ -756,7 +760,7 @@ from t
                 %7 = yz.constant_int 1
                 %8 = yz.constant_int 3
                 %9 = yzl.list[%7, %8] : (!yz.int64, !yz.int64) -> !yzl.var
-                %10 = yzl.call @in(%arg2, %9) : (!yzl.var, !yzl.var) -> !yzl.var {callee_kind = "builtin"}
+                %10 = yzl.call @in(%arg2, %9) : (!yzl.var, !yzl.var) -> !yzl.var {callee_source = "builtin"}
                 yzl.yield %10 : !yzl.var
               }
               %5 = yzl.drop %4 ["rating"]
@@ -785,8 +789,8 @@ from employees as e
     fn converts_sugar_and_bindings() {
         expect![[r#"
             module {
-              yzl.struct @Row ["a", "active"] : [!yz.int64, !yz.bool]
-              yzl.table @t of @Row
+              yzl.struct @Row ["a", "active"] : [!yz.int64, !yz.bool] {sym_visibility = "private"}
+              yzl.table @t of @Row {sym_visibility = "private"}
               yzl.let @base {
                 %4 = yzl.from @t
                 %5 = yzl.where %4 {
@@ -794,7 +798,7 @@ from employees as e
                   yzl.yield %arg1 : !yzl.var
                 }
                 yzl.yield %5 : !yzl.query
-              }
+              } {sym_visibility = "private"}
               %0 = yzl.from @base
               %1 = yzl.rename %0 from ["a"] to ["renamed"] {rename_cols = [0]}
               %2 = yzl.alias %1 as "q"

@@ -1,4 +1,4 @@
-use crate::diagnostics::Diagnostic;
+use crate::diagnostics::{Diagnostic, Severity};
 
 pub struct DiagnosticsEngine {
     diagnostics: Vec<Diagnostic>,
@@ -19,6 +19,12 @@ impl DiagnosticsEngine {
 
     pub fn emit(&mut self, diagnostic: impl Into<Diagnostic>) {
         self.diagnostics.push(diagnostic.into());
+    }
+
+    pub fn has_errors(&self) -> bool {
+        self.diagnostics
+            .iter()
+            .any(|diagnostic| matches!(diagnostic.severity, Severity::Error))
     }
 
     pub fn diagnostics(&self) -> &[Diagnostic] {

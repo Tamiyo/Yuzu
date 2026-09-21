@@ -148,6 +148,13 @@ impl<'c: 'a, 'a, T: OperationLike<'c, 'a>> OperationExt<'c, 'a> for T {}
 
 /// Stamping the answers passes record, as attributes.
 pub trait OperationMutExt<'c: 'a, 'a>: OperationMutLike<'c, 'a> {
+    /// Marks a symbol private, so symbol DCE may remove it once nothing
+    /// refers to it. A symbol is public unless told otherwise.
+    fn set_private(&mut self, context: &'c Context) {
+        let private = StringAttribute::new(context, "private");
+        self.set_attribute("sym_visibility", private.into());
+    }
+
     /// Stamps an array of indices.
     fn set_index_array_attribute(&mut self, context: &'c Context, name: &str, indices: &[usize]) {
         let i64 = IntegerType::new(context, 64).into();

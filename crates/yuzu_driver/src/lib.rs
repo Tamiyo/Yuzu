@@ -257,6 +257,7 @@ fn plan_through_mlir(
     // carry a function across.
     yuzu_mlir::diagnostics::capture(&context, sources, diagnostics, || {
         yuzu_passes::inline_calls(&context, &mut module);
+        yuzu_passes::remove_dead_symbols(&context, &mut module);
     });
     if has_errors(diagnostics) {
         return None;
