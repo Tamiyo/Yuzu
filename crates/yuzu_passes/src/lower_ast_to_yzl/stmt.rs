@@ -399,6 +399,15 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             return;
         }
 
+        // A file-level binding is copied into each use, so nothing could see
+        // a change to it.
+        if let Some(token) = decl.mut_token() {
+            let diagnostic = self
+                .error_at(token.text_range(), "a file-level binding cannot be `mut`")
+                .note("a file-level binding is a constant; move it into a function to change it");
+            self.diagnostics.emit(diagnostic);
+        }
+
         if !self.is_bound(decl, &name) {
             debug_assert!(
                 self.diagnostics.has_errors(),
@@ -1047,6 +1056,21 @@ mod tests {
     use expect_test::expect;
 
     use crate::test_support::{lower, lowered, reported};
+
+    #[test]
+    fn a_file_level_let_cannot_be_mut() {
+        expect![[r#"
+            error: a file-level binding cannot be `mut`
+             --> test.yz:4:5
+              |
+            4 | let mut cap = 1
+              |     ^^^
+              = note: a file-level binding is a constant; move it into a function to change it
+        "#]]
+        .assert_eq(&reported(
+            "struct Row { a: int64 }\ntable t = Row\n\nlet mut cap = 1\n\nfrom t |> select a + cap as v\n",
+        ));
+    }
 
     #[test]
     fn a_body_statement_at_the_file_level_is_reported() {

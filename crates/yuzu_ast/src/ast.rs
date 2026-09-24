@@ -572,17 +572,17 @@ impl LetStmt {
     }
 
     pub fn mutability(&self) -> Mutability {
-        let is_mut = self
-            .syntax()
+        match self.mut_token() {
+            Some(_) => Mutability::Mutable,
+            None => Mutability::Immutable,
+        }
+    }
+
+    pub fn mut_token(&self) -> Option<SyntaxToken> {
+        self.syntax()
             .children_with_tokens()
             .filter_map(SyntaxElement::into_token)
-            .any(|token| token.kind() == SyntaxKind::MutKw);
-
-        if is_mut {
-            Mutability::Mutable
-        } else {
-            Mutability::Immutable
-        }
+            .find(|token| token.kind() == SyntaxKind::MutKw)
     }
 
     pub fn type_annotation(&self) -> Option<TypeAnnotation> {
