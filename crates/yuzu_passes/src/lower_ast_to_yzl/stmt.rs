@@ -420,7 +420,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 Mutability::Immutable => Place::Immutable,
             };
             let place = self.emit_local(block, &name, place, value, location);
-            self.bind_local(locals, &name, place, decl.mutability());
+            self.bind_local(locals, &name, place);
             return;
         }
 
@@ -517,8 +517,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             return;
         }
 
-        let Lookup::Local { slot, .. } = self.symbols.lookup(Reference::unqualified(&name)) else {
-            unreachable!("only a mutable local is assignable");
+        let (Lookup::Param(slot) | Lookup::Local(slot)) =
+            self.symbols.lookup(Reference::unqualified(&name))
+        else {
+            unreachable!("only a place is assignable");
         };
 
         let value = self.convert_expr(block, locals, &value);
@@ -841,14 +843,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     }
 
     /// Binds a name to a place the body has declared.
-    fn bind_local<'a>(
-        &mut self,
-        locals: &mut Locals<'c, 'a>,
-        name: &str,
-        place: Value<'c, 'a>,
-        mutability: Mutability,
-    ) {
-        self.symbols.bind_local(name, locals.len(), mutability);
+    fn bind_local<'a>(&mut self, locals: &mut Locals<'c, 'a>, name: &str, place: Value<'c, 'a>) {
+        self.symbols.bind_local(name, locals.len());
         locals.push(place);
     }
 
@@ -1059,14 +1055,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
     fn check_assignable(&mut self, node: &impl AstNode, name: &str) -> bool {
         let message = match self.symbols.lookup(Reference::unqualified(name)) {
-            Lookup::Local {
-                mutability: Mutability::Mutable,
-                ..
-            } => return true,
-            Lookup::Local { .. } => {
-                format!("`{name}` is not mutable; declare it with `let mut` to assign it")
-            }
-            Lookup::Param(_) => format!("`{name}` is a parameter and cannot be assigned"),
+            Lookup::Param(_) | Lookup::Local(_) => return true,
             Lookup::Column(_) | Lookup::Ambiguous | Lookup::NarrowedAway => {
                 format!("`{name}` is a column; `set` is how a query writes one")
             }
@@ -1343,42 +1332,6 @@ external def upper(s: str) -> str
         "#]]
         .assert_eq(&reported(
             "struct Row { a: int64 }\nstruct Row { b: int64 }\ntable t = Row\n\nfrom t\n|> select a as x\n",
-        ));
-    }
-
-    #[test]
-    fn assigning_a_binding_needs_mut() {
-        expect![[r#"
-            error: `n` is not mutable; declare it with `let mut` to assign it
-             --> test.yz:6:5
-              |
-            6 |     n = n + 1
-              |     ^^^^^^^^^
-        "#]]
-        .assert_eq(&reported(
-            "struct Row { a: int64 }\ntable t = Row\n\ndef f(x: int64) -> int64 {\n    let n = 0\n    n = n + 1\n    return n\n}\n\nfrom t |> select f(a) as v\n",
-        ));
-    }
-
-    #[test]
-    fn a_mutable_binding_may_be_assigned() {
-        let module = lowered(
-            "struct Row { a: int64 }\ntable t = Row\n\ndef f(x: int64) -> int64 {\n    let mut n = 0\n    n = n + 1\n    return n\n}\n\nfrom t |> select f(a) as v\n",
-        );
-        assert!(module.contains("yzl.return"), "the body lowers:\n{module}");
-    }
-
-    #[test]
-    fn a_parameter_is_not_assignable() {
-        expect![[r#"
-            error: `x` is a parameter and cannot be assigned
-             --> test.yz:5:5
-              |
-            5 |     x = 1
-              |     ^^^^^
-        "#]]
-        .assert_eq(&reported(
-            "struct Row { a: int64 }\ntable t = Row\n\ndef f(x: int64) -> int64 {\n    x = 1\n    return x\n}\n\nfrom t |> select f(a) as v\n",
         ));
     }
 

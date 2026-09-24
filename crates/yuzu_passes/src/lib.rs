@@ -1,4 +1,5 @@
 mod check_aggregates;
+mod check_mutability;
 mod infer_types;
 mod inline_calls;
 mod lower_ast_to_yzl;
@@ -10,6 +11,7 @@ mod simplify_yzr;
 mod test_support;
 
 pub use check_aggregates::check_aggregates;
+pub use check_mutability::check_mutability;
 pub use infer_types::infer_types;
 pub use inline_calls::inline_calls;
 pub use lower_ast_to_yzl::{File, lower_ast_to_yzl};

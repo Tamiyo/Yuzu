@@ -449,7 +449,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .into();
             }
             // A parameter's place is slot `index`: `convert_method` declares them first.
-            Lookup::Param(slot) | Lookup::Local { slot, .. } => {
+            Lookup::Param(slot) | Lookup::Local(slot) => {
                 let load = yzl::load(
                     self.context,
                     UnresolvedType::get(self.context),

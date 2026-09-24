@@ -9,7 +9,6 @@ use std::fmt;
 
 use text_size::TextRange;
 use yuzu_ast::Visibility;
-use yuzu_ast::ast::Mutability;
 use yuzu_mlir::attributes::CalleeSource;
 use yuzu_types::FunctionRegistry;
 
@@ -211,7 +210,6 @@ impl fmt::Display for BindingKind {
 pub(super) struct Local {
     pub(super) name: String,
     pub(super) slot: usize,
-    pub(super) mutability: Mutability,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -245,10 +243,7 @@ impl Callable {
 pub(super) enum Lookup {
     Column(usize),
     Param(usize),
-    Local {
-        slot: usize,
-        mutability: Mutability,
-    },
+    Local(usize),
     Let(String),
     Ambiguous,
     NarrowedAway,
@@ -578,9 +573,8 @@ impl SymbolTable {
         self.scopes.push(Scope::Block { locals: Vec::new() });
     }
 
-    /// Binding a name twice shadows it: a second `let` and an assignment
-    /// both do.
-    pub(super) fn bind_local(&mut self, name: &str, slot: usize, mutability: Mutability) {
+    /// Binding a name twice shadows it.
+    pub(super) fn bind_local(&mut self, name: &str, slot: usize) {
         let Some(Scope::Block { locals }) = self.scopes.last_mut() else {
             panic!("a local is being bound outside a block")
         };
@@ -588,7 +582,6 @@ impl SymbolTable {
         locals.push(Local {
             name: name.to_string(),
             slot,
-            mutability,
         });
     }
 
@@ -645,10 +638,7 @@ impl SymbolTable {
                             .rev()
                             .find(|local| local.name == reference.name)
                     {
-                        return Lookup::Local {
-                            slot: local.slot,
-                            mutability: local.mutability,
-                        };
+                        return Lookup::Local(local.slot);
                     }
                 }
                 Scope::Function { params } => {
@@ -757,7 +747,6 @@ impl SymbolTable {
 mod tests {
     use text_size::TextRange;
     use yuzu_ast::Visibility;
-    use yuzu_ast::ast::Mutability;
     use yuzu_mlir::attributes::CalleeSource;
 
     use super::{
@@ -872,14 +861,8 @@ mod tests {
         symbols.enter_function(strings(&["cap"]));
         assert_eq!(symbols.lookup(bare("cap")), Lookup::Param(0));
         symbols.enter_block();
-        symbols.bind_local("cap", 7, Mutability::Immutable);
-        assert_eq!(
-            symbols.lookup(bare("cap")),
-            Lookup::Local {
-                slot: 7,
-                mutability: Mutability::Immutable
-            }
-        );
+        symbols.bind_local("cap", 7);
+        assert_eq!(symbols.lookup(bare("cap")), Lookup::Local(7));
         symbols.leave();
         assert_eq!(symbols.lookup(bare("cap")), Lookup::Param(0));
         symbols.leave();
@@ -894,7 +877,7 @@ mod tests {
         bind_let(&mut symbols, "cap");
         symbols.enter_function(strings(&["x"]));
         symbols.enter_block();
-        symbols.bind_local("local", 0, Mutability::Immutable);
+        symbols.bind_local("local", 0);
         enter_relation(&mut symbols, "t");
 
         assert_eq!(symbols.lookup(bare("id")), Lookup::Column(0));
