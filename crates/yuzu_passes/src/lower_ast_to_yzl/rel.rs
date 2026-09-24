@@ -13,7 +13,7 @@ use yuzu_ast::{AstNode, ast};
 use yuzu_mlir::attributes::JoinKind;
 use yuzu_mlir::ext::{ArrayAttributeExt, OperationExt, OperationMutExt};
 use yuzu_mlir::ods::yzl;
-use yuzu_mlir::types::{QueryType, VarType};
+use yuzu_mlir::types::{QueryType, UnresolvedType};
 
 use crate::lower_ast_to_yzl::symbols::{ColumnLookup, Reference, Row};
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
@@ -97,7 +97,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 body,
                 stage,
                 "`where` is missing its predicate",
-                VarType::get(self.context),
+                UnresolvedType::get(self.context),
             ),
         };
 
@@ -563,7 +563,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn stage_block<'r>(&self, region: &'r Region<'c>, loc: Location<'c>) -> BlockRef<'c, 'r> {
         let width = self.symbols.row().len();
         let arguments: Vec<(Type<'c>, Location<'c>)> = (0..width)
-            .map(|_| (VarType::get(self.context), loc))
+            .map(|_| (UnresolvedType::get(self.context), loc))
             .collect();
         region.append_block(Block::new(&arguments))
     }
@@ -648,7 +648,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 Some(expr) => self.convert_expr(body, &Locals::new(), expr),
                 None => {
                     self.report_at(range, &format!("{what} is missing its expression"));
-                    self.emit_hole(body, range, VarType::get(self.context))
+                    self.emit_hole(body, range, UnresolvedType::get(self.context))
                 }
             };
 
@@ -708,26 +708,26 @@ mod tests {
               yzl.struct @Row ["a", "b"] : [!yz.int64, !yz.int64] {sym_visibility = "private"}
               yzl.table @t of @Row {sym_visibility = "private"}
               yzl.fn @f params ["x"] (!yz.int64) -> !yz.int64 {
-              ^bb0(%arg0: !yzl.var):
-                yzl.return %arg0 : !yzl.var
+              ^bb0(%arg0: !yzl.unresolved):
+                yzl.return %arg0 : !yzl.unresolved
               } {sym_visibility = "private"}
               %0 = yzl.from @t
               %1 = yzl.where %0 {
-              ^bb0(%arg0: !yzl.var, %arg1: !yzl.var):
+              ^bb0(%arg0: !yzl.unresolved, %arg1: !yzl.unresolved):
                 %5 = yz.constant_int 10
-                %6 = yz.cmp "gt", %arg0, %5 : !yzl.var, !yz.int64 -> !yzl.var
-                yzl.yield %6 : !yzl.var
+                %6 = yz.cmp "gt", %arg0, %5 : !yzl.unresolved, !yz.int64 -> !yzl.unresolved
+                yzl.yield %6 : !yzl.unresolved
               }
               %2 = yzl.extend %1 as ["e"] {
-              ^bb0(%arg0: !yzl.var, %arg1: !yzl.var):
-                %5 = yzl.call @f(%arg0) : (!yzl.var) -> !yzl.var {callee_source = "fn"}
-                %6 = yz.add %5, %arg1 : !yzl.var, !yzl.var -> !yzl.var
-                yzl.yield %6 : !yzl.var
+              ^bb0(%arg0: !yzl.unresolved, %arg1: !yzl.unresolved):
+                %5 = yzl.call @f(%arg0) : (!yzl.unresolved) -> !yzl.unresolved {callee_source = "fn"}
+                %6 = yz.add %5, %arg1 : !yzl.unresolved, !yzl.unresolved -> !yzl.unresolved
+                yzl.yield %6 : !yzl.unresolved
               }
               %3 = yzl.aggregate %2 group_by ["b"] as ["s"] {
-              ^bb0(%arg0: !yzl.var, %arg1: !yzl.var, %arg2: !yzl.var):
-                %5 = yzl.call @sum(%arg2) : (!yzl.var) -> !yzl.var {agg, callee_source = "builtin"}
-                yzl.yield %5 : !yzl.var
+              ^bb0(%arg0: !yzl.unresolved, %arg1: !yzl.unresolved, %arg2: !yzl.unresolved):
+                %5 = yzl.call @sum(%arg2) : (!yzl.unresolved) -> !yzl.unresolved {agg, callee_source = "builtin"}
+                yzl.yield %5 : !yzl.unresolved
               } {key_cols = [1]}
               %4 = yzl.limit %3, 10 offset 2
               yzl.output %4
@@ -759,23 +759,23 @@ from t
               %0 = yzl.from @employees
               %1 = yzl.alias %0 as "e"
               %2 = yzl.join "inner", %1, @departments as "d" {
-              ^bb0(%arg0: !yzl.var, %arg1: !yzl.var, %arg2: !yzl.var, %arg3: !yzl.var, %arg4: !yzl.var, %arg5: !yzl.var):
-                %7 = yz.cmp "eq", %arg1, %arg4 : !yzl.var, !yzl.var -> !yzl.var
-                yzl.yield %7 : !yzl.var
+              ^bb0(%arg0: !yzl.unresolved, %arg1: !yzl.unresolved, %arg2: !yzl.unresolved, %arg3: !yzl.unresolved, %arg4: !yzl.unresolved, %arg5: !yzl.unresolved):
+                %7 = yz.cmp "eq", %arg1, %arg4 : !yzl.unresolved, !yzl.unresolved -> !yzl.unresolved
+                yzl.yield %7 : !yzl.unresolved
               }
               %3 = yzl.set %2 as ["level"] {
-              ^bb0(%arg0: !yzl.var, %arg1: !yzl.var, %arg2: !yzl.var, %arg3: !yzl.var, %arg4: !yzl.var, %arg5: !yzl.var):
+              ^bb0(%arg0: !yzl.unresolved, %arg1: !yzl.unresolved, %arg2: !yzl.unresolved, %arg3: !yzl.unresolved, %arg4: !yzl.unresolved, %arg5: !yzl.unresolved):
                 %7 = yz.constant_int 1
-                %8 = yz.add %arg2, %7 : !yzl.var, !yz.int64 -> !yzl.var
-                yzl.yield %8 : !yzl.var
+                %8 = yz.add %arg2, %7 : !yzl.unresolved, !yz.int64 -> !yzl.unresolved
+                yzl.yield %8 : !yzl.unresolved
               } {set_cols = [2]}
               %4 = yzl.where %3 {
-              ^bb0(%arg0: !yzl.var, %arg1: !yzl.var, %arg2: !yzl.var, %arg3: !yzl.var, %arg4: !yzl.var, %arg5: !yzl.var):
+              ^bb0(%arg0: !yzl.unresolved, %arg1: !yzl.unresolved, %arg2: !yzl.unresolved, %arg3: !yzl.unresolved, %arg4: !yzl.unresolved, %arg5: !yzl.unresolved):
                 %7 = yz.constant_int 1
                 %8 = yz.constant_int 3
-                %9 = yzl.list[%7, %8] : (!yz.int64, !yz.int64) -> !yzl.var
-                %10 = yzl.call @in(%arg2, %9) : (!yzl.var, !yzl.var) -> !yzl.var {callee_source = "builtin"}
-                yzl.yield %10 : !yzl.var
+                %9 = yzl.list[%7, %8] : (!yz.int64, !yz.int64) -> !yzl.unresolved
+                %10 = yzl.call @in(%arg2, %9) : (!yzl.unresolved, !yzl.unresolved) -> !yzl.unresolved {callee_source = "builtin"}
+                yzl.yield %10 : !yzl.unresolved
               }
               %5 = yzl.drop %4 ["rating"]
               %6 = yzl.distinct %5
@@ -808,8 +808,8 @@ from employees as e
               yzl.let @base {
                 %4 = yzl.from @t
                 %5 = yzl.where %4 {
-                ^bb0(%arg0: !yzl.var, %arg1: !yzl.var):
-                  yzl.yield %arg1 : !yzl.var
+                ^bb0(%arg0: !yzl.unresolved, %arg1: !yzl.unresolved):
+                  yzl.yield %arg1 : !yzl.unresolved
                 }
                 yzl.yield %5 : !yzl.query
               } {sym_visibility = "private"}
@@ -817,8 +817,8 @@ from employees as e
               %1 = yzl.rename %0 from ["a"] to ["renamed"] {rename_cols = [0]}
               %2 = yzl.alias %1 as "q"
               %3 = yzl.select %2 as ["out"] {
-              ^bb0(%arg0: !yzl.var, %arg1: !yzl.var):
-                yzl.yield %arg0 : !yzl.var
+              ^bb0(%arg0: !yzl.unresolved, %arg1: !yzl.unresolved):
+                yzl.yield %arg0 : !yzl.unresolved
               }
               yzl.output %3
             }

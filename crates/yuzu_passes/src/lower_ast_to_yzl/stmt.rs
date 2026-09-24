@@ -10,7 +10,7 @@ use yuzu_ast::{AstNode, Visibility, ast};
 use yuzu_mlir::attributes::CalleeSource;
 use yuzu_mlir::ext::{ArrayAttributeExt, OperationMutExt};
 use yuzu_mlir::ods::yzl;
-use yuzu_mlir::types::{self, VarType};
+use yuzu_mlir::types::{self, UnresolvedType};
 use yuzu_mlir::{ListType, ParamType, StructType};
 
 use crate::lower_ast_to_yzl::symbols::{
@@ -226,7 +226,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
         let result = match decl.result() {
             Some(result) => self.read_type(result),
-            None => VarType::get(self.context),
+            None => UnresolvedType::get(self.context),
         };
 
         let signature = FunctionType::new(self.context, &param_types, &[result]);
@@ -242,7 +242,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
         let body = Region::new();
         if let Some(block) = decl.body() {
-            let ty = VarType::get(self.context);
+            let ty = UnresolvedType::get(self.context);
             let arguments = vec![(ty, location); param_count];
             let entry = body.append_block(Block::new(&arguments));
 
@@ -897,13 +897,13 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             ast::TypeAnnotation::NamedTypeAnnotation(named) => named,
             ast::TypeAnnotation::FuncTypeAnnotation(func) => {
                 self.report(&func, "function types are not supported yet");
-                return VarType::get(self.context);
+                return UnresolvedType::get(self.context);
             }
         };
 
         let Some(name) = named.name_text() else {
             self.report(&named, "type is missing its name");
-            return VarType::get(self.context);
+            return UnresolvedType::get(self.context);
         };
 
         if self.symbols.is_type_param(&name) {
@@ -914,7 +914,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             let mut args = named.args();
             let (Some(inner), None) = (args.next(), args.next()) else {
                 self.report(&named, "`List` takes exactly one type argument");
-                return VarType::get(self.context);
+                return UnresolvedType::get(self.context);
             };
 
             let inner = self.read_type(inner);
@@ -930,7 +930,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
 
         self.report(&named, &format!("unknown type `{name}`"));
-        VarType::get(self.context)
+        UnresolvedType::get(self.context)
     }
 
     fn path_text(&self, path: &ast::ModulePath) -> String {
@@ -1126,19 +1126,19 @@ mod tests {
         expect![[r#"
             module {
               yzl.fn @f params ["x"] (!yz.int64) -> !yz.int64 {
-              ^bb0(%arg0: !yzl.var):
+              ^bb0(%arg0: !yzl.unresolved):
                 %0 = yz.constant_int 2
-                %1 = yz.mul %arg0, %0 : !yzl.var, !yz.int64 -> !yzl.var
+                %1 = yz.mul %arg0, %0 : !yzl.unresolved, !yz.int64 -> !yzl.unresolved
                 %2 = yz.constant_int 1
-                %3 = yz.add %1, %2 : !yzl.var, !yz.int64 -> !yzl.var
-                yzl.return %3 : !yzl.var
+                %3 = yz.add %1, %2 : !yzl.unresolved, !yz.int64 -> !yzl.unresolved
+                yzl.return %3 : !yzl.unresolved
               } {sym_visibility = "private"}
               yzl.fn @spread params ["x"] (!yz.int64) -> !yz.int64 agg {
-              ^bb0(%arg0: !yzl.var):
-                %0 = yzl.call @max(%arg0) : (!yzl.var) -> !yzl.var {agg, callee_source = "builtin"}
-                %1 = yzl.call @min(%arg0) : (!yzl.var) -> !yzl.var {agg, callee_source = "builtin"}
-                %2 = yz.sub %0, %1 : !yzl.var, !yzl.var -> !yzl.var
-                yzl.return %2 : !yzl.var
+              ^bb0(%arg0: !yzl.unresolved):
+                %0 = yzl.call @max(%arg0) : (!yzl.unresolved) -> !yzl.unresolved {agg, callee_source = "builtin"}
+                %1 = yzl.call @min(%arg0) : (!yzl.unresolved) -> !yzl.unresolved {agg, callee_source = "builtin"}
+                %2 = yz.sub %0, %1 : !yzl.unresolved, !yzl.unresolved -> !yzl.unresolved
+                yzl.return %2 : !yzl.unresolved
               } {sym_visibility = "private"}
               yzl.fn @upper params ["s"] (!yz.str) -> !yz.str external {
               } {sym_visibility = "private"}
@@ -1167,12 +1167,12 @@ external def upper(s: str) -> str
               yzl.struct @Row ["a"] : [!yz.int64] {sym_visibility = "private"}
               yzl.table @t of @Row {sym_visibility = "private"}
               yzl.fn @f params ["x"] (!yz.int64) -> !yz.int64 {
-              ^bb0(%arg0: !yzl.var):
+              ^bb0(%arg0: !yzl.unresolved):
                 %1 = yz.constant_int 1
-                %2 = yz.add %arg0, %1 : !yzl.var, !yz.int64 -> !yzl.var
+                %2 = yz.add %arg0, %1 : !yzl.unresolved, !yz.int64 -> !yzl.unresolved
                 %3 = yz.constant_int 2
-                %4 = yz.mul %arg0, %3 : !yzl.var, !yz.int64 -> !yzl.var
-                yzl.return %4 : !yzl.var
+                %4 = yz.mul %arg0, %3 : !yzl.unresolved, !yz.int64 -> !yzl.unresolved
+                yzl.return %4 : !yzl.unresolved
               } {sym_visibility = "private"}
               %0 = yzl.from @t
               yzl.output %0
@@ -1192,14 +1192,14 @@ external def upper(s: str) -> str
               } {sym_visibility = "private"}
               yzl.impl @Add for @int64 {
                 yzl.fn @add generics ["Self"] params ["x", "y"] (!yz.int64, !yz.int64) -> !yz.int64 {
-                ^bb0(%arg0: !yzl.var, %arg1: !yzl.var):
-                  %0 = yz.add %arg0, %arg1 : !yzl.var, !yzl.var -> !yzl.var
-                  yzl.return %0 : !yzl.var
+                ^bb0(%arg0: !yzl.unresolved, %arg1: !yzl.unresolved):
+                  %0 = yz.add %arg0, %arg1 : !yzl.unresolved, !yzl.unresolved -> !yzl.unresolved
+                  yzl.return %0 : !yzl.unresolved
                 }
               }
               yzl.fn @id generics ["T"] where ["T"] : [@Add] params ["x"] (!yzl.param<"T">) -> !yzl.param<"T"> {
-              ^bb0(%arg0: !yzl.var):
-                yzl.return %arg0 : !yzl.var
+              ^bb0(%arg0: !yzl.unresolved):
+                yzl.return %arg0 : !yzl.unresolved
               } {sym_visibility = "private"}
             }
         "#]].assert_eq(&lowered(
@@ -1228,8 +1228,8 @@ external def upper(s: str) -> str
               yzl.let @ids : !yz.list<!yz.int64> {
                 %0 = yz.constant_int 1
                 %1 = yz.constant_int 3
-                %2 = yzl.list[%0, %1] : (!yz.int64, !yz.int64) -> !yzl.var
-                yzl.yield %2 : !yzl.var
+                %2 = yzl.list[%0, %1] : (!yz.int64, !yz.int64) -> !yzl.unresolved
+                yzl.yield %2 : !yzl.unresolved
               } {sym_visibility = "private"}
             }
         "#]]
@@ -1345,8 +1345,8 @@ external def upper(s: str) -> str
               yzl.struct @Row ["a"] : [!yz.int64] {sym_visibility = "private"}
               %0 = yzl.from @t
               %1 = yzl.select %0 as ["a"] {
-              ^bb0(%arg0: !yzl.var):
-                yzl.yield %arg0 : !yzl.var
+              ^bb0(%arg0: !yzl.unresolved):
+                yzl.yield %arg0 : !yzl.unresolved
               }
               yzl.output %1
             }

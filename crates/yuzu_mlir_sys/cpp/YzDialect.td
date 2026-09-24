@@ -109,24 +109,24 @@ def Yz_ListOp : Yz_Op<"list", [Pure]> {
 
 // Arithmetic. One op per surface operator, polymorphic over the numeric
 // types the way the language's operators are; folds dispatch on the
-// literal's kind. The constraints also admit !yzl.var — the pre-inference
+// literal's kind. The constraints also admit !yzl.unresolved — the pre-inference
 // window, the way Mojo's pop ops admit unbound parametrics — so operand
 // types are spelled individually until InferTypes stamps them concrete.
 
 def Yz_NumericType : Type<
     CPred<"::llvm::isa<::yuzu::yz::Int64Type, ::yuzu::yz::Float64Type, "
-          "::yuzu::yzl::VarType>($_self)">,
-    "numeric or !yzl.var">;
+          "::yuzu::yzl::UnresolvedType>($_self)">,
+    "numeric or !yzl.unresolved">;
 
-def Yz_ScalarOrVarType : Type<
+def Yz_ScalarOrUnresolvedType : Type<
     CPred<"::llvm::isa<::yuzu::yz::Int64Type, ::yuzu::yz::Float64Type, "
-          "::yuzu::yz::BoolType, ::yuzu::yz::StrType, ::yuzu::yzl::VarType>"
+          "::yuzu::yz::BoolType, ::yuzu::yz::StrType, ::yuzu::yzl::UnresolvedType>"
           "($_self)">,
-    "a scalar or !yzl.var">;
+    "a scalar or !yzl.unresolved">;
 
-def Yz_BoolOrVarType : Type<
-    CPred<"::llvm::isa<::yuzu::yz::BoolType, ::yuzu::yzl::VarType>($_self)">,
-    "!yz.bool or !yzl.var">;
+def Yz_BoolOrUnresolvedType : Type<
+    CPred<"::llvm::isa<::yuzu::yz::BoolType, ::yuzu::yzl::UnresolvedType>($_self)">,
+    "!yz.bool or !yzl.unresolved">;
 
 class Yz_ArithBinaryOp<string mnemonic, list<Trait> traits = []>
     : Yz_Op<mnemonic, traits # [Pure]> {
@@ -176,9 +176,9 @@ def Yz_NegOp : Yz_Op<"neg", [Pure]> {
 
 def Yz_CmpOp : Yz_Op<"cmp", [Pure]> {
   let summary = "scalar comparison";
-  let arguments = (ins StrAttr:$predicate, Yz_ScalarOrVarType:$lhs,
-                       Yz_ScalarOrVarType:$rhs);
-  let results = (outs Yz_BoolOrVarType:$result);
+  let arguments = (ins StrAttr:$predicate, Yz_ScalarOrUnresolvedType:$lhs,
+                       Yz_ScalarOrUnresolvedType:$rhs);
+  let results = (outs Yz_BoolOrUnresolvedType:$result);
   let assemblyFormat =
       "$predicate `,` $lhs `,` $rhs `:` type($lhs) `,` type($rhs) `->` type($result) attr-dict";
   let hasFolder = 1;
@@ -186,8 +186,8 @@ def Yz_CmpOp : Yz_Op<"cmp", [Pure]> {
 
 def Yz_AndOp : Yz_Op<"and", [Commutative, Pure]> {
   let summary = "logical and";
-  let arguments = (ins Yz_BoolOrVarType:$lhs, Yz_BoolOrVarType:$rhs);
-  let results = (outs Yz_BoolOrVarType:$result);
+  let arguments = (ins Yz_BoolOrUnresolvedType:$lhs, Yz_BoolOrUnresolvedType:$rhs);
+  let results = (outs Yz_BoolOrUnresolvedType:$result);
   let assemblyFormat =
       "$lhs `,` $rhs `:` type($lhs) `,` type($rhs) `->` type($result) attr-dict";
   let hasFolder = 1;
@@ -195,8 +195,8 @@ def Yz_AndOp : Yz_Op<"and", [Commutative, Pure]> {
 
 def Yz_OrOp : Yz_Op<"or", [Commutative, Pure]> {
   let summary = "logical or";
-  let arguments = (ins Yz_BoolOrVarType:$lhs, Yz_BoolOrVarType:$rhs);
-  let results = (outs Yz_BoolOrVarType:$result);
+  let arguments = (ins Yz_BoolOrUnresolvedType:$lhs, Yz_BoolOrUnresolvedType:$rhs);
+  let results = (outs Yz_BoolOrUnresolvedType:$result);
   let assemblyFormat =
       "$lhs `,` $rhs `:` type($lhs) `,` type($rhs) `->` type($result) attr-dict";
   let hasFolder = 1;
@@ -204,8 +204,8 @@ def Yz_OrOp : Yz_Op<"or", [Commutative, Pure]> {
 
 def Yz_NotOp : Yz_Op<"not", [Pure]> {
   let summary = "logical negation";
-  let arguments = (ins Yz_BoolOrVarType:$value);
-  let results = (outs Yz_BoolOrVarType:$result);
+  let arguments = (ins Yz_BoolOrUnresolvedType:$value);
+  let results = (outs Yz_BoolOrUnresolvedType:$result);
   let assemblyFormat = "$value `:` type($value) `->` type($result) attr-dict";
   let hasFolder = 1;
 }

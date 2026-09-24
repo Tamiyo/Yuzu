@@ -17,7 +17,7 @@ class Yzl_Type<string name, string typeMnemonic> : TypeDef<Yzl_Dialect, name> {
   let mnemonic = typeMnemonic;
 }
 
-def Yzl_VarType : Yzl_Type<"Var", "var"> {
+def Yzl_UnresolvedType : Yzl_Type<"Unresolved", "unresolved"> {
   let summary = "a unification variable: a type inference has not resolved yet";
 }
 
@@ -28,7 +28,7 @@ def Yzl_QueryType : Yzl_Type<"Query", "query"> {
 def Yzl_ParamType : Yzl_Type<"Param", "param"> {
   let summary = "a generic parameter in type position, by name";
   let description = [{
-    The sibling of `!yzl.var`: both stand for a type the checking passes
+    The sibling of `!yzl.unresolved`: both stand for a type the checking passes
     resolve, but a parameter is named by the program and a variable is minted
     by inference. `Self` is the parameter a trait declares implicitly.
   }];

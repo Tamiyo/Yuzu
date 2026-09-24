@@ -1,6 +1,6 @@
-//! Unification over the values of a verified module. Every `!yzl.var` value
+//! Unification over the values of a verified module. Every `!yzl.unresolved` value
 //! is a type variable, and the answers are written onto the values, so
-//! `!yzl.var` is gone by the end.
+//! `!yzl.unresolved` is gone by the end.
 
 use std::collections::{HashMap, HashSet};
 use std::mem;
@@ -17,7 +17,7 @@ use yuzu_mlir::ext::{
 };
 use yuzu_mlir::ops::yz::YzOp;
 use yuzu_mlir::ops::yzl::{FnOp, YzlOp};
-use yuzu_mlir::types::{self, BoolType, Float64Type, Int64Type, VarType};
+use yuzu_mlir::types::{self, BoolType, Float64Type, Int64Type, UnresolvedType};
 use yuzu_mlir::{ListType, ParamType};
 use yuzu_types::{AggFunc, BuiltinFunc, Func, FunctionRegistry};
 
@@ -147,7 +147,7 @@ struct TypeInferrer<'c, 'd> {
 impl<'c, 'd> TypeInferrer<'c, 'd> {
     fn term_of(&mut self, value: Value<'c, '_>) -> Term<'c> {
         let ty = value.r#type();
-        if ty != VarType::get(self.context) {
+        if ty != UnresolvedType::get(self.context) {
             return Term::Concrete(ty);
         }
 
@@ -516,7 +516,7 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
     fn operand_term(&mut self, op: OperationRef<'c, '_>, index: usize) -> Term<'c> {
         match op.operand(index) {
             Ok(value) => self.term_of(value),
-            Err(_) => Term::Concrete(VarType::get(self.context)),
+            Err(_) => Term::Concrete(UnresolvedType::get(self.context)),
         }
     }
 
@@ -866,14 +866,14 @@ from t
                   } {sym_visibility = "private"}
                   yzl.impl @Numeric for @int64 {
                     yzl.fn @zero generics ["Self"] params ["x"] (!yz.int64) -> !yz.int64 {
-                    ^bb0(%arg0: !yzl.var):
+                    ^bb0(%arg0: !yzl.unresolved):
                       %2 = yz.constant_int 0
                       yzl.return %2 : !yz.int64
                     }
                   }
                   yzl.impl @Numeric for @float64 {
                     yzl.fn @zero generics ["Self"] params ["x"] (!yz.float64) -> !yz.float64 {
-                    ^bb0(%arg0: !yzl.var):
+                    ^bb0(%arg0: !yzl.unresolved):
                       %2 = yz.constant_float 0.000000e+00
                       yzl.return %2 : !yz.float64
                     }

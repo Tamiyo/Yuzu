@@ -463,8 +463,8 @@ fn borrowed_views_match_and_read_during_walks() {
 module {
   %0 = yzl.from @t
   %1 = yzl.where %0 {
-  ^bb0(%a: !yzl.var):
-    yzl.yield %a : !yzl.var
+  ^bb0(%a: !yzl.unresolved):
+    yzl.yield %a : !yzl.unresolved
   }
   yzl.output %1
 }
@@ -519,9 +519,9 @@ fn views_read_optional_unit_and_variadic_arguments() {
         r#"
 module {
   yzl.fn @f params ["x", "y"] (!yz.int64, !yz.int64) -> !yz.int64 {
-  ^bb0(%x: !yzl.var, %y: !yzl.var):
-    %2 = yzl.call @g(%x, %y) : (!yzl.var, !yzl.var) -> !yzl.var
-    yzl.return %2 : !yzl.var
+  ^bb0(%x: !yzl.unresolved, %y: !yzl.unresolved):
+    %2 = yzl.call @g(%x, %y) : (!yzl.unresolved, !yzl.unresolved) -> !yzl.unresolved
+    yzl.return %2 : !yzl.unresolved
   }
 }
 "#,

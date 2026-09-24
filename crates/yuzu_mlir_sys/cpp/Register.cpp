@@ -74,7 +74,7 @@ YZU_SINGLETON_TYPE(yzuInt64TypeGet, yuzu::yz::Int64Type)
 YZU_SINGLETON_TYPE(yzuFloat64TypeGet, yuzu::yz::Float64Type)
 YZU_SINGLETON_TYPE(yzuBoolTypeGet, yuzu::yz::BoolType)
 YZU_SINGLETON_TYPE(yzuStrTypeGet, yuzu::yz::StrType)
-YZU_SINGLETON_TYPE(yzuVarTypeGet, yuzu::yzl::VarType)
+YZU_SINGLETON_TYPE(yzuUnresolvedTypeGet, yuzu::yzl::UnresolvedType)
 YZU_SINGLETON_TYPE(yzuQueryTypeGet, yuzu::yzl::QueryType)
 
 #undef YZU_SINGLETON_TYPE

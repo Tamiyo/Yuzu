@@ -10,7 +10,7 @@ use yuzu_ast::{AstNode, BinOp, UnaryOp, ast};
 use yuzu_mlir::attributes::CmpPredicate;
 use yuzu_mlir::ext::{IntegerAttributeExt, OperationExt};
 use yuzu_mlir::ods::{yz, yzl};
-use yuzu_mlir::types::{BoolType, Float64Type, Int64Type, StrType, VarType};
+use yuzu_mlir::types::{BoolType, Float64Type, Int64Type, StrType, UnresolvedType};
 
 use crate::lower_ast_to_yzl::symbols::{BindingKind, Callable, FunctionKind, Lookup, Reference};
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
@@ -39,7 +39,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     block,
                     paren,
                     "parenthesized expression is missing its inner expression",
-                    VarType::get(self.context),
+                    UnresolvedType::get(self.context),
                 ),
             },
             ast::Expr::Rel(rel) => self.convert_query(block, rel).0,
@@ -47,7 +47,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 block,
                 literal,
                 "struct literals are not supported yet",
-                VarType::get(self.context),
+                UnresolvedType::get(self.context),
             ),
         }
     }
@@ -108,7 +108,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 block,
                 ident,
                 "identifier expression is missing its name",
-                VarType::get(self.context),
+                UnresolvedType::get(self.context),
             );
         };
 
@@ -130,7 +130,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     block,
                     access,
                     "field access on an expression is not supported yet",
-                    VarType::get(self.context),
+                    UnresolvedType::get(self.context),
                 );
             }
             None => None,
@@ -141,7 +141,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 block,
                 access,
                 "field access is missing its base",
-                VarType::get(self.context),
+                UnresolvedType::get(self.context),
             );
         };
 
@@ -150,7 +150,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 block,
                 access,
                 "field access is missing its field",
-                VarType::get(self.context),
+                UnresolvedType::get(self.context),
             );
         };
 
@@ -176,7 +176,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     block,
                     binary,
                     "binary expression is missing its left operand",
-                    VarType::get(self.context),
+                    UnresolvedType::get(self.context),
                 );
             }
         };
@@ -188,12 +188,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     block,
                     binary,
                     "binary expression is missing its right operand",
-                    VarType::get(self.context),
+                    UnresolvedType::get(self.context),
                 );
             }
         };
 
-        let var = VarType::get(self.context);
+        let var = UnresolvedType::get(self.context);
         let cmp = |predicate: CmpPredicate| {
             yz::cmp(
                 self.context,
@@ -258,17 +258,17 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     block,
                     unary,
                     "unary expression is missing its operand",
-                    VarType::get(self.context),
+                    UnresolvedType::get(self.context),
                 );
             }
         };
 
         let result = match unary.op() {
             Some(UnaryOp::Neg) => {
-                yz::neg(self.context, VarType::get(self.context), value, loc).into()
+                yz::neg(self.context, UnresolvedType::get(self.context), value, loc).into()
             }
             Some(UnaryOp::Not) => {
-                yz::not(self.context, VarType::get(self.context), value, loc).into()
+                yz::not(self.context, UnresolvedType::get(self.context), value, loc).into()
             }
             Some(UnaryOp::Pos) => return value,
             None => {
@@ -276,7 +276,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     block,
                     unary,
                     "unary expression is missing its operator",
-                    VarType::get(self.context),
+                    UnresolvedType::get(self.context),
                 );
             }
         };
@@ -299,7 +299,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                         block,
                         call,
                         "call is missing its callee",
-                        VarType::get(self.context),
+                        UnresolvedType::get(self.context),
                     );
                 }
             },
@@ -311,7 +311,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     block,
                     call,
                     "calling an expression is not supported yet",
-                    VarType::get(self.context),
+                    UnresolvedType::get(self.context),
                 );
             }
             None => {
@@ -319,7 +319,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     block,
                     call,
                     "call is missing its callee",
-                    VarType::get(self.context),
+                    UnresolvedType::get(self.context),
                 );
             }
         };
@@ -339,7 +339,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 }
                 None => format!("unresolved identifier `{callee}`"),
             };
-            return self.report_and_hole(block, call, &message, VarType::get(self.context));
+            return self.report_and_hole(block, call, &message, UnresolvedType::get(self.context));
         };
 
         self.check_arity(call, &callee, &callable, operands.len());
@@ -364,7 +364,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 block,
                 call,
                 "calling an expression is not supported yet",
-                VarType::get(self.context),
+                UnresolvedType::get(self.context),
             );
         };
 
@@ -373,7 +373,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 block,
                 call,
                 &format!("`{base}` is not a module"),
-                VarType::get(self.context),
+                UnresolvedType::get(self.context),
             );
         };
         let path = path.to_string();
@@ -389,7 +389,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             return self.emit_hole(
                 block,
                 call.syntax().text_range(),
-                VarType::get(self.context),
+                UnresolvedType::get(self.context),
             );
         };
 
@@ -398,7 +398,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 block,
                 call,
                 &format!("`{name}` is a {}, not a function", binding.kind),
-                VarType::get(self.context),
+                UnresolvedType::get(self.context),
             );
         };
 
@@ -419,7 +419,13 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .collect();
         block
             .append_operation(
-                yzl::list(self.context, VarType::get(self.context), &values, loc).into(),
+                yzl::list(
+                    self.context,
+                    UnresolvedType::get(self.context),
+                    &values,
+                    loc,
+                )
+                .into(),
             )
             .first_result()
     }
@@ -463,7 +469,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         self.emit_hole(
             block,
             node.syntax().text_range(),
-            VarType::get(self.context),
+            UnresolvedType::get(self.context),
         )
     }
 
@@ -475,7 +481,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         let mut builder = yzl::CallOperationBuilder::new(self.context, loc)
-            .result(VarType::get(self.context))
+            .result(UnresolvedType::get(self.context))
             .operands(operands)
             .callee(FlatSymbolRefAttribute::new(self.context, &callable.symbol))
             .callee_source(StringAttribute::new(self.context, callable.source.as_str()));
@@ -501,7 +507,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 block,
                 node,
                 &format!("`{callee}` is not available"),
-                VarType::get(self.context),
+                UnresolvedType::get(self.context),
             );
         };
 
@@ -590,18 +596,18 @@ from t
               yzl.struct @Row ["a"] : [!yz.int64] {sym_visibility = "private"}
               yzl.table @t of @Row {sym_visibility = "private"}
               yzl.fn @shift_left params ["x", "y"] (!yz.int64, !yz.int64) -> !yz.int64 {
-              ^bb0(%arg0: !yzl.var, %arg1: !yzl.var):
-                %2 = yz.add %arg0, %arg1 : !yzl.var, !yzl.var -> !yzl.var
-                yzl.return %2 : !yzl.var
+              ^bb0(%arg0: !yzl.unresolved, %arg1: !yzl.unresolved):
+                %2 = yz.add %arg0, %arg1 : !yzl.unresolved, !yzl.unresolved -> !yzl.unresolved
+                yzl.return %2 : !yzl.unresolved
               } {sym_visibility = "private"}
               %0 = yzl.from @t
               %1 = yzl.select %0 as ["named", "operator"] {
-              ^bb0(%arg0: !yzl.var):
+              ^bb0(%arg0: !yzl.unresolved):
                 %2 = yz.constant_int 2
-                %3 = yzl.call @shift_left(%arg0, %2) : (!yzl.var, !yz.int64) -> !yzl.var {callee_source = "fn"}
+                %3 = yzl.call @shift_left(%arg0, %2) : (!yzl.unresolved, !yz.int64) -> !yzl.unresolved {callee_source = "fn"}
                 %4 = yz.constant_int 2
-                %5 = yzl.call @shift_left(%arg0, %4) : (!yzl.var, !yz.int64) -> !yzl.var {callee_source = "fn"}
-                yzl.yield %3, %5 : !yzl.var, !yzl.var
+                %5 = yzl.call @shift_left(%arg0, %4) : (!yzl.unresolved, !yz.int64) -> !yzl.unresolved {callee_source = "fn"}
+                yzl.yield %3, %5 : !yzl.unresolved, !yzl.unresolved
               }
               yzl.output %1
             }

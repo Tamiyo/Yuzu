@@ -1,5 +1,5 @@
 //! Names resolve as they are emitted, and a type the source does not write
-//! comes out as `!yzl.var` for inference.
+//! comes out as `!yzl.unresolved` for inference.
 
 use melior::Context;
 use melior::ir::{BlockLike, BlockRef, Location, Module, Type, Value};

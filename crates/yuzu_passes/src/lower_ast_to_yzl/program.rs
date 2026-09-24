@@ -101,19 +101,19 @@ mod tests {
             module {
               yzl.struct @helpers.Row ["a"] : [!yz.int64]
               yzl.fn @helpers.double params ["x"] (!yz.int64) -> !yz.int64 {
-              ^bb0(%arg0: !yzl.var):
+              ^bb0(%arg0: !yzl.unresolved):
                 %2 = yz.constant_int 2
-                %3 = yz.mul %arg0, %2 : !yzl.var, !yz.int64 -> !yzl.var
-                yzl.return %3 : !yzl.var
+                %3 = yz.mul %arg0, %2 : !yzl.unresolved, !yz.int64 -> !yzl.unresolved
+                yzl.return %3 : !yzl.unresolved
               }
               yzl.table @h of @helpers.Row {sym_visibility = "private"}
               yzl.struct @Row ["b"] : [!yz.int64] {sym_visibility = "private"}
               yzl.table @t of @Row {sym_visibility = "private"}
               %0 = yzl.from @t
               %1 = yzl.select %0 as ["v"] {
-              ^bb0(%arg0: !yzl.var):
-                %2 = yzl.call @helpers.double(%arg0) : (!yzl.var) -> !yzl.var {callee_source = "fn"}
-                yzl.yield %2 : !yzl.var
+              ^bb0(%arg0: !yzl.unresolved):
+                %2 = yzl.call @helpers.double(%arg0) : (!yzl.unresolved) -> !yzl.unresolved {callee_source = "fn"}
+                yzl.yield %2 : !yzl.unresolved
               }
               yzl.output %1
             }
@@ -138,17 +138,17 @@ mod tests {
               yzl.let @helpers.cap {
                 %2 = yz.constant_int 40
                 %3 = yz.constant_int 2
-                %4 = yz.add %2, %3 : !yz.int64, !yz.int64 -> !yzl.var
-                yzl.yield %4 : !yzl.var
+                %4 = yz.add %2, %3 : !yz.int64, !yz.int64 -> !yzl.unresolved
+                yzl.yield %4 : !yzl.unresolved
               }
               yzl.struct @Row ["a"] : [!yz.int64] {sym_visibility = "private"}
               yzl.table @t of @Row {sym_visibility = "private"}
               %0 = yzl.from @t
               %1 = yzl.select %0 as ["v"] {
-              ^bb0(%arg0: !yzl.var):
-                %2 = yzl.call @helpers.cap() : () -> !yzl.var {callee_source = "let"}
-                %3 = yz.add %arg0, %2 : !yzl.var, !yzl.var -> !yzl.var
-                yzl.yield %3 : !yzl.var
+              ^bb0(%arg0: !yzl.unresolved):
+                %2 = yzl.call @helpers.cap() : () -> !yzl.unresolved {callee_source = "let"}
+                %3 = yz.add %arg0, %2 : !yzl.unresolved, !yzl.unresolved -> !yzl.unresolved
+                yzl.yield %3 : !yzl.unresolved
               }
               yzl.output %1
             }

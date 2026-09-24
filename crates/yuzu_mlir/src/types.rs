@@ -70,13 +70,13 @@ impl StrType {
     }
 }
 
-/// `!yzl.var`, the unification variable.
-pub struct VarType;
+/// `!yzl.unresolved`, the unification variable.
+pub struct UnresolvedType;
 
-impl VarType {
+impl UnresolvedType {
     pub fn get(context: &Context) -> Type<'_> {
         // SAFETY: the context is live for the returned lifetime and the type is uniqued in it.
-        unsafe { Type::from_raw(yuzu_mlir_sys::yzuVarTypeGet(context.to_raw())) }
+        unsafe { Type::from_raw(yuzu_mlir_sys::yzuUnresolvedTypeGet(context.to_raw())) }
     }
 
     pub fn is(ty: Type<'_>) -> bool {
