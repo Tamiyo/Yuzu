@@ -35,7 +35,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 
                 let ty = op.first_result().r#type();
                 let kind = call.callee_source();
-                if matches!(kind, Some(CalleeSource::Fn | CalleeSource::Let)) {
+                if matches!(kind, Some(CalleeSource::Fn | CalleeSource::Const)) {
                     self.report(op, &format!("`{callee}` was not expanded before lowering"));
                     return;
                 }
@@ -109,7 +109,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                 | YzlOp::Fn(_)
                 | YzlOp::Trait(_)
                 | YzlOp::Impl(_)
-                | YzlOp::Let(_)
+                | YzlOp::Const(_)
                 | YzlOp::Return(_),
             ) => self.report(op, &format!("`{}` is not lowered yet", op_name(op))),
         }

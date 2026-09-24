@@ -433,7 +433,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         body.append_operation(yzl::r#yield(self.context, &[value], location).into());
 
         let symbol = self.symbols.module().declares(&name).symbol();
-        let mut builder = yzl::LetOperationBuilder::new(self.context, location)
+        let mut builder = yzl::ConstOperationBuilder::new(self.context, location)
             .sym_name(StringAttribute::new(self.context, &symbol))
             .body(region);
 
@@ -441,12 +441,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             builder = builder.annotation(TypeAttribute::new(annotation));
         }
 
-        let mut r#let: Operation<'c> = builder.build().into();
+        let mut constant: Operation<'c> = builder.build().into();
         if decl.visibility() != Visibility::Public {
-            r#let.set_private(self.context);
+            constant.set_private(self.context);
         }
 
-        block.append_operation(r#let);
+        block.append_operation(constant);
 
         let kind = match row {
             Some(row) => BindingKind::Relation { row },
@@ -1225,7 +1225,7 @@ external def upper(s: str) -> str
     fn converts_an_annotated_let() {
         expect![[r#"
             module {
-              yzl.let @ids : !yz.list<!yz.int64> {
+              yzl.const @ids : !yz.list<!yz.int64> {
                 %0 = yz.constant_int 1
                 %1 = yz.constant_int 3
                 %2 = yzl.list[%0, %1] : (!yz.int64, !yz.int64) -> !yzl.unresolved

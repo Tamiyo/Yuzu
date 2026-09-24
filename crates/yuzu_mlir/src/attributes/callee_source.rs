@@ -20,10 +20,10 @@ pub enum CalleeSource {
     /// Declared without a body: the engine is promised to have it, and the
     /// call reaches the plan by name.
     External,
-    /// A module-level `let`: a body with no parameters, expanded at each use
-    /// exactly as a function is. A call is how a use refers to it, since a
-    /// stage region cannot reach a value outside itself.
-    Let,
+    /// A file-level constant, `yzl.const`: a body with no parameters,
+    /// expanded at each use exactly as a function is. A call is how a use
+    /// refers to it, since a stage region cannot reach a value outside itself.
+    Const,
 }
 
 impl CalleeSource {
@@ -33,7 +33,7 @@ impl CalleeSource {
             Self::Fn => "fn",
             Self::Builtin => "builtin",
             Self::External => "external",
-            Self::Let => "let",
+            Self::Const => "const",
         }
     }
 }
@@ -48,7 +48,7 @@ impl CallOp<'_, '_> {
             "fn" => Some(CalleeSource::Fn),
             "builtin" => Some(CalleeSource::Builtin),
             "external" => Some(CalleeSource::External),
-            "let" => Some(CalleeSource::Let),
+            "const" => Some(CalleeSource::Const),
             other => panic!("`{other}` is not a callee source resolution writes"),
         }
     }
@@ -66,14 +66,14 @@ mod tests {
             CalleeSource::Fn,
             CalleeSource::Builtin,
             CalleeSource::External,
-            CalleeSource::Let,
+            CalleeSource::Const,
         ] {
             let spelled = kind.as_str();
             let read = match spelled {
                 "fn" => CalleeSource::Fn,
                 "builtin" => CalleeSource::Builtin,
                 "external" => CalleeSource::External,
-                "let" => CalleeSource::Let,
+                "const" => CalleeSource::Const,
                 other => panic!("`{other}` is not a kind this reads back"),
             };
 

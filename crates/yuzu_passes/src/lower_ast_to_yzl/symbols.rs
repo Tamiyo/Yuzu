@@ -230,10 +230,10 @@ pub(super) struct Callable {
 }
 
 impl Callable {
-    pub(super) fn let_binding(symbol: &str) -> Self {
+    pub(super) fn constant(symbol: &str) -> Self {
         Self {
             symbol: symbol.to_string(),
-            source: CalleeSource::Let,
+            source: CalleeSource::Const,
             kind: FunctionKind::Scalar,
             min_args: 0,
             max_args: 0,
@@ -475,7 +475,7 @@ impl SymbolTable {
                     kind: BindingKind::Let,
                     ..
                 },
-            )) => Some(Callable::let_binding(&at.symbol())),
+            )) => Some(Callable::constant(&at.symbol())),
             _ => self.operator(name, registry),
         }
     }
@@ -995,7 +995,7 @@ mod tests {
             symbols
                 .callable("cap", registry)
                 .map(|callable| callable.source),
-            Some(CalleeSource::Let)
+            Some(CalleeSource::Const)
         );
         assert_eq!(
             symbols.callable("f", registry),

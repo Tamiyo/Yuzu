@@ -267,7 +267,7 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
                 let callee = call.callee().value();
                 match call.callee_source() {
                     Some(CalleeSource::Builtin) => self.resolve_builtin_ty(op, callee),
-                    Some(CalleeSource::Let) => {
+                    Some(CalleeSource::Const) => {
                         let yielded = self
                             .bindings
                             .get(callee)
@@ -313,7 +313,7 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
                     .unwrap_or_default();
                 self.record_row(op, row);
             }
-            Some(YzlOp::Let(binding)) => {
+            Some(YzlOp::Const(binding)) => {
                 self.infer_regions(op, &Row::new(), &[]);
                 let name = binding.sym_name().value();
                 let query_row = last_region_op(op)
@@ -758,11 +758,11 @@ mod tests {
                 module {
                   yzl.struct @Row ["a"] : [!yz.int64] {sym_visibility = "private"}
                   yzl.table @t of @Row {sym_visibility = "private"}
-                  yzl.let @cap {
+                  yzl.const @cap {
                     %2 = yz.constant_int 42
                     yzl.yield %2 : !yz.int64
                   } {sym_visibility = "private"}
-                  yzl.let @small {
+                  yzl.const @small {
                     %2 = yzl.from @t
                     %3 = yzl.where %2 {
                     ^bb0(%arg0: !yz.int64):
@@ -775,7 +775,7 @@ mod tests {
                   %0 = yzl.from @small
                   %1 = yzl.select %0 as ["v"] {
                   ^bb0(%arg0: !yz.int64):
-                    %2 = yzl.call @cap() : () -> !yz.int64 {callee_source = "let"}
+                    %2 = yzl.call @cap() : () -> !yz.int64 {callee_source = "const"}
                     %3 = yz.add %arg0, %2 : !yz.int64, !yz.int64 -> !yz.int64
                     yzl.yield %3 : !yz.int64
                   }
@@ -1172,7 +1172,7 @@ from t
                 module {
                   yzl.struct @Row ["a"] : [!yz.int64] {sym_visibility = "private"}
                   yzl.table @t of @Row {sym_visibility = "private"}
-                  yzl.let @xs {
+                  yzl.const @xs {
                     %2 = yz.constant_int 1
                     %3 = yz.constant_int 2
                     %4 = yzl.list[%2, %3] : (!yz.int64, !yz.int64) -> !yz.list<!yz.int64>

@@ -5,7 +5,7 @@ use yuzu_mlir::SymbolTable;
 use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationCast, OperationExt, ValueExt};
 use yuzu_mlir::ods::{yz, yzr};
 use yuzu_mlir::ops::yzl::{
-    AggregateOp, DropOp, ExtendOp, FromOp, JoinOp, LetOp, LimitOp, RenameOp, SelectOp, SetOp,
+    AggregateOp, ConstOp, DropOp, ExtendOp, FromOp, JoinOp, LimitOp, RenameOp, SelectOp, SetOp,
     StructOp, WhereOp, YzlOp,
 };
 use yuzu_mlir::types::BoolType;
@@ -23,7 +23,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         match op.as_yzl() {
             Some(YzlOp::Struct(item)) => self.convert_struct(symbols, &item),
             Some(YzlOp::From(from)) => self.convert_from(op, target, source, symbols, &from),
-            Some(YzlOp::Let(binding)) => self.convert_let(op, target, source, symbols, &binding),
+            Some(YzlOp::Const(binding)) => self.convert_let(op, target, source, symbols, &binding),
             Some(YzlOp::Where(stage)) => self.convert_where(op, target, &stage),
             Some(YzlOp::Select(stage)) => self.convert_select(op, target, symbols, &stage),
             Some(YzlOp::Extend(stage)) => self.convert_extend(op, target, symbols, &stage),
@@ -79,7 +79,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         target: BlockRef<'c, 'a>,
         source: &SymbolTable<'c, '_>,
         symbols: &mut SymbolTable<'c, '_>,
-        binding: &LetOp<'c, '_>,
+        binding: &ConstOp<'c, '_>,
     ) {
         let Some(block) = binding.body().first_block() else {
             self.report(op, "`let` has no body to bind");

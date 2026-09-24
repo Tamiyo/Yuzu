@@ -450,7 +450,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             }
             Lookup::Local { slot, .. } => return locals[slot],
             Lookup::Let(symbol) => {
-                return self.call(block, Callable::let_binding(&symbol), &[], loc);
+                return self.call(block, Callable::constant(&symbol), &[], loc);
             }
             Lookup::Ambiguous => {
                 format!("column `{name}` is ambiguous; qualify it with a relation alias")

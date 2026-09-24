@@ -17,7 +17,7 @@ use yuzu_mlir::diagnostics::emit_error;
 use yuzu_mlir::ext::{
     ArrayAttributeExt, BlockExt, OperationCast, OperationExt, RegionExt, ValueExt, ValueId,
 };
-use yuzu_mlir::ops::yzl::{CallOp, FnOp, LetOp, YzlOp};
+use yuzu_mlir::ops::yzl::{CallOp, ConstOp, FnOp, YzlOp};
 use yuzu_mlir::types::QueryType;
 use yuzu_mlir::{ParamType, SymbolTable};
 
@@ -59,7 +59,7 @@ fn collect_calls<'c, 'a>(block: BlockRef<'c, 'a>, out: &mut Vec<OperationRef<'c,
             Some(YzlOp::Call(call)) => {
                 if matches!(
                     call.callee_source(),
-                    Some(CalleeSource::Fn | CalleeSource::Let)
+                    Some(CalleeSource::Fn | CalleeSource::Const)
                 ) {
                     out.push(op);
                 }
@@ -94,7 +94,7 @@ fn expand<'c, 'a>(
             function.body().first_block(),
             type_arguments(&function, &site, call.location(), callee)?,
         ),
-        Some(YzlOp::Let(binding)) => (binding.body().first_block(), HashMap::new()),
+        Some(YzlOp::Const(binding)) => (binding.body().first_block(), HashMap::new()),
         _ => return error(call.location(), &format!("`{callee}` is not a function")),
     };
     let body = body.or_else(|| {
@@ -256,7 +256,7 @@ fn discard_declarations(context: &Context, rewriter: &RewriterBase, block: Block
     for op in block.operations() {
         let discard = match op.as_yzl() {
             Some(YzlOp::Fn(_) | YzlOp::Trait(_) | YzlOp::Impl(_)) => true,
-            Some(YzlOp::Let(binding)) => !binds_query(context, &binding),
+            Some(YzlOp::Const(binding)) => !binds_query(context, &binding),
             _ => false,
         };
         if discard {
@@ -269,7 +269,7 @@ fn discard_declarations(context: &Context, rewriter: &RewriterBase, block: Block
     }
 }
 
-fn binds_query(context: &Context, binding: &LetOp) -> bool {
+fn binds_query(context: &Context, binding: &ConstOp) -> bool {
     binding
         .body()
         .first_block()

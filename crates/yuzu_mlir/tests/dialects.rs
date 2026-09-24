@@ -672,7 +672,7 @@ module {
   %0 = yz.constant_int 1
   %1 = yz.constant_int 3
   %2 = yz.list[%0, %1] : (!yz.int64, !yz.int64) -> !yz.list<!yz.int64>
-  yzl.let @ids : !yz.list<!yz.int64> {
+  yzl.const @ids : !yz.list<!yz.int64> {
     yzl.yield %2 : !yz.list<!yz.int64>
   }
 }
@@ -685,7 +685,7 @@ module {
           %0 = yz.constant_int 1
           %1 = yz.constant_int 3
           %2 = yz.list[%0, %1] : (!yz.int64, !yz.int64) -> !yz.list<!yz.int64>
-          yzl.let @ids : !yz.list<!yz.int64> {
+          yzl.const @ids : !yz.list<!yz.int64> {
             yzl.yield %2 : !yz.list<!yz.int64>
           }
         }

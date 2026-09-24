@@ -135,7 +135,7 @@ mod tests {
     fn a_binding_a_module_exports_can_be_imported() {
         expect![[r#"
             module {
-              yzl.let @helpers.cap {
+              yzl.const @helpers.cap {
                 %2 = yz.constant_int 40
                 %3 = yz.constant_int 2
                 %4 = yz.add %2, %3 : !yz.int64, !yz.int64 -> !yzl.unresolved
@@ -146,7 +146,7 @@ mod tests {
               %0 = yzl.from @t
               %1 = yzl.select %0 as ["v"] {
               ^bb0(%arg0: !yzl.unresolved):
-                %2 = yzl.call @helpers.cap() : () -> !yzl.unresolved {callee_source = "let"}
+                %2 = yzl.call @helpers.cap() : () -> !yzl.unresolved {callee_source = "const"}
                 %3 = yz.add %arg0, %2 : !yzl.unresolved, !yzl.unresolved -> !yzl.unresolved
                 yzl.yield %3 : !yzl.unresolved
               }
@@ -179,7 +179,8 @@ mod tests {
             ),
         ]);
         assert!(
-            module.contains("yzl.let @helpers.small") && module.contains("yzl.from @helpers.small"),
+            module.contains("yzl.const @helpers.small")
+                && module.contains("yzl.from @helpers.small"),
             "the imported query is built once and read by name:\n{module}"
         );
     }

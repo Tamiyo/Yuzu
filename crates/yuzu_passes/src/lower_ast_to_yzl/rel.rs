@@ -805,7 +805,7 @@ from employees as e
             module {
               yzl.struct @Row ["a", "active"] : [!yz.int64, !yz.bool] {sym_visibility = "private"}
               yzl.table @t of @Row {sym_visibility = "private"}
-              yzl.let @base {
+              yzl.const @base {
                 %4 = yzl.from @t
                 %5 = yzl.where %4 {
                 ^bb0(%arg0: !yzl.unresolved, %arg1: !yzl.unresolved):

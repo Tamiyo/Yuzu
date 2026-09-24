@@ -101,8 +101,8 @@ def Yzl_FnOp : Yzl_Op<"fn", [Symbol, IsolatedFromAbove]> {
       "(`external` $external^)? $body attr-dict";
 }
 
-def Yzl_LetOp : Yzl_Op<"let", [Symbol]> {
-  let summary = "a named binding of the single value its body yields";
+def Yzl_ConstOp : Yzl_Op<"const", [Symbol]> {
+  let summary = "a named constant: the single value its body yields";
   let description = [{
     The annotation, when the program wrote one, is the type the body must
     yield — declared here the way a function's signature is, for inference
@@ -256,7 +256,7 @@ def Yzl_CallOp : Yzl_Op<"call", [Pure]> {
 def Yzl_YieldOp : Yzl_Op<"yield",
     [Terminator,
      ParentOneOf<["WhereOp", "SelectOp", "ExtendOp", "AggregateOp",
-                  "LetOp", "JoinOp", "SetOp"]>]> {
+                  "ConstOp", "JoinOp", "SetOp"]>]> {
   let summary = "the values a stage's region produces";
   let arguments = (ins Variadic<AnyType>:$values);
   let assemblyFormat = "attr-dict ($values^ `:` type($values))?";
