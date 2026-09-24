@@ -102,6 +102,22 @@ impl QueryType {
     }
 }
 
+/// `!yzl.ref`, a place that holds the value of a local variable.
+pub struct RefType;
+
+impl RefType {
+    pub fn get(context: &Context) -> Type<'_> {
+        // SAFETY: the context is live for the returned lifetime and the type is uniqued in it.
+        unsafe { Type::from_raw(yuzu_mlir_sys::yzuRefTypeGet(context.to_raw())) }
+    }
+
+    pub fn is(ty: Type<'_>) -> bool {
+        // SAFETY: a type lives in its context, so the reference lives as long as the type.
+        let context = unsafe { ty.context().to_ref() };
+        ty == Self::get(context)
+    }
+}
+
 /// `!yz.list<inner>`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ListType<'c>(Type<'c>);

@@ -18,6 +18,7 @@ unsafe extern "C" {
     pub fn yzuStrTypeGet(ctx: MlirContext) -> MlirType;
     pub fn yzuUnresolvedTypeGet(ctx: MlirContext) -> MlirType;
     pub fn yzuQueryTypeGet(ctx: MlirContext) -> MlirType;
+    pub fn yzuRefTypeGet(ctx: MlirContext) -> MlirType;
 }
 
 pub fn register_all(ctx: MlirContext) {

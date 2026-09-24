@@ -242,6 +242,44 @@ fn builds_a_stage_with_generated_constructors() {
 }
 
 #[test]
+fn locals_round_trip() {
+    let context = yuzu_mlir::context();
+    let module = parse(
+        &context,
+        r#"
+module {
+  yzl.fn @f params ["x"] (!yz.int64) -> !yz.int64 {
+  ^bb0(%arg: !yzl.unresolved):
+%x = yzl.local "x" param
+%y = yzl.local "y" mut
+yzl.store %x, %arg : !yzl.unresolved
+%a = yzl.load %x : !yzl.unresolved
+yzl.store %y, %a : !yzl.unresolved
+%b = yzl.load %y : !yzl.unresolved
+yzl.return %b : !yzl.unresolved
+  }
+}
+"#,
+    )
+    .expect("locals parse");
+    expect![[r#"
+        module {
+          yzl.fn @f params ["x"] (!yz.int64) -> !yz.int64 {
+          ^bb0(%arg0: !yzl.unresolved):
+            %0 = yzl.local "x" param
+            %1 = yzl.local "y" mut
+            yzl.store %0, %arg0 : !yzl.unresolved
+            %2 = yzl.load %0 : !yzl.unresolved
+            yzl.store %1, %2 : !yzl.unresolved
+            %3 = yzl.load %1 : !yzl.unresolved
+            yzl.return %3 : !yzl.unresolved
+          }
+        }
+    "#]]
+    .assert_eq(&module.as_operation().to_string());
+}
+
+#[test]
 fn functions_and_calls_round_trip() {
     let context = yuzu_mlir::context();
     let module = parse(

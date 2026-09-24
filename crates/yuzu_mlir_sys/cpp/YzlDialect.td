@@ -25,6 +25,14 @@ def Yzl_QueryType : Yzl_Type<"Query", "query"> {
   let summary = "a relation whose schema resolution has not computed yet";
 }
 
+def Yzl_RefType : Yzl_Type<"Ref", "ref"> {
+  let summary = "a place that holds the value of a local variable";
+  let description = [{
+    What `yzl.local` gives, and what `yzl.load` and `yzl.store` read and
+    write. Every place is removed by `mem2reg` before inference runs.
+  }];
+}
+
 def Yzl_ParamType : Yzl_Type<"Param", "param"> {
   let summary = "a generic parameter in type position, by name";
   let description = [{
@@ -222,6 +230,37 @@ def Yzl_DropOp : Yzl_Op<"drop", [Pure]> {
   let arguments = (ins Yzl_QueryType:$input, StrArrayAttr:$columns);
   let results = (outs Yzl_QueryType:$result);
   let assemblyFormat = "$input $columns attr-dict";
+}
+
+// Local variables. A place is declared at the start of its function's
+// entry block, the way Clang declares an `alloca`.
+
+def Yzl_LocalOp : Yzl_Op<"local",
+    [MemoryEffects<[MemAlloc<DefaultResource>]>]> {
+  let summary = "a place for a local variable in a function body";
+  let description = [{
+    `name` is the variable as the program wrote it, for diagnostics. A place
+    without `mut` has exactly one store, its initializer. `param` marks the
+    place a parameter is copied into.
+  }];
+  let arguments = (ins StrAttr:$name, UnitAttr:$is_mut, UnitAttr:$param);
+  let results = (outs Yzl_RefType:$place);
+  let assemblyFormat = "$name (`mut` $is_mut^)? (`param` $param^)? attr-dict";
+}
+
+def Yzl_LoadOp : Yzl_Op<"load",
+    [MemoryEffects<[MemRead<DefaultResource>]>]> {
+  let summary = "the value a place holds";
+  let arguments = (ins Yzl_RefType:$place);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$place attr-dict `:` type($result)";
+}
+
+def Yzl_StoreOp : Yzl_Op<"store",
+    [MemoryEffects<[MemWrite<DefaultResource>]>]> {
+  let summary = "gives a place a new value";
+  let arguments = (ins Yzl_RefType:$place, AnyType:$value);
+  let assemblyFormat = "$place `,` $value attr-dict `:` type($value)";
 }
 
 def Yzl_OutputOp : Yzl_Op<"output"> {

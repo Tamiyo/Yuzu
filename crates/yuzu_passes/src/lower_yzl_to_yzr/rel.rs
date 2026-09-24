@@ -43,6 +43,13 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                 op,
                 &format!("`{}` was not expanded before lowering", op_name(op)),
             ),
+            Some(YzlOp::Local(_) | YzlOp::Load(_) | YzlOp::Store(_)) => self.report(
+                op,
+                &format!(
+                    "`{}` was not promoted to a value before lowering",
+                    op_name(op)
+                ),
+            ),
             Some(YzlOp::Missing(_)) => self.report(op, "this part of the query is missing"),
             Some(YzlOp::Call(_) | YzlOp::List(_) | YzlOp::Yield(_) | YzlOp::Return(_)) | None => {}
         }

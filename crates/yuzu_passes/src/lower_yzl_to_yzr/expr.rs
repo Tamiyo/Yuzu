@@ -112,6 +112,13 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                 | YzlOp::Const(_)
                 | YzlOp::Return(_),
             ) => self.report(op, &format!("`{}` is not lowered yet", op_name(op))),
+            Some(YzlOp::Local(_) | YzlOp::Load(_) | YzlOp::Store(_)) => self.report(
+                op,
+                &format!(
+                    "`{}` was not promoted to a value before lowering",
+                    op_name(op)
+                ),
+            ),
         }
     }
 
