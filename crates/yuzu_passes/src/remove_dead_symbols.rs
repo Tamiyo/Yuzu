@@ -1,18 +1,14 @@
 use melior::Context;
 use melior::ir::Module;
-use melior::ir::operation::OperationLike;
 use melior::pass::{PassManager, transform};
 
 pub fn remove_dead_symbols(context: &Context, module: &mut Module) {
     let passes = PassManager::new(context);
     passes.add_pass(transform::create_symbol_dce());
 
-    if let Err(error) = passes.run(module) {
-        yuzu_mlir::diagnostics::emit_error(
-            module.as_operation().location(),
-            &format!("removing dead symbols failed: {error}"),
-        );
-    }
+    passes
+        .run(module)
+        .expect("symbol DCE runs on any module the lowering builds");
 }
 
 #[cfg(test)]

@@ -8,7 +8,7 @@ use yuzu_mlir::ops::yzl::{
     AggregateOp, DropOp, ExtendOp, FromOp, JoinOp, LetOp, LimitOp, RenameOp, SelectOp, SetOp,
     StructOp, WhereOp, YzlOp,
 };
-use yuzu_mlir::types;
+use yuzu_mlir::types::BoolType;
 
 use crate::lower_yzl_to_yzr::{Row, Yielded, YzlToYzr, op_name, struct_fields};
 
@@ -467,7 +467,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             let equal = body.append_operation(
                 yz::cmp(
                     self.context,
-                    types::boolean(self.context),
+                    BoolType::get(self.context),
                     body.argument(left)
                         .expect("the left column is in range")
                         .into(),
@@ -485,7 +485,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                     .append_operation(
                         yz::and(
                             self.context,
-                            types::boolean(self.context),
+                            BoolType::get(self.context),
                             previous,
                             equal.first_result(),
                             location,

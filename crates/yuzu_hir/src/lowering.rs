@@ -122,7 +122,7 @@ impl<'l> HirLowerer<'l> {
         };
         let name = self.lower_ident(name);
 
-        match stmt.row_struct() {
+        match stmt.struct_name() {
             Some(row) => Stmt::Table {
                 name,
                 row: self.lower_ident(row),

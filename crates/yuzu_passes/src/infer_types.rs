@@ -17,7 +17,7 @@ use yuzu_mlir::ext::{
 };
 use yuzu_mlir::ops::yz::YzOp;
 use yuzu_mlir::ops::yzl::{FnOp, YzlOp};
-use yuzu_mlir::types;
+use yuzu_mlir::types::{self, BoolType, Float64Type, Int64Type, VarType};
 use yuzu_mlir::{ListType, ParamType};
 use yuzu_types::{AggFunc, BuiltinFunc, Func, FunctionRegistry};
 
@@ -141,7 +141,7 @@ struct TypeInferrer<'c, 'd> {
 impl<'c, 'd> TypeInferrer<'c, 'd> {
     fn term_of(&mut self, value: Value<'c, '_>) -> Term<'c> {
         let ty = value.r#type();
-        if ty != types::var(self.context) {
+        if ty != VarType::get(self.context) {
             return Term::Concrete(ty);
         }
 
@@ -339,7 +339,7 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
                 let row = self.input_row(op);
                 self.infer_regions(op, &row, &[]);
                 if matches!(stage, YzlOp::Where(_)) {
-                    let boolean = types::boolean(self.context);
+                    let boolean = BoolType::get(self.context);
                     self.expect_yield(op, boolean, "`where` predicate");
                 }
 
@@ -385,7 +385,7 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
             Some(YzlOp::Join(_)) => {
                 let row = self.input_row(op);
                 self.infer_regions(op, &row, &[]);
-                let boolean = types::boolean(self.context);
+                let boolean = BoolType::get(self.context);
                 self.expect_yield(op, boolean, "`on` condition");
                 self.record_row(op, row);
             }
@@ -395,7 +395,7 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
     }
 
     fn infer_yz_op(&mut self, op: OperationRef<'c, '_>) {
-        let boolean = Term::Concrete(types::boolean(self.context));
+        let boolean = Term::Concrete(BoolType::get(self.context));
         match op.as_yz() {
             Some(YzOp::Add(_) | YzOp::Sub(_) | YzOp::Mul(_) | YzOp::Div(_) | YzOp::Rem(_)) => {
                 let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
@@ -502,7 +502,7 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
     fn operand_term(&mut self, op: OperationRef<'c, '_>, index: usize) -> Term<'c> {
         match op.operand(index) {
             Ok(value) => self.term_of(value),
-            Err(_) => Term::Concrete(types::var(self.context)),
+            Err(_) => Term::Concrete(VarType::get(self.context)),
         }
     }
 
@@ -517,8 +517,8 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
             return;
         };
 
-        let int64 = Term::Concrete(types::int64(self.context));
-        let boolean = Term::Concrete(types::boolean(self.context));
+        let int64 = Term::Concrete(Int64Type::get(self.context));
+        let boolean = Term::Concrete(BoolType::get(self.context));
         let out = self.term_of(op.first_result());
         match entry.func {
             BuiltinFunc::Aggregate(AggFunc::Count | AggFunc::CountDistinct) => {
@@ -528,7 +528,7 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
                 if let Some(argument) = op.try_first_operand() {
                     let term = self.term_of(argument);
                     if let Some(ty) = self.resolve(term) {
-                        let result = if ty == types::float64(self.context) {
+                        let result = if ty == Float64Type::get(self.context) {
                             Term::Concrete(ty)
                         } else {
                             int64

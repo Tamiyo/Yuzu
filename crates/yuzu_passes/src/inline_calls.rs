@@ -18,7 +18,7 @@ use yuzu_mlir::ext::{
     ArrayAttributeExt, BlockExt, OperationCast, OperationExt, RegionExt, ValueExt, ValueId,
 };
 use yuzu_mlir::ops::yzl::{CallOp, FnOp, LetOp, YzlOp};
-use yuzu_mlir::types;
+use yuzu_mlir::types::QueryType;
 use yuzu_mlir::{ParamType, SymbolTable};
 
 const BUDGET: usize = 1000;
@@ -275,7 +275,7 @@ fn binds_query(context: &Context, binding: &LetOp) -> bool {
         .first_block()
         .and_then(|block| block.last_operation())
         .and_then(|yielded| yielded.try_first_operand())
-        .is_some_and(|value| value.r#type() == types::query(context))
+        .is_some_and(|value| value.r#type() == QueryType::get(context))
 }
 
 fn report_budget(calls: &[OperationRef]) {

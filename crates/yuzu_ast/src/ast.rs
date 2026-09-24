@@ -201,6 +201,10 @@ impl NamedTypeAnnotation {
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
+
+    pub fn name_text(&self) -> Option<String> {
+        self.name().and_then(|ident| ident.text())
+    }
     pub fn args(&self) -> impl Iterator<Item = TypeAnnotation> + use<> {
         support::children(self.syntax())
     }
@@ -228,12 +232,20 @@ impl TypeParam {
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
+
+    pub fn name_text(&self) -> Option<String> {
+        self.name().and_then(|ident| ident.text())
+    }
 }
 
 ast_node!(TypeBound);
 impl TypeBound {
     pub fn subject(&self) -> Option<Ident> {
         support::child(self.syntax())
+    }
+
+    pub fn subject_text(&self) -> Option<String> {
+        self.subject().and_then(|ident| ident.text())
     }
 
     pub fn traits(&self) -> impl Iterator<Item = TraitRef> + use<> {
@@ -245,6 +257,10 @@ ast_node!(TraitRef);
 impl TraitRef {
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
+    }
+
+    pub fn name_text(&self) -> Option<String> {
+        self.name().and_then(|ident| ident.text())
     }
 }
 
@@ -271,6 +287,10 @@ impl ModulePath {
     pub fn segments(&self) -> impl Iterator<Item = Ident> + use<> {
         support::children(self.syntax())
     }
+
+    pub fn segments_text(&self) -> impl Iterator<Item = String> + use<> {
+        self.segments().filter_map(|ident| ident.text())
+    }
 }
 
 ast_node!(ModStmt);
@@ -285,6 +305,10 @@ impl ModStmt {
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
+
+    pub fn name_text(&self) -> Option<String> {
+        self.name().and_then(|ident| ident.text())
+    }
 }
 
 ast_node!(ImportStmt);
@@ -296,6 +320,10 @@ impl ImportStmt {
     /// The name this file calls the module, when `as` gave it one.
     pub fn alias(&self) -> Option<Ident> {
         support::child(self.syntax())
+    }
+
+    pub fn alias_text(&self) -> Option<String> {
+        self.alias().and_then(|ident| ident.text())
     }
 }
 
@@ -316,9 +344,17 @@ impl ImportItem {
         support::child(self.syntax())
     }
 
+    pub fn name_text(&self) -> Option<String> {
+        self.name().and_then(|ident| ident.text())
+    }
+
     /// The name this file calls the import, when `as` gave it one.
     pub fn alias(&self) -> Option<Ident> {
         support::children(self.syntax()).nth(1)
+    }
+
+    pub fn alias_text(&self) -> Option<String> {
+        self.alias().and_then(|ident| ident.text())
     }
 }
 
@@ -330,8 +366,13 @@ impl StructStmt {
     pub fn visibility(&self) -> Visibility {
         visibility_of(self.syntax())
     }
+
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
+    }
+
+    pub fn name_text(&self) -> Option<String> {
+        self.name().and_then(|name| name.text())
     }
 
     pub fn fields(&self) -> impl Iterator<Item = StructField> + use<> {
@@ -341,14 +382,16 @@ impl StructStmt {
 
 ast_node!(StructField);
 impl StructField {
-    /// Whether another file may name this. Private unless `pub` says so, so
-    /// forgetting to export is a complaint from the importer rather than a
-    /// name that quietly became API.
     pub fn visibility(&self) -> Visibility {
         visibility_of(self.syntax())
     }
+
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
+    }
+
+    pub fn name_text(&self) -> Option<String> {
+        self.name().and_then(|name| name.text())
     }
 
     pub fn mutability(&self) -> Mutability {
@@ -372,14 +415,16 @@ impl StructField {
 
 ast_node!(TraitStmt);
 impl TraitStmt {
-    /// Whether another file may name this. Private unless `pub` says so, so
-    /// forgetting to export is a complaint from the importer rather than a
-    /// name that quietly became API.
     pub fn visibility(&self) -> Visibility {
         visibility_of(self.syntax())
     }
+
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
+    }
+
+    pub fn name_text(&self) -> Option<String> {
+        self.name().and_then(|name| name.text())
     }
 
     pub fn methods(&self) -> impl Iterator<Item = FuncStmt> + use<> {
@@ -395,6 +440,10 @@ impl ImplStmt {
 
     pub fn ty(&self) -> Option<Ident> {
         support::child(self.syntax())
+    }
+
+    pub fn ty_text(&self) -> Option<String> {
+        self.ty().and_then(|ident| ident.text())
     }
 
     pub fn methods(&self) -> impl Iterator<Item = FuncStmt> + use<> {
@@ -430,12 +479,20 @@ impl FuncStmt {
         support::child(self.syntax())
     }
 
+    pub fn name_text(&self) -> Option<String> {
+        self.name().and_then(|name| name.text())
+    }
+
     pub fn type_params(&self) -> impl Iterator<Item = TypeParam> + use<> {
         support::children(self.syntax())
     }
 
     pub fn params(&self) -> impl Iterator<Item = FuncParam> + use<> {
         support::children(self.syntax())
+    }
+
+    pub fn param_count(&self) -> usize {
+        self.params().count()
     }
 
     pub fn result(&self) -> Option<TypeAnnotation> {
@@ -457,6 +514,10 @@ impl FuncParam {
         support::child(self.syntax())
     }
 
+    pub fn name_text(&self) -> Option<String> {
+        self.name().and_then(|ident| ident.text())
+    }
+
     pub fn ty(&self) -> Option<TypeAnnotation> {
         support::child(self.syntax())
     }
@@ -464,18 +525,24 @@ impl FuncParam {
 
 ast_node!(TableStmt);
 impl TableStmt {
-    /// Whether another file may name this. Private unless `pub` says so, so
-    /// forgetting to export is a complaint from the importer rather than a
-    /// name that quietly became API.
     pub fn visibility(&self) -> Visibility {
         visibility_of(self.syntax())
     }
+
     pub fn name(&self) -> Option<Ident> {
         support::nth_child(self.syntax(), 0)
     }
 
-    pub fn row_struct(&self) -> Option<Ident> {
+    pub fn name_text(&self) -> Option<String> {
+        self.name().and_then(|name| name.text())
+    }
+
+    pub fn struct_name(&self) -> Option<Ident> {
         support::nth_child(self.syntax(), 1)
+    }
+
+    pub fn struct_name_text(&self) -> Option<String> {
+        self.struct_name().and_then(|ident| ident.text())
     }
 
     pub fn inline_fields(&self) -> impl Iterator<Item = StructField> + use<> {
@@ -492,14 +559,16 @@ impl BlockStmt {
 
 ast_node!(LetStmt);
 impl LetStmt {
-    /// Whether another file may name this. Private unless `pub` says so, so
-    /// forgetting to export is a complaint from the importer rather than a
-    /// name that quietly became API.
     pub fn visibility(&self) -> Visibility {
         visibility_of(self.syntax())
     }
+
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
+    }
+
+    pub fn name_text(&self) -> Option<String> {
+        self.name().and_then(|name| name.text())
     }
 
     pub fn mutability(&self) -> Mutability {
@@ -568,6 +637,10 @@ impl IdentExpr {
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
+
+    pub fn name_text(&self) -> Option<String> {
+        self.name().and_then(|ident| ident.text())
+    }
 }
 
 ast_node!(CallExpr);
@@ -597,12 +670,20 @@ impl FieldAccessExpr {
     pub fn field(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
+
+    pub fn field_text(&self) -> Option<String> {
+        self.field().and_then(|ident| ident.text())
+    }
 }
 
 ast_node!(StructExpr);
 impl StructExpr {
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
+    }
+
+    pub fn name_text(&self) -> Option<String> {
+        self.name().and_then(|ident| ident.text())
     }
 
     pub fn fields(&self) -> impl Iterator<Item = StructFieldInit> + use<> {
@@ -614,6 +695,10 @@ ast_node!(StructFieldInit);
 impl StructFieldInit {
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
+    }
+
+    pub fn name_text(&self) -> Option<String> {
+        self.name().and_then(|ident| ident.text())
     }
 
     pub fn value(&self) -> Option<Expr> {
@@ -688,8 +773,16 @@ impl FromExpr {
         support::nth_child(self.syntax(), 0)
     }
 
+    pub fn relation_text(&self) -> Option<String> {
+        self.relation().and_then(|ident| ident.text())
+    }
+
     pub fn alias(&self) -> Option<Ident> {
         support::nth_child(self.syntax(), 1)
+    }
+
+    pub fn alias_text(&self) -> Option<String> {
+        self.alias().and_then(|ident| ident.text())
     }
 }
 
@@ -712,6 +805,10 @@ impl SelectItem {
 
     pub fn alias(&self) -> Option<Ident> {
         support::child(self.syntax())
+    }
+
+    pub fn alias_text(&self) -> Option<String> {
+        self.alias().and_then(|ident| ident.text())
     }
 }
 
@@ -742,6 +839,10 @@ impl DropExpr {
     pub fn columns(&self) -> impl Iterator<Item = Ident> + use<> {
         support::children(self.syntax())
     }
+
+    pub fn columns_text(&self) -> impl Iterator<Item = String> + use<> {
+        self.columns().filter_map(|ident| ident.text())
+    }
 }
 
 ast_node!(RenameExpr);
@@ -765,12 +866,24 @@ impl RenameItem {
             .flatten()
     }
 
+    pub fn qualifier_text(&self) -> Option<String> {
+        self.qualifier().and_then(|ident| ident.text())
+    }
+
     pub fn from(&self) -> Option<Ident> {
         support::nth_child(self.syntax(), self.is_qualified() as usize)
     }
 
+    pub fn from_text(&self) -> Option<String> {
+        self.from().and_then(|ident| ident.text())
+    }
+
     pub fn to(&self) -> Option<Ident> {
         support::nth_child(self.syntax(), self.is_qualified() as usize + 1)
+    }
+
+    pub fn to_text(&self) -> Option<String> {
+        self.to().and_then(|ident| ident.text())
     }
 
     fn is_qualified(&self) -> bool {
@@ -829,8 +942,16 @@ impl JoinExpr {
         support::nth_child(self.syntax(), 0)
     }
 
+    pub fn relation_text(&self) -> Option<String> {
+        self.relation().and_then(|ident| ident.text())
+    }
+
     pub fn alias(&self) -> Option<Ident> {
         support::nth_child(self.syntax(), 1)
+    }
+
+    pub fn alias_text(&self) -> Option<String> {
+        self.alias().and_then(|ident| ident.text())
     }
 
     pub fn on(&self) -> Option<JoinOn> {
@@ -854,6 +975,10 @@ impl JoinUsing {
     pub fn columns(&self) -> impl Iterator<Item = Ident> + use<> {
         support::children(self.syntax())
     }
+
+    pub fn columns_text(&self) -> impl Iterator<Item = String> + use<> {
+        self.columns().filter_map(|ident| ident.text())
+    }
 }
 
 ast_node!(SetExpr);
@@ -871,6 +996,10 @@ ast_node!(SetItem);
 impl SetItem {
     pub fn column(&self) -> Option<Ident> {
         support::child(self.syntax())
+    }
+
+    pub fn column_text(&self) -> Option<String> {
+        self.column().and_then(|ident| ident.text())
     }
 
     pub fn value(&self) -> Option<Expr> {
@@ -902,6 +1031,10 @@ impl AliasExpr {
     pub fn alias(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
+
+    pub fn alias_text(&self) -> Option<String> {
+        self.alias().and_then(|ident| ident.text())
+    }
 }
 
 ast_node!(AggregateExpr);
@@ -928,6 +1061,10 @@ impl AggregateItem {
     pub fn alias(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
+
+    pub fn alias_text(&self) -> Option<String> {
+        self.alias().and_then(|ident| ident.text())
+    }
 }
 
 ast_node!(GroupBy);
@@ -945,14 +1082,26 @@ impl GroupByItem {
             .flatten()
     }
 
+    pub fn qualifier_text(&self) -> Option<String> {
+        self.qualifier().and_then(|ident| ident.text())
+    }
+
     pub fn column(&self) -> Option<Ident> {
         support::nth_child(self.syntax(), self.is_qualified() as usize)
+    }
+
+    pub fn column_text(&self) -> Option<String> {
+        self.column().and_then(|ident| ident.text())
     }
 
     pub fn alias(&self) -> Option<Ident> {
         self.is_aliased()
             .then(|| support::nth_child(self.syntax(), self.is_qualified() as usize + 1))
             .flatten()
+    }
+
+    pub fn alias_text(&self) -> Option<String> {
+        self.alias().and_then(|ident| ident.text())
     }
 
     fn is_qualified(&self) -> bool {

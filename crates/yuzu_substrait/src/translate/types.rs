@@ -6,7 +6,7 @@ use substrait::proto::{
     Type as SubstraitType,
     r#type::{self, Kind},
 };
-use yuzu_mlir::types;
+use yuzu_mlir::types::{BoolType, Float64Type, Int64Type, StrType};
 
 use crate::proto::nullable;
 
@@ -31,22 +31,22 @@ pub(crate) fn emit_type(context: &Context, ty: Type<'_>) -> Option<SubstraitType
 }
 
 fn kind(context: &Context, ty: Type<'_>) -> Option<Kind> {
-    let kind = if ty == types::int64(context) {
+    let kind = if ty == Int64Type::get(context) {
         Kind::I64(r#type::I64 {
             nullability: nullable(),
             ..Default::default()
         })
-    } else if ty == types::float64(context) {
+    } else if ty == Float64Type::get(context) {
         Kind::Fp64(r#type::Fp64 {
             nullability: nullable(),
             ..Default::default()
         })
-    } else if ty == types::boolean(context) {
+    } else if ty == BoolType::get(context) {
         Kind::Bool(r#type::Boolean {
             nullability: nullable(),
             ..Default::default()
         })
-    } else if ty == types::str(context) {
+    } else if ty == StrType::get(context) {
         Kind::String(r#type::String {
             nullability: nullable(),
             ..Default::default()

@@ -2,15 +2,15 @@
 //! resolves to something callable.
 
 use melior::ir::attribute::{
-    FlatSymbolRefAttribute, FloatAttribute, IntegerAttribute, StringAttribute,
+    BoolAttribute, FlatSymbolRefAttribute, FloatAttribute, IntegerAttribute, StringAttribute,
 };
 use melior::ir::r#type::IntegerType;
 use melior::ir::{Attribute, BlockLike, BlockRef, Location, Type, Value};
 use yuzu_ast::{AstNode, BinOp, UnaryOp, ast};
 use yuzu_mlir::attributes::CmpPredicate;
-use yuzu_mlir::ext::OperationExt;
+use yuzu_mlir::ext::{IntegerAttributeExt, OperationExt};
 use yuzu_mlir::ods::{yz, yzl};
-use yuzu_mlir::types;
+use yuzu_mlir::types::{BoolType, Float64Type, Int64Type, StrType, VarType};
 
 use crate::lower_ast_to_yzl::symbols::{BindingKind, Callable, FunctionKind, Lookup, Reference};
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
@@ -39,20 +39,15 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     block,
                     paren,
                     "parenthesized expression is missing its inner expression",
-                    types::var(self.context),
+                    VarType::get(self.context),
                 ),
             },
-            // A query is a scope, and it ends where the expression ends.
-            ast::Expr::Rel(rel) => {
-                let value = self.convert_rel(block, rel);
-                self.symbols.leave();
-                value
-            }
+            ast::Expr::Rel(rel) => self.convert_query(block, rel).0,
             ast::Expr::StructExpr(literal) => self.report_and_hole(
                 block,
                 literal,
                 "struct literals are not supported yet",
-                types::var(self.context),
+                VarType::get(self.context),
             ),
         }
     }
@@ -66,17 +61,14 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let operation = match literal {
             ast::Literal::IntLiteral(int) => yz::constant_int(
                 self.context,
-                types::int64(self.context),
-                IntegerAttribute::new(
-                    IntegerType::new(self.context, 64).into(),
-                    int.value().unwrap_or_default() as i64,
-                ),
+                Int64Type::get(self.context),
+                IntegerAttribute::from_i64(self.context, int.value().unwrap_or_default() as i64),
                 loc,
             )
             .into(),
             ast::Literal::FloatLiteral(float) => yz::constant_float(
                 self.context,
-                types::float64(self.context),
+                Float64Type::get(self.context),
                 FloatAttribute::new(
                     self.context,
                     Type::float64(self.context),
@@ -87,22 +79,14 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .into(),
             ast::Literal::BoolLiteral(boolean) => yz::constant_bool(
                 self.context,
-                types::boolean(self.context),
-                Attribute::parse(
-                    self.context,
-                    if boolean.value().unwrap_or_default() {
-                        "true"
-                    } else {
-                        "false"
-                    },
-                )
-                .expect("a bool attribute parses"),
+                BoolType::get(self.context),
+                BoolAttribute::new(self.context, boolean.value().unwrap_or_default()).into(),
                 loc,
             )
             .into(),
             ast::Literal::StringLiteral(string) => yz::constant_str(
                 self.context,
-                types::str(self.context),
+                StrType::get(self.context),
                 StringAttribute::new(self.context, &string.value().unwrap_or_default()),
                 loc,
             )
@@ -119,16 +103,16 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         ident: &ast::IdentExpr,
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
-        let Some(name) = self.read_name(ident.name()) else {
+        let Some(name) = ident.name_text() else {
             return self.report_and_hole(
                 block,
                 ident,
                 "identifier expression is missing its name",
-                types::var(self.context),
+                VarType::get(self.context),
             );
         };
 
-        self.name_ref(block, locals, ident, Reference::bare(name), loc)
+        self.name_ref(block, locals, ident, Reference::unqualified(&name), loc)
     }
 
     /// `t.a` is a qualified column reference, not a load.
@@ -140,13 +124,13 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         let base = match access.base() {
-            Some(ast::Expr::IdentExpr(ident)) => self.read_name(ident.name()),
+            Some(ast::Expr::IdentExpr(ident)) => ident.name_text(),
             Some(_) => {
                 return self.report_and_hole(
                     block,
                     access,
                     "field access on an expression is not supported yet",
-                    types::var(self.context),
+                    VarType::get(self.context),
                 );
             }
             None => None,
@@ -157,22 +141,22 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 block,
                 access,
                 "field access is missing its base",
-                types::var(self.context),
+                VarType::get(self.context),
             );
         };
 
-        let Some(field) = self.read_name(access.field()) else {
+        let Some(field) = access.field_text() else {
             return self.report_and_hole(
                 block,
                 access,
                 "field access is missing its field",
-                types::var(self.context),
+                VarType::get(self.context),
             );
         };
 
         let reference = Reference {
-            qualifier: Some(base),
-            name: field,
+            qualifier: Some(&base),
+            name: &field,
         };
         self.name_ref(block, locals, access, reference, loc)
     }
@@ -184,6 +168,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         binary: &ast::BinaryExpr,
     ) -> Value<'c, 'a> {
         let loc = self.location(binary);
+
         let lhs = match binary.lhs() {
             Some(expr) => self.convert_expr(block, locals, &expr),
             None => {
@@ -191,7 +176,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     block,
                     binary,
                     "binary expression is missing its left operand",
-                    types::var(self.context),
+                    VarType::get(self.context),
                 );
             }
         };
@@ -203,32 +188,31 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     block,
                     binary,
                     "binary expression is missing its right operand",
-                    types::var(self.context),
+                    VarType::get(self.context),
                 );
             }
         };
 
-        let context = self.context;
-        let var = types::var(context);
+        let var = VarType::get(self.context);
         let cmp = |predicate: CmpPredicate| {
             yz::cmp(
-                context,
+                self.context,
                 var,
                 lhs,
                 rhs,
-                StringAttribute::new(context, predicate.as_str()),
+                StringAttribute::new(self.context, predicate.as_str()),
                 loc,
             )
             .into()
         };
 
         let operation = match binary.op() {
-            Some(BinOp::Add) => yz::add(context, var, lhs, rhs, loc).into(),
-            Some(BinOp::Sub) => yz::sub(context, var, lhs, rhs, loc).into(),
-            Some(BinOp::Mul) => yz::mul(context, var, lhs, rhs, loc).into(),
-            Some(BinOp::Div) => yz::div(context, var, lhs, rhs, loc).into(),
-            Some(BinOp::And) => yz::and(context, var, lhs, rhs, loc).into(),
-            Some(BinOp::Or) => yz::or(context, var, lhs, rhs, loc).into(),
+            Some(BinOp::Add) => yz::add(self.context, var, lhs, rhs, loc).into(),
+            Some(BinOp::Sub) => yz::sub(self.context, var, lhs, rhs, loc).into(),
+            Some(BinOp::Mul) => yz::mul(self.context, var, lhs, rhs, loc).into(),
+            Some(BinOp::Div) => yz::div(self.context, var, lhs, rhs, loc).into(),
+            Some(BinOp::And) => yz::and(self.context, var, lhs, rhs, loc).into(),
+            Some(BinOp::Or) => yz::or(self.context, var, lhs, rhs, loc).into(),
             Some(BinOp::Eq) => cmp(CmpPredicate::Equal),
             Some(BinOp::Neq) => cmp(CmpPredicate::NotEqual),
             Some(BinOp::Lt) => cmp(CmpPredicate::Less),
@@ -245,7 +229,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             Some(BinOp::In) => return self.operator(block, binary, "in", &[lhs, rhs], loc),
             Some(BinOp::NotIn) => {
                 let contains = self.operator(block, binary, "in", &[lhs, rhs], loc);
-                yz::not(context, var, contains, loc).into()
+                yz::not(self.context, var, contains, loc).into()
             }
             None => {
                 return self.report_and_hole(
@@ -274,17 +258,17 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     block,
                     unary,
                     "unary expression is missing its operand",
-                    types::var(self.context),
+                    VarType::get(self.context),
                 );
             }
         };
 
         let result = match unary.op() {
             Some(UnaryOp::Neg) => {
-                yz::neg(self.context, types::var(self.context), value, loc).into()
+                yz::neg(self.context, VarType::get(self.context), value, loc).into()
             }
             Some(UnaryOp::Not) => {
-                yz::not(self.context, types::var(self.context), value, loc).into()
+                yz::not(self.context, VarType::get(self.context), value, loc).into()
             }
             Some(UnaryOp::Pos) => return value,
             None => {
@@ -292,7 +276,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     block,
                     unary,
                     "unary expression is missing its operator",
-                    types::var(self.context),
+                    VarType::get(self.context),
                 );
             }
         };
@@ -308,14 +292,14 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         let callee = match call.callee() {
-            Some(ast::Expr::IdentExpr(ident)) => match self.read_name(ident.name()) {
+            Some(ast::Expr::IdentExpr(ident)) => match ident.name_text() {
                 Some(callee) => callee,
                 None => {
                     return self.report_and_hole(
                         block,
                         call,
                         "call is missing its callee",
-                        types::var(self.context),
+                        VarType::get(self.context),
                     );
                 }
             },
@@ -327,7 +311,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     block,
                     call,
                     "calling an expression is not supported yet",
-                    types::var(self.context),
+                    VarType::get(self.context),
                 );
             }
             None => {
@@ -335,7 +319,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     block,
                     call,
                     "call is missing its callee",
-                    types::var(self.context),
+                    VarType::get(self.context),
                 );
             }
         };
@@ -346,18 +330,19 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .flat_map(|args| args.args())
             .map(|arg| self.convert_expr(block, locals, &arg))
             .collect();
-        let Some(callable) = self.symbols.callable(callee, self.registry) else {
-            let message = match self.symbols.kind(callee) {
-                Some(kind) => format!("`{callee}` is a {}, not a function", kind.what()),
-                None if self.symbols.is_method(callee) => {
+        let Some(callable) = self.symbols.callable(&callee, self.registry) else {
+            let message = match self.symbols.kind(&callee) {
+                Some(BindingKind::Pending) => format!("`{callee}` is bound further down the file"),
+                Some(kind) => format!("`{callee}` is a {kind}, not a function"),
+                None if self.symbols.is_method(&callee) => {
                     format!("`{callee}` is a trait method, and calling one is not supported yet")
                 }
                 None => format!("unresolved identifier `{callee}`"),
             };
-            return self.report_and_hole(block, call, &message, types::var(self.context));
+            return self.report_and_hole(block, call, &message, VarType::get(self.context));
         };
 
-        self.check_arity(call, callee, callable, operands.len());
+        self.check_arity(call, &callee, &callable, operands.len());
         self.call(block, callable, &operands, loc)
     }
 
@@ -370,27 +355,28 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         let base = match access.base() {
-            Some(ast::Expr::IdentExpr(ident)) => self.read_name(ident.name()),
+            Some(ast::Expr::IdentExpr(ident)) => ident.name_text(),
             _ => None,
         };
 
-        let (Some(base), Some(name)) = (base, self.read_name(access.field())) else {
+        let (Some(base), Some(name)) = (base, access.field_text()) else {
             return self.report_and_hole(
                 block,
                 call,
                 "calling an expression is not supported yet",
-                types::var(self.context),
+                VarType::get(self.context),
             );
         };
 
-        let Some(path) = self.symbols.module_of(base) else {
+        let Some(path) = self.symbols.module_of(&base) else {
             return self.report_and_hole(
                 block,
                 call,
                 &format!("`{base}` is not a module"),
-                types::var(self.context),
+                VarType::get(self.context),
             );
         };
+        let path = path.to_string();
 
         let operands: Vec<Value> = call
             .args()
@@ -399,20 +385,24 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .map(|arg| self.convert_expr(block, locals, &arg))
             .collect();
 
-        let Some(binding) = self.read_export(call, path, name) else {
-            return self.emit_hole(block, call.syntax().text_range(), types::var(self.context));
-        };
-
-        let BindingKind::Func(callable) = binding.kind else {
-            return self.report_and_hole(
+        let Some((at, binding)) = self.read_export(call, &path, &name) else {
+            return self.emit_hole(
                 block,
-                call,
-                &format!("`{name}` is a {}, not a function", binding.kind.what()),
-                types::var(self.context),
+                call.syntax().text_range(),
+                VarType::get(self.context),
             );
         };
 
-        self.check_arity(call, name, callable, operands.len());
+        let Some(callable) = self.symbols.callable_in(&at) else {
+            return self.report_and_hole(
+                block,
+                call,
+                &format!("`{name}` is a {}, not a function", binding.kind),
+                VarType::get(self.context),
+            );
+        };
+
+        self.check_arity(call, &name, &callable, operands.len());
         self.call(block, callable, &operands, loc)
     }
 
@@ -429,7 +419,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .collect();
         block
             .append_operation(
-                yzl::list(self.context, types::var(self.context), &values, loc).into(),
+                yzl::list(self.context, VarType::get(self.context), &values, loc).into(),
             )
             .first_result()
     }
@@ -441,7 +431,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         block: BlockRef<'c, 'a>,
         locals: &Locals<'c, 'a>,
         node: &impl AstNode,
-        reference: Reference<'c>,
+        reference: Reference<'_>,
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         let name = reference.name;
@@ -454,7 +444,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             }
             Lookup::Local { slot, .. } => return locals[slot],
             Lookup::Let(symbol) => {
-                return self.call(block, Callable::let_binding(symbol), &[], loc);
+                return self.call(block, Callable::let_binding(&symbol), &[], loc);
             }
             Lookup::Ambiguous => {
                 format!("column `{name}` is ambiguous; qualify it with a relation alias")
@@ -465,24 +455,29 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 )
             }
             Lookup::NotAValue(what) => format!("`{reference}` is a {what}, not a value"),
+            Lookup::NotYet => format!("`{reference}` is bound further down the file"),
             Lookup::Unknown => format!("unresolved identifier `{reference}`"),
         };
 
         self.unresolved_column(node, &message);
-        self.emit_hole(block, node.syntax().text_range(), types::var(self.context))
+        self.emit_hole(
+            block,
+            node.syntax().text_range(),
+            VarType::get(self.context),
+        )
     }
 
     fn call<'a>(
         &self,
         block: BlockRef<'c, 'a>,
-        callable: Callable<'c>,
+        callable: Callable,
         operands: &[Value<'c, 'a>],
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         let mut builder = yzl::CallOperationBuilder::new(self.context, loc)
-            .result(types::var(self.context))
+            .result(VarType::get(self.context))
             .operands(operands)
-            .callee(FlatSymbolRefAttribute::new(self.context, callable.symbol))
+            .callee(FlatSymbolRefAttribute::new(self.context, &callable.symbol))
             .callee_source(StringAttribute::new(self.context, callable.source.as_str()));
         if callable.kind == FunctionKind::Aggregate {
             builder = builder.agg(Attribute::unit(self.context));
@@ -506,15 +501,21 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 block,
                 node,
                 &format!("`{callee}` is not available"),
-                types::var(self.context),
+                VarType::get(self.context),
             );
         };
 
-        self.check_arity(node, callee, callable, operands.len());
+        self.check_arity(node, callee, &callable, operands.len());
         self.call(block, callable, operands, loc)
     }
 
-    fn check_arity(&mut self, call: &impl AstNode, callee: &str, callable: Callable, given: usize) {
+    fn check_arity(
+        &mut self,
+        call: &impl AstNode,
+        callee: &str,
+        callable: &Callable,
+        given: usize,
+    ) {
         let (min, max) = (callable.min_args, callable.max_args);
         if given < min || given > max {
             let expected = if min == max {

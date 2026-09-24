@@ -19,6 +19,7 @@ use yuzu_diagnostics::source_map::SourceMap;
 /// Emits an error against a location, into whichever handler is attached.
 pub fn emit_error(location: Location, message: &str) {
     let message = CString::new(message).expect("diagnostic messages have no interior nul");
+    // SAFETY: the location belongs to a live context, and the message is nul-terminated and outlives the call.
     unsafe { mlir_sys::mlirEmitError(location.to_raw(), message.as_ptr()) }
 }
 

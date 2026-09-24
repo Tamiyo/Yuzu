@@ -37,11 +37,8 @@ pub(crate) fn lower<'c>(context: &'c Context, program: &Program) -> Lowered<'c> 
         .iter()
         .map(|&(name, module, source)| {
             let source_id = sources.add(name.to_string(), source.to_string());
-            File {
-                source_id,
-                module: module.map(str::to_string),
-                root: parsed(&sources, source_id, &mut diagnostics),
-            }
+            let root = parsed(&sources, source_id, &mut diagnostics);
+            File::new(source_id, module.map(str::to_string), root)
         })
         .collect();
     let module = crate::lower_ast_to_yzl(

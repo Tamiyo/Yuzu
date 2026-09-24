@@ -2,10 +2,9 @@
 //! comes out as `!yzl.var` for inference.
 
 use melior::Context;
-use melior::ir::attribute::StringAttribute;
 use melior::ir::{BlockLike, BlockRef, Location, Module, Type, Value};
 use text_size::TextRange;
-use yuzu_ast::{AstNode, ast};
+use yuzu_ast::AstNode;
 use yuzu_diagnostics::diagnostics::Span;
 use yuzu_diagnostics::diagnostics::builder::DiagnosticBuilder;
 use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
@@ -30,6 +29,11 @@ pub use program::File;
 /// What it could not lower it reports, and stands a `yzl.missing` hole in
 /// the place, so the module it returns may hold holes. Whether the program
 /// compiled is the engine's answer, not this one's.
+///
+/// # Panics
+///
+/// If `files` is empty. A program without an entry file is a caller bug,
+/// not a program that failed to compile.
 pub fn lower_ast_to_yzl<'c>(
     context: &'c Context,
     sources: &SourceMap,
@@ -53,7 +57,7 @@ pub fn lower_ast_to_yzl<'c>(
 struct AstToYzl<'c, 'd> {
     // What the whole run is given.
     context: &'c Context,
-    symbols: SymbolTable<'c>,
+    symbols: SymbolTable,
     registry: &'d dyn FunctionRegistry,
     sources: &'d SourceMap,
     source_id: SourceId,
@@ -65,25 +69,6 @@ struct AstToYzl<'c, 'd> {
 type Locals<'c, 'a> = Vec<Value<'c, 'a>>;
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
-    /// The name a declaration is built under: qualified by its module, or
-    /// bare in the entry file.
-    fn built_symbol(&self, name: &str) -> &'c str {
-        match self.symbols.module().qualify(name) {
-            Some(symbol) => self.intern(&symbol),
-            None => self.intern(name),
-        }
-    }
-
-    fn intern(&self, name: &str) -> &'c str {
-        StringAttribute::new(self.context, name).value()
-    }
-
-    fn read_name(&self, ident: Option<ast::Ident>) -> Option<&'c str> {
-        ident
-            .and_then(|ident| ident.text())
-            .map(|text| self.intern(&text))
-    }
-
     fn error_at(&self, range: TextRange, message: &str) -> DiagnosticBuilder {
         let span = Span {
             source_id: self.source_id,

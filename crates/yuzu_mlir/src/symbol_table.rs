@@ -12,12 +12,14 @@ pub struct SymbolTable<'c, 'a> {
 impl<'c, 'a> SymbolTable<'c, 'a> {
     pub fn new(module: &'a Module<'c>) -> Self {
         Self {
+            // SAFETY: the module is a live op for `'a`, which the table borrows; MLIR returns an owned handle that `drop` frees once.
             raw: unsafe { mlir_sys::mlirSymbolTableCreate(module.as_operation().to_raw()) },
             _module: PhantomData,
         }
     }
 
     pub fn lookup(&self, name: &str) -> Option<OperationRef<'c, 'a>> {
+        // SAFETY: the table and the name outlive the call. A null result is checked before it becomes a reference, and the op found belongs to the borrowed module.
         unsafe {
             let operation =
                 mlir_sys::mlirSymbolTableLookup(self.raw, StringRef::new(name).to_raw());
@@ -31,6 +33,7 @@ impl<'c, 'a> SymbolTable<'c, 'a> {
     }
 
     pub fn insert(&mut self, operation: Operation<'c>) -> Attribute<'c> {
+        // SAFETY: `into_raw` hands the operation to MLIR, which owns it from here. The returned attribute is owned by the context.
         unsafe {
             Attribute::from_raw(mlir_sys::mlirSymbolTableInsert(
                 self.raw,
@@ -42,6 +45,7 @@ impl<'c, 'a> SymbolTable<'c, 'a> {
 
 impl Drop for SymbolTable<'_, '_> {
     fn drop(&mut self) {
+        // SAFETY: `raw` came from `mlirSymbolTableCreate` and is destroyed exactly once, here.
         unsafe { mlir_sys::mlirSymbolTableDestroy(self.raw) }
     }
 }

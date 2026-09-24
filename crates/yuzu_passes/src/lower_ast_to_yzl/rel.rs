@@ -6,22 +6,36 @@ use melior::ir::attribute::{
 };
 use melior::ir::r#type::IntegerType;
 use melior::ir::{
-    Attribute, Block, BlockLike, BlockRef, Location, Operation, Region, RegionLike, Type, Value,
+    Block, BlockLike, BlockRef, Location, Operation, Region, RegionLike, Type, Value,
 };
 use text_size::TextRange;
 use yuzu_ast::{AstNode, ast};
 use yuzu_mlir::attributes::JoinKind;
-use yuzu_mlir::ext::{OperationExt, OperationMutExt};
+use yuzu_mlir::ext::{ArrayAttributeExt, OperationExt, OperationMutExt};
 use yuzu_mlir::ods::yzl;
-use yuzu_mlir::types;
+use yuzu_mlir::types::{QueryType, VarType};
 
 use crate::lower_ast_to_yzl::symbols::{ColumnLookup, Reference, Row};
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 
 /// A stage item: its alias, its expression, and where it was written.
-type Item = (Option<ast::Ident>, Option<ast::Expr>, TextRange);
+type Item = (Option<String>, Option<ast::Expr>, TextRange);
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
+    /// A whole query. `convert_rel` leaves the query's scope open, since a
+    /// stage converts its input through it and only the outermost caller
+    /// knows the chain has ended; this is that caller.
+    pub(super) fn convert_query<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        rel: &ast::Rel,
+    ) -> (Value<'c, 'a>, Row) {
+        let value = self.convert_rel(block, rel);
+        let row = self.symbols.row().clone();
+        self.symbols.leave();
+        (value, row)
+    }
+
     pub(super) fn convert_rel<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
@@ -51,18 +65,18 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         at: TextRange,
     ) -> Value<'c, 'a> {
         let loc = self.location_at(at);
-        let Some(source) = self.read_name(from.relation()) else {
+        let Some(source) = from.relation_text() else {
             return self.report_and_hole(
                 block,
                 from,
                 "`from` is missing its relation",
-                types::query(self.context),
+                QueryType::get(self.context),
             );
         };
 
-        let value = self.scan(block, from, source, loc);
-        match self.read_name(from.alias()) {
-            Some(alias) => self.qualify(block, value, alias, loc),
+        let value = self.scan(block, from, &source, loc);
+        match from.alias_text() {
+            Some(alias) => self.qualify(block, value, &alias, loc),
             None => value,
         }
     }
@@ -83,14 +97,21 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 body,
                 stage,
                 "`where` is missing its predicate",
-                types::var(self.context),
+                VarType::get(self.context),
             ),
         };
 
         body.append_operation(yzl::r#yield(self.context, &[predicate], loc).into());
         block
             .append_operation(
-                yzl::r#where(self.context, types::query(self.context), input, region, loc).into(),
+                yzl::r#where(
+                    self.context,
+                    QueryType::get(self.context),
+                    input,
+                    region,
+                    loc,
+                )
+                .into(),
             )
             .first_result()
     }
@@ -105,18 +126,18 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let input = self.convert_input(block, stage, "`select`", stage.input());
         let items = stage
             .items()
-            .map(|item| (item.alias(), item.expr(), item.syntax().text_range()));
+            .map(|item| (item.alias_text(), item.expr(), item.syntax().text_range()));
         let (names, region) = self.convert_items(items, "select item", loc);
-        let columns = self.string_attributes(&names);
+        let columns = ArrayAttribute::from_strings(self.context, &names);
         self.symbols.replace(names);
         block
             .append_operation(
                 yzl::select(
                     self.context,
-                    types::query(self.context),
+                    QueryType::get(self.context),
                     input,
                     region,
-                    ArrayAttribute::new(self.context, &columns),
+                    columns,
                     loc,
                 )
                 .into(),
@@ -134,18 +155,18 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let input = self.convert_input(block, stage, "`extend`", stage.input());
         let items = stage
             .items()
-            .map(|item| (item.alias(), item.expr(), item.syntax().text_range()));
+            .map(|item| (item.alias_text(), item.expr(), item.syntax().text_range()));
         let (names, region) = self.convert_items(items, "extend item", loc);
-        let columns = self.string_attributes(&names);
+        let columns = ArrayAttribute::from_strings(self.context, &names);
         self.symbols.extend(names);
         block
             .append_operation(
                 yzl::extend(
                     self.context,
-                    types::query(self.context),
+                    QueryType::get(self.context),
                     input,
                     region,
-                    ArrayAttribute::new(self.context, &columns),
+                    columns,
                     loc,
                 )
                 .into(),
@@ -162,39 +183,41 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let loc = self.location_at(at);
         let input = self.convert_input(block, stage, "`aggregate`", stage.input());
         let mut keys = Vec::new();
-        let mut key_names: Vec<&'c str> = Vec::new();
+        let mut key_names: Vec<String> = Vec::new();
         for item in stage.group_by().into_iter().flat_map(|group| group.items()) {
-            let Some(column) = self.read_name(item.column()) else {
+            let Some(column) = item.column_text() else {
                 self.report(&item, "group by key is missing its column");
                 continue;
             };
 
+            let qualifier = item.qualifier_text();
+
             let reference = Reference {
-                qualifier: self.read_name(item.qualifier()),
-                name: column,
+                qualifier: qualifier.as_deref(),
+                name: &column,
             };
             if let Some(index) = self.column(&item, "group key", reference) {
                 keys.push(index);
-                key_names.push(self.read_name(item.alias()).unwrap_or(column));
+                key_names.push(item.alias_text().unwrap_or(column));
             }
         }
 
         let items = stage
             .items()
-            .map(|item| (item.alias(), item.expr(), item.syntax().text_range()));
+            .map(|item| (item.alias_text(), item.expr(), item.syntax().text_range()));
         let (names, region) = self.convert_items(items, "aggregate item", loc);
-        let group_by = self.string_attributes(&key_names);
-        let measures = self.string_attributes(&names);
+        let group_by = ArrayAttribute::from_strings(self.context, &key_names);
+        let measures = ArrayAttribute::from_strings(self.context, &names);
         key_names.extend(names);
         self.symbols.replace(key_names);
 
         let mut op: Operation<'c> = yzl::aggregate(
             self.context,
-            types::query(self.context),
+            QueryType::get(self.context),
             input,
             region,
-            ArrayAttribute::new(self.context, &group_by),
-            ArrayAttribute::new(self.context, &measures),
+            group_by,
+            measures,
             loc,
         )
         .into();
@@ -221,7 +244,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
         let i64 = IntegerType::new(self.context, 64).into();
         let mut builder = yzl::LimitOperationBuilder::new(self.context, loc)
-            .result(types::query(self.context))
+            .result(QueryType::get(self.context))
             .input(input)
             .count(IntegerAttribute::new(i64, count));
         if let Some(offset) = offset {
@@ -241,23 +264,24 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     ) -> Value<'c, 'a> {
         let loc = self.location_at(at);
         let input = self.convert_input(block, stage, "`rename`", stage.input());
-        let mut from: Vec<&'c str> = Vec::new();
-        let mut to: Vec<&'c str> = Vec::new();
+        let mut from: Vec<String> = Vec::new();
+        let mut to: Vec<String> = Vec::new();
         let mut renames = Vec::new();
         for item in stage.items() {
-            let (Some(old), Some(new)) = (self.read_name(item.from()), self.read_name(item.to()))
-            else {
+            let (Some(old), Some(new)) = (item.from_text(), item.to_text()) else {
                 self.report(&item, "rename item is missing a column name");
                 continue;
             };
 
+            let qualifier = item.qualifier_text();
+
             let reference = Reference {
-                qualifier: self.read_name(item.qualifier()),
-                name: old,
+                qualifier: qualifier.as_deref(),
+                name: &old,
             };
             if let Some(index) = self.column(&item, "column", reference) {
-                renames.push((index, new));
-                from.push(self.intern(&reference.to_string()));
+                renames.push((index, new.clone()));
+                from.push(reference.to_string());
                 to.push(new);
             }
         }
@@ -266,10 +290,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let indices: Vec<usize> = renames.iter().map(|&(index, _)| index).collect();
         let mut op: Operation<'c> = yzl::rename(
             self.context,
-            types::query(self.context),
+            QueryType::get(self.context),
             input,
-            ArrayAttribute::new(self.context, &self.string_attributes(&from)),
-            ArrayAttribute::new(self.context, &self.string_attributes(&to)),
+            ArrayAttribute::from_strings(self.context, &from),
+            ArrayAttribute::from_strings(self.context, &to),
             loc,
         )
         .into();
@@ -285,12 +309,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     ) -> Value<'c, 'a> {
         let loc = self.location_at(at);
         let input = self.convert_input(block, stage, "`as`", stage.input());
-        let Some(alias) = self.read_name(stage.alias()) else {
+        let Some(alias) = stage.alias_text() else {
             self.report_at(at, "`as` is missing its alias");
             return input;
         };
 
-        self.qualify(block, input, alias, loc)
+        self.qualify(block, input, &alias, loc)
     }
 
     fn convert_join<'a>(
@@ -307,36 +331,30 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             Some(ast::JoinKind::Full) => JoinKind::Full,
             Some(ast::JoinKind::Inner) | None => JoinKind::Inner,
         };
-        let Some(relation) = self.read_name(stage.relation()) else {
+        let Some(relation) = stage.relation_text() else {
             return self.report_and_hole(
                 block,
                 stage,
                 "`join` is missing its relation",
-                types::query(self.context),
+                QueryType::get(self.context),
             );
         };
 
-        let alias = self.read_name(stage.alias());
-        let (rhs_symbol, rhs) = match self.symbols.relation(relation, alias) {
-            Some(found) => found,
-            None => {
-                self.report_at(at, &format!("`{relation}` is not a relation"));
-                (relation, Row::new())
-            }
+        let alias = stage.alias_text();
+        let Some((rhs_symbol, rhs)) = self.symbols.relation(&relation, alias.as_deref()) else {
+            self.report_at(at, &format!("`{relation}` is not a relation"));
+            return self.emit_hole(block, at, QueryType::get(self.context));
         };
 
-        let mut using: Vec<&'c str> = Vec::new();
+        let mut using: Vec<String> = Vec::new();
         if let Some(clause) = stage.using() {
-            using = clause
-                .columns()
-                .filter_map(|column| self.read_name(Some(column)))
-                .collect();
+            using = clause.columns_text().collect();
             if using.is_empty() {
                 self.report(&clause, "`using` needs at least one column");
             }
 
-            for &column in &using {
-                let column = Reference::bare(column);
+            for column in &using {
+                let column = Reference::unqualified(column);
                 if !self.symbols.row().has(column) || !rhs.has(column) {
                     self.report(
                         &clause,
@@ -364,17 +382,17 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
 
         let mut builder = yzl::JoinOperationBuilder::new(self.context, loc)
-            .result(types::query(self.context))
+            .result(QueryType::get(self.context))
             .lhs(lhs)
             .kind(StringAttribute::new(self.context, kind.as_str()))
-            .rhs(FlatSymbolRefAttribute::new(self.context, rhs_symbol))
+            .rhs(FlatSymbolRefAttribute::new(self.context, &rhs_symbol))
             .on(on);
         if let Some(alias) = alias {
-            builder = builder.rhs_alias(StringAttribute::new(self.context, alias));
+            builder = builder.rhs_alias(StringAttribute::new(self.context, &alias));
         }
         if !using.is_empty() {
-            let columns = self.string_attributes(&using);
-            builder = builder.using_columns(ArrayAttribute::new(self.context, &columns));
+            let columns = ArrayAttribute::from_strings(self.context, &using);
+            builder = builder.using_columns(columns);
         }
 
         block
@@ -393,27 +411,27 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let items: Vec<ast::SetItem> = stage.items().collect();
         let mut columns = Vec::new();
         for item in &items {
-            let Some(name) = self.read_name(item.column()) else {
+            let Some(name) = item.column_text() else {
                 self.report(item, "set item is incomplete");
                 continue;
             };
 
-            if let Some(index) = self.column(item, "column", Reference::bare(name)) {
+            if let Some(index) = self.column(item, "column", Reference::unqualified(&name)) {
                 columns.push(index);
             }
         }
 
         let items = items
             .iter()
-            .map(|item| (item.column(), item.value(), item.syntax().text_range()));
+            .map(|item| (item.column_text(), item.value(), item.syntax().text_range()));
         let (names, region) = self.convert_items(items, "set item", loc);
-        let names = self.string_attributes(&names);
+        let names = ArrayAttribute::from_strings(self.context, &names);
         let mut op: Operation<'c> = yzl::set(
             self.context,
-            types::query(self.context),
+            QueryType::get(self.context),
             input,
             region,
-            ArrayAttribute::new(self.context, &names),
+            names,
             loc,
         )
         .into();
@@ -431,7 +449,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let input = self.convert_input(block, stage, "`distinct`", stage.input());
         block
             .append_operation(
-                yzl::distinct(self.context, types::query(self.context), input, loc).into(),
+                yzl::distinct(self.context, QueryType::get(self.context), input, loc).into(),
             )
             .first_result()
     }
@@ -444,27 +462,27 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     ) -> Value<'c, 'a> {
         let loc = self.location_at(at);
         let input = self.convert_input(block, stage, "`drop`", stage.input());
-        let mut names: Vec<&'c str> = Vec::new();
+        let mut names: Vec<String> = Vec::new();
         for column in stage.columns() {
-            let Some(name) = self.read_name(Some(column.clone())) else {
+            let Some(name) = column.clone().text() else {
                 continue;
             };
 
-            if let Some(index) = self.column(&column, "column", Reference::bare(name)) {
+            if let Some(index) = self.column(&column, "column", Reference::unqualified(&name)) {
                 self.symbols.remove(index);
             }
 
             names.push(name);
         }
 
-        let columns = self.string_attributes(&names);
+        let columns = ArrayAttribute::from_strings(self.context, &names);
         block
             .append_operation(
                 yzl::drop(
                     self.context,
-                    types::query(self.context),
+                    QueryType::get(self.context),
                     input,
-                    ArrayAttribute::new(self.context, &columns),
+                    columns,
                     loc,
                 )
                 .into(),
@@ -490,15 +508,19 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         node: &impl AstNode,
-        source: &'c str,
+        source: &str,
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
-        let (symbol, row) = match self.symbols.relation(source, None) {
-            Some(found) => found,
-            None => {
-                self.report(node, &format!("`{source}` is not a relation"));
-                (source, Row::new())
-            }
+        // The stages after this one still need a scope to resolve in, so an
+        // unknown relation opens an empty one and stands a hole.
+        let Some((symbol, row)) = self.symbols.relation(source, None) else {
+            self.symbols.enter_relation(Row::new());
+            return self.report_and_hole(
+                block,
+                node,
+                &format!("`{source}` is not a relation"),
+                QueryType::get(self.context),
+            );
         };
 
         self.symbols.enter_relation(row);
@@ -506,8 +528,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .append_operation(
                 yzl::from(
                     self.context,
-                    types::query(self.context),
-                    FlatSymbolRefAttribute::new(self.context, symbol),
+                    QueryType::get(self.context),
+                    FlatSymbolRefAttribute::new(self.context, &symbol),
                     loc,
                 )
                 .into(),
@@ -519,7 +541,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         input: Value<'c, 'a>,
-        alias: &'c str,
+        alias: &str,
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         self.symbols.alias(alias);
@@ -527,7 +549,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .append_operation(
                 yzl::alias(
                     self.context,
-                    types::query(self.context),
+                    QueryType::get(self.context),
                     input,
                     StringAttribute::new(self.context, alias),
                     loc,
@@ -541,7 +563,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn stage_block<'r>(&self, region: &'r Region<'c>, loc: Location<'c>) -> BlockRef<'c, 'r> {
         let width = self.symbols.row().len();
         let arguments: Vec<(Type<'c>, Location<'c>)> = (0..width)
-            .map(|_| (types::var(self.context), loc))
+            .map(|_| (VarType::get(self.context), loc))
             .collect();
         region.append_block(Block::new(&arguments))
     }
@@ -556,29 +578,29 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         match input {
             Some(ast::Expr::Rel(rel)) => self.convert_rel(block, &rel),
             Some(ast::Expr::IdentExpr(ident)) => {
-                let Some(name) = self.read_name(ident.name()) else {
+                let Some(name) = ident.name_text() else {
                     return self.report_and_hole(
                         block,
                         &ident,
                         &format!("{what} is missing its input relation"),
-                        types::query(self.context),
+                        QueryType::get(self.context),
                     );
                 };
 
                 let loc = self.location(&ident);
-                self.scan(block, &ident, name, loc)
+                self.scan(block, &ident, &name, loc)
             }
             Some(other) => self.report_and_hole(
                 block,
                 &other,
                 "expected a relation as the pipe input",
-                types::query(self.context),
+                QueryType::get(self.context),
             ),
             None => self.report_and_hole(
                 block,
                 stage,
                 &format!("{what} is missing its input relation"),
-                types::query(self.context),
+                QueryType::get(self.context),
             ),
         }
     }
@@ -587,7 +609,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         node: &impl AstNode,
         what: &str,
-        reference: Reference<'c>,
+        reference: Reference<'_>,
     ) -> Option<usize> {
         let message = match self.symbols.column(reference) {
             ColumnLookup::Unique(index) => return Some(index),
@@ -609,25 +631,24 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         items: impl Iterator<Item = Item>,
         what: &str,
         loc: Location<'c>,
-    ) -> (Vec<&'c str>, Region<'c>) {
+    ) -> (Vec<String>, Region<'c>) {
         let region = Region::new();
         let body = self.stage_block(&region, loc);
         let mut names = Vec::new();
         let mut values = Vec::new();
         for (index, (alias, expr, range)) in items.enumerate() {
-            let name = self
-                .read_name(alias)
+            let name = alias
                 .or_else(|| match &expr {
-                    Some(ast::Expr::IdentExpr(ident)) => self.read_name(ident.name()),
+                    Some(ast::Expr::IdentExpr(ident)) => ident.name_text(),
                     _ => None,
                 })
-                .unwrap_or_else(|| self.intern(&format!("column{index}")));
+                .unwrap_or_else(|| format!("column{index}"));
             names.push(name);
             let value = match &expr {
                 Some(expr) => self.convert_expr(body, &Locals::new(), expr),
                 None => {
                     self.report_at(range, &format!("{what} is missing its expression"));
-                    self.emit_hole(body, range, types::var(self.context))
+                    self.emit_hole(body, range, VarType::get(self.context))
                 }
             };
 
@@ -636,13 +657,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
         body.append_operation(yzl::r#yield(self.context, &values, loc).into());
         (names, region)
-    }
-
-    pub(super) fn string_attributes(&self, names: &[&'c str]) -> Vec<Attribute<'c>> {
-        names
-            .iter()
-            .map(|&name| StringAttribute::new(self.context, name).into())
-            .collect()
     }
 }
 

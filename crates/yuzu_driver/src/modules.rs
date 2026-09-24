@@ -231,11 +231,8 @@ impl Loader<'_> {
         self.loading.pop();
 
         self.loaded.insert(path.to_string());
-        self.files.push(File {
-            source_id,
-            module: Some(path.to_string()),
-            root,
-        });
+        self.files
+            .push(File::new(source_id, Some(path.to_string()), root));
     }
 
     fn follow_imports(&mut self, source_id: SourceId, root: &ast::Root, asking: &str) {
@@ -331,7 +328,7 @@ mod tests {
         match load(id, &mut sources, &mut diagnostics, &resolver(modules)) {
             Some(files) => Ok(files
                 .iter()
-                .map(|file| file.module.clone().unwrap_or_else(|| "<entry>".to_string()))
+                .map(|file| file.module().unwrap_or("<entry>").to_string())
                 .collect()),
             None => Err(diagnostics
                 .diagnostics()

@@ -4,7 +4,6 @@
 
 use melior::Context;
 use melior::ir::Module;
-use melior::ir::operation::OperationLike;
 use melior::pass::{PassManager, transform};
 
 pub fn simplify_yzr(context: &Context, module: &mut Module) {
@@ -12,12 +11,9 @@ pub fn simplify_yzr(context: &Context, module: &mut Module) {
     passes.add_pass(transform::create_canonicalizer());
     passes.add_pass(transform::create_cse());
 
-    if let Err(error) = passes.run(module) {
-        yuzu_mlir::diagnostics::emit_error(
-            module.as_operation().location(),
-            &format!("simplifying the query failed: {error}"),
-        );
-    }
+    passes
+        .run(module)
+        .expect("canonicalization runs on any module the lowering builds");
 }
 
 #[cfg(test)]
