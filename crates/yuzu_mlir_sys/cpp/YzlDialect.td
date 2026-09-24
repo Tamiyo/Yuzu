@@ -5,6 +5,7 @@ include "mlir/IR/OpBase.td"
 include "mlir/IR/AttrTypeBase.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
+include "mlir/Interfaces/MemorySlotInterfaces.td"
 
 def Yzl_Dialect : Dialect {
   let name = "yzl";
@@ -236,7 +237,8 @@ def Yzl_DropOp : Yzl_Op<"drop", [Pure]> {
 // entry block, the way Clang declares an `alloca`.
 
 def Yzl_LocalOp : Yzl_Op<"local",
-    [MemoryEffects<[MemAlloc<DefaultResource>]>]> {
+    [MemoryEffects<[MemAlloc<DefaultResource>]>,
+     DeclareOpInterfaceMethods<PromotableAllocationOpInterface>]> {
   let summary = "a place for a local variable in a function body";
   let description = [{
     `name` is the variable as the program wrote it, for diagnostics. A place
@@ -249,7 +251,8 @@ def Yzl_LocalOp : Yzl_Op<"local",
 }
 
 def Yzl_LoadOp : Yzl_Op<"load",
-    [MemoryEffects<[MemRead<DefaultResource>]>]> {
+    [MemoryEffects<[MemRead<DefaultResource>]>,
+     DeclareOpInterfaceMethods<PromotableMemOpInterface>]> {
   let summary = "the value a place holds";
   let arguments = (ins Yzl_RefType:$place);
   let results = (outs AnyType:$result);
@@ -257,7 +260,8 @@ def Yzl_LoadOp : Yzl_Op<"load",
 }
 
 def Yzl_StoreOp : Yzl_Op<"store",
-    [MemoryEffects<[MemWrite<DefaultResource>]>]> {
+    [MemoryEffects<[MemWrite<DefaultResource>]>,
+     DeclareOpInterfaceMethods<PromotableMemOpInterface>]> {
   let summary = "gives a place a new value";
   let arguments = (ins Yzl_RefType:$place, AnyType:$value);
   let assemblyFormat = "$place `,` $value attr-dict `:` type($value)";

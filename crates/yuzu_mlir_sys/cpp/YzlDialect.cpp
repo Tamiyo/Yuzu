@@ -26,3 +26,89 @@ void YzlDialect::initialize() {
 }
 
 } // namespace yuzu::yzl
+
+// Promotion of places to values, for MLIR's `mem2reg`. This follows the
+// upstream `memref.alloca`, `memref.load` and `memref.store`. A place holds a
+// value of any type: inference has not run, so a load and the value stored
+// need not have the same type yet.
+
+namespace yuzu::yzl {
+
+llvm::SmallVector<mlir::MemorySlot> LocalOp::getPromotableSlots() {
+  return {mlir::MemorySlot{getPlace(), UnresolvedType::get(getContext())}};
+}
+
+// Only a load before any store reads this. The frontend stores every place
+// where it declares it, so the value is removed again unused.
+mlir::Value LocalOp::getDefaultValue(const mlir::MemorySlot &slot,
+                                     mlir::OpBuilder &builder) {
+  return builder.create<MissingOp>(getLoc(), slot.elemType);
+}
+
+void LocalOp::handleBlockArgument(const mlir::MemorySlot &,
+                                  mlir::BlockArgument, mlir::OpBuilder &) {}
+
+std::optional<mlir::PromotableAllocationOpInterface>
+LocalOp::handlePromotionComplete(const mlir::MemorySlot &,
+                                 mlir::Value defaultValue, mlir::OpBuilder &) {
+  if (defaultValue && defaultValue.use_empty())
+    defaultValue.getDefiningOp()->erase();
+  erase();
+  return std::nullopt;
+}
+
+bool LoadOp::loadsFrom(const mlir::MemorySlot &slot) {
+  return getPlace() == slot.ptr;
+}
+
+bool LoadOp::storesTo(const mlir::MemorySlot &) { return false; }
+
+mlir::Value LoadOp::getStored(const mlir::MemorySlot &, mlir::OpBuilder &,
+                              mlir::Value, const mlir::DataLayout &) {
+  llvm_unreachable("a load does not store");
+}
+
+bool LoadOp::canUsesBeRemoved(
+    const mlir::MemorySlot &slot,
+    const llvm::SmallPtrSetImpl<mlir::OpOperand *> &blockingUses,
+    llvm::SmallVectorImpl<mlir::OpOperand *> &, const mlir::DataLayout &) {
+  return blockingUses.size() == 1 &&
+         (*blockingUses.begin())->get() == slot.ptr && getPlace() == slot.ptr;
+}
+
+mlir::DeletionKind LoadOp::removeBlockingUses(
+    const mlir::MemorySlot &, const llvm::SmallPtrSetImpl<mlir::OpOperand *> &,
+    mlir::OpBuilder &, mlir::Value reachingDefinition,
+    const mlir::DataLayout &) {
+  getResult().replaceAllUsesWith(reachingDefinition);
+  return mlir::DeletionKind::Delete;
+}
+
+bool StoreOp::loadsFrom(const mlir::MemorySlot &) { return false; }
+
+bool StoreOp::storesTo(const mlir::MemorySlot &slot) {
+  return getPlace() == slot.ptr;
+}
+
+mlir::Value StoreOp::getStored(const mlir::MemorySlot &, mlir::OpBuilder &,
+                               mlir::Value, const mlir::DataLayout &) {
+  return getValue();
+}
+
+bool StoreOp::canUsesBeRemoved(
+    const mlir::MemorySlot &slot,
+    const llvm::SmallPtrSetImpl<mlir::OpOperand *> &blockingUses,
+    llvm::SmallVectorImpl<mlir::OpOperand *> &, const mlir::DataLayout &) {
+  // A store of the place itself would let the place escape.
+  return blockingUses.size() == 1 &&
+         (*blockingUses.begin())->get() == slot.ptr && getPlace() == slot.ptr &&
+         getValue() != slot.ptr;
+}
+
+mlir::DeletionKind StoreOp::removeBlockingUses(
+    const mlir::MemorySlot &, const llvm::SmallPtrSetImpl<mlir::OpOperand *> &,
+    mlir::OpBuilder &, mlir::Value, const mlir::DataLayout &) {
+  return mlir::DeletionKind::Delete;
+}
+
+} // namespace yuzu::yzl
