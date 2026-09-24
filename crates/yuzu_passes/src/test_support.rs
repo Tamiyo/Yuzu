@@ -120,6 +120,7 @@ pub(crate) fn check_yzr(source: &str, expected: Expect) {
     check(
         source,
         |context, module| {
+            crate::promote_locals(context, module);
             crate::infer_types(context, module, &yuzu_types::Builtins);
             crate::lower_yzl_to_yzr(context, module)
                 .as_operation()
@@ -133,6 +134,7 @@ pub(crate) fn check_simplified(source: &str, expected: Expect) {
     check(
         source,
         |context, module| {
+            crate::promote_locals(context, module);
             crate::infer_types(context, module, &yuzu_types::Builtins);
             crate::inline_calls(context, module);
             crate::remove_dead_symbols(context, module);

@@ -233,21 +233,21 @@ def Yzl_DropOp : Yzl_Op<"drop", [Pure]> {
   let assemblyFormat = "$input $columns attr-dict";
 }
 
-// Local variables. A place is declared at the start of its function's
-// entry block, the way Clang declares an `alloca`.
+// Local variables. A place is declared in its function's body where the
+// variable is, and holds its value until `mem2reg` promotes it.
 
 def Yzl_LocalOp : Yzl_Op<"local",
     [MemoryEffects<[MemAlloc<DefaultResource>]>,
      DeclareOpInterfaceMethods<PromotableAllocationOpInterface>]> {
   let summary = "a place for a local variable in a function body";
   let description = [{
-    `name` is the variable as the program wrote it, for diagnostics. A place
+    `var_name` is the variable as the program wrote it, for diagnostics. A place
     without `mut` has exactly one store, its initializer. `param` marks the
     place a parameter is copied into.
   }];
-  let arguments = (ins StrAttr:$name, UnitAttr:$is_mut, UnitAttr:$param);
+  let arguments = (ins StrAttr:$var_name, UnitAttr:$is_mut, UnitAttr:$param);
   let results = (outs Yzl_RefType:$place);
-  let assemblyFormat = "$name (`mut` $is_mut^)? (`param` $param^)? attr-dict";
+  let assemblyFormat = "$var_name (`mut` $is_mut^)? (`param` $param^)? attr-dict";
 }
 
 def Yzl_LoadOp : Yzl_Op<"load",

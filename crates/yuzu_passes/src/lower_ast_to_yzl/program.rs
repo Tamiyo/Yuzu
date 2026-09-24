@@ -102,9 +102,12 @@ mod tests {
               yzl.struct @helpers.Row ["a"] : [!yz.int64]
               yzl.fn @helpers.double params ["x"] (!yz.int64) -> !yz.int64 {
               ^bb0(%arg0: !yzl.unresolved):
-                %2 = yz.constant_int 2
-                %3 = yz.mul %arg0, %2 : !yzl.unresolved, !yz.int64 -> !yzl.unresolved
-                yzl.return %3 : !yzl.unresolved
+                %2 = yzl.local "x" param
+                yzl.store %2, %arg0 : !yzl.unresolved
+                %3 = yzl.load %2 : !yzl.unresolved
+                %4 = yz.constant_int 2
+                %5 = yz.mul %3, %4 : !yzl.unresolved, !yz.int64 -> !yzl.unresolved
+                yzl.return %5 : !yzl.unresolved
               }
               yzl.table @h of @helpers.Row {sym_visibility = "private"}
               yzl.struct @Row ["b"] : [!yz.int64] {sym_visibility = "private"}

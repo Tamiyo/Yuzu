@@ -442,13 +442,22 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     ) -> Value<'c, 'a> {
         let name = reference.name;
         let message = match self.symbols.lookup(reference) {
-            Lookup::Column(index) | Lookup::Param(index) => {
+            Lookup::Column(index) => {
                 return block
                     .argument(index)
                     .expect("the scope answered from the row this block was built for")
                     .into();
             }
-            Lookup::Local { slot, .. } => return locals[slot],
+            // A parameter's place is slot `index`: `convert_method` declares them first.
+            Lookup::Param(slot) | Lookup::Local { slot, .. } => {
+                let load = yzl::load(
+                    self.context,
+                    UnresolvedType::get(self.context),
+                    locals[slot],
+                    loc,
+                );
+                return block.append_operation(load.into()).first_result();
+            }
             Lookup::Let(symbol) => {
                 return self.call(block, Callable::constant(&symbol), &[], loc);
             }
@@ -597,8 +606,14 @@ from t
               yzl.table @t of @Row {sym_visibility = "private"}
               yzl.fn @shift_left params ["x", "y"] (!yz.int64, !yz.int64) -> !yz.int64 {
               ^bb0(%arg0: !yzl.unresolved, %arg1: !yzl.unresolved):
-                %2 = yz.add %arg0, %arg1 : !yzl.unresolved, !yzl.unresolved -> !yzl.unresolved
-                yzl.return %2 : !yzl.unresolved
+                %2 = yzl.local "x" param
+                yzl.store %2, %arg0 : !yzl.unresolved
+                %3 = yzl.local "y" param
+                yzl.store %3, %arg1 : !yzl.unresolved
+                %4 = yzl.load %2 : !yzl.unresolved
+                %5 = yzl.load %3 : !yzl.unresolved
+                %6 = yz.add %4, %5 : !yzl.unresolved, !yzl.unresolved -> !yzl.unresolved
+                yzl.return %6 : !yzl.unresolved
               } {sym_visibility = "private"}
               %0 = yzl.from @t
               %1 = yzl.select %0 as ["named", "operator"] {

@@ -245,6 +245,7 @@ fn plan_through_mlir(
     }
 
     yuzu_mlir::diagnostics::capture(&context, sources, diagnostics, || {
+        yuzu_passes::promote_locals(&context, &mut module);
         yuzu_passes::infer_types(&context, &mut module, &yuzu_types::Builtins);
         yuzu_passes::check_aggregates(&module);
     });

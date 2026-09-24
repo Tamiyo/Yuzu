@@ -187,7 +187,8 @@ mod tests {
     fn check(source: &str, expected: Expect) {
         test_support::check(
             source,
-            |_context, module| {
+            |context, module| {
+                crate::promote_locals(context, module);
                 check_aggregates(module);
                 "no diagnostics".to_string()
             },

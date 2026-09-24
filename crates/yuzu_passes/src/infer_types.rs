@@ -741,6 +741,7 @@ mod tests {
         test_support::check(
             source,
             |context, module| {
+                crate::promote_locals(context, module);
                 infer_types(context, module, &yuzu_types::Builtins);
                 module.as_operation().to_string()
             },
