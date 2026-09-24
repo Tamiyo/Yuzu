@@ -35,6 +35,7 @@ pub fn infer_types<'c>(
         vars: HashMap::new(),
         rows: HashMap::new(),
         bindings: HashMap::new(),
+        relations: HashMap::new(),
         pending: Vec::new(),
         instances: HashMap::new(),
     };
@@ -132,7 +133,12 @@ struct TypeInferrer<'c, 'd> {
     filled: Vec<Option<Term<'c>>>,
     vars: HashMap<ValueId, TypeVar>,
     rows: HashMap<ValueId, Row<'c>>,
+    /// What each `let` yields, by symbol: the types a call to it gives.
     bindings: HashMap<&'c str, Row<'c>>,
+    /// The row of each `let` that yields a query, by symbol: what `from`
+    /// reads. A query `let` yields one value, the query, so its row is not
+    /// its yielded types.
+    relations: HashMap<&'c str, Row<'c>>,
     pending: Vec<PendingBound<'c>>,
     /// The type variables each generic call minted, in declaration order.
     instances: HashMap<ValueId, Vec<TypeVar>>,
@@ -302,13 +308,21 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
                 let row = declared
                     .rows
                     .get(source)
-                    .or_else(|| self.bindings.get(source))
+                    .or_else(|| self.relations.get(source))
                     .cloned()
                     .unwrap_or_default();
                 self.record_row(op, row);
             }
             Some(YzlOp::Let(binding)) => {
                 self.infer_regions(op, &Row::new(), &[]);
+                let name = binding.sym_name().value();
+                let query_row = last_region_op(op)
+                    .and_then(|terminator| terminator.try_first_operand())
+                    .and_then(|query| self.rows.get(&query.id()).cloned());
+                if let Some(query_row) = query_row {
+                    self.relations.insert(name, query_row);
+                }
+
                 let row = self.yield_terms(op);
                 if let Some(annotation) = binding.annotation()
                     && let Some(&yielded) = row.first()
@@ -316,7 +330,7 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
                     self.unify(op, Term::Concrete(annotation.value()), yielded);
                 }
 
-                self.bindings.insert(binding.sym_name().value(), row);
+                self.bindings.insert(name, row);
             }
             Some(YzlOp::List(_)) => {
                 let inner = self.fresh();
@@ -731,6 +745,43 @@ mod tests {
                 module.as_operation().to_string()
             },
             expected,
+        );
+    }
+
+    /// A query `let` yields one value, the query, and `from` reads its row
+    /// of columns, not that one value.
+    #[test]
+    fn a_query_let_gives_its_row_to_from() {
+        check(
+            "struct Row { a: int64 }\ntable t = Row\n\nlet cap = 42\nlet small = from t |> where a < 10\n\nfrom small |> select a + cap as v\n",
+            expect![[r#"
+                module {
+                  yzl.struct @Row ["a"] : [!yz.int64] {sym_visibility = "private"}
+                  yzl.table @t of @Row {sym_visibility = "private"}
+                  yzl.let @cap {
+                    %2 = yz.constant_int 42
+                    yzl.yield %2 : !yz.int64
+                  } {sym_visibility = "private"}
+                  yzl.let @small {
+                    %2 = yzl.from @t
+                    %3 = yzl.where %2 {
+                    ^bb0(%arg0: !yz.int64):
+                      %4 = yz.constant_int 10
+                      %5 = yz.cmp "lt", %arg0, %4 : !yz.int64, !yz.int64 -> !yz.bool
+                      yzl.yield %5 : !yz.bool
+                    }
+                    yzl.yield %3 : !yzl.query
+                  } {sym_visibility = "private"}
+                  %0 = yzl.from @small
+                  %1 = yzl.select %0 as ["v"] {
+                  ^bb0(%arg0: !yz.int64):
+                    %2 = yzl.call @cap() : () -> !yz.int64 {callee_source = "let"}
+                    %3 = yz.add %arg0, %2 : !yz.int64, !yz.int64 -> !yz.int64
+                    yzl.yield %3 : !yz.int64
+                  }
+                  yzl.output %1
+                }
+            "#]],
         );
     }
 
