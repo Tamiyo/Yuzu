@@ -571,8 +571,8 @@ module {
         panic!("the first op is the yzl.fn");
     };
 
-    assert!(!function.agg());
-    assert!(!function.external());
+    assert!(!function.is_agg());
+    assert!(!function.is_external());
     let call = function
         .body()
         .first_block()
@@ -639,7 +639,10 @@ module {
 
     // A unit attribute that is present reads as true.
     let aggregate_fn = OperationBuilder::new("yzl.fn", location)
-        .add_attributes(&[(Identifier::new(&context, "agg"), Attribute::unit(&context))])
+        .add_attributes(&[(
+            Identifier::new(&context, "is_agg"),
+            Attribute::unit(&context),
+        )])
         .add_regions([Region::new()])
         .build()
         .expect("the fn builds");
@@ -647,8 +650,8 @@ module {
         panic!("the op is the yzl.fn");
     };
 
-    assert!(view.agg());
-    assert!(!view.external());
+    assert!(view.is_agg());
+    assert!(!view.is_external());
 }
 
 /// A view classifies only its own dialect; foreign ops come back as None.

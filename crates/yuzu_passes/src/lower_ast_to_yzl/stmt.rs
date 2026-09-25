@@ -27,11 +27,9 @@ enum Site {
     InImpl,
 }
 
-/// What kind of place a local variable gets.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Place {
-    Immutable,
-    Mutable,
+enum LocalKind {
+    Let(Mutability),
     Param,
 }
 
@@ -215,7 +213,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             };
 
             let ty = match param.ty() {
-                Some(ty) => self.read_type(ty),
+                Some(ty) => self.read_type_annotation(ty),
                 None => {
                     self.report(&param, "parameter is missing its type");
                     has_error = true;
@@ -233,7 +231,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
 
         let result = match decl.result() {
-            Some(result) => self.read_type(result),
+            Some(result) => self.read_type_annotation(result),
             None => UnresolvedType::get(self.context),
         };
 
@@ -254,19 +252,17 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             let arguments = vec![(ty, location); param_count];
             let entry = body.append_block(Block::new(&arguments));
 
-            // A parameter is copied into a place, so a read of it is a load like
-            // any local's. The places go in first, so parameter `i` is slot `i`.
             let mut locals = Locals::new();
+            self.symbols.enter_block();
             for (index, name) in param_names.iter().enumerate() {
                 let argument = entry
                     .argument(index)
                     .expect("the entry block has one argument per parameter")
                     .into();
-                let place = self.emit_local(entry, name, Place::Param, argument, location);
-                locals.push(place);
+                let place = self.emit_local(entry, name, LocalKind::Param, argument, location);
+                self.bind_local(&mut locals, name, place);
             }
 
-            self.symbols.enter_function(param_names.clone());
             self.convert_block(entry, &mut locals, &block);
             self.symbols.leave();
         }
@@ -278,11 +274,11 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .body(body);
 
         if decl.is_agg() {
-            builder = builder.agg(Attribute::unit(self.context));
+            builder = builder.is_agg(Attribute::unit(self.context));
         }
 
         if decl.is_external() {
-            builder = builder.external(Attribute::unit(self.context));
+            builder = builder.is_external(Attribute::unit(self.context));
         }
 
         if !generics.is_empty() {
@@ -414,12 +410,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         };
 
         if self.symbols.in_body() {
+            let kind = LocalKind::Let(decl.mutability());
             let value = self.convert_expr(block, locals, &expr);
-            let place = match decl.mutability() {
-                Mutability::Mutable => Place::Mutable,
-                Mutability::Immutable => Place::Immutable,
-            };
-            let place = self.emit_local(block, &name, place, value, location);
+            let place = self.emit_local(block, &name, kind, value, location);
             self.bind_local(locals, &name, place);
             return;
         }
@@ -430,6 +423,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             let diagnostic = self
                 .error_at(token.text_range(), "a file-level binding cannot be `mut`")
                 .note("a file-level binding is a constant; move it into a function to change it");
+
             self.diagnostics.emit(diagnostic);
         }
 
@@ -443,7 +437,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
         let annotation = decl
             .type_annotation()
-            .map(|annotation| self.read_type(annotation));
+            .map(|annotation| self.read_type_annotation(annotation));
 
         let region = Region::new();
         let body = region.append_block(Block::new(&[]));
@@ -482,7 +476,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             &name,
             Binding {
                 kind,
-                declared: decl.syntax().text_range(),
+                text_range: decl.syntax().text_range(),
                 visibility: decl.visibility(),
             },
         );
@@ -513,14 +507,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             return;
         };
 
-        if !self.check_assignable(assign, &name) {
+        let Some(slot) = self.read_place(assign, &name) else {
             return;
-        }
-
-        let (Lookup::Param(slot) | Lookup::Local(slot)) =
-            self.symbols.lookup(Reference::unqualified(&name))
-        else {
-            unreachable!("only a place is assignable");
         };
 
         let value = self.convert_expr(block, locals, &value);
@@ -534,7 +522,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         locals: &mut Locals<'c, 'a>,
         ret: &ast::ReturnStmt,
     ) {
-        if !self.check_in_function(ret, "a return is not a top-level statement") {
+        if !self.check_in_body(ret, "a return is not a top-level statement") {
             return;
         }
 
@@ -814,7 +802,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             &local,
             Binding {
                 kind: BindingKind::Import { from },
-                declared: item.syntax().text_range(),
+                text_range: item.syntax().text_range(),
                 visibility: exported.visibility,
             },
         );
@@ -836,7 +824,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             name,
             Binding {
                 kind,
-                declared: node.syntax().text_range(),
+                text_range: node.syntax().text_range(),
                 visibility,
             },
         );
@@ -919,7 +907,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         (subjects, traits)
     }
 
-    fn read_type(&mut self, annotation: ast::TypeAnnotation) -> Type<'c> {
+    fn read_type_annotation(&mut self, annotation: ast::TypeAnnotation) -> Type<'c> {
         let named = match annotation {
             ast::TypeAnnotation::NamedTypeAnnotation(named) => named,
             ast::TypeAnnotation::FuncTypeAnnotation(func) => {
@@ -944,7 +932,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 return UnresolvedType::get(self.context);
             };
 
-            let inner = self.read_type(inner);
+            let inner = self.read_type_annotation(inner);
             return ListType::new(self.context, inner).into();
         }
 
@@ -964,29 +952,50 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         path.segments_text().collect::<Vec<_>>().join(".")
     }
 
+    /// The slot of the place an assignment writes, when the name is one.
+    fn read_place(&mut self, node: &impl AstNode, name: &str) -> Option<usize> {
+        let message = match self.symbols.lookup(Reference::unqualified(name)) {
+            Lookup::Local(slot) => return Some(slot),
+            Lookup::Column(_) | Lookup::Ambiguous | Lookup::NarrowedAway => {
+                format!("`{name}` is a column; `set` is how a query writes one")
+            }
+            Lookup::Let(_) => {
+                format!("`{name}` is a module-level binding and cannot be assigned")
+            }
+            Lookup::NotAValue(what) => format!("`{name}` is a {what}, not a binding"),
+            Lookup::NotYet => format!("`{name}` is bound further down the file"),
+            Lookup::Unknown => format!("unresolved identifier `{name}`"),
+        };
+
+        self.report(node, &message);
+        None
+    }
+
     /// Declares a place for a local variable and stores its first value.
     fn emit_local<'a>(
         &self,
         block: BlockRef<'c, 'a>,
         name: &str,
-        place: Place,
+        kind: LocalKind,
         value: Value<'c, 'a>,
         location: Location<'c>,
     ) -> Value<'c, 'a> {
-        let mut builder = yzl::LocalOperationBuilder::new(self.context, location)
+        let builder = yzl::LocalOperationBuilder::new(self.context, location)
             .place(RefType::get(self.context))
             .var_name(StringAttribute::new(self.context, name));
-        match place {
-            Place::Mutable => builder = builder.is_mut(Attribute::unit(self.context)),
-            Place::Param => builder = builder.param(Attribute::unit(self.context)),
-            Place::Immutable => {}
-        }
 
-        let local = block
+        let builder = match kind {
+            LocalKind::Let(Mutability::Mutable) => builder.is_mut(Attribute::unit(self.context)),
+            LocalKind::Let(Mutability::Immutable) => builder,
+            LocalKind::Param => builder.is_param(Attribute::unit(self.context)),
+        };
+
+        let place = block
             .append_operation(builder.build().into())
             .first_result();
-        block.append_operation(yzl::store(self.context, local, value, location).into());
-        local
+
+        block.append_operation(yzl::store(self.context, place, value, location).into());
+        place
     }
 
     fn emit_struct<'a>(
@@ -1007,7 +1016,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             };
 
             names.push(name);
-            types.push(self.read_type(ty));
+            types.push(self.read_type_annotation(ty));
         }
 
         let mut r#struct: Operation<'c> = yzl::r#struct(
@@ -1044,41 +1053,14 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         true
     }
 
-    fn check_in_function(&mut self, node: &impl AstNode, message: &str) -> bool {
-        if !self.symbols.in_function() {
-            self.report(node, message);
-            return false;
-        }
-
-        true
-    }
-
-    fn check_assignable(&mut self, node: &impl AstNode, name: &str) -> bool {
-        let message = match self.symbols.lookup(Reference::unqualified(name)) {
-            Lookup::Param(_) | Lookup::Local(_) => return true,
-            Lookup::Column(_) | Lookup::Ambiguous | Lookup::NarrowedAway => {
-                format!("`{name}` is a column; `set` is how a query writes one")
-            }
-            Lookup::Let(_) => {
-                format!("`{name}` is a module-level binding and cannot be assigned")
-            }
-            Lookup::NotAValue(what) => format!("`{name}` is a {what}, not a binding"),
-            Lookup::NotYet => format!("`{name}` is bound further down the file"),
-            Lookup::Unknown => format!("unresolved identifier `{name}`"),
-        };
-
-        self.report(node, &message);
-        false
-    }
-
     fn check_duplicate(&mut self, node: &impl AstNode, what: &str, name: &str) {
-        let site = self
+        let text_range = self
             .symbols
             .binding(name)
             .expect("a duplicate is checked against a bound name")
-            .declared;
+            .text_range;
 
-        let other = self.position_text(site);
+        let other = self.text_at_range(text_range);
         let diagnostic = self
             .error_at(
                 node.syntax().text_range(),
@@ -1092,7 +1074,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn is_bound(&self, node: &impl AstNode, name: &str) -> bool {
         self.symbols
             .binding(name)
-            .is_some_and(|binding| binding.declared == node.syntax().text_range())
+            .is_some_and(|binding| binding.text_range == node.syntax().text_range())
     }
 }
 
@@ -1189,9 +1171,9 @@ mod tests {
                 %0 = yzl.local "x" param
                 yzl.store %0, %arg0 : !yzl.unresolved
                 %1 = yzl.load %0 : !yzl.unresolved
-                %2 = yzl.call @max(%1) : (!yzl.unresolved) -> !yzl.unresolved {agg, callee_source = "builtin"}
+                %2 = yzl.call @max(%1) : (!yzl.unresolved) -> !yzl.unresolved {callee_source = "builtin", is_agg}
                 %3 = yzl.load %0 : !yzl.unresolved
-                %4 = yzl.call @min(%3) : (!yzl.unresolved) -> !yzl.unresolved {agg, callee_source = "builtin"}
+                %4 = yzl.call @min(%3) : (!yzl.unresolved) -> !yzl.unresolved {callee_source = "builtin", is_agg}
                 %5 = yz.sub %2, %4 : !yzl.unresolved, !yzl.unresolved -> !yzl.unresolved
                 yzl.return %5 : !yzl.unresolved
               } {sym_visibility = "private"}

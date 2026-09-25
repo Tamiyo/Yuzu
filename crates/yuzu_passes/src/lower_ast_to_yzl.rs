@@ -116,7 +116,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         Some(format!("the row carries {}", names.join(", ")))
     }
 
-    fn position_text(&self, range: TextRange) -> String {
+    fn text_at_range(&self, range: TextRange) -> String {
         let (line, column) = self.line_col(range.start().into());
         format!("{}:{line}:{column}", self.name())
     }

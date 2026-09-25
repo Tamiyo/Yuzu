@@ -43,14 +43,14 @@ impl<'c> AggregateChecker<'c> {
     fn check_block(&mut self, block: BlockRef<'c, '_>, grouping: Option<Grouping<'c>>) {
         for op in block.operations() {
             match op.as_yzl() {
-                Some(YzlOp::Call(call)) if call.agg() => {
+                Some(YzlOp::Call(call)) if call.is_agg() => {
                     self.check_aggregate_call(op, call.callee().value(), grouping);
                 }
                 Some(YzlOp::Aggregate(stage)) => {
                     self.check_regions(stage.operation(), Some(Grouping::Item));
                 }
                 // An `external agg fn` has no body to aggregate in.
-                Some(YzlOp::Fn(function)) if function.agg() && !function.external() => {
+                Some(YzlOp::Fn(function)) if function.is_agg() && !function.is_external() => {
                     let name = function.sym_name().value();
                     let outer = mem::replace(&mut self.saw_aggregate, false);
                     self.check_regions(function.operation(), Some(Grouping::FnBody(name)));

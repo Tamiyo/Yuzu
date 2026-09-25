@@ -144,7 +144,7 @@ impl From<Vec<&str>> for Row {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(super) struct Binding {
     pub(super) kind: BindingKind,
-    pub(super) declared: TextRange,
+    pub(super) text_range: TextRange,
     pub(super) visibility: Visibility,
 }
 
@@ -242,7 +242,6 @@ impl Callable {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(super) enum Lookup {
     Column(usize),
-    Param(usize),
     Local(usize),
     Let(String),
     Ambiguous,
@@ -262,23 +261,14 @@ pub(super) enum ColumnLookup {
 }
 
 enum Scope {
+    /// The outermost block of a function body holds its parameters.
+    Block { locals: Vec<Local> },
     /// The type parameters of the function being read. Names in the type
     /// namespace, so value lookups pass through it.
-    TypeParams {
-        names: Vec<String>,
-    },
-    Function {
-        params: Vec<String>,
-    },
-    Block {
-        locals: Vec<Local>,
-    },
+    TypeParams { names: Vec<String> },
     /// `narrowed` is the names earlier stages stopped carrying, which get a
     /// diagnostic of their own.
-    Relation {
-        row: Row,
-        narrowed: Vec<String>,
-    },
+    Relation { row: Row, narrowed: Vec<String> },
 }
 
 /// Which module a declaration lives in. The entry file has no path, since
@@ -345,8 +335,6 @@ impl SymbolTable {
         }
     }
 
-    // --- modules ---
-
     pub(super) fn module(&self) -> &ModulePath {
         &self.module
     }
@@ -363,8 +351,6 @@ impl SymbolTable {
     pub(super) fn contains_module(&self, module: &ModulePath) -> bool {
         self.modules.contains_key(module)
     }
-
-    // --- what the program declares ---
 
     pub(super) fn bind(&mut self, name: &str, binding: Binding) {
         self.modules
@@ -559,16 +545,6 @@ impl SymbolTable {
             .any(|scope| matches!(scope, Scope::Block { .. }))
     }
 
-    pub(super) fn in_function(&self) -> bool {
-        self.scopes
-            .iter()
-            .any(|scope| matches!(scope, Scope::Function { .. }))
-    }
-
-    pub(super) fn enter_function(&mut self, params: Vec<String>) {
-        self.scopes.push(Scope::Function { params });
-    }
-
     pub(super) fn enter_block(&mut self) {
         self.scopes.push(Scope::Block { locals: Vec::new() });
     }
@@ -640,15 +616,6 @@ impl SymbolTable {
                     {
                         return Lookup::Local(local.slot);
                     }
-                }
-                Scope::Function { params } => {
-                    if reference.qualifier.is_none()
-                        && let Some(index) = params.iter().position(|param| param == reference.name)
-                    {
-                        return Lookup::Param(index);
-                    }
-
-                    break;
                 }
             }
         }
@@ -766,7 +733,7 @@ mod tests {
                 kind: BindingKind::Struct {
                     fields: strings(&["id", "dept_id"]),
                 },
-                declared: TextRange::default(),
+                text_range: TextRange::default(),
                 visibility: Visibility::Private,
             },
         );
@@ -781,7 +748,7 @@ mod tests {
                 kind: BindingKind::Relation {
                     row: Row::from(row),
                 },
-                declared: TextRange::default(),
+                text_range: TextRange::default(),
                 visibility: Visibility::Private,
             },
         );
@@ -792,7 +759,7 @@ mod tests {
             name,
             Binding {
                 kind: BindingKind::Let,
-                declared: TextRange::default(),
+                text_range: TextRange::default(),
                 visibility: Visibility::Private,
             },
         );
@@ -858,13 +825,14 @@ mod tests {
         bind_let(&mut symbols, "id");
 
         assert_eq!(symbols.lookup(bare("cap")), Lookup::Let("cap".to_string()));
-        symbols.enter_function(strings(&["cap"]));
-        assert_eq!(symbols.lookup(bare("cap")), Lookup::Param(0));
+        symbols.enter_block();
+        symbols.bind_local("cap", 0);
+        assert_eq!(symbols.lookup(bare("cap")), Lookup::Local(0));
         symbols.enter_block();
         symbols.bind_local("cap", 7);
         assert_eq!(symbols.lookup(bare("cap")), Lookup::Local(7));
         symbols.leave();
-        assert_eq!(symbols.lookup(bare("cap")), Lookup::Param(0));
+        assert_eq!(symbols.lookup(bare("cap")), Lookup::Local(0));
         symbols.leave();
         assert_eq!(symbols.lookup(bare("cap")), Lookup::Let("cap".to_string()));
         enter_relation(&mut symbols, "t");
@@ -875,9 +843,10 @@ mod tests {
     fn an_isolated_scope_reaches_the_module_and_nothing_between() {
         let mut symbols = symbols();
         bind_let(&mut symbols, "cap");
-        symbols.enter_function(strings(&["x"]));
         symbols.enter_block();
-        symbols.bind_local("local", 0);
+        symbols.bind_local("x", 0);
+        symbols.enter_block();
+        symbols.bind_local("local", 1);
         enter_relation(&mut symbols, "t");
 
         assert_eq!(symbols.lookup(bare("id")), Lookup::Column(0));
@@ -904,7 +873,7 @@ mod tests {
                 kind: BindingKind::Struct {
                     fields: strings(&["a"]),
                 },
-                declared: TextRange::default(),
+                text_range: TextRange::default(),
                 visibility: Visibility::Private,
             },
         );
@@ -914,7 +883,7 @@ mod tests {
                 kind: BindingKind::Trait {
                     methods: strings(&["show"]),
                 },
-                declared: TextRange::default(),
+                text_range: TextRange::default(),
                 visibility: Visibility::Private,
             },
         );
@@ -926,7 +895,7 @@ mod tests {
                     kind: FunctionKind::Scalar,
                     arity: 0,
                 },
-                declared: TextRange::default(),
+                text_range: TextRange::default(),
                 visibility: Visibility::Private,
             },
         );
@@ -958,7 +927,7 @@ mod tests {
                     kind: FunctionKind::Scalar,
                     arity: 2,
                 },
-                declared: TextRange::default(),
+                text_range: TextRange::default(),
                 visibility: Visibility::Private,
             },
         );
@@ -968,7 +937,7 @@ mod tests {
                 kind: BindingKind::Trait {
                     methods: strings(&["zero"]),
                 },
-                declared: TextRange::default(),
+                text_range: TextRange::default(),
                 visibility: Visibility::Private,
             },
         );

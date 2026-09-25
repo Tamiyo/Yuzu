@@ -70,7 +70,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 
         let measures: Vec<_> = block
             .operations()
-            .filter(|op| matches!(op.as_yzl(), Some(YzlOp::Call(call)) if call.agg()))
+            .filter(|op| matches!(op.as_yzl(), Some(YzlOp::Call(call)) if call.is_agg()))
             .collect();
         let feeds_a_measure = rests_on(
             measures.iter().flat_map(|op| op.operands()),
@@ -89,7 +89,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         let mut discard = Vec::new();
         for op in block.operations() {
             let call = match op.as_yzl() {
-                Some(YzlOp::Call(call)) if call.agg() => call,
+                Some(YzlOp::Call(call)) if call.is_agg() => call,
                 _ => {
                     if op
                         .try_first_result()
@@ -195,7 +195,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             let wanted = op
                 .try_first_result()
                 .is_some_and(|result| needed.contains(&result.id()));
-            if wanted && !matches!(op.as_yzl(), Some(YzlOp::Call(call)) if call.agg()) {
+            if wanted && !matches!(op.as_yzl(), Some(YzlOp::Call(call)) if call.is_agg()) {
                 self.convert_expression(op, body, &mut values, &mut produced);
             }
         }

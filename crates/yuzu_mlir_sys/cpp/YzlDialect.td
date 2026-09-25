@@ -101,13 +101,13 @@ def Yzl_FnOp : Yzl_Op<"fn", [Symbol, IsolatedFromAbove]> {
                        OptionalAttr<StrArrayAttr>:$type_params,
                        OptionalAttr<StrArrayAttr>:$bound_params,
                        OptionalAttr<ArrayAttr>:$bound_traits,
-                       UnitAttr:$agg, UnitAttr:$external);
+                       UnitAttr:$is_agg, UnitAttr:$is_external);
   let regions = (region AnyRegion:$body);
   let assemblyFormat =
       "$sym_name (`generics` $type_params^)? "
       "(`where` $bound_params^ `:` $bound_traits)? "
-      "`params` $params $signature (`agg` $agg^)? "
-      "(`external` $external^)? $body attr-dict";
+      "`params` $params $signature (`agg` $is_agg^)? "
+      "(`external` $is_external^)? $body attr-dict";
 }
 
 def Yzl_ConstOp : Yzl_Op<"const", [Symbol]> {
@@ -242,12 +242,12 @@ def Yzl_LocalOp : Yzl_Op<"local",
   let summary = "a place for a local variable in a function body";
   let description = [{
     `var_name` is the variable as the program wrote it, for diagnostics. A place
-    without `mut` has exactly one store, its initializer. `param` marks the
+    without `mut` has exactly one store, its initializer. `is_param` marks the
     place a parameter is copied into.
   }];
-  let arguments = (ins StrAttr:$var_name, UnitAttr:$is_mut, UnitAttr:$param);
+  let arguments = (ins StrAttr:$var_name, UnitAttr:$is_mut, UnitAttr:$is_param);
   let results = (outs Yzl_RefType:$place);
-  let assemblyFormat = "$var_name (`mut` $is_mut^)? (`param` $param^)? attr-dict";
+  let assemblyFormat = "$var_name (`mut` $is_mut^)? (`param` $is_param^)? attr-dict";
 }
 
 def Yzl_LoadOp : Yzl_Op<"load",
@@ -284,13 +284,13 @@ def Yzl_ListOp : Yzl_Op<"list", [Pure]> {
 def Yzl_CallOp : Yzl_Op<"call", [Pure]> {
   let summary = "a call by name; registry and shadowing unresolved";
   let description = [{
-    `agg` says the callee aggregates, whichever kind of callee it is: a
+    `is_agg` says the callee aggregates, whichever kind of callee it is: a
     builtin, an `agg fn`, or an `external agg fn`. Resolution knows which
     at the point the call is built, so nothing downstream asks again.
   }];
   let arguments = (ins FlatSymbolRefAttr:$callee, Variadic<AnyType>:$operands,
                        OptionalAttr<StrAttr>:$callee_source,
-                       OptionalAttr<TypeArrayAttr>:$type_args, UnitAttr:$agg);
+                       OptionalAttr<TypeArrayAttr>:$type_args, UnitAttr:$is_agg);
   let results = (outs AnyType:$result);
   let assemblyFormat =
       "$callee `(` $operands `)` `:` functional-type($operands, $result) attr-dict";

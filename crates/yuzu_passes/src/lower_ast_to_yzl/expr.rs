@@ -448,8 +448,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .expect("the scope answered from the row this block was built for")
                     .into();
             }
-            // A parameter's place is slot `index`: `convert_method` declares them first.
-            Lookup::Param(slot) | Lookup::Local(slot) => {
+            Lookup::Local(slot) => {
                 let load = yzl::load(
                     self.context,
                     UnresolvedType::get(self.context),
@@ -495,7 +494,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .callee(FlatSymbolRefAttribute::new(self.context, &callable.symbol))
             .callee_source(StringAttribute::new(self.context, callable.source.as_str()));
         if callable.kind == FunctionKind::Aggregate {
-            builder = builder.agg(Attribute::unit(self.context));
+            builder = builder.is_agg(Attribute::unit(self.context));
         }
 
         block

@@ -729,7 +729,7 @@ mod tests {
               }
               %3 = yzl.aggregate %2 group_by ["b"] as ["s"] {
               ^bb0(%arg0: !yzl.unresolved, %arg1: !yzl.unresolved, %arg2: !yzl.unresolved):
-                %5 = yzl.call @sum(%arg2) : (!yzl.unresolved) -> !yzl.unresolved {agg, callee_source = "builtin"}
+                %5 = yzl.call @sum(%arg2) : (!yzl.unresolved) -> !yzl.unresolved {callee_source = "builtin", is_agg}
                 yzl.yield %5 : !yzl.unresolved
               } {key_cols = [1]}
               %4 = yzl.limit %3, 10 offset 2

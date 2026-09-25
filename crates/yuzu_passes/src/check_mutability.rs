@@ -11,27 +11,32 @@ use yuzu_mlir::ops::yzl::YzlOp;
 
 pub fn check_mutability(module: &Module) {
     let mut checker = MutabilityChecker {
-        places: HashMap::new(),
+        variables: HashMap::new(),
     };
 
     checker.check_block(module.body());
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Place {
+enum Mutability {
     Immutable,
     Mutable,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LocalKind {
+    Let(Mutability),
     Param,
 }
 
 struct Variable<'c> {
     name: &'c str,
-    place: Place,
+    kind: LocalKind,
     initialized: bool,
 }
 
 struct MutabilityChecker<'c> {
-    places: HashMap<ValueId, Variable<'c>>,
+    variables: HashMap<ValueId, Variable<'c>>,
 }
 
 impl<'c> MutabilityChecker<'c> {
@@ -39,26 +44,26 @@ impl<'c> MutabilityChecker<'c> {
         for op in block.operations() {
             match op.as_yzl() {
                 Some(YzlOp::Local(local)) => {
-                    let place = if local.param() {
-                        Place::Param
+                    let kind = if local.is_param() {
+                        LocalKind::Param
                     } else if local.is_mut() {
-                        Place::Mutable
+                        LocalKind::Let(Mutability::Mutable)
                     } else {
-                        Place::Immutable
+                        LocalKind::Let(Mutability::Immutable)
                     };
 
-                    self.places.insert(
+                    self.variables.insert(
                         op.first_result().id(),
                         Variable {
                             name: local.var_name().value(),
-                            place,
+                            kind,
                             initialized: false,
                         },
                     );
                 }
                 Some(YzlOp::Store(store)) => {
                     let variable = self
-                        .places
+                        .variables
                         .get_mut(&store.place().id())
                         .expect("a store follows the place it writes");
 
@@ -68,15 +73,15 @@ impl<'c> MutabilityChecker<'c> {
                     }
 
                     let name = variable.name;
-                    match variable.place {
-                        Place::Mutable => {}
-                        Place::Immutable => emit_error(
+                    match variable.kind {
+                        LocalKind::Let(Mutability::Mutable) => {}
+                        LocalKind::Let(Mutability::Immutable) => emit_error(
                             op.location(),
                             &format!(
                                 "`{name}` is not mutable; declare it with `let mut` to assign it"
                             ),
                         ),
-                        Place::Param => emit_error(
+                        LocalKind::Param => emit_error(
                             op.location(),
                             &format!("`{name}` is a parameter and cannot be assigned"),
                         ),
@@ -115,12 +120,23 @@ mod tests {
     #[test]
     fn assigning_a_binding_needs_mut() {
         check(
-            "struct Row { a: int64 }\ntable t = Row\n\ndef f(x: int64) -> int64 {\n    let n = 0\n    n = n + 1\n    return n\n}\n\nfrom t |> select f(a) as v\n",
+            r#"
+struct Row { a: int64 }
+table t = Row
+
+def f(x: int64) -> int64 {
+    let n = 0
+    n = n + 1
+    return n
+}
+
+from t |> select f(a) as v
+"#,
             expect![[r#"
                 error: `n` is not mutable; declare it with `let mut` to assign it
-                 --> test.yz:6:5
+                 --> test.yz:7:5
                   |
-                6 |     n = n + 1
+                7 |     n = n + 1
                   |     ^^^^^^^^^
             "#]],
         );
@@ -129,7 +145,19 @@ mod tests {
     #[test]
     fn a_mutable_binding_may_be_assigned() {
         check(
-            "struct Row { a: int64 }\ntable t = Row\n\ndef f(x: int64) -> int64 {\n    let mut n = 0\n    n = n + 1\n    n = n * 2\n    return n\n}\n\nfrom t |> select f(a) as v\n",
+            r#"
+struct Row { a: int64 }
+table t = Row
+
+def f(x: int64) -> int64 {
+    let mut n = 0
+    n = n + 1
+    n = n * 2
+    return n
+}
+
+from t |> select f(a) as v
+"#,
             expect!["no diagnostics"],
         );
     }
@@ -137,12 +165,22 @@ mod tests {
     #[test]
     fn a_parameter_is_not_assignable() {
         check(
-            "struct Row { a: int64 }\ntable t = Row\n\ndef f(x: int64) -> int64 {\n    x = 1\n    return x\n}\n\nfrom t |> select f(a) as v\n",
+            r#"
+struct Row { a: int64 }
+table t = Row
+
+def f(x: int64) -> int64 {
+    x = 1
+    return x
+}
+
+from t |> select f(a) as v
+"#,
             expect![[r#"
                 error: `x` is a parameter and cannot be assigned
-                 --> test.yz:5:5
+                 --> test.yz:6:5
                   |
-                5 |     x = 1
+                6 |     x = 1
                   |     ^^^^^
             "#]],
         );
@@ -151,7 +189,18 @@ mod tests {
     #[test]
     fn a_shadowing_let_is_a_new_place() {
         check(
-            "struct Row { a: int64 }\ntable t = Row\n\ndef f(x: int64) -> int64 {\n    let n = x\n    let n = n + 1\n    return n\n}\n\nfrom t |> select f(a) as v\n",
+            r#"
+struct Row { a: int64 }
+table t = Row
+
+def f(x: int64) -> int64 {
+    let n = x
+    let n = n + 1
+    return n
+}
+
+from t |> select f(a) as v
+"#,
             expect!["no diagnostics"],
         );
     }

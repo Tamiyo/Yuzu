@@ -40,7 +40,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                     return;
                 }
 
-                let lowered = if call.agg() {
+                let lowered = if call.is_agg() {
                     self.convert_measure(op, callee, &operands, ty)
                 } else if kind == Some(CalleeSource::External) {
                     yz::extern_call(
