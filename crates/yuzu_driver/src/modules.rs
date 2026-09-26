@@ -18,6 +18,8 @@ use yuzu_diagnostics::source_map::{SourceId, SourceMap};
 use yuzu_lexer::lexer::{Lexer, Token};
 use yuzu_passes::File;
 
+use crate::stdlib;
+
 /// A submodule a module declares: its name, and whether anyone outside may
 /// reach it.
 struct Submodule {
@@ -218,7 +220,13 @@ impl Loader<'_> {
             return;
         }
 
-        let Some(module) = self.resolver.resolve(path) else {
+        let module = if stdlib::reserves(path) {
+            stdlib::resolve(path)
+        } else {
+            self.resolver.resolve(path)
+        };
+
+        let Some(module) = module else {
             self.report(at, asked_by, &format!("cannot find module `{path}`"));
             return;
         };
@@ -378,17 +386,17 @@ mod tests {
     fn a_path_names_a_module_through_the_ones_holding_it() {
         assert_eq!(
             loaded(
-                "from yuzu.std.math import clamp\n",
+                "from lib.std.math import clamp\n",
                 &[
-                    ("yuzu", "pub mod std\n"),
-                    ("yuzu.std", "pub mod math\n"),
-                    ("yuzu.std.math", "pub def clamp() -> int64 { return 1 }\n"),
+                    ("lib", "pub mod std\n"),
+                    ("lib.std", "pub mod math\n"),
+                    ("lib.std.math", "pub def clamp() -> int64 { return 1 }\n"),
                 ],
             ),
             Ok(vec![
-                "yuzu".to_string(),
-                "yuzu.std".to_string(),
-                "yuzu.std.math".to_string(),
+                "lib".to_string(),
+                "lib.std".to_string(),
+                "lib.std.math".to_string(),
                 "<entry>".to_string(),
             ])
         );
@@ -453,6 +461,29 @@ mod tests {
         assert_eq!(
             loaded("import a\n", &[("a", "import b\n"), ("b", "import a\n")],),
             Err(vec!["circular import: a imports b imports a".to_string()])
+        );
+    }
+
+    #[test]
+    fn a_library_path_is_read_from_the_library() {
+        assert_eq!(
+            loaded("import yuzu.std\n", &[]),
+            Ok(vec![
+                "yuzu".to_string(),
+                "yuzu.std".to_string(),
+                "<entry>".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn a_program_module_cannot_take_a_library_path() {
+        assert_eq!(
+            loaded(
+                "import yuzu.extra\n",
+                &[("yuzu.extra", "pub def one() -> int64 { return 1 }\n")],
+            ),
+            Err(vec!["`yuzu` does not declare a module `extra`".to_string()])
         );
     }
 

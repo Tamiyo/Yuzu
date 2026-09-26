@@ -1,4 +1,5 @@
 pub mod modules;
+mod stdlib;
 
 use std::time::Instant;
 
