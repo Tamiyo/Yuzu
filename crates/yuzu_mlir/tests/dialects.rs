@@ -574,7 +574,7 @@ module {
     };
 
     assert!(!function.is_agg());
-    assert!(!function.is_external());
+    assert!(function.external_name().is_none());
     let call = function
         .body()
         .first_block()
@@ -653,7 +653,7 @@ module {
     };
 
     assert!(view.is_agg());
-    assert!(!view.is_external());
+    assert!(view.external_name().is_none());
 }
 
 /// A view classifies only its own dialect; foreign ops come back as None.

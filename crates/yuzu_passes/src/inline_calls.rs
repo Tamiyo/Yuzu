@@ -253,11 +253,14 @@ fn substitute<'c>(ty: Type<'c>, types: &HashMap<&str, Type<'c>>) -> Type<'c> {
 }
 
 /// A `let` bound to a query stays: its stages are rows other queries name.
+/// An external function stays too: it has no body to expand, and the yzr
+/// lowering reads the engine's name from it.
 fn discard_declarations(context: &Context, rewriter: &RewriterBase, block: BlockRef) {
     let mut declarations = Vec::new();
     for op in block.operations() {
         let discard = match op.as_yzl() {
-            Some(YzlOp::Fn(_) | YzlOp::Trait(_) | YzlOp::Impl(_)) => true,
+            Some(YzlOp::Fn(function)) => function.external_name().is_none(),
+            Some(YzlOp::Trait(_) | YzlOp::Impl(_)) => true,
             Some(YzlOp::Const(binding)) => !binds_query(context, &binding),
             _ => false,
         };

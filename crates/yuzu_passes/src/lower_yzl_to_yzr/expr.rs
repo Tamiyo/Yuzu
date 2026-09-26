@@ -5,6 +5,7 @@ use melior::ir::operation::{OperationBuilder, OperationLike, OperationRef};
 use melior::ir::{Attribute, BlockLike, BlockRef, Identifier, Operation, Type, Value, ValueLike};
 use yuzu_mlir::ListType;
 use yuzu_mlir::attributes::CalleeSource;
+use yuzu_mlir::ir::block::BlockExt;
 use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
 use yuzu_mlir::ir::value::{ValueExt, ValueId};
 use yuzu_mlir::ods::{yz, yzr};
@@ -44,11 +45,12 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                 let lowered = if call.is_agg() {
                     self.convert_measure(op, callee, &operands, ty)
                 } else if kind == Some(CalleeSource::External) {
+                    let name = self.externals[callee];
                     yz::extern_call(
                         self.context,
                         ty,
                         &operands,
-                        StringAttribute::new(self.context, callee),
+                        StringAttribute::new(self.context, name),
                         op.location(),
                     )
                     .into()
@@ -120,6 +122,17 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                     op_name(op)
                 ),
             ),
+        }
+    }
+
+    pub(super) fn record_externals(&mut self, block: BlockRef<'c, '_>) {
+        for op in block.operations() {
+            if let Some(YzlOp::Fn(function)) = op.as_yzl()
+                && let Some(name) = function.external_name()
+            {
+                self.externals
+                    .insert(function.sym_name().value(), name.value());
+            }
         }
     }
 

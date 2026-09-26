@@ -914,7 +914,7 @@ from t
 "#,
             expect![[r#"
                 module {
-                  yzl.fn @median params ["x"] (!yz.float64) -> !yz.float64 external {
+                  yzl.fn @median params ["x"] (!yz.float64) -> !yz.float64 external "median" {
                   } {sym_visibility = "private"}
                   yzl.struct @Row ["rating"] : [!yz.float64] {sym_visibility = "private"}
                   yzl.table @t of @Row {sym_visibility = "private"}

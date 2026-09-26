@@ -32,10 +32,12 @@ pub fn lower_yzl_to_yzr<'c>(context: &'c Context, module: &Module<'c>) -> Module
             stages: HashMap::new(),
             shapes: HashMap::new(),
             bindings: HashMap::new(),
+            externals: HashMap::new(),
         };
 
         let source = SymbolTable::new(module);
         lowering.intern_declared_shapes(module.body());
+        lowering.record_externals(module.body());
         lowering.convert_block(module.body(), target, &source, &mut symbols);
     }
 
@@ -58,6 +60,8 @@ struct YzlToYzr<'c, 'a> {
     /// once.
     shapes: HashMap<Row<'c>, &'c str>,
     bindings: HashMap<&'c str, (Value<'c, 'a>, Row<'c>)>,
+    /// The engine's name for each external function, by its symbol.
+    externals: HashMap<&'c str, &'c str>,
 }
 
 impl<'c, 'a> YzlToYzr<'c, 'a> {

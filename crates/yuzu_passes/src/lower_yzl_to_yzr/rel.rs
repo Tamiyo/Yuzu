@@ -42,6 +42,9 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             // `yzr.table` carries the row as its type, so the declaration is
             // not needed.
             Some(YzlOp::Table(_)) => {}
+            // `record_externals` read its name, and a call to it becomes
+            // `yz.extern_call`.
+            Some(YzlOp::Fn(function)) if function.external_name().is_some() => {}
             Some(YzlOp::Fn(_) | YzlOp::Trait(_) | YzlOp::Impl(_)) => self.report(
                 op,
                 &format!("`{}` was not expanded before lowering", op_name(op)),

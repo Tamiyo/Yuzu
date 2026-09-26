@@ -240,6 +240,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
         let (bound_params, bound_traits) = self.read_bounds(decl);
 
+        let external_name = decl.is_external().then(|| name.clone());
+
         // A trait or an implementation is a symbol table of its own, so a
         // method keeps its bare name.
         let name = match site {
@@ -278,8 +280,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             builder = builder.is_agg(Attribute::unit(self.context));
         }
 
-        if decl.is_external() {
-            builder = builder.is_external(Attribute::unit(self.context));
+        if let Some(external_name) = &external_name {
+            builder = builder.external_name(StringAttribute::new(self.context, external_name));
         }
 
         if !generics.is_empty() {
@@ -1178,7 +1180,7 @@ mod tests {
                 %5 = yz.sub %2, %4 : !yzl.unresolved, !yzl.unresolved -> !yzl.unresolved
                 yzl.return %5 : !yzl.unresolved
               } {sym_visibility = "private"}
-              yzl.fn @upper params ["s"] (!yz.str) -> !yz.str external {
+              yzl.fn @upper params ["s"] (!yz.str) -> !yz.str external "upper" {
               } {sym_visibility = "private"}
             }
         "#]]

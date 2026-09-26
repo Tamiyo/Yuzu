@@ -96,18 +96,23 @@ def Yzl_TableOp : Yzl_Op<"table", [Symbol]> {
 
 def Yzl_FnOp : Yzl_Op<"fn", [Symbol, IsolatedFromAbove]> {
   let summary = "a function declaration; parameters are referenced by name";
+  let description = [{
+    `external_name` marks a function the engine provides, and is the name the
+    engine knows it by. The symbol is qualified by the module that declares
+    it, so the two differ outside the entry file.
+  }];
   let arguments = (ins SymbolNameAttr:$sym_name, StrArrayAttr:$params,
                        TypeAttrOf<FunctionType>:$signature,
                        OptionalAttr<StrArrayAttr>:$type_params,
                        OptionalAttr<StrArrayAttr>:$bound_params,
                        OptionalAttr<ArrayAttr>:$bound_traits,
-                       UnitAttr:$is_agg, UnitAttr:$is_external);
+                       UnitAttr:$is_agg, OptionalAttr<StrAttr>:$external_name);
   let regions = (region AnyRegion:$body);
   let assemblyFormat =
       "$sym_name (`generics` $type_params^)? "
       "(`where` $bound_params^ `:` $bound_traits)? "
       "`params` $params $signature (`agg` $is_agg^)? "
-      "(`external` $is_external^)? $body attr-dict";
+      "(`external` $external_name^)? $body attr-dict";
 }
 
 def Yzl_ConstOp : Yzl_Op<"const", [Symbol]> {

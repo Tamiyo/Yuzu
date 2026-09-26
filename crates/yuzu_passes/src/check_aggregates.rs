@@ -53,7 +53,9 @@ impl<'c> AggregateChecker<'c> {
                     self.check_regions(stage.operation(), Some(Grouping::Item));
                 }
                 // An `external agg fn` has no body to aggregate in.
-                Some(YzlOp::Fn(function)) if function.is_agg() && !function.is_external() => {
+                Some(YzlOp::Fn(function))
+                    if function.is_agg() && function.external_name().is_none() =>
+                {
                     let name = function.sym_name().value();
                     let outer = mem::replace(&mut self.saw_aggregate, false);
                     self.check_regions(function.operation(), Some(Grouping::FnBody(name)));
