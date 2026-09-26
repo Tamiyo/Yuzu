@@ -236,7 +236,7 @@ impl Loader<'_> {
         };
 
         let source_id = self.sources.add(module.name, module.source);
-        let root = self.parse(source_id);
+        let root = stdlib::syntax(path).unwrap_or_else(|| self.parse(source_id));
         self.submodules.insert(path.to_string(), submodules(&root));
         self.loading.push(path.to_string());
         self.follow_imports(source_id, &root, path);

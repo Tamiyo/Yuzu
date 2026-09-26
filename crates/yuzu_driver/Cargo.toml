@@ -22,4 +22,5 @@ yuzu_parser = { path = "../yuzu_parser" }
 yuzu_passes = { path = "../yuzu_passes" }
 yuzu_plan = { path = "../yuzu_plan" }
 yuzu_substrait = { path = "../yuzu_substrait" }
+yuzu_syntax = { path = "../yuzu_syntax" }
 yuzu_types = { path = "../yuzu_types" }

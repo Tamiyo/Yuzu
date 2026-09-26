@@ -19,6 +19,7 @@ impl rowan::Language for YuzuLanguage {
     }
 }
 
+pub type GreenNode = rowan::GreenNode;
 pub type SyntaxNode = rowan::SyntaxNode<YuzuLanguage>;
 pub type SyntaxNodePtr = rowan::ast::SyntaxNodePtr<YuzuLanguage>;
 pub type SyntaxElement = rowan::SyntaxElement<YuzuLanguage>;

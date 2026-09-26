@@ -2128,6 +2128,7 @@ dependencies = [
  "yuzu_passes",
  "yuzu_plan",
  "yuzu_substrait",
+ "yuzu_syntax",
  "yuzu_types",
 ]
 
