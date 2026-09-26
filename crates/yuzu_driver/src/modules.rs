@@ -18,7 +18,7 @@ use yuzu_diagnostics::source_map::{SourceId, SourceMap};
 use yuzu_lexer::lexer::{Lexer, Token};
 use yuzu_passes::File;
 
-use crate::stdlib;
+use crate::stdlib::{self, Engine};
 
 /// A submodule a module declares: its name, and whether anyone outside may
 /// reach it.
@@ -94,11 +94,13 @@ pub fn load(
     sources: &mut SourceMap,
     diagnostics: &mut DiagnosticsEngine,
     resolver: &dyn ModuleResolver,
+    engine: Engine,
 ) -> Option<Vec<File>> {
     let mut loader = Loader {
         sources,
         diagnostics,
         resolver,
+        engine,
         loaded: HashSet::new(),
         submodules: HashMap::new(),
         loading: Vec::new(),
@@ -118,6 +120,7 @@ struct Loader<'a> {
     sources: &'a mut SourceMap,
     diagnostics: &'a mut DiagnosticsEngine,
     resolver: &'a dyn ModuleResolver,
+    engine: Engine,
     loaded: HashSet<String>,
     /// The submodules each loaded module declares, which is what makes a
     /// path through it resolvable.
@@ -221,7 +224,7 @@ impl Loader<'_> {
         }
 
         let module = if stdlib::reserves(path) {
-            stdlib::resolve(path)
+            stdlib::resolve(path, self.engine)
         } else {
             self.resolver.resolve(path)
         };
@@ -333,7 +336,13 @@ mod tests {
         let mut sources = SourceMap::new();
         let mut diagnostics = DiagnosticsEngine::new();
         let id = sources.add("main.yz".to_string(), entry.to_string());
-        match load(id, &mut sources, &mut diagnostics, &resolver(modules)) {
+        match load(
+            id,
+            &mut sources,
+            &mut diagnostics,
+            &resolver(modules),
+            Engine::DataFusion,
+        ) {
             Some(files) => Ok(files
                 .iter()
                 .map(|file| file.module().unwrap_or("<entry>").to_string())
@@ -471,6 +480,18 @@ mod tests {
             Ok(vec![
                 "yuzu".to_string(),
                 "yuzu.std".to_string(),
+                "<entry>".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn the_engine_module_is_written_for_the_engine() {
+        assert_eq!(
+            loaded("from yuzu.engine import ENGINE\n", &[]),
+            Ok(vec![
+                "yuzu".to_string(),
+                "yuzu.engine".to_string(),
                 "<entry>".to_string(),
             ])
         );

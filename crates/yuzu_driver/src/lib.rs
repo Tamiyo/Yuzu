@@ -1,5 +1,5 @@
 pub mod modules;
-mod stdlib;
+pub mod stdlib;
 
 use std::time::Instant;
 
@@ -228,7 +228,8 @@ fn plan_through_mlir(
 ) -> Option<yuzu_substrait::Plan> {
     use melior::ir::operation::OperationLike;
 
-    let files = modules::load(source_id, sources, diagnostics, resolver)?;
+    let engine = read_engine(options, diagnostics, source_id)?;
+    let files = modules::load(source_id, sources, diagnostics, resolver, engine)?;
     let context = yuzu_mlir::context();
     let mut module = yuzu_passes::lower_ast_to_yzl(
         &context,
@@ -469,6 +470,33 @@ fn build_plan(
     converter.convert(query.rel)
 }
 
+/// The engine `--target` names; DataFusion when it names none.
+fn read_engine(
+    options: &CompileOptions,
+    diagnostics: &mut DiagnosticsEngine,
+    source_id: yuzu_diagnostics::source_map::SourceId,
+) -> Option<stdlib::Engine> {
+    let Some(name) = &options.target else {
+        return Some(stdlib::Engine::DataFusion);
+    };
+
+    let engine = stdlib::Engine::from_name(name);
+    if engine.is_none() {
+        let span = yuzu_diagnostics::diagnostics::Span {
+            source_id,
+            range: Default::default(),
+        };
+        diagnostics.emit(
+            yuzu_diagnostics::diagnostics::builder::DiagnosticBuilder::error(
+                span,
+                format!("`{name}` is not a supported engine; the supported engine is `datafusion`"),
+            ),
+        );
+    }
+
+    engine
+}
+
 fn parse_target(
     options: &CompileOptions,
     diagnostics: &mut DiagnosticsEngine,
@@ -516,5 +544,29 @@ fn print_diagnostics(diagnostics: &DiagnosticsEngine, sources: &SourceMap) {
     let printer = DiagnosticPrinter::new(sources);
     for diagnostic in diagnostics.diagnostics() {
         eprintln!("{}", printer.print(diagnostic));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::{CompileOptions, compile_to_substrait_mlir, modules};
+
+    #[test]
+    fn an_engine_the_compiler_does_not_know_is_reported() {
+        let options = CompileOptions {
+            target: Some("postgres".to_string()),
+            ..CompileOptions::default()
+        };
+        let resolver = modules::MapResolver(HashMap::new());
+        let error = compile_to_substrait_mlir("test.yz", "", &options, &resolver)
+            .expect_err("postgres is not an engine");
+        assert!(
+            error.contains(
+                "`postgres` is not a supported engine; the supported engine is `datafusion`"
+            ),
+            "{error}"
+        );
     }
 }
