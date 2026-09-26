@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
@@ -85,7 +87,8 @@ fn compile<'py>(
     let options = options
         .map(yuzu_driver::CompileOptions::from)
         .unwrap_or_default();
-    match yuzu_driver::compile_to_substrait("<python>", source, &options) {
+    let resolver = yuzu_driver::modules::MapResolver(HashMap::new());
+    match yuzu_driver::compile_to_substrait_mlir("<python>", source, &options, &resolver) {
         Ok(plan) => Ok(PyBytes::new(py, &plan)),
         Err(message) => Err(PyValueError::new_err(message)),
     }

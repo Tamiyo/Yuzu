@@ -38,7 +38,7 @@ def test_non_bool_predicate():
     """
     assert (
         error_of(query)
-        == "error: expected ``where` predicate` to be a `bool` type, but found `Int64`"
+        == "error: expected the `where` predicate to be `bool`, found `int64`"
     )
 
 
@@ -49,7 +49,7 @@ def test_non_bool_join_condition():
     """
     assert (
         error_of(query)
-        == "error: expected ``on` condition` to be a `bool` type, but found `Int64`"
+        == "error: expected the `on` condition to be `bool`, found `int64`"
     )
 
 
@@ -89,5 +89,5 @@ def test_unbounded_recursion_is_rejected_at_compile_time():
     """
     assert (
         error_of(query)
-        == "error: call to `f` could not be fully reduced"
+        == "error: expanding `f` did not finish within 1000 calls; a function that reaches itself has to reduce to stop"
     )
