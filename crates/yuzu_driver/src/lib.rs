@@ -230,54 +230,90 @@ fn plan_through_mlir(
 
     let engine = read_engine(options, diagnostics, source_id)?;
     let files = modules::load(source_id, sources, diagnostics, resolver, engine)?;
-    let context = yuzu_mlir::context();
-    let mut module = yuzu_passes::lower_ast_to_yzl(
-        &context,
-        sources,
-        &files,
-        diagnostics,
-        &yuzu_types::Builtins,
-    );
+    with_context(|context| {
+        let mut module = yuzu_passes::lower_ast_to_yzl(
+            context,
+            sources,
+            &files,
+            diagnostics,
+            &yuzu_types::Builtins,
+        );
 
-    let verified = yuzu_mlir::diagnostics::capture(&context, sources, diagnostics, || {
-        module.as_operation().verify()
-    });
-    if !verified || has_errors(diagnostics) {
-        return None;
-    }
-
-    yuzu_mlir::diagnostics::capture(&context, sources, diagnostics, || {
-        yuzu_passes::check_mutability(&module);
-        yuzu_passes::promote_locals(&context, &mut module);
-        yuzu_passes::infer_types(&context, &mut module, &yuzu_types::Builtins);
-        yuzu_passes::check_aggregates(&module);
-    });
-    if has_errors(diagnostics) {
-        return None;
-    }
-
-    // Expansion runs after the aggregate rules, which read an `agg fn` body
-    // while it is still a body, and before the lowering, which has no way to
-    // carry a function across.
-    yuzu_mlir::diagnostics::capture(&context, sources, diagnostics, || {
-        yuzu_passes::inline_calls(&context, &mut module);
-        yuzu_passes::remove_dead_symbols(&context, &mut module);
-    });
-    if has_errors(diagnostics) {
-        return None;
-    }
-
-    yuzu_mlir::diagnostics::capture(&context, sources, diagnostics, || {
-        let mut lowered = yuzu_passes::lower_yzl_to_yzr(&context, &module);
-        yuzu_passes::simplify_yzr(&context, &mut lowered);
-        if options.debug_plan {
-            println!("=== yzr ===");
-            print!("{}", lowered.as_operation());
+        let verified = yuzu_mlir::diagnostics::capture(context, sources, diagnostics, || {
+            module.as_operation().verify()
+        });
+        if !verified || has_errors(diagnostics) {
+            return None;
         }
 
-        yuzu_substrait::translate(&context, &lowered)
+        yuzu_mlir::diagnostics::capture(context, sources, diagnostics, || {
+            yuzu_passes::check_mutability(&module);
+            yuzu_passes::promote_locals(context, &mut module);
+            yuzu_passes::infer_types(context, &mut module, &yuzu_types::Builtins);
+            yuzu_passes::check_aggregates(&module);
+        });
+        if has_errors(diagnostics) {
+            return None;
+        }
+
+        // Expansion runs after the aggregate rules, which read an `agg fn` body
+        // while it is still a body, and before the lowering, which has no way to
+        // carry a function across.
+        yuzu_mlir::diagnostics::capture(context, sources, diagnostics, || {
+            yuzu_passes::inline_calls(context, &mut module);
+            yuzu_passes::remove_dead_symbols(context, &mut module);
+        });
+        if has_errors(diagnostics) {
+            return None;
+        }
+
+        yuzu_mlir::diagnostics::capture(context, sources, diagnostics, || {
+            let mut lowered = yuzu_passes::lower_yzl_to_yzr(context, &module);
+            yuzu_passes::simplify_yzr(context, &mut lowered);
+            if options.debug_plan {
+                println!("=== yzr ===");
+                print!("{}", lowered.as_operation());
+            }
+
+            yuzu_substrait::translate(context, &lowered)
+        })
+        .filter(|_| !has_errors(diagnostics))
     })
-    .filter(|_| !has_errors(diagnostics))
+}
+
+/// How many compiles one thread's context serves. A context keeps every
+/// attribute it has uniqued until it is dropped, so a long-lived process
+/// replaces it now and then.
+const CONTEXT_COMPILES: usize = 1000;
+
+/// The context this thread compiles in.
+struct Reused {
+    context: melior::Context,
+    compiles: usize,
+}
+
+thread_local! {
+    static CONTEXT: std::cell::RefCell<Reused> = std::cell::RefCell::new(Reused {
+        context: yuzu_mlir::context(),
+        compiles: 0,
+    });
+}
+
+/// Runs a compile in this thread's context. Making a context registers every
+/// op of the dialects, which was a sixth of a compile.
+fn with_context<T>(compile: impl FnOnce(&melior::Context) -> T) -> T {
+    CONTEXT.with(|reused| {
+        let mut reused = reused.borrow_mut();
+        if reused.compiles == CONTEXT_COMPILES {
+            *reused = Reused {
+                context: yuzu_mlir::context(),
+                compiles: 0,
+            };
+        }
+
+        reused.compiles += 1;
+        compile(&reused.context)
+    })
 }
 
 /// Wall-clock time spent in each compile phase.
