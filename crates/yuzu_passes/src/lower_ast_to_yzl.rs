@@ -2,6 +2,7 @@
 //! comes out as `!yzl.unresolved` for inference.
 
 use melior::Context;
+use melior::ir::attribute::StringAttribute;
 use melior::ir::{BlockLike, BlockRef, Location, Module, Type, Value};
 use text_size::TextRange;
 use yuzu_ast::AstNode;
@@ -9,6 +10,7 @@ use yuzu_diagnostics::diagnostics::Span;
 use yuzu_diagnostics::diagnostics::builder::DiagnosticBuilder;
 use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
 use yuzu_diagnostics::source_map::{SourceId, SourceMap};
+use yuzu_mlir::ir::location::LocationExt;
 use yuzu_mlir::ir::operation::OperationExt;
 use yuzu_mlir::ods::yzl;
 use yuzu_types::FunctionRegistry;
@@ -49,6 +51,7 @@ pub fn lower_ast_to_yzl<'c>(
         registry,
         sources,
         source_id: entry.source_id,
+        file: StringAttribute::new(context, sources.name(entry.source_id)),
         diagnostics,
     };
 
@@ -62,6 +65,8 @@ struct AstToYzl<'c, 'd> {
     registry: &'d dyn FunctionRegistry,
     sources: &'d SourceMap,
     source_id: SourceId,
+    /// The name of the file being lowered, made once for its locations.
+    file: StringAttribute<'c>,
     diagnostics: &'d mut DiagnosticsEngine,
 }
 
@@ -154,14 +159,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn location_at(&self, range: TextRange) -> Location<'c> {
         let (start_line, start_column) = self.line_col(range.start().into());
         let (end_line, end_column) = self.line_col(range.end().into());
-        Location::file_line_col_range(
-            self.context,
-            self.name(),
-            start_line,
-            start_column,
-            end_line,
-            end_column,
-        )
+        Location::file_range(self.file, start_line, start_column, end_line, end_column)
     }
 
     fn line_col(&self, offset: usize) -> (usize, usize) {

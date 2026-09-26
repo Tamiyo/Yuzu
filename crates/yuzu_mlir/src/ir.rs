@@ -3,6 +3,7 @@
 
 pub mod attribute;
 pub mod block;
+pub mod location;
 pub mod operation;
 pub mod region;
 pub mod symbol_table;

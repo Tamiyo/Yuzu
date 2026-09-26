@@ -1,3 +1,4 @@
+use melior::ir::attribute::StringAttribute;
 use melior::ir::operation::OperationLike;
 use melior::ir::{BlockLike, BlockRef, Location, Module, ValueLike};
 use yuzu_ast::ast;
@@ -68,6 +69,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
     fn set_file(&mut self, file: &File) {
         self.source_id = file.source_id;
+        self.file = StringAttribute::new(self.context, self.sources.name(file.source_id));
         self.symbols.set_module(match file.module.as_deref() {
             Some(module) => ModulePath::from_path(module),
             None => ModulePath::entry(),

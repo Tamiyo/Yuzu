@@ -83,3 +83,16 @@ YZU_SINGLETON_TYPE(yzuQueryTypeGet, yzuTypeIsQueryType, yuzu::yzl::QueryType)
 YZU_SINGLETON_TYPE(yzuRefTypeGet, yzuTypeIsRefType, yuzu::yzl::RefType)
 
 #undef YZU_SINGLETON_TYPE
+
+// A location in a file whose name is already an attribute. A lowering makes
+// one location for each op, and the overload taking a string hashes the file
+// name again each time.
+extern "C" MlirLocation yzuFileLineColRangeGet(MlirAttribute filename,
+                                               unsigned startLine,
+                                               unsigned startColumn,
+                                               unsigned endLine,
+                                               unsigned endColumn) {
+  return wrap(mlir::Location(mlir::FileLineColRange::get(
+      llvm::cast<mlir::StringAttr>(unwrap(filename)), startLine, startColumn,
+      endLine, endColumn)));
+}

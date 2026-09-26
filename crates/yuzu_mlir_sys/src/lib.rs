@@ -1,4 +1,4 @@
-use mlir_sys::{MlirContext, MlirStringRef, MlirType};
+use mlir_sys::{MlirAttribute, MlirContext, MlirLocation, MlirStringRef, MlirType};
 
 // SAFETY: these are the symbols the C++ leaf in `cpp/` exports, with the signatures it declares; `build.rs` links that leaf into this crate.
 unsafe extern "C" {
@@ -26,6 +26,14 @@ unsafe extern "C" {
     pub fn yzuTypeIsQueryType(ty: MlirType) -> bool;
     pub fn yzuRefTypeGet(ctx: MlirContext) -> MlirType;
     pub fn yzuTypeIsRefType(ty: MlirType) -> bool;
+
+    pub fn yzuFileLineColRangeGet(
+        filename: MlirAttribute,
+        start_line: u32,
+        start_column: u32,
+        end_line: u32,
+        end_column: u32,
+    ) -> MlirLocation;
 }
 
 pub fn register_all(ctx: MlirContext) {
