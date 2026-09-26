@@ -19,3 +19,12 @@ pub use lower_yzl_to_yzr::lower_yzl_to_yzr;
 pub use promote_locals::promote_locals;
 pub use remove_dead_symbols::remove_dead_symbols;
 pub use simplify_yzr::simplify_yzr;
+
+/// A pass manager for one of the MLIR passes this crate runs. The driver
+/// verifies the module once, after the lowering builds it; only a debug
+/// build verifies it again after each pass, which is most of a pass's cost.
+fn pass_manager(context: &melior::Context) -> melior::pass::PassManager<'_> {
+    let passes = melior::pass::PassManager::new(context);
+    passes.enable_verifier(cfg!(debug_assertions));
+    passes
+}

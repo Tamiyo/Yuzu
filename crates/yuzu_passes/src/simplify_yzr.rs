@@ -4,10 +4,10 @@
 
 use melior::Context;
 use melior::ir::Module;
-use melior::pass::{PassManager, transform};
+use melior::pass::transform;
 
 pub fn simplify_yzr(context: &Context, module: &mut Module) {
-    let passes = PassManager::new(context);
+    let passes = crate::pass_manager(context);
     passes.add_pass(transform::create_canonicalizer());
     passes.add_pass(transform::create_cse());
 

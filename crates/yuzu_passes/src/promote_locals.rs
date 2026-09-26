@@ -3,10 +3,10 @@
 
 use melior::Context;
 use melior::ir::Module;
-use melior::pass::{PassManager, transform};
+use melior::pass::transform;
 
 pub fn promote_locals(context: &Context, module: &mut Module) {
-    let passes = PassManager::new(context);
+    let passes = crate::pass_manager(context);
     passes.add_pass(transform::create_mem_2_reg());
 
     passes
