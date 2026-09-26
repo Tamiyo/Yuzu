@@ -14,7 +14,7 @@ pub use check_aggregates::check_aggregates;
 pub use check_mutability::check_mutability;
 pub use infer_types::infer_types;
 pub use inline_calls::inline_calls;
-pub use lower_ast_to_yzl::{File, lower_ast_to_yzl};
+pub use lower_ast_to_yzl::{File, PRELUDE, lower_ast_to_yzl};
 pub use lower_yzl_to_yzr::lower_yzl_to_yzr;
 pub use promote_locals::promote_locals;
 pub use remove_dead_symbols::remove_dead_symbols;

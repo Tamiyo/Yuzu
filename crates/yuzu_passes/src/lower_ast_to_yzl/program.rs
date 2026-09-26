@@ -190,6 +190,66 @@ mod tests {
     }
 
     #[test]
+    fn a_prelude_name_is_found_without_an_import() {
+        let module = lowered_program(&[
+            (
+                "prelude.yz",
+                Some("yuzu.prelude"),
+                "pub def two() -> int64 { return 2 }\n",
+            ),
+            (
+                "main.yz",
+                None,
+                "struct Row { a: int64 }\ntable t = Row\n\nfrom t |> select a + two() as v\n",
+            ),
+        ]);
+        assert!(module.contains("yzl.call @yuzu.prelude.two()"), "{module}");
+    }
+
+    #[test]
+    fn a_file_declaration_comes_before_a_prelude_name() {
+        let module = lowered_program(&[
+            (
+                "prelude.yz",
+                Some("yuzu.prelude"),
+                "pub def two() -> int64 { return 2 }\n",
+            ),
+            (
+                "main.yz",
+                None,
+                "def two() -> int64 { return 20 }\nstruct Row { a: int64 }\ntable t = Row\n\nfrom t |> select a + two() as v\n",
+            ),
+        ]);
+        assert!(
+            module.contains("yzl.call @two()") && !module.contains("yzl.call @yuzu.prelude.two()"),
+            "{module}"
+        );
+    }
+
+    #[test]
+    fn a_private_prelude_name_is_not_found() {
+        expect![[r#"
+            error: unresolved identifier `two`
+             --> main.yz:4:22
+              |
+            4 | from t |> select a + two() as v
+              |                      ^^^^^
+        "#]]
+        .assert_eq(&reported_program(&[
+            (
+                "prelude.yz",
+                Some("yuzu.prelude"),
+                "def two() -> int64 { return 2 }\n",
+            ),
+            (
+                "main.yz",
+                None,
+                "struct Row { a: int64 }\ntable t = Row\n\nfrom t |> select a + two() as v\n",
+            ),
+        ]));
+    }
+
+    #[test]
     fn a_binding_a_module_keeps_to_itself_cannot_be_imported() {
         expect![[r#"
             error: `cap` is not public; `helpers` keeps it to itself

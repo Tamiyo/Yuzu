@@ -109,6 +109,7 @@ pub fn load(
 
     let root = loader.parse(entry);
     loader.submodules.insert(String::new(), submodules(&root));
+    loader.load_path(yuzu_passes::PRELUDE, &root, entry, "");
     // The entry file belongs to no module, so nothing keeps anything from
     // it beyond what `pub` already governs.
     loader.follow_imports(entry, &root, "");
@@ -331,8 +332,21 @@ mod tests {
         )
     }
 
-    /// Loads a program and says which modules came out, in order.
+    /// Loads a program and says which of its own modules came out, in order.
     fn loaded(entry: &str, modules: &[(&str, &str)]) -> Result<Vec<String>, Vec<String>> {
+        loaded_with_library(entry, modules).map(|paths| {
+            paths
+                .into_iter()
+                .filter(|path| !stdlib::reserves(path))
+                .collect()
+        })
+    }
+
+    /// Every module that came out, the library's included.
+    fn loaded_with_library(
+        entry: &str,
+        modules: &[(&str, &str)],
+    ) -> Result<Vec<String>, Vec<String>> {
         let mut sources = SourceMap::new();
         let mut diagnostics = DiagnosticsEngine::new();
         let id = sources.add("main.yz".to_string(), entry.to_string());
@@ -476,9 +490,10 @@ mod tests {
     #[test]
     fn a_library_path_is_read_from_the_library() {
         assert_eq!(
-            loaded("import yuzu.std\n", &[]),
+            loaded_with_library("import yuzu.std\n", &[]),
             Ok(vec![
                 "yuzu".to_string(),
+                "yuzu.prelude".to_string(),
                 "yuzu.std".to_string(),
                 "<entry>".to_string(),
             ])
@@ -488,9 +503,10 @@ mod tests {
     #[test]
     fn the_engine_module_is_written_for_the_engine() {
         assert_eq!(
-            loaded("from yuzu.engine import ENGINE\n", &[]),
+            loaded_with_library("from yuzu.engine import ENGINE\n", &[]),
             Ok(vec![
                 "yuzu".to_string(),
+                "yuzu.prelude".to_string(),
                 "yuzu.engine".to_string(),
                 "<entry>".to_string(),
             ])

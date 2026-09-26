@@ -12,6 +12,9 @@ use yuzu_ast::Visibility;
 use yuzu_mlir::attributes::CalleeSource;
 use yuzu_types::FunctionRegistry;
 
+/// The module every file sees without importing it.
+pub const PRELUDE: &str = "yuzu.prelude";
+
 /// A name as a lookup asks for it: what the source wrote, with the
 /// qualifier if it wrote one.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -366,8 +369,21 @@ impl SymbolTable {
 
     /// What a name in this file stands for, and where it was declared,
     /// following an import to the file that wrote it.
+    /// A name the file does not declare or import is looked up among the
+    /// prelude's public names.
     pub(super) fn find(&self, name: &str) -> Option<(Declared, &Binding)> {
         self.find_in(self.module.declares(name))
+            .or_else(|| self.find_in_prelude(name))
+    }
+
+    fn find_in_prelude(&self, name: &str) -> Option<(Declared, &Binding)> {
+        let prelude = ModulePath::from_path(PRELUDE);
+        let binding = self.modules.get(&prelude)?.get(name)?;
+        if binding.visibility != Visibility::Public {
+            return None;
+        }
+
+        self.find_in(prelude.declares(name))
     }
 
     /// Where a declaration was written, following imports. Each link points
