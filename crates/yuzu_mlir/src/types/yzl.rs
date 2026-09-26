@@ -15,9 +15,8 @@ impl UnresolvedType {
     }
 
     pub fn is(ty: Type<'_>) -> bool {
-        // SAFETY: a type lives in its context, so the reference lives as long as the type.
-        let context = unsafe { ty.context().to_ref() };
-        ty == Self::get(context)
+        // SAFETY: `ty` is a live type; the query only reads it.
+        unsafe { yuzu_mlir_sys::yzuTypeIsUnresolvedType(ty.to_raw()) }
     }
 }
 
@@ -31,9 +30,8 @@ impl QueryType {
     }
 
     pub fn is(ty: Type<'_>) -> bool {
-        // SAFETY: a type lives in its context, so the reference lives as long as the type.
-        let context = unsafe { ty.context().to_ref() };
-        ty == Self::get(context)
+        // SAFETY: `ty` is a live type; the query only reads it.
+        unsafe { yuzu_mlir_sys::yzuTypeIsQueryType(ty.to_raw()) }
     }
 }
 
@@ -47,9 +45,8 @@ impl RefType {
     }
 
     pub fn is(ty: Type<'_>) -> bool {
-        // SAFETY: a type lives in its context, so the reference lives as long as the type.
-        let context = unsafe { ty.context().to_ref() };
-        ty == Self::get(context)
+        // SAFETY: `ty` is a live type; the query only reads it.
+        unsafe { yuzu_mlir_sys::yzuTypeIsRefType(ty.to_raw()) }
     }
 }
 

@@ -13,12 +13,19 @@ unsafe extern "C" {
     pub fn yzuTypeIsListType(ty: MlirType) -> bool;
     pub fn yzuListTypeInner(ty: MlirType) -> MlirType;
     pub fn yzuInt64TypeGet(ctx: MlirContext) -> MlirType;
+    pub fn yzuTypeIsInt64Type(ty: MlirType) -> bool;
     pub fn yzuFloat64TypeGet(ctx: MlirContext) -> MlirType;
+    pub fn yzuTypeIsFloat64Type(ty: MlirType) -> bool;
     pub fn yzuBoolTypeGet(ctx: MlirContext) -> MlirType;
+    pub fn yzuTypeIsBoolType(ty: MlirType) -> bool;
     pub fn yzuStrTypeGet(ctx: MlirContext) -> MlirType;
+    pub fn yzuTypeIsStrType(ty: MlirType) -> bool;
     pub fn yzuUnresolvedTypeGet(ctx: MlirContext) -> MlirType;
+    pub fn yzuTypeIsUnresolvedType(ty: MlirType) -> bool;
     pub fn yzuQueryTypeGet(ctx: MlirContext) -> MlirType;
+    pub fn yzuTypeIsQueryType(ty: MlirType) -> bool;
     pub fn yzuRefTypeGet(ctx: MlirContext) -> MlirType;
+    pub fn yzuTypeIsRefType(ty: MlirType) -> bool;
 }
 
 pub fn register_all(ctx: MlirContext) {

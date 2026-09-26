@@ -15,9 +15,8 @@ impl Int64Type {
     }
 
     pub fn is(ty: Type<'_>) -> bool {
-        // SAFETY: a type lives in its context, so the reference lives as long as the type.
-        let context = unsafe { ty.context().to_ref() };
-        ty == Self::get(context)
+        // SAFETY: `ty` is a live type; the query only reads it.
+        unsafe { yuzu_mlir_sys::yzuTypeIsInt64Type(ty.to_raw()) }
     }
 }
 
@@ -31,9 +30,8 @@ impl Float64Type {
     }
 
     pub fn is(ty: Type<'_>) -> bool {
-        // SAFETY: a type lives in its context, so the reference lives as long as the type.
-        let context = unsafe { ty.context().to_ref() };
-        ty == Self::get(context)
+        // SAFETY: `ty` is a live type; the query only reads it.
+        unsafe { yuzu_mlir_sys::yzuTypeIsFloat64Type(ty.to_raw()) }
     }
 }
 
@@ -47,9 +45,8 @@ impl BoolType {
     }
 
     pub fn is(ty: Type<'_>) -> bool {
-        // SAFETY: a type lives in its context, so the reference lives as long as the type.
-        let context = unsafe { ty.context().to_ref() };
-        ty == Self::get(context)
+        // SAFETY: `ty` is a live type; the query only reads it.
+        unsafe { yuzu_mlir_sys::yzuTypeIsBoolType(ty.to_raw()) }
     }
 }
 
@@ -63,9 +60,8 @@ impl StrType {
     }
 
     pub fn is(ty: Type<'_>) -> bool {
-        // SAFETY: a type lives in its context, so the reference lives as long as the type.
-        let context = unsafe { ty.context().to_ref() };
-        ty == Self::get(context)
+        // SAFETY: `ty` is a live type; the query only reads it.
+        unsafe { yuzu_mlir_sys::yzuTypeIsStrType(ty.to_raw()) }
     }
 }
 

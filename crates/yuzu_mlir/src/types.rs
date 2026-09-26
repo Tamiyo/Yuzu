@@ -59,3 +59,34 @@ pub fn name(context: &Context, ty: Type<'_>) -> String {
         None => ty.to_string(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use melior::Context;
+    use melior::ir::Type;
+
+    use super::{BoolType, Float64Type, Int64Type, QueryType, RefType, StrType, UnresolvedType};
+
+    type Singleton = (fn(&Context) -> Type<'_>, fn(Type<'_>) -> bool);
+
+    const SINGLETONS: [Singleton; 7] = [
+        (Int64Type::get, Int64Type::is),
+        (Float64Type::get, Float64Type::is),
+        (BoolType::get, BoolType::is),
+        (StrType::get, StrType::is),
+        (UnresolvedType::get, UnresolvedType::is),
+        (QueryType::get, QueryType::is),
+        (RefType::get, RefType::is),
+    ];
+
+    #[test]
+    fn each_singleton_is_itself_and_no_other() {
+        let context = crate::context();
+        for (row, (get, _)) in SINGLETONS.iter().enumerate() {
+            let ty = get(&context);
+            for (column, (_, is)) in SINGLETONS.iter().enumerate() {
+                assert_eq!(is(ty), row == column, "{ty} against predicate {column}");
+            }
+        }
+    }
+}
