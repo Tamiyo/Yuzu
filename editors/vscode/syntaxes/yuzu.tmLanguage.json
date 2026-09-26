@@ -1,0 +1,435 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "fileTypes": [
+    "yz"
+  ],
+  "name": "Yuzu",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#declarations"
+    },
+    {
+      "include": "#imports"
+    },
+    {
+      "include": "#annotations"
+    },
+    {
+      "include": "#booleans"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#builtin-types"
+    },
+    {
+      "include": "#struct-literals"
+    },
+    {
+      "include": "#calls"
+    },
+    {
+      "include": "#members"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#punctuation"
+    }
+  ],
+  "repository": {
+    "annotations": {
+      "patterns": [
+        {
+          "captures": {
+            "1": {
+              "patterns": [
+                {
+                  "include": "#punctuation"
+                },
+                {
+                  "include": "#operators"
+                }
+              ]
+            },
+            "2": {
+              "name": "entity.name.type.yuzu",
+              "patterns": [
+                {
+                  "include": "#builtin-types"
+                }
+              ]
+            }
+          },
+          "match": "(:|->)\\s*([A-Za-z_][A-Za-z0-9_]*)"
+        }
+      ]
+    },
+    "booleans": {
+      "match": "\\b(?:true|false)\\b",
+      "name": "constant.language.boolean.yuzu"
+    },
+    "builtin-types": {
+      "match": "\\b(?:int64|float64|bool|str|List)\\b",
+      "name": "support.type.primitive.yuzu"
+    },
+    "calls": {
+      "captures": {
+        "1": {
+          "name": "entity.name.function.yuzu"
+        }
+      },
+      "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(?=\\()"
+    },
+    "comments": {
+      "match": "//.*$",
+      "name": "comment.line.double-slash.yuzu"
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "captures": {
+            "1": {
+              "name": "storage.type.yuzu"
+            },
+            "2": {
+              "name": "entity.name.function.yuzu"
+            }
+          },
+          "match": "\\b(def)\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "captures": {
+            "1": {
+              "name": "storage.type.yuzu"
+            },
+            "2": {
+              "name": "entity.name.type.yuzu"
+            }
+          },
+          "match": "\\b(struct|table|trait)\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "captures": {
+            "1": {
+              "name": "storage.type.yuzu"
+            },
+            "2": {
+              "name": "entity.name.type.yuzu"
+            },
+            "3": {
+              "name": "keyword.control.yuzu"
+            },
+            "4": {
+              "name": "entity.name.type.yuzu"
+            }
+          },
+          "match": "\\b(impl)\\s+([A-Za-z_][A-Za-z0-9_]*)(?:\\s+(for)\\s+([A-Za-z_][A-Za-z0-9_]*))?"
+        },
+        {
+          "captures": {
+            "1": {
+              "name": "storage.type.yuzu"
+            },
+            "2": {
+              "name": "entity.name.namespace.yuzu"
+            }
+          },
+          "match": "\\b(mod)\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        }
+      ]
+    },
+    "imports": {
+      "patterns": [
+        {
+          "captures": {
+            "1": {
+              "name": "keyword.control.import.yuzu"
+            },
+            "2": {
+              "name": "entity.name.namespace.yuzu"
+            },
+            "3": {
+              "name": "keyword.control.import.yuzu"
+            }
+          },
+          "match": "\\b(from)\\s+([A-Za-z_][A-Za-z0-9_]*(?:\\s*\\.\\s*[A-Za-z_][A-Za-z0-9_]*)*)\\s+(import)\\b"
+        },
+        {
+          "captures": {
+            "1": {
+              "name": "keyword.control.import.yuzu"
+            },
+            "2": {
+              "name": "entity.name.namespace.yuzu"
+            }
+          },
+          "match": "\\b(import)\\s+([A-Za-z_][A-Za-z0-9_]*(?:\\s*\\.\\s*[A-Za-z_][A-Za-z0-9_]*)*)"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "match": "\\b(?:def|impl|let|mod|struct|table|trait)\\b",
+          "name": "storage.type.yuzu"
+        },
+        {
+          "match": "\\b(?:agg|external|mut|pub)\\b",
+          "name": "storage.modifier.yuzu"
+        },
+        {
+          "match": "\\b(?:import)\\b",
+          "name": "keyword.control.import.yuzu"
+        },
+        {
+          "match": "\\b(?:for|return)\\b",
+          "name": "keyword.control.yuzu"
+        },
+        {
+          "match": "\\b(?:aggregate|as|by|distinct|drop|extend|from|full|group|inner|join|left|limit|offset|on|rename|right|select|set|using|where)\\b",
+          "name": "keyword.control.query.yuzu"
+        },
+        {
+          "match": "\\b(?:and|in|not|or)\\b",
+          "name": "keyword.operator.logical.yuzu"
+        }
+      ]
+    },
+    "members": {
+      "captures": {
+        "1": {
+          "patterns": [
+            {
+              "include": "#punctuation"
+            }
+          ]
+        },
+        "2": {
+          "name": "variable.other.member.yuzu"
+        }
+      },
+      "match": "(\\.)\\s*([A-Za-z_][A-Za-z0-9_]*)\\b(?!\\s*\\()"
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "match": "\\b0[xX][0-9a-fA-F][0-9a-fA-F_]*",
+          "name": "constant.numeric.integer.hexadecimal.yuzu"
+        },
+        {
+          "match": "\\b0[bB][01][01_]*",
+          "name": "constant.numeric.integer.binary.yuzu"
+        },
+        {
+          "match": "(?:\\b[0-9][0-9_]*\\.[0-9_]*|\\.[0-9][0-9_]*)(?:[eE][+-]?[0-9][0-9_]*)?|\\b[0-9][0-9_]*[eE][+-]?[0-9][0-9_]*",
+          "name": "constant.numeric.float.yuzu"
+        },
+        {
+          "match": "\\b[0-9][0-9_]*",
+          "name": "constant.numeric.integer.decimal.yuzu"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "match": "!=",
+          "name": "keyword.operator.comparison.yuzu"
+        },
+        {
+          "match": "\\*\\*",
+          "name": "keyword.operator.arithmetic.yuzu"
+        },
+        {
+          "match": "->",
+          "name": "keyword.operator.arrow.yuzu"
+        },
+        {
+          "match": "<<",
+          "name": "keyword.operator.bitwise.shift.yuzu"
+        },
+        {
+          "match": "<=",
+          "name": "keyword.operator.comparison.yuzu"
+        },
+        {
+          "match": "==",
+          "name": "keyword.operator.comparison.yuzu"
+        },
+        {
+          "match": ">=",
+          "name": "keyword.operator.comparison.yuzu"
+        },
+        {
+          "match": ">>",
+          "name": "keyword.operator.bitwise.shift.yuzu"
+        },
+        {
+          "match": "\\|>",
+          "name": "keyword.operator.pipe.yuzu"
+        },
+        {
+          "match": "\\*",
+          "name": "keyword.operator.arithmetic.yuzu"
+        },
+        {
+          "match": "\\+",
+          "name": "keyword.operator.arithmetic.yuzu"
+        },
+        {
+          "match": "-",
+          "name": "keyword.operator.arithmetic.yuzu"
+        },
+        {
+          "match": "/",
+          "name": "keyword.operator.arithmetic.yuzu"
+        },
+        {
+          "match": "<",
+          "name": "keyword.operator.comparison.yuzu"
+        },
+        {
+          "match": "=",
+          "name": "keyword.operator.assignment.yuzu"
+        },
+        {
+          "match": ">",
+          "name": "keyword.operator.comparison.yuzu"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "match": "\\(",
+          "name": "punctuation.brackets.round.yuzu"
+        },
+        {
+          "match": "\\)",
+          "name": "punctuation.brackets.round.yuzu"
+        },
+        {
+          "match": ",",
+          "name": "punctuation.separator.comma.yuzu"
+        },
+        {
+          "match": "\\.",
+          "name": "punctuation.accessor.dot.yuzu"
+        },
+        {
+          "match": ":",
+          "name": "punctuation.separator.colon.yuzu"
+        },
+        {
+          "match": "\\[",
+          "name": "punctuation.brackets.square.yuzu"
+        },
+        {
+          "match": "\\]",
+          "name": "punctuation.brackets.square.yuzu"
+        },
+        {
+          "match": "\\{",
+          "name": "punctuation.brackets.curly.yuzu"
+        },
+        {
+          "match": "\\}",
+          "name": "punctuation.brackets.curly.yuzu"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "begin": "\\b(r)(\")",
+          "beginCaptures": {
+            "1": {
+              "name": "storage.type.string.yuzu"
+            },
+            "2": {
+              "name": "punctuation.definition.string.begin.yuzu"
+            }
+          },
+          "end": "\"",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.yuzu"
+            }
+          },
+          "name": "string.quoted.double.raw.yuzu"
+        },
+        {
+          "begin": "\"",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.yuzu"
+            }
+          },
+          "end": "\"",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.yuzu"
+            }
+          },
+          "name": "string.quoted.double.yuzu",
+          "patterns": [
+            {
+              "match": "\\\\.",
+              "name": "constant.character.escape.yuzu"
+            }
+          ]
+        }
+      ]
+    },
+    "struct-literals": {
+      "begin": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(\\{)",
+      "beginCaptures": {
+        "1": {
+          "name": "entity.name.type.yuzu"
+        },
+        "2": {
+          "name": "punctuation.brackets.curly.yuzu"
+        }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.brackets.curly.yuzu"
+        }
+      },
+      "patterns": [
+        {
+          "captures": {
+            "1": {
+              "name": "variable.other.member.yuzu"
+            },
+            "2": {
+              "patterns": [
+                {
+                  "include": "#punctuation"
+                }
+              ]
+            }
+          },
+          "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(:)"
+        },
+        {
+          "include": "$self"
+        }
+      ]
+    }
+  },
+  "scopeName": "source.yuzu"
+}

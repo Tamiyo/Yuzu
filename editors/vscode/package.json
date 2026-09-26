@@ -1,0 +1,36 @@
+{
+  "name": "yuzu",
+  "displayName": "Yuzu",
+  "description": "Syntax highlighting for the Yuzu language",
+  "version": "0.0.1",
+  "publisher": "yuzu",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "yuzu",
+        "aliases": [
+          "Yuzu",
+          "yuzu"
+        ],
+        "extensions": [
+          ".yz"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "yuzu",
+        "scopeName": "source.yuzu",
+        "path": "./syntaxes/yuzu.tmLanguage.json"
+      }
+    ]
+  }
+}

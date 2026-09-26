@@ -13,5 +13,6 @@
 
 # Python
 __pycache__/
+.pytest_cache/
 .Python
 .venv/

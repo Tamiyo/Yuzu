@@ -1,0 +1,64 @@
+// A file that uses each construct of the language once.
+
+pub mod reports
+mod helpers
+
+import yuzu.std.math as m
+from yuzu.std.math import sqrt, pow as power
+
+pub struct Point {
+    x: float64,
+    y: float64,
+}
+
+table employees = {
+    id: str,
+    name: str,
+    dept_id: str,
+    salary: int64,
+}
+
+table staff = employees
+
+trait Shape {
+    def area(self: Point) -> float64
+}
+
+impl Shape for Point {
+    def area(self: Point) -> float64 {
+        return self.x * self.y
+    }
+}
+
+external def score(x: int64) -> int64
+external agg def median(x: float64) -> float64
+
+agg def spread(x: int64) -> int64 {
+    return max(x) - min(x)
+}
+
+pub(mod) def classify[T](n: int64, f: (int64) -> bool) -> List[int64] where T: Shape + Ord {
+    let mut total: int64 = 0x1F + 0b1010 + 1_000
+    total = total ** 2 / 7 << 1 >> 1
+    let ratio = 3.14e-2 + .5 - 2.
+    let flags = [true, false, not true and false or 1 in [1, 2]]
+    let origin = Point { x: 0.0, y: 0.0 }
+    let path = r"C:\raw\no\escapes"
+    return [n, total]
+}
+
+let greeting = "hello \"world\"\n"
+
+from employees e
+|> join departments as d on e.dept_id == d.dept_id
+|> left join offices o using (office_id)
+|> where e.salary >= 100 and e.name != "bob"
+|> extend e.salary * 2 as doubled
+|> set doubled = doubled + 1
+|> rename e.name as employee
+|> drop dept_id, office_id
+|> aggregate count(e.id) as n, spread(e.salary) as range group by d.name as dept
+|> distinct
+|> limit 10 offset 5
+|> as summary
+|> select dept, n
