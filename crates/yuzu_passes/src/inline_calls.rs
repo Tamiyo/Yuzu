@@ -3,7 +3,7 @@
 //! whether a function reaches itself: a call that reduces is fine, and the
 //! budget stops one that never finishes.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use melior::ir::attribute::TypeAttribute;
 use melior::ir::operation::{OperationBuilder, OperationLike, OperationRef};
@@ -29,26 +29,25 @@ pub fn inline_calls(context: &Context, module: &mut Module) {
     let rewriter = IrRewriter::new(context);
     let rewriter = rewriter.as_rewriter_base();
     let symbols = SymbolTable::new(module);
+
+    // The module is walked once. An expansion hands back the calls it
+    // copied in, so a chain of expansions never walks the module again.
+    let mut calls = Vec::new();
+    collect_calls(module.body(), &mut calls);
+    let mut pending = VecDeque::from(calls);
     let mut spent = 0;
-
-    loop {
-        let mut calls = Vec::new();
-        collect_calls(module.body(), &mut calls);
-        if calls.is_empty() {
-            break;
-        }
-
-        if spent + calls.len() > BUDGET {
-            report_budget(&calls);
+    while let Some(call) = pending.pop_front() {
+        if spent == BUDGET {
+            report_budget(call);
             return;
         }
 
-        spent += calls.len();
-        for call in calls {
-            if expand(&rewriter, call, &symbols).is_none() {
-                return;
-            }
-        }
+        spent += 1;
+        let Some(copied) = expand(&rewriter, call, &symbols) else {
+            return;
+        };
+
+        pending.extend(copied);
     }
 
     discard_declarations(context, &rewriter, module.body());
@@ -58,11 +57,8 @@ fn collect_calls<'c, 'a>(block: BlockRef<'c, 'a>, out: &mut Vec<OperationRef<'c,
     for op in block.operations() {
         match op.as_yzl() {
             Some(YzlOp::Fn(_) | YzlOp::Trait(_) | YzlOp::Impl(_)) => {}
-            Some(YzlOp::Call(call)) => {
-                if matches!(
-                    call.callee_source(),
-                    Some(CalleeSource::Fn | CalleeSource::Const)
-                ) {
+            Some(YzlOp::Call(_)) => {
+                if expands(op) {
                     out.push(op);
                 }
             }
@@ -77,11 +73,24 @@ fn collect_calls<'c, 'a>(block: BlockRef<'c, 'a>, out: &mut Vec<OperationRef<'c,
     }
 }
 
+/// A call to a function or a constant, which is what this pass replaces.
+fn expands(op: OperationRef) -> bool {
+    matches!(
+        op.as_yzl(),
+        Some(YzlOp::Call(call)) if matches!(
+            call.callee_source(),
+            Some(CalleeSource::Fn | CalleeSource::Const)
+        )
+    )
+}
+
+/// Replaces a call with a copy of its body, and returns the calls the copy
+/// holds, which need expanding in turn.
 fn expand<'c, 'a>(
     rewriter: &'a RewriterBase<'c, 'a>,
-    call: OperationRef<'c, '_>,
+    call: OperationRef<'c, 'a>,
     symbols: &SymbolTable<'c, '_>,
-) -> Option<()> {
+) -> Option<Vec<OperationRef<'c, 'a>>> {
     let Some(YzlOp::Call(site)) = call.as_yzl() else {
         return error(call.location(), "expected a call to expand");
     };
@@ -126,6 +135,7 @@ fn expand<'c, 'a>(
         .zip(arguments)
         .collect();
     let mut returned = None;
+    let mut copied_calls = Vec::new();
     for op in body.operations() {
         match op.as_yzl() {
             Some(YzlOp::Return(_) | YzlOp::Yield(_)) => {
@@ -147,8 +157,14 @@ fn expand<'c, 'a>(
                         &format!("`{callee}` has a body that did not copy"),
                     )
                 })?;
-                if let Some(result) = op.try_first_result() {
-                    values.insert(result.id(), copied);
+                if expands(copied) {
+                    copied_calls.push(copied);
+                }
+
+                if let (Some(result), Some(value)) =
+                    (op.try_first_result(), copied.try_first_result())
+                {
+                    values.insert(result.id(), value);
                 }
             }
         }
@@ -162,7 +178,7 @@ fn expand<'c, 'a>(
     })?;
     rewriter.replace_all_op_uses_with_values(call, &[returned]);
     rewriter.erase_op(call);
-    Some(())
+    Some(copied_calls)
 }
 
 fn copy<'c, 'a>(
@@ -170,7 +186,7 @@ fn copy<'c, 'a>(
     op: OperationRef<'c, '_>,
     values: &HashMap<ValueId, Value<'c, 'a>>,
     types: &HashMap<&str, Type<'c>>,
-) -> Option<Value<'c, 'a>> {
+) -> Option<OperationRef<'c, 'a>> {
     let operands: Vec<Value> = op
         .operands()
         .map(|operand| values.get(&operand.id()).copied().unwrap_or(operand))
@@ -212,8 +228,7 @@ fn copy<'c, 'a>(
     .build()
     .ok()?;
 
-    let inserted = rewriter.insert(built);
-    inserted.try_first_result()
+    Some(rewriter.insert(built))
 }
 
 fn type_arguments<'c>(
@@ -283,10 +298,7 @@ fn binds_query(context: &Context, binding: &ConstOp) -> bool {
         .is_some_and(|value| value.r#type() == QueryType::get(context))
 }
 
-fn report_budget(calls: &[OperationRef]) {
-    let call = calls
-        .first()
-        .expect("the budget is reported over some call");
+fn report_budget(call: OperationRef) {
     let name = match call.as_yzl() {
         Some(YzlOp::Call(site)) => site.callee().value(),
         _ => "a function",
