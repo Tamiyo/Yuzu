@@ -1,0 +1,3 @@
+pub external def bitwise_shift_left(a: int64, b: int64) -> int64
+pub external def bitwise_shift_right(a: int64, b: int64) -> int64
+pub external def power(a: int64, b: int64) -> int64

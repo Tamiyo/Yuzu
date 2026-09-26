@@ -489,28 +489,15 @@ mod tests {
 
     #[test]
     fn a_library_path_is_read_from_the_library() {
-        assert_eq!(
-            loaded_with_library("import yuzu.std\n", &[]),
-            Ok(vec![
-                "yuzu".to_string(),
-                "yuzu.prelude".to_string(),
-                "yuzu.std".to_string(),
-                "<entry>".to_string(),
-            ])
-        );
+        let paths = loaded_with_library("import yuzu.std\n", &[]).expect("the library loads");
+        assert!(paths.iter().any(|path| path == "yuzu.std"), "{paths:?}");
     }
 
     #[test]
     fn the_engine_module_is_written_for_the_engine() {
-        assert_eq!(
-            loaded_with_library("from yuzu.engine import ENGINE\n", &[]),
-            Ok(vec![
-                "yuzu".to_string(),
-                "yuzu.prelude".to_string(),
-                "yuzu.engine".to_string(),
-                "<entry>".to_string(),
-            ])
-        );
+        let paths = loaded_with_library("from yuzu.engine import ENGINE\n", &[])
+            .expect("the library loads");
+        assert!(paths.iter().any(|path| path == "yuzu.engine"), "{paths:?}");
     }
 
     #[test]

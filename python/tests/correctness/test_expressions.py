@@ -1,8 +1,6 @@
 """Operators compute the values they should."""
 
-import pytest
-
-from support import error_of, rows, sorted_rows
+from support import rows, sorted_rows
 
 CAROL = 'from employees |> where name == "carol" |> '
 ALICE = 'from employees |> where name == "alice" |> '
@@ -125,12 +123,10 @@ def test_membership():
     )
 
 
-@pytest.mark.xfail(reason="`<<` needs the prelude to reach DataFusion's `bitwise_shift_left`")
-def test_shifts_are_rejected_for_the_datafusion_target():
-    """DataFusion lacks `shift_left`/`shift_right`, so targeting it makes
-    shifts a compile error instead of a runtime failure."""
+def test_shifts_and_powers_reach_the_engine():
     query = """
         from employees
-        |> select level << 2 as shl
+        |> where name == "carol"
+        |> select level << 2 as shl, level >> 1 as shr, level ** 2 as sq
     """
-    assert error_of(query) == "error: `<<` is not supported by the datafusion target"
+    assert rows(query) == [(12, 1, 9)]

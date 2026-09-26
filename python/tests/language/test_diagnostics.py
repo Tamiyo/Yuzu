@@ -70,17 +70,6 @@ def test_using_column_missing_from_a_side():
     )
 
 
-def test_operator_without_a_substrait_equivalent():
-    query = """
-        from employees
-        |> select level ** 2 as p
-    """
-    assert (
-        error_of(query)
-        == "error: `**` is not supported by the datafusion target"
-    )
-
-
 def test_unbounded_recursion_is_rejected_at_compile_time():
     query = """
         def f(n: int64) -> int64 { return f(n - 1) }
