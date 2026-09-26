@@ -17,7 +17,10 @@ use substrait::version;
 use yuzu_mlir::StructType;
 use yuzu_mlir::SymbolTable;
 use yuzu_mlir::diagnostics::emit_error;
-use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationCast, OperationExt, ValueId};
+use yuzu_mlir::ir::attribute::array::ArrayAttributeExt;
+use yuzu_mlir::ir::block::BlockExt;
+use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
+use yuzu_mlir::ir::value::ValueId;
 use yuzu_mlir::ops::yz::YzOp;
 use yuzu_mlir::ops::yzr::YzrOp;
 

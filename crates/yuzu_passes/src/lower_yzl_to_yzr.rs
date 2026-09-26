@@ -11,7 +11,10 @@ use melior::ir::operation::{OperationLike, OperationRef};
 use melior::ir::{BlockRef, Location, Module, Type, Value};
 use yuzu_mlir::SymbolTable;
 use yuzu_mlir::diagnostics::emit_error;
-use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationExt, ValueExt, ValueId};
+use yuzu_mlir::ir::attribute::array::ArrayAttributeExt;
+use yuzu_mlir::ir::block::BlockExt;
+use yuzu_mlir::ir::operation::OperationExt;
+use yuzu_mlir::ir::value::{ValueExt, ValueId};
 use yuzu_mlir::ops::yzl::StructOp;
 
 mod expr;

@@ -11,7 +11,8 @@ use melior::ir::{
 use text_size::TextRange;
 use yuzu_ast::{AstNode, ast};
 use yuzu_mlir::attributes::JoinKind;
-use yuzu_mlir::ext::{ArrayAttributeExt, OperationExt, OperationMutExt};
+use yuzu_mlir::ir::attribute::array::ArrayAttributeExt;
+use yuzu_mlir::ir::operation::{OperationExt, OperationMutExt};
 use yuzu_mlir::ods::yzl;
 use yuzu_mlir::types::{QueryType, UnresolvedType};
 

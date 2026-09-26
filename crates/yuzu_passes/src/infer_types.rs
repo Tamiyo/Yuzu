@@ -12,9 +12,11 @@ use melior::ir::r#type::FunctionType;
 use melior::ir::{Attribute, BlockRef, Location, Module, RegionLike, Type, Value, ValueLike};
 use yuzu_mlir::attributes::CalleeSource;
 use yuzu_mlir::diagnostics::emit_error;
-use yuzu_mlir::ext::{
-    ArrayAttributeExt, BlockExt, OperationCast, OperationExt, RegionExt, ValueExt, ValueId,
-};
+use yuzu_mlir::ir::attribute::array::ArrayAttributeExt;
+use yuzu_mlir::ir::block::BlockExt;
+use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
+use yuzu_mlir::ir::region::RegionExt;
+use yuzu_mlir::ir::value::{ValueExt, ValueId};
 use yuzu_mlir::ops::yz::YzOp;
 use yuzu_mlir::ops::yzl::{FnOp, YzlOp};
 use yuzu_mlir::types::{self, BoolType, Float64Type, Int64Type, UnresolvedType};

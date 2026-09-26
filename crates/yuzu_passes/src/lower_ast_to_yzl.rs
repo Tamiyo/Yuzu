@@ -9,7 +9,7 @@ use yuzu_diagnostics::diagnostics::Span;
 use yuzu_diagnostics::diagnostics::builder::DiagnosticBuilder;
 use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
 use yuzu_diagnostics::source_map::{SourceId, SourceMap};
-use yuzu_mlir::ext::OperationExt;
+use yuzu_mlir::ir::operation::OperationExt;
 use yuzu_mlir::ods::yzl;
 use yuzu_types::FunctionRegistry;
 

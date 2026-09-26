@@ -19,7 +19,8 @@ use substrait::proto::{
     r#type,
 };
 use yuzu_mlir::attributes::JoinKind;
-use yuzu_mlir::ext::{OperationCast, OperationExt, ValueExt, ValueId};
+use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
+use yuzu_mlir::ir::value::{ValueExt, ValueId};
 use yuzu_mlir::ops::yzr::YzrOp;
 
 use crate::proto::{emit_common, literal, nullable, selection};

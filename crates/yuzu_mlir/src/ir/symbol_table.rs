@@ -1,3 +1,5 @@
+//! MLIR's symbol table over a module: symbol lookup and insertion.
+
 use std::marker::PhantomData;
 
 use melior::StringRef;
@@ -56,7 +58,7 @@ mod tests {
     use melior::ir::{BlockLike, Location, Module};
 
     use super::SymbolTable;
-    use crate::ext::OperationExt;
+    use crate::ir::operation::OperationExt;
 
     #[test]
     fn looks_up_declared_symbols() {

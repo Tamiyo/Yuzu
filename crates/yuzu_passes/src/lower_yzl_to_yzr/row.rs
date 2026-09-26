@@ -3,7 +3,8 @@ use melior::ir::attribute::{
 };
 use melior::ir::{Attribute, BlockLike, BlockRef, Location, Type, Value};
 use yuzu_mlir::diagnostics::emit_error;
-use yuzu_mlir::ext::{BlockExt, OperationCast, OperationExt};
+use yuzu_mlir::ir::block::BlockExt;
+use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
 use yuzu_mlir::ods::{yz, yzr};
 use yuzu_mlir::ops::yzl::YzlOp;
 use yuzu_mlir::{StructType, SymbolTable};

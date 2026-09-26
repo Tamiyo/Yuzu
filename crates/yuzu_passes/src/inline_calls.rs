@@ -14,9 +14,11 @@ use melior::ir::{
 use melior::{Context, IrRewriter, RewriterBase};
 use yuzu_mlir::attributes::CalleeSource;
 use yuzu_mlir::diagnostics::emit_error;
-use yuzu_mlir::ext::{
-    ArrayAttributeExt, BlockExt, OperationCast, OperationExt, RegionExt, ValueExt, ValueId,
-};
+use yuzu_mlir::ir::attribute::array::ArrayAttributeExt;
+use yuzu_mlir::ir::block::BlockExt;
+use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
+use yuzu_mlir::ir::region::RegionExt;
+use yuzu_mlir::ir::value::{ValueExt, ValueId};
 use yuzu_mlir::ops::yzl::{CallOp, ConstOp, FnOp, YzlOp};
 use yuzu_mlir::types::QueryType;
 use yuzu_mlir::{ParamType, SymbolTable};

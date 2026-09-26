@@ -8,7 +8,8 @@ use melior::ir::{
 use yuzu_ast::ast::Mutability;
 use yuzu_ast::{AstNode, Visibility, ast};
 use yuzu_mlir::attributes::CalleeSource;
-use yuzu_mlir::ext::{ArrayAttributeExt, OperationExt, OperationMutExt};
+use yuzu_mlir::ir::attribute::array::ArrayAttributeExt;
+use yuzu_mlir::ir::operation::{OperationExt, OperationMutExt};
 use yuzu_mlir::ods::yzl;
 use yuzu_mlir::types::{self, RefType, UnresolvedType};
 use yuzu_mlir::{ListType, ParamType, StructType};

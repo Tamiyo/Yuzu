@@ -4,11 +4,11 @@
 use melior::ir::attribute::{
     BoolAttribute, FlatSymbolRefAttribute, FloatAttribute, IntegerAttribute, StringAttribute,
 };
-use melior::ir::r#type::IntegerType;
 use melior::ir::{Attribute, BlockLike, BlockRef, Location, Type, Value};
 use yuzu_ast::{AstNode, BinOp, UnaryOp, ast};
 use yuzu_mlir::attributes::CmpPredicate;
-use yuzu_mlir::ext::{IntegerAttributeExt, OperationExt};
+use yuzu_mlir::ir::attribute::integer::IntegerAttributeExt;
+use yuzu_mlir::ir::operation::OperationExt;
 use yuzu_mlir::ods::{yz, yzl};
 use yuzu_mlir::types::{BoolType, Float64Type, Int64Type, StrType, UnresolvedType};
 

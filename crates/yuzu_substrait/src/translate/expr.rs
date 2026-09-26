@@ -11,7 +11,9 @@ use substrait::proto::{
     expression::{RexType, ScalarFunction, SingularOrList, literal::LiteralType},
     function_argument::ArgType,
 };
-use yuzu_mlir::ext::{BlockExt, OperationCast, OperationExt, ValueExt, ValueId};
+use yuzu_mlir::ir::block::BlockExt;
+use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
+use yuzu_mlir::ir::value::{ValueExt, ValueId};
 use yuzu_mlir::ops::yz::YzOp;
 use yuzu_mlir::ops::yzr::YzrOp;
 use yuzu_types::Func;

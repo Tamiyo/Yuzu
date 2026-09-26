@@ -2,7 +2,8 @@ use melior::ir::operation::OperationLike;
 use melior::ir::{BlockLike, BlockRef, Location, Module, ValueLike};
 use yuzu_ast::ast;
 use yuzu_diagnostics::source_map::SourceId;
-use yuzu_mlir::ext::{BlockExt, OperationExt};
+use yuzu_mlir::ir::block::BlockExt;
+use yuzu_mlir::ir::operation::OperationExt;
 use yuzu_mlir::ods::yzl;
 use yuzu_mlir::types::QueryType;
 

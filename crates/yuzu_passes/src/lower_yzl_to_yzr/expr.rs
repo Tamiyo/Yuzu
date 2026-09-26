@@ -5,7 +5,8 @@ use melior::ir::operation::{OperationBuilder, OperationLike, OperationRef};
 use melior::ir::{Attribute, BlockLike, BlockRef, Identifier, Operation, Type, Value, ValueLike};
 use yuzu_mlir::ListType;
 use yuzu_mlir::attributes::CalleeSource;
-use yuzu_mlir::ext::{OperationCast, OperationExt, ValueExt, ValueId};
+use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
+use yuzu_mlir::ir::value::{ValueExt, ValueId};
 use yuzu_mlir::ods::{yz, yzr};
 use yuzu_mlir::ops::yzl::YzlOp;
 

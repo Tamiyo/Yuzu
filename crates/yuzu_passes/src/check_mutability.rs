@@ -6,7 +6,10 @@ use std::collections::HashMap;
 use melior::ir::operation::OperationLike;
 use melior::ir::{BlockRef, Module};
 use yuzu_mlir::diagnostics::emit_error;
-use yuzu_mlir::ext::{BlockExt, OperationCast, OperationExt, RegionExt, ValueExt, ValueId};
+use yuzu_mlir::ir::block::BlockExt;
+use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
+use yuzu_mlir::ir::region::RegionExt;
+use yuzu_mlir::ir::value::{ValueExt, ValueId};
 use yuzu_mlir::ops::yzl::YzlOp;
 
 pub fn check_mutability(module: &Module) {

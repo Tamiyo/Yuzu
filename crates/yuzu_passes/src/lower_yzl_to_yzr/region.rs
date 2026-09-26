@@ -4,7 +4,9 @@ use melior::ir::operation::{OperationLike, OperationResult};
 use melior::ir::{
     Block, BlockLike, BlockRef, Location, Region, RegionLike, RegionRef, Type, Value, ValueLike,
 };
-use yuzu_mlir::ext::{BlockExt, OperationCast, OperationExt, ValueExt, ValueId};
+use yuzu_mlir::ir::block::BlockExt;
+use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
+use yuzu_mlir::ir::value::{ValueExt, ValueId};
 use yuzu_mlir::ods::yzr;
 use yuzu_mlir::ops::yzl::YzlOp;
 

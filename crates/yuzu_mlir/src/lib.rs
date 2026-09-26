@@ -2,13 +2,12 @@ use melior::Context;
 
 pub mod attributes;
 pub mod diagnostics;
-pub mod ext;
+pub mod ir;
 pub mod ods;
 pub mod ops;
-mod symbol_table;
 pub mod types;
 
-pub use symbol_table::SymbolTable;
+pub use ir::symbol_table::SymbolTable;
 pub use types::{ListType, ParamType, StructType};
 
 pub fn context() -> Context {

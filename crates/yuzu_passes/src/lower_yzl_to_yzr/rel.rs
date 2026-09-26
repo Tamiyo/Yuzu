@@ -2,7 +2,10 @@ use melior::ir::attribute::{DenseI64ArrayAttribute, StringAttribute};
 use melior::ir::operation::{OperationLike, OperationRef};
 use melior::ir::{BlockLike, BlockRef, Region, RegionLike, Value};
 use yuzu_mlir::SymbolTable;
-use yuzu_mlir::ext::{ArrayAttributeExt, BlockExt, OperationCast, OperationExt, ValueExt};
+use yuzu_mlir::ir::attribute::array::ArrayAttributeExt;
+use yuzu_mlir::ir::block::BlockExt;
+use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
+use yuzu_mlir::ir::value::ValueExt;
 use yuzu_mlir::ods::{yz, yzr};
 use yuzu_mlir::ops::yzl::{
     AggregateOp, ConstOp, DropOp, ExtendOp, FromOp, JoinOp, LimitOp, RenameOp, SelectOp, SetOp,

@@ -491,7 +491,9 @@ fn struct_types_are_nominal() {
 #[test]
 fn borrowed_views_match_and_read_during_walks() {
     use melior::ir::RegionLike;
-    use yuzu_mlir::ext::{BlockExt, OperationCast, ValueExt};
+    use yuzu_mlir::ir::block::BlockExt;
+    use yuzu_mlir::ir::operation::OperationCast;
+    use yuzu_mlir::ir::value::ValueExt;
     use yuzu_mlir::ops::yzl::YzlOp;
 
     let context = yuzu_mlir::context();
@@ -545,7 +547,7 @@ module {
 fn views_read_optional_unit_and_variadic_arguments() {
     use melior::ir::attribute::{FlatSymbolRefAttribute, StringAttribute};
     use melior::ir::{Attribute, Identifier, Region, RegionLike};
-    use yuzu_mlir::ext::OperationCast;
+    use yuzu_mlir::ir::operation::OperationCast;
     use yuzu_mlir::ops::yzl::YzlOp;
 
     let context = yuzu_mlir::context();
@@ -658,7 +660,7 @@ module {
 #[test]
 fn borrowed_views_reject_foreign_operations() {
     use melior::ir::attribute::IntegerAttribute;
-    use yuzu_mlir::ext::OperationCast;
+    use yuzu_mlir::ir::operation::OperationCast;
     use yuzu_mlir::ods::yz;
     use yuzu_mlir::ops::yz::YzOp;
 
