@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
 pub struct SourceId(usize);
 
@@ -6,12 +8,16 @@ pub struct LineCol {
     pub col: usize,
 }
 
+/// A source's text and line index are shared, so a map made from another
+/// one's sources copies no text.
+#[derive(Clone)]
 struct Entry {
-    name: String,
-    text: String,
-    line_starts: Vec<usize>,
+    name: Arc<str>,
+    text: Arc<str>,
+    line_starts: Arc<[usize]>,
 }
 
+#[derive(Clone)]
 pub struct SourceMap {
     entries: Vec<Entry>,
 }
@@ -30,13 +36,29 @@ impl SourceMap {
     }
 
     pub fn add(&mut self, name: String, text: String) -> SourceId {
-        let line_starts = index_lines(&text);
+        let line_starts = index_lines(&text).into();
         self.entries.push(Entry {
-            name,
-            text,
+            name: name.into(),
+            text: text.into(),
             line_starts,
         });
         SourceId(self.entries.len())
+    }
+
+    /// The number of sources added so far.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Adds the sources `other` holds past this map's own count, sharing
+    /// their text, so each keeps the id it has in `other`.
+    pub fn extend_from(&mut self, other: &SourceMap) {
+        let own = self.entries.len();
+        self.entries.extend(other.entries.iter().skip(own).cloned());
     }
 
     pub fn name(&self, source_id: SourceId) -> &str {
@@ -47,7 +69,7 @@ impl SourceMap {
     /// outside carry the name the file was read under rather than its id, so
     /// this is how they find their way back.
     pub fn id(&self, name: &str) -> Option<SourceId> {
-        let index = self.entries.iter().position(|entry| entry.name == name)?;
+        let index = self.entries.iter().position(|entry| &*entry.name == name)?;
         Some(SourceId(index + 1))
     }
 
@@ -99,4 +121,24 @@ fn index_lines(text: &str) -> Vec<usize> {
     let mut starts = vec![0];
     starts.extend(text.match_indices('\n').map(|(i, _)| i + 1));
     starts
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SourceMap;
+
+    #[test]
+    fn an_extended_source_keeps_its_id() {
+        let mut library = SourceMap::new();
+        library.add("<entry>".to_string(), String::new());
+        let shared = library.add("lib.yz".to_string(), "a\nb\n".to_string());
+
+        let mut program = SourceMap::new();
+        program.add("main.yz".to_string(), "from t\n".to_string());
+        program.extend_from(&library);
+
+        assert_eq!(program.name(shared), "lib.yz");
+        assert_eq!(program.line_text(shared, 2), "b");
+        assert_eq!(program.len(), 2);
+    }
 }

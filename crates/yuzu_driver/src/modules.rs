@@ -22,7 +22,8 @@ use crate::stdlib::{self, Engine};
 
 /// A submodule a module declares: its name, and whether anyone outside may
 /// reach it.
-struct Submodule {
+#[derive(Clone)]
+pub(crate) struct Submodule {
     name: String,
     public: bool,
 }
@@ -96,6 +97,33 @@ pub fn load(
     resolver: &dyn ModuleResolver,
     engine: Engine,
 ) -> Option<Vec<File>> {
+    // The cached library's sources follow its own entry, so they keep their
+    // ids only in a map that holds nothing but this program's entry.
+    let library = (sources.len() == 1).then(|| stdlib::library(engine));
+    load_with(
+        entry,
+        sources,
+        diagnostics,
+        resolver,
+        engine,
+        library.as_deref(),
+    )
+    .map(|(files, _)| files)
+}
+
+/// What loading gave: the files, and the submodules each module declares.
+pub(crate) type Loaded = (Vec<File>, HashMap<String, Vec<Submodule>>);
+
+/// Loads with the library read from `library` when it is given, and from
+/// its files when it is not, which is how the cached library is made.
+pub(crate) fn load_with(
+    entry: SourceId,
+    sources: &mut SourceMap,
+    diagnostics: &mut DiagnosticsEngine,
+    resolver: &dyn ModuleResolver,
+    engine: Engine,
+    library: Option<&stdlib::Library>,
+) -> Option<Loaded> {
     let mut loader = Loader {
         sources,
         diagnostics,
@@ -109,12 +137,16 @@ pub fn load(
 
     let root = loader.parse(entry);
     loader.submodules.insert(String::new(), submodules(&root));
-    loader.load_path(yuzu_passes::PRELUDE, &root, entry, "");
+    match library {
+        Some(library) => loader.install(library),
+        None => loader.load_path(yuzu_passes::PRELUDE, &root, entry, ""),
+    }
+
     // The entry file belongs to no module, so nothing keeps anything from
     // it beyond what `pub` already governs.
     loader.follow_imports(entry, &root, "");
     loader.files.push(File::entry(entry, root));
-    (!has_errors(loader.diagnostics)).then_some(loader.files)
+    (!has_errors(loader.diagnostics)).then_some((loader.files, loader.submodules))
 }
 
 struct Loader<'a> {
@@ -133,6 +165,21 @@ struct Loader<'a> {
 }
 
 impl Loader<'_> {
+    /// The library as a cached load left it: its sources, its files and
+    /// what each of its modules declares.
+    fn install(&mut self, library: &stdlib::Library) {
+        self.sources.extend_from(&library.sources);
+        for file in &library.files {
+            let path = file.module().expect("a library file is a module");
+            self.loaded.insert(path.to_string());
+            self.files.push(file.clone());
+        }
+
+        for (path, declared) in &library.submodules {
+            self.submodules.insert(path.clone(), declared.clone());
+        }
+    }
+
     /// A path, one segment at a time. Each module declares the ones it
     /// holds, so reaching `std.math` means loading `std` and asking whether
     /// it declares `math`. A file nobody declares is not part of the program
