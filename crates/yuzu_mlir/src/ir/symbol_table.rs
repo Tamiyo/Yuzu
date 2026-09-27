@@ -1,14 +1,14 @@
 //! MLIR's symbol table over a module: symbol lookup and insertion.
 
-use std::marker::PhantomData;
+use std::fmt;
 
 use melior::StringRef;
-use melior::ir::operation::{Operation, OperationRef};
+use melior::ir::operation::{Operation, OperationLike, OperationRef};
 use melior::ir::{Attribute, Module};
 
 pub struct SymbolTable<'c, 'a> {
     raw: mlir_sys::MlirSymbolTable,
-    _module: PhantomData<&'a Module<'c>>,
+    module: &'a Module<'c>,
 }
 
 impl<'c, 'a> SymbolTable<'c, 'a> {
@@ -16,7 +16,7 @@ impl<'c, 'a> SymbolTable<'c, 'a> {
         Self {
             // SAFETY: the module is a live op for `'a`, which the table borrows; MLIR returns an owned handle that `drop` frees once.
             raw: unsafe { mlir_sys::mlirSymbolTableCreate(module.as_operation().to_raw()) },
-            _module: PhantomData,
+            module,
         }
     }
 
@@ -47,8 +47,16 @@ impl<'c, 'a> SymbolTable<'c, 'a> {
     /// Adds a symbol op that is already in the module where it should
     /// stand, renaming it when its name is taken. MLIR moves an op only
     /// when it has no parent, so this one stays in place.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the op is not directly in the table's module.
     pub fn insert_placed(&mut self, operation: OperationRef<'c, 'a>) -> Attribute<'c> {
-        // SAFETY: the op is live in the borrowed module; the returned attribute is owned by the context.
+        assert!(
+            self.is_top_level(operation),
+            "a placed symbol is directly in the table's module"
+        );
+        // SAFETY: the op is live and directly in the borrowed module, as the assert checked; the returned attribute is owned by the context.
         unsafe {
             Attribute::from_raw(mlir_sys::mlirSymbolTableInsert(
                 self.raw,
@@ -58,9 +66,34 @@ impl<'c, 'a> SymbolTable<'c, 'a> {
     }
 
     /// Removes a symbol op from the table and erases it.
-    pub fn erase(&mut self, operation: OperationRef<'c, '_>) {
-        // SAFETY: the op is a live symbol of the borrowed module and is not used after this call.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the op is not directly in the table's module.
+    ///
+    /// # Safety
+    ///
+    /// The op is freed. The caller must not use any copy of `operation`, or
+    /// any reference into the op, after this call.
+    pub unsafe fn erase(&mut self, operation: OperationRef<'c, '_>) {
+        assert!(
+            self.is_top_level(operation),
+            "an erased symbol is directly in the table's module"
+        );
+        // SAFETY: the op is live and directly in the borrowed module, as the assert checked; the caller does not use it after this call.
         unsafe { mlir_sys::mlirSymbolTableErase(self.raw, operation.to_raw()) }
+    }
+
+    fn is_top_level(&self, operation: OperationRef<'c, '_>) -> bool {
+        operation.parent_operation() == Some(self.module.as_operation())
+    }
+}
+
+impl fmt::Debug for SymbolTable<'_, '_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SymbolTable")
+            .finish_non_exhaustive()
     }
 }
 
@@ -95,7 +128,7 @@ module {
 
         let table = SymbolTable::new(&module);
         let row = table.lookup("Row").expect("the struct is declared");
-        assert_eq!(row.text_attribute("sym_name").as_deref(), Some("Row"));
+        assert_eq!(row.text_attribute("sym_name"), Some("Row"));
         assert!(table.lookup("t").is_some());
         assert!(table.lookup("Ghost").is_none());
     }
@@ -158,7 +191,8 @@ module {
         let second = module.body().append_operation(declaration("b"));
         symbols.insert_placed(second);
 
-        symbols.erase(first);
+        // SAFETY: `first` is not used after it is erased.
+        unsafe { symbols.erase(first) };
         let third = module.body().append_operation(declaration("a"));
         let name = symbols.insert_placed(third);
 
