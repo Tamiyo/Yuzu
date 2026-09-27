@@ -237,6 +237,7 @@ fn plan_through_mlir(
             &files,
             diagnostics,
             &yuzu_types::Builtins,
+            Some(stdlib::bound_library(engine)),
         );
 
         let verified = yuzu_mlir::diagnostics::capture(context, sources, diagnostics, || {

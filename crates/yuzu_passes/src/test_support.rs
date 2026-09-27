@@ -47,6 +47,7 @@ pub(crate) fn lower<'c>(context: &'c Context, program: &Program) -> Lowered<'c> 
         &files,
         &mut diagnostics,
         &yuzu_types::Builtins,
+        None,
     );
 
     Lowered {

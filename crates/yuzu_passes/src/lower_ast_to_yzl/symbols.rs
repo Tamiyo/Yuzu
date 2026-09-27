@@ -307,10 +307,20 @@ pub(super) struct Declared<'c> {
     pub(super) name: &'c str,
 }
 
+/// What each module declares, by the name the source wrote.
+type Modules<'c> = FxHashMap<ModulePath<'c>, FxHashMap<&'c str, Binding<'c>>>;
+
+/// The names the library's files declare, bound once and read by every
+/// compile that loads the library.
+#[derive(Default)]
+pub struct BoundLibrary<'l> {
+    modules: Modules<'l>,
+}
+
 pub(super) struct SymbolTable<'c> {
     context: &'c Context,
-    /// What each module declares, by the name the source wrote.
-    modules: FxHashMap<ModulePath<'c>, FxHashMap<&'c str, Binding<'c>>>,
+    modules: Modules<'c>,
+    library: Option<&'c BoundLibrary<'c>>,
     module: ModulePath<'c>,
     scopes: Vec<Scope<'c>>,
     /// The declarations a reference has named since the lowering last
@@ -319,10 +329,11 @@ pub(super) struct SymbolTable<'c> {
 }
 
 impl<'c> SymbolTable<'c> {
-    pub(super) fn new(context: &'c Context) -> Self {
+    pub(super) fn new(context: &'c Context, library: Option<&'c BoundLibrary<'c>>) -> Self {
         Self {
             context,
             modules: FxHashMap::default(),
+            library,
             module: ModulePath::entry(),
             scopes: Vec::new(),
             used: Vec::new(),
@@ -376,6 +387,33 @@ impl<'c> SymbolTable<'c> {
 
     pub(super) fn contains_module(&self, module: ModulePath<'c>) -> bool {
         self.modules.contains_key(&module)
+            || self
+                .library
+                .is_some_and(|library| library.modules.contains_key(&module))
+    }
+
+    /// Whether the bound library already holds this file's names.
+    pub(super) fn library_binds_module(&self) -> bool {
+        self.library
+            .is_some_and(|library| library.modules.contains_key(&self.module))
+    }
+
+    /// The names bound so far, as a library later compiles read.
+    pub(super) fn into_library(self) -> BoundLibrary<'c> {
+        BoundLibrary {
+            modules: self.modules,
+        }
+    }
+
+    /// A name a module declares, with the name as the table holds it. This
+    /// compile's own binding comes first: lowering a library `let` binds it
+    /// again, over the pending one the library holds.
+    fn declared_in(&self, module: ModulePath<'c>, name: &str) -> Option<(&'c str, &Binding<'c>)> {
+        self.modules
+            .get(&module)
+            .and_then(|own| own.get_key_value(name))
+            .or_else(|| self.library?.modules.get(&module)?.get_key_value(name))
+            .map(|(&name, binding)| (name, binding))
     }
 
     pub(super) fn bind(&mut self, name: &'c str, binding: Binding<'c>) {
@@ -387,7 +425,8 @@ impl<'c> SymbolTable<'c> {
 
     /// What this file holds under a name, an import left as it is.
     pub(super) fn binding(&self, name: &str) -> Option<&Binding<'c>> {
-        self.modules.get(&self.module)?.get(name)
+        self.declared_in(self.module, name)
+            .map(|(_, binding)| binding)
     }
 
     /// What a name in this file stands for, and where it was declared,
@@ -401,7 +440,7 @@ impl<'c> SymbolTable<'c> {
 
     fn find_in_prelude(&self, name: &str) -> Option<(Declared<'c>, &Binding<'c>)> {
         let prelude = ModulePath::from_path(PRELUDE);
-        let binding = self.modules.get(&prelude)?.get(name)?;
+        let (_, binding) = self.declared_in(prelude, name)?;
         if binding.visibility != Visibility::Public {
             return None;
         }
@@ -415,14 +454,14 @@ impl<'c> SymbolTable<'c> {
         module: ModulePath<'c>,
         name: &str,
     ) -> Option<(Declared<'c>, &Binding<'c>)> {
-        let (&name, _) = self.modules.get(&module)?.get_key_value(name)?;
+        let (name, _) = self.declared_in(module, name)?;
         self.find_in(module.declares(name))
     }
 
     /// Where a declaration was written, following imports. Each link points
     /// at a file read earlier, so a chain cannot come back around.
     pub(super) fn find_in(&self, at: Declared<'c>) -> Option<(Declared<'c>, &Binding<'c>)> {
-        let binding = self.modules.get(&at.module)?.get(at.name)?;
+        let (_, binding) = self.declared_in(at.module, at.name)?;
         match &binding.kind {
             BindingKind::Import { from } => self.find_in(*from),
             _ => Some((at, binding)),
@@ -430,14 +469,20 @@ impl<'c> SymbolTable<'c> {
     }
 
     pub(super) fn is_method(&self, name: &str) -> bool {
-        self.modules.get(&self.module).is_some_and(|declarations| {
-            declarations.keys().any(|declared| {
+        let library = self
+            .library
+            .and_then(|library| library.modules.get(&self.module));
+        self.modules
+            .get(&self.module)
+            .into_iter()
+            .chain(library)
+            .flat_map(|declarations| declarations.keys())
+            .any(|declared| {
                 matches!(
                     self.find(declared).map(|(_, binding)| &binding.kind),
                     Some(BindingKind::Trait { methods }) if methods.contains(&name)
                 )
             })
-        })
     }
 
     pub(super) fn kind(&self, name: &str) -> Option<&BindingKind<'c>> {
@@ -745,7 +790,7 @@ mod tests {
     };
 
     fn table() -> SymbolTable<'static> {
-        SymbolTable::new(Box::leak(Box::new(yuzu_mlir::context())))
+        SymbolTable::new(Box::leak(Box::new(yuzu_mlir::context())), None)
     }
 
     fn symbols() -> SymbolTable<'static> {

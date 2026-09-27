@@ -148,6 +148,7 @@ pub(crate) mod test_support {
             &[yuzu_passes::File::entry(source_id, root)],
             &mut diagnostics,
             &yuzu_types::Builtins,
+            None,
         );
 
         let plan = yuzu_mlir::diagnostics::capture(&context, &sources, &mut diagnostics, || {

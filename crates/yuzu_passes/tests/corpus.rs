@@ -70,6 +70,7 @@ fn the_correctness_corpus_lowers() {
                 &[File::entry(source_id, root)],
                 &mut diagnostics,
                 &yuzu_types::Builtins,
+                None,
             );
             let messages: Vec<&str> = diagnostics
                 .diagnostics()

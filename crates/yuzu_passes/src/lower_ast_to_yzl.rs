@@ -24,7 +24,7 @@ mod stmt;
 mod symbols;
 
 pub use program::{File, Lowering};
-pub use symbols::PRELUDE;
+pub use symbols::{BoundLibrary, PRELUDE};
 
 /// `files` is in the order the imports were resolved, the entry file last,
 /// and holds at least that one.
@@ -43,11 +43,12 @@ pub fn lower_ast_to_yzl<'c>(
     files: &[File],
     diagnostics: &mut DiagnosticsEngine,
     registry: &dyn FunctionRegistry,
+    library: Option<&'c BoundLibrary<'c>>,
 ) -> Module<'c> {
     let entry = files.last().expect("a program has an entry file");
     let mut lowerer = AstToYzl {
         context,
-        symbols: SymbolTable::new(context),
+        symbols: SymbolTable::new(context, library),
         registry,
         sources,
         source_id: entry.source_id,
@@ -56,6 +57,35 @@ pub fn lower_ast_to_yzl<'c>(
     };
 
     lowerer.lower(files, entry)
+}
+
+/// Binds the names `files` declare, in the order the imports were resolved,
+/// without lowering anything. A compile given the result skips binding
+/// those files again.
+///
+/// # Panics
+///
+/// If `files` is empty.
+pub fn bind_library<'c>(
+    context: &'c Context,
+    sources: &SourceMap,
+    files: &[File],
+    diagnostics: &mut DiagnosticsEngine,
+    registry: &dyn FunctionRegistry,
+) -> BoundLibrary<'c> {
+    let first = files.first().expect("a library has a file");
+    let mut lowerer = AstToYzl {
+        context,
+        symbols: SymbolTable::new(context, None),
+        registry,
+        sources,
+        source_id: first.source_id,
+        file: StringAttribute::new(context, sources.name(first.source_id)),
+        diagnostics,
+    };
+
+    lowerer.bind(files);
+    lowerer.symbols.into_library()
 }
 
 struct AstToYzl<'c, 'd> {

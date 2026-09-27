@@ -65,12 +65,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             1,
         ));
 
-        // Names first, for every file: a reference may point forward.
-        for file in files {
-            self.set_file(file);
-            self.bind_imports(&file.root);
-            self.hoist_declarations(&file.root);
-        }
+        self.bind(files);
 
         let body = module.body();
         let mut on_demand = FxHashMap::default();
@@ -106,6 +101,20 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
         self.convert_output(body);
         module
+    }
+
+    /// Names first, for every file: a reference may point forward. A file
+    /// the bound library already holds is not bound again.
+    pub(super) fn bind(&mut self, files: &[File]) {
+        for file in files {
+            self.set_file(file);
+            if self.symbols.library_binds_module() {
+                continue;
+            }
+
+            self.bind_imports(&file.root);
+            self.hoist_declarations(&file.root);
+        }
     }
 
     fn set_file(&mut self, file: &File) {

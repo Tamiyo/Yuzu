@@ -1,16 +1,20 @@
 //! The standard library: the Yuzu modules under `stdlib/`, built into the
 //! compiler so that no files have to be installed beside it.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::OnceLock;
+
+use melior::Context;
 
 use yuzu_ast::{AstNode, ast};
 use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
 use yuzu_diagnostics::source_map::SourceMap;
 use yuzu_lexer::lexer::{Lexer, Token};
+use yuzu_passes::{BoundLibrary, File};
 use yuzu_syntax::{GreenNode, SyntaxNode};
 
-use crate::modules::ModuleSource;
+use crate::modules::{self, MapResolver, ModuleSource};
 
 /// One library file: its module path, the name a diagnostic shows for it,
 /// and its text.
@@ -29,7 +33,7 @@ const ROOT: &str = "yuzu";
 const ENGINE_MODULE: &str = "yuzu.engine";
 
 /// The engine a program is compiled for.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Engine {
     DataFusion,
 }
@@ -71,6 +75,56 @@ pub(crate) fn resolve(path: &str, engine: Engine) -> Option<ModuleSource> {
             name: module.name.to_string(),
             source: module.source.to_string(),
         })
+}
+
+thread_local! {
+    static BOUND: RefCell<HashMap<Engine, &'static BoundLibrary<'static>>> =
+        RefCell::new(HashMap::new());
+}
+
+/// The library's names for an engine, bound once for the thread.
+pub(crate) fn bound_library(engine: Engine) -> &'static BoundLibrary<'static> {
+    BOUND.with(|bound| {
+        *bound
+            .borrow_mut()
+            .entry(engine)
+            .or_insert_with(|| bind(engine))
+    })
+}
+
+/// The names live in a context made for them and never dropped. It holds
+/// only the library, which is fixed, so it does not grow.
+fn bind(engine: Engine) -> &'static BoundLibrary<'static> {
+    let context: &'static Context = Box::leak(Box::new(yuzu_mlir::context()));
+    let mut sources = SourceMap::new();
+    let mut diagnostics = DiagnosticsEngine::new();
+    let entry = sources.add("<library>".to_string(), String::new());
+    let files = modules::load(
+        entry,
+        &mut sources,
+        &mut diagnostics,
+        &MapResolver(HashMap::new()),
+        engine,
+    )
+    .expect("the library loads");
+    let library: Vec<File> = files
+        .into_iter()
+        .filter(|file| file.module().is_some())
+        .collect();
+
+    let bound = yuzu_passes::bind_library(
+        context,
+        &sources,
+        &library,
+        &mut diagnostics,
+        &yuzu_types::Builtins,
+    );
+    assert!(
+        diagnostics.diagnostics().is_empty(),
+        "the library binds without diagnostics"
+    );
+
+    Box::leak(Box::new(bound))
 }
 
 /// A library file's syntax tree. Each file is parsed once for the process;
@@ -150,6 +204,7 @@ mod tests {
             &files,
             &mut diagnostics,
             &yuzu_types::Builtins,
+            None,
         );
         let messages: Vec<&str> = diagnostics
             .diagnostics()
