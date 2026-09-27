@@ -166,20 +166,26 @@ from t |> select double(a) + cap + two() as v
 
     #[test]
     fn a_module_let_goes_to_its_let() {
-        check_definition(&PROGRAM.replacen("+ cap", "+ $0cap", 1), expect![[r#"
+        check_definition(
+            &PROGRAM.replacen("+ cap", "+ $0cap", 1),
+            expect![[r#"
             Some(
                 "main.yz:cap",
             )
-        "#]]);
+        "#]],
+        );
     }
 
     #[test]
     fn a_relation_goes_to_its_table() {
-        check_definition(&PROGRAM.replacen("from t", "from $0t", 1), expect![[r#"
+        check_definition(
+            &PROGRAM.replacen("from t", "from $0t", 1),
+            expect![[r#"
             Some(
                 "main.yz:t",
             )
-        "#]]);
+        "#]],
+        );
     }
 
     #[test]

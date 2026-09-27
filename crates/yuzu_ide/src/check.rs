@@ -13,10 +13,11 @@ use yuzu_driver::index::Index;
 use yuzu_driver::modules::{FsResolver, MARKER, ModuleResolver, ModuleSource};
 use yuzu_driver::{Focus, stdlib};
 
+use crate::HlRange;
 use crate::hover::HoverResult;
 use crate::inlay_hints::InlayHint;
 use crate::navigation::FileRange;
-use crate::{hover, inlay_hints, navigation};
+use crate::{hover, inlay_hints, navigation, syntax_highlighting};
 
 /// What checking a file's program found.
 #[derive(Debug)]
@@ -64,6 +65,13 @@ impl Checked {
 
     pub fn hover(&self, file: &Path, offset: TextSize) -> Option<HoverResult> {
         hover::hover(self, self.source_of(file)?, offset)
+    }
+
+    /// Each resolved use in a file, highlighted as its declaration is.
+    pub fn highlight_uses(&self, file: &Path) -> Vec<HlRange> {
+        self.source_of(file)
+            .map(|source| syntax_highlighting::highlight_uses(self, source))
+            .unwrap_or_default()
     }
 
     pub fn inlay_hints(&self, file: &Path) -> Vec<InlayHint> {

@@ -157,10 +157,13 @@ from t |> select double(1) + cap as v
 
     #[test]
     fn a_literal_shows_its_type() {
-        check(&PROGRAM.replacen("* 2", "* $02", 1), expect![[r#"
+        check(
+            &PROGRAM.replacen("* 2", "* $02", 1),
+            expect![[r#"
             Some(
                 "2 ```yuzu\nint64\n```",
             )
-        "#]]);
+        "#]],
+        );
     }
 }

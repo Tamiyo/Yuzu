@@ -84,6 +84,19 @@ pub(crate) enum Refresh {
     Unsupported,
 }
 
+pub(crate) fn semantic_tokens_refresh(client: &ClientCapabilities) -> Refresh {
+    let supported = client
+        .workspace
+        .as_ref()
+        .and_then(|workspace| workspace.semantic_tokens.as_ref())
+        .and_then(|semantic_tokens| semantic_tokens.refresh_support);
+
+    match supported {
+        Some(true) => Refresh::Supported,
+        Some(false) | None => Refresh::Unsupported,
+    }
+}
+
 pub(crate) fn inlay_hint_refresh(client: &ClientCapabilities) -> Refresh {
     let supported = client
         .workspace

@@ -14,7 +14,7 @@ use lsp_types::notification::{
 use lsp_types::request::{
     DocumentHighlightRequest, DocumentSymbolRequest, FoldingRangeRequest, GotoDefinition,
     HoverRequest, InlayHintRefreshRequest, InlayHintRequest, References, Request as _,
-    SelectionRangeRequest, SemanticTokensFullRequest,
+    SelectionRangeRequest, SemanticTokensFullRequest, SemanticTokensRefresh,
 };
 use lsp_types::{
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
@@ -71,6 +71,7 @@ pub fn run(connection: &Connection) -> Result<(), RunError> {
         published: FxHashSet::default(),
         checks: FxHashMap::default(),
         inlay_hints: capabilities::inlay_hint_refresh(&params.capabilities),
+        semantic_tokens: capabilities::semantic_tokens_refresh(&params.capabilities),
         next_request: 0,
     };
     loop {
@@ -124,6 +125,8 @@ pub(crate) struct GlobalState<'c> {
     checks: FxHashMap<FileId, (i32, Arc<Checked>)>,
     /// Whether the client asks for inlay hints again when told to.
     inlay_hints: Refresh,
+    /// Whether the client asks for semantic tokens again when told to.
+    semantic_tokens: Refresh,
     /// The id of the next request the server sends the client.
     next_request: i32,
 }
@@ -317,10 +320,13 @@ impl GlobalState<'_> {
                 self.checks.insert(file_id, (version, Arc::new(checked)));
             }
         }
-        match self.inlay_hints {
-            Refresh::Supported => self.send_request::<InlayHintRefreshRequest>(()),
-            Refresh::Unsupported => Ok(()),
+        if self.inlay_hints == Refresh::Supported {
+            self.send_request::<InlayHintRefreshRequest>(())?;
         }
+        if self.semantic_tokens == Refresh::Supported {
+            self.send_request::<SemanticTokensRefresh>(())?;
+        }
+        Ok(())
     }
 
     fn respond<R>(&self, request: Request, handler: fn(&Self, R::Params) -> R::Result) -> Response

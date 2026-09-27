@@ -1,13 +1,18 @@
-//! Highlighting from the syntax tree alone. What a name is follows from the
-//! node that holds it. What needs name resolution gets the most it can say
-//! without it: a bare name in an expression gets no highlight, and a type
-//! name is a `Type` whether it is built in or declared.
+//! Highlighting. What a name is follows from the node that holds it, so the
+//! syntax tree answers for most names at once. A bare name in an expression
+//! needs name resolution, so it waits for a check and takes the highlight of
+//! the declaration it resolves to. A type name is a `Type` whether it is
+//! built in or declared.
 
 use std::ops::BitOr;
 
 use text_size::TextRange;
 use yuzu_ast::{self as ast, AstNode, Ident, Mutability};
+use yuzu_diagnostics::source_map::SourceId;
 use yuzu_syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
+
+use crate::Checked;
+use crate::names::{Trees, resolutions};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HlRange {
@@ -102,6 +107,39 @@ pub(crate) fn highlight(root: &SyntaxNode) -> Vec<HlRange> {
             Some(HlRange {
                 range: token.text_range(),
                 highlight: highlight_token(&token)?,
+            })
+        })
+        .collect()
+}
+
+/// Each use a check resolved in a source, highlighted as its declaration.
+pub(crate) fn highlight_uses(checked: &Checked, source: SourceId) -> Vec<HlRange> {
+    let mut trees = Trees::new(checked);
+    let resolutions = resolutions(checked, &mut trees);
+    resolutions
+        .iter()
+        .filter(|resolution| resolution.used.source == source)
+        .filter_map(|resolution| {
+            let root = trees.get(resolution.declared.source);
+            let declaring = root
+                .covering_element(resolution.declared.range)
+                .parent()?
+                .parent()?;
+            let highlight = match declaring.kind() {
+                SyntaxKind::FuncParam => HlTag::Parameter.into(),
+                SyntaxKind::LetStmt => match ast::LetStmt::cast(declaring)?.mutability() {
+                    Mutability::Mutable => HlTag::Local | HlMod::Mutable,
+                    Mutability::Immutable => HlTag::Local.into(),
+                },
+                SyntaxKind::FuncStmt => HlTag::Function.into(),
+                SyntaxKind::TableStmt => HlTag::Table.into(),
+                SyntaxKind::StructStmt => HlTag::Struct.into(),
+                SyntaxKind::TraitStmt => HlTag::Trait.into(),
+                _ => return None,
+            };
+            Some(HlRange {
+                range: resolution.used.range,
+                highlight,
             })
         })
         .collect()
@@ -328,5 +366,38 @@ from employees e
                 n Field
                 summary Local Declaration"#]],
         );
+    }
+
+    #[test]
+    fn resolved_uses_take_their_declarations_highlight() {
+        let text = "table t = { a: int64 }\nlet cap = 10\ndef f(x: int64) -> int64 {\n    let mut k = x\n    k = k + cap\n    return k\n}\nfrom t |> select f(a) as v\n";
+        let (_tree, main, checked) = crate::test_support::checked(&[], text);
+        let rendered: Vec<String> = checked
+            .highlight_uses(&main)
+            .iter()
+            .map(|range| {
+                let mods: Vec<String> = range
+                    .highlight
+                    .mods
+                    .iter()
+                    .map(|m| format!("{m:?}"))
+                    .collect();
+                format!(
+                    "{} {:?} {}",
+                    &text[range.range],
+                    range.highlight.tag,
+                    mods.join(",")
+                )
+                .trim_end()
+                .to_string()
+            })
+            .collect();
+        expect![[r#"
+            x Parameter
+            k Local Mutable
+            cap Local
+            k Local Mutable
+            t Table
+            f Function"#]].assert_eq(&rendered.join("\n"));
     }
 }

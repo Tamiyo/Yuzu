@@ -59,8 +59,15 @@ pub(crate) fn semantic_tokens_full(
     state: &GlobalState,
     params: SemanticTokensParams,
 ) -> Option<SemanticTokensResult> {
-    let (file_id, document) = state.document(&params.text_document.uri)?;
-    let highlights = state.analysis().highlight(file_id)?;
+    let url = &params.text_document.uri;
+    let (file_id, document) = state.document(url)?;
+    let mut highlights = state.analysis().highlight(file_id)?;
+    if let Some((_, path, checked)) = state.checked_document(url) {
+        let uses = checked.highlight_uses(path);
+        highlights.retain(|syntax| uses.iter().all(|used| used.range != syntax.range));
+        highlights.extend(uses);
+        highlights.sort_by_key(|highlight| highlight.range.start());
+    }
     let tokens = to_proto::semantic_tokens(&document.text, &document.line_index, &highlights);
     Some(SemanticTokensResult::Tokens(tokens))
 }
