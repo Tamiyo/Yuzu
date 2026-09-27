@@ -718,9 +718,12 @@ fn stage_range(rel: &ast::Rel) -> TextRange {
         return node.text_range();
     };
 
+    // The input is the stage node's first child and `|>` is one of its own
+    // tokens, so the direct children are enough; walking every token under
+    // the node would walk the whole pipeline before it again.
     let after = input.syntax().text_range().end();
     let start = node
-        .descendants_with_tokens()
+        .children_with_tokens()
         .filter_map(|element| element.into_token())
         .find(|token| token.text_range().start() >= after && !token.kind().is_trivia())
         .map_or(after, |token| token.text_range().start());
