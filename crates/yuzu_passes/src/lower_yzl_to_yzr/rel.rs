@@ -76,7 +76,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             &fields,
             op.location(),
         ));
-        self.anchor = Some(placed);
+        self.anchor = placed;
         // SAFETY: `op` and `item` are not used after this, and the anchor
         // no longer points at `op`.
         unsafe { symbols.erase(op) };

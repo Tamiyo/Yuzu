@@ -52,7 +52,10 @@ pub trait ArrayAttributeExt<'c> {
         let i64 = IntegerType::new(context, 64).into();
         let indices: Vec<Attribute<'c>> = indices
             .into_iter()
-            .map(|index| IntegerAttribute::new(i64, index as i64).into())
+            .map(|index| {
+                let index = i64::try_from(index).expect("an index fits in an i64");
+                IntegerAttribute::new(i64, index).into()
+            })
             .collect();
         ArrayAttribute::new(context, &indices)
     }
@@ -72,27 +75,36 @@ impl<'c> ArrayAttributeExt<'c> for ArrayAttribute<'c> {
     }
 
     fn strings(&self) -> impl Iterator<Item = &'c str> + use<'c> {
-        self.elements()
-            .filter_map(|element| StringAttribute::try_from(element).ok())
-            .map(|string| string.value())
+        self.elements().map(|element| {
+            StringAttribute::try_from(element)
+                .expect("the array holds only strings")
+                .value()
+        })
     }
 
     fn symbols(&self) -> impl Iterator<Item = &'c str> + use<'c> {
-        self.elements()
-            .filter_map(|element| FlatSymbolRefAttribute::try_from(element).ok())
-            .map(|symbol| symbol.value())
+        self.elements().map(|element| {
+            FlatSymbolRefAttribute::try_from(element)
+                .expect("the array holds only symbols")
+                .value()
+        })
     }
 
     fn types(&self) -> impl Iterator<Item = Type<'c>> + use<'c> {
-        self.elements()
-            .filter_map(|element| TypeAttribute::try_from(element).ok())
-            .map(|attribute| attribute.value())
+        self.elements().map(|element| {
+            TypeAttribute::try_from(element)
+                .expect("the array holds only types")
+                .value()
+        })
     }
 
     fn indices(&self) -> impl Iterator<Item = usize> + use<'c> {
-        self.elements()
-            .filter_map(|element| IntegerAttribute::try_from(element).ok())
-            .map(|index| index.value() as usize)
+        self.elements().map(|element| {
+            let index = IntegerAttribute::try_from(element)
+                .expect("the array holds only integers")
+                .value();
+            usize::try_from(index).expect("an index is not negative")
+        })
     }
 }
 
@@ -108,7 +120,6 @@ mod tests {
         let context = crate::context();
         let array = ArrayAttribute::from_strings(&context, ["a", "b"]);
         assert_eq!(array.strings().collect::<Vec<_>>(), ["a", "b"]);
-        assert_eq!(array.symbols().count(), 0);
     }
 
     #[test]
@@ -116,7 +127,14 @@ mod tests {
         let context = crate::context();
         let array = ArrayAttribute::from_symbols(&context, [String::from("helpers.f")]);
         assert_eq!(array.symbols().collect::<Vec<_>>(), ["helpers.f"]);
-        assert_eq!(array.strings().count(), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "the array holds only symbols")]
+    fn an_element_of_another_kind_is_a_bug() {
+        let context = crate::context();
+        let array = ArrayAttribute::from_strings(&context, ["a"]);
+        array.symbols().for_each(drop);
     }
 
     #[test]

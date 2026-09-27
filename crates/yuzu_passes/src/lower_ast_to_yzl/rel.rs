@@ -172,7 +172,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 )
             })
             .collect::<Vec<_>>();
-        let (names, region) = self.convert_items(items.into_iter(), "select item", loc);
+        let (names, region) = self.convert_items(&items, "select item", loc);
         let columns = ArrayAttribute::from_strings(self.context, &names);
         self.symbols.replace(names);
         block
@@ -207,7 +207,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 )
             })
             .collect::<Vec<_>>();
-        let (names, region) = self.convert_items(items.into_iter(), "extend item", loc);
+        let (names, region) = self.convert_items(&items, "extend item", loc);
         let columns = ArrayAttribute::from_strings(self.context, &names);
         self.symbols.extend(names);
         block
@@ -262,7 +262,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 )
             })
             .collect::<Vec<_>>();
-        let (names, region) = self.convert_items(items.into_iter(), "aggregate item", loc);
+        let (names, region) = self.convert_items(&items, "aggregate item", loc);
         let group_by = ArrayAttribute::from_strings(self.context, &key_names);
         let measures = ArrayAttribute::from_strings(self.context, &names);
         key_names.extend(names);
@@ -494,7 +494,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             })
             .collect();
 
-        let (names, region) = self.convert_items(items.into_iter(), "set item", loc);
+        let (names, region) = self.convert_items(&items, "set item", loc);
         let names = ArrayAttribute::from_strings(self.context, &names);
 
         let mut op: Operation<'c> = yzl::set(
@@ -625,7 +625,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
     fn convert_items(
         &mut self,
-        items: impl Iterator<Item = Item<'c>>,
+        items: &[Item<'c>],
         what: &str,
         loc: Location<'c>,
     ) -> (Vec<&'c str>, Region<'c>) {
@@ -633,9 +633,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let body = self.stage_block(&region, loc);
         let mut names = Vec::new();
         let mut values = Vec::new();
-        for (index, (alias, expr, range)) in items.enumerate() {
+        for (index, (alias, expr, range)) in items.iter().enumerate() {
             let name = alias
-                .or_else(|| match &expr {
+                .or_else(|| match expr {
                     Some(ast::Expr::IdentExpr(ident)) => self.read_ident(ident.name()),
                     _ => None,
                 })
@@ -643,11 +643,11 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
             names.push(name);
 
-            let value = match &expr {
+            let value = match expr {
                 Some(expr) => self.convert_expr(body, &Locals::new(), expr),
                 None => {
-                    self.report_at(range, &format!("{what} is missing its expression"));
-                    self.emit_hole(body, range, UnresolvedType::get(self.context))
+                    self.report_at(*range, &format!("{what} is missing its expression"));
+                    self.emit_hole(body, *range, UnresolvedType::get(self.context))
                 }
             };
 

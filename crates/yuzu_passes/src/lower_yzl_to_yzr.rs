@@ -25,11 +25,16 @@ mod row;
 pub fn lower_yzl_to_yzr<'c>(context: &'c Context, module: &mut Module<'c>) {
     let module = &*module;
     let body = module.body();
+    let ops: Vec<OperationRef<'c, '_>> = body.operations().collect();
+    let Some(&first) = ops.first() else {
+        return;
+    };
+
     let mut symbols = SymbolTable::new(module);
     let mut lowering = YzlToYzr {
         context,
         body,
-        anchor: None,
+        anchor: first,
         stages: FxHashMap::default(),
         shapes: FxHashMap::default(),
         declared: FxHashMap::default(),
@@ -39,9 +44,8 @@ pub fn lower_yzl_to_yzr<'c>(context: &'c Context, module: &mut Module<'c>) {
 
     lowering.intern_declared_shapes(body);
     lowering.record_externals(body);
-    let ops: Vec<OperationRef<'c, '_>> = body.operations().collect();
     for op in ops {
-        lowering.anchor = Some(op);
+        lowering.anchor = op;
         lowering.convert_op(op, &mut symbols);
     }
 
@@ -77,7 +81,7 @@ struct YzlToYzr<'c, 'a> {
     body: BlockRef<'c, 'a>,
     /// The top-level yzl op being converted; what it becomes is placed
     /// before it.
-    anchor: Option<OperationRef<'c, 'a>>,
+    anchor: OperationRef<'c, 'a>,
     stages: FxHashMap<ValueId, (Value<'c, 'a>, Row<'c>)>,
     /// The struct declaring each row shape; one nobody declared is declared
     /// once.
@@ -91,10 +95,7 @@ struct YzlToYzr<'c, 'a> {
 
 impl<'c, 'a> YzlToYzr<'c, 'a> {
     fn insert(&self, op: Operation<'c>) -> OperationRef<'c, 'a> {
-        let anchor = self
-            .anchor
-            .expect("an op is placed while a top-level op is converted");
-        self.body.insert_operation_before(anchor, op)
+        self.body.insert_operation_before(self.anchor, op)
     }
 
     fn input_stage(&mut self, op: OperationRef<'c, '_>) -> Option<(Value<'c, 'a>, Row<'c>)> {
