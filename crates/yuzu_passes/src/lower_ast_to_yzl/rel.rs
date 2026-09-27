@@ -29,9 +29,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         rel: &ast::Rel,
     ) -> (Value<'c, 'a>, Row<'c>) {
         let value = self.convert_rel(block, rel);
-        let row = self.symbols.row().clone();
-        self.symbols.leave();
-        (value, row)
+        (value, self.symbols.leave_relation())
     }
 
     pub(super) fn convert_rel<'a>(

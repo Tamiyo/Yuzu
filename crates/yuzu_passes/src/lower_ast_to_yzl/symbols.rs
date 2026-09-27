@@ -651,6 +651,14 @@ impl<'c> SymbolTable<'c> {
         self.scopes.pop();
     }
 
+    /// Leaves the relation a query opened, and hands back its row.
+    pub(super) fn leave_relation(&mut self) -> Row<'c> {
+        match self.scopes.pop() {
+            Some(Scope::Relation { row, .. }) => row,
+            _ => panic!("a query is left outside a relation"),
+        }
+    }
+
     pub(super) fn row(&self) -> &Row<'c> {
         self.current_row()
             .expect("a stage is being lowered outside a relation")
@@ -738,22 +746,25 @@ impl<'c> SymbolTable<'c> {
         *row = next;
     }
 
-    pub(super) fn alias(&mut self, alias: &'c str) {
-        let Some(Scope::Relation { row, .. }) = self.scopes.last_mut() else {
-            panic!("a stage is being lowered outside a relation")
-        };
+    fn row_mut(&mut self) -> &mut Row<'c> {
+        match self.scopes.last_mut() {
+            Some(Scope::Relation { row, .. }) => row,
+            _ => panic!("a stage is being lowered outside a relation"),
+        }
+    }
 
-        row.qualify(alias);
+    pub(super) fn alias(&mut self, alias: &'c str) {
+        self.row_mut().qualify(alias);
     }
 
     pub(super) fn replace(&mut self, names: Vec<&'c str>) {
         self.replace_row(Row::from(names));
     }
 
+    /// Adds columns; every column already there stays, so none is narrowed
+    /// away.
     pub(super) fn extend(&mut self, names: Vec<&'c str>) {
-        let mut next = self.row().clone();
-        next.append(Row::from(names));
-        self.replace_row(next);
+        self.row_mut().append(Row::from(names));
     }
 
     pub(super) fn remove(&mut self, index: usize) {
@@ -772,9 +783,7 @@ impl<'c> SymbolTable<'c> {
     }
 
     pub(super) fn concat(&mut self, rhs: Row<'c>) {
-        let mut next = self.row().clone();
-        next.append(rhs);
-        self.replace_row(next);
+        self.row_mut().append(rhs);
     }
 }
 
