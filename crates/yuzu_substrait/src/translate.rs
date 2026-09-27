@@ -99,7 +99,10 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
             return None;
         };
 
-        Some((item.names().strings(), item.types().types()))
+        Some((
+            item.names().strings().collect(),
+            item.types().types().collect(),
+        ))
     }
 
     fn width(&self, value: Value<'c, 'a>) -> Option<usize> {

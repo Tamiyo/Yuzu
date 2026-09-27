@@ -242,7 +242,7 @@ fn type_arguments<'c>(
         return Some(FxHashMap::default());
     };
 
-    let parameters = parameters.strings();
+    let parameters: Vec<&str> = parameters.strings().collect();
     let arguments = site
         .type_args()
         .or_else(|| {
@@ -251,7 +251,8 @@ fn type_arguments<'c>(
                 &format!("`{callee}` is generic and this call's types were never settled"),
             )
         })?
-        .types();
+        .types()
+        .collect::<Vec<_>>();
     if arguments.len() != parameters.len() {
         return error(
             location,

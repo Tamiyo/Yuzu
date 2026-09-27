@@ -93,12 +93,7 @@ impl<'c> Declarations<'c> {
                         .insert((item.r#trait().value(), item.target().value()));
                 }
                 Some(YzlOp::Struct(item)) => {
-                    let row = item
-                        .types()
-                        .types()
-                        .into_iter()
-                        .map(Term::Concrete)
-                        .collect();
+                    let row = item.types().types().map(Term::Concrete).collect();
                     declared.rows.insert(item.sym_name().value(), row);
                 }
                 Some(YzlOp::Table(table)) => {
@@ -365,8 +360,11 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
                 let row = self.input_row(op);
                 self.infer_regions(op, &row, &[]);
                 let yields = self.yield_terms(op);
-                let columns = stage.set_cols().map(|columns| columns.indices());
-                for (index, term) in columns.unwrap_or_default().into_iter().zip(yields) {
+                let columns = stage
+                    .set_cols()
+                    .into_iter()
+                    .flat_map(|columns| columns.indices());
+                for (index, term) in columns.zip(yields) {
                     if let Some(&column) = row.get(index) {
                         self.unify(op, column, term);
                     }
@@ -389,10 +387,10 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
             Some(YzlOp::Aggregate(stage)) => {
                 let input = self.input_row(op);
                 self.infer_regions(op, &input, &[]);
-                let keys = stage.key_cols().map(|keys| keys.indices());
-                let mut row: Row = keys
-                    .unwrap_or_default()
+                let mut row: Row = stage
+                    .key_cols()
                     .into_iter()
+                    .flat_map(|keys| keys.indices())
                     .filter_map(|index| input.get(index).copied())
                     .collect();
                 row.extend(self.yield_terms(op));
@@ -714,21 +712,21 @@ fn parse_signature<'c>(function: &FnOp<'c, '_>) -> Option<Signature<'c>> {
         .collect();
     let subjects = function
         .bound_params()
-        .map(|names| names.strings())
-        .unwrap_or_default();
+        .into_iter()
+        .flat_map(|names| names.strings());
     let traits = function
         .bound_traits()
-        .map(|names| names.symbols())
-        .unwrap_or_default();
+        .into_iter()
+        .flat_map(|names| names.symbols());
 
     Some(Signature {
         params,
         result: signature.result(0).ok()?,
         type_params: function
             .type_params()
-            .map(|names| names.strings())
+            .map(|names| names.strings().collect())
             .unwrap_or_default(),
-        bounds: subjects.into_iter().zip(traits).collect(),
+        bounds: subjects.zip(traits).collect(),
     })
 }
 

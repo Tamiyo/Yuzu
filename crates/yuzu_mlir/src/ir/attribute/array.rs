@@ -57,46 +57,42 @@ pub trait ArrayAttributeExt<'c> {
         ArrayAttribute::new(context, &indices)
     }
 
-    fn elements(&self) -> impl Iterator<Item = Attribute<'c>>;
-    fn strings(&self) -> Vec<&'c str>;
-    fn symbols(&self) -> Vec<&'c str>;
-    fn types(&self) -> Vec<Type<'c>>;
-    fn indices(&self) -> Vec<usize>;
+    fn elements(&self) -> impl Iterator<Item = Attribute<'c>> + use<'c, Self>;
+    fn strings(&self) -> impl Iterator<Item = &'c str> + use<'c, Self>;
+    fn symbols(&self) -> impl Iterator<Item = &'c str> + use<'c, Self>;
+    fn types(&self) -> impl Iterator<Item = Type<'c>> + use<'c, Self>;
+    fn indices(&self) -> impl Iterator<Item = usize> + use<'c, Self>;
 }
 
 impl<'c> ArrayAttributeExt<'c> for ArrayAttribute<'c> {
-    fn elements(&self) -> impl Iterator<Item = Attribute<'c>> {
+    fn elements(&self) -> impl Iterator<Item = Attribute<'c>> + use<'c> {
         let array = *self;
         (0..array.len())
             .map(move |index| array.element(index).expect("the element index is in range"))
     }
 
-    fn strings(&self) -> Vec<&'c str> {
+    fn strings(&self) -> impl Iterator<Item = &'c str> + use<'c> {
         self.elements()
             .filter_map(|element| StringAttribute::try_from(element).ok())
             .map(|string| string.value())
-            .collect()
     }
 
-    fn symbols(&self) -> Vec<&'c str> {
+    fn symbols(&self) -> impl Iterator<Item = &'c str> + use<'c> {
         self.elements()
             .filter_map(|element| FlatSymbolRefAttribute::try_from(element).ok())
             .map(|symbol| symbol.value())
-            .collect()
     }
 
-    fn types(&self) -> Vec<Type<'c>> {
+    fn types(&self) -> impl Iterator<Item = Type<'c>> + use<'c> {
         self.elements()
             .filter_map(|element| TypeAttribute::try_from(element).ok())
             .map(|attribute| attribute.value())
-            .collect()
     }
 
-    fn indices(&self) -> Vec<usize> {
+    fn indices(&self) -> impl Iterator<Item = usize> + use<'c> {
         self.elements()
             .filter_map(|element| IntegerAttribute::try_from(element).ok())
             .map(|index| index.value() as usize)
-            .collect()
     }
 }
 
@@ -111,16 +107,16 @@ mod tests {
     fn strings_round_trip() {
         let context = crate::context();
         let array = ArrayAttribute::from_strings(&context, ["a", "b"]);
-        assert_eq!(array.strings(), ["a", "b"]);
-        assert!(array.symbols().is_empty());
+        assert_eq!(array.strings().collect::<Vec<_>>(), ["a", "b"]);
+        assert_eq!(array.symbols().count(), 0);
     }
 
     #[test]
     fn symbols_round_trip() {
         let context = crate::context();
         let array = ArrayAttribute::from_symbols(&context, [String::from("helpers.f")]);
-        assert_eq!(array.symbols(), ["helpers.f"]);
-        assert!(array.strings().is_empty());
+        assert_eq!(array.symbols().collect::<Vec<_>>(), ["helpers.f"]);
+        assert_eq!(array.strings().count(), 0);
     }
 
     #[test]
@@ -128,13 +124,13 @@ mod tests {
         let context = crate::context();
         let int64 = Type::index(&context);
         let array = ArrayAttribute::from_types(&context, [int64, int64]);
-        assert_eq!(array.types(), [int64, int64]);
+        assert_eq!(array.types().collect::<Vec<_>>(), [int64, int64]);
     }
 
     #[test]
     fn indices_round_trip() {
         let context = crate::context();
         let array = ArrayAttribute::from_indices(&context, [2, 0, 1]);
-        assert_eq!(array.indices(), [2, 0, 1]);
+        assert_eq!(array.indices().collect::<Vec<_>>(), [2, 0, 1]);
     }
 }

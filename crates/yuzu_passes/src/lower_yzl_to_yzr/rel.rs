@@ -146,7 +146,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 
         let (region, yielded) =
             self.convert_region(stage.body(), &row, op.location(), Yielded::Body);
-        let produced = stage.names().strings().into_iter().zip(yielded).collect();
+        let produced = stage.names().strings().zip(yielded).collect();
         self.project(op, target, symbols, input, region, produced);
     }
 
@@ -163,7 +163,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 
         let (region, yielded) =
             self.convert_region(stage.body(), &row, op.location(), Yielded::Body);
-        row.extend(stage.names().strings().into_iter().zip(yielded));
+        row.extend(stage.names().strings().zip(yielded));
         let ty = self.row_type(&row, symbols, op.location());
         let extended = target
             .append_operation(yzr::extend(self.context, ty, input, region, op.location()).into());
@@ -182,9 +182,9 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             return;
         };
 
-        let keys = stage
+        let keys: Vec<usize> = stage
             .key_cols()
-            .map(|keys| keys.indices())
+            .map(|keys| keys.indices().collect())
             .unwrap_or_default();
         let grouping = self.convert_grouping(stage.body(), &row, &keys, op.location());
 
@@ -196,7 +196,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 
         // Without a projection the grouping's output is the row; with one it
         // is the keys and the raw measures the projection computes from.
-        let names = stage.names().strings();
+        let names: Vec<&str> = stage.names().strings().collect();
         let mut grouped = carried.clone();
         match &grouping.items {
             Some(_) => grouped.extend(
@@ -264,7 +264,10 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         row.extend(right.iter().copied());
 
         let region = match stage.using_columns() {
-            Some(columns) => self.join_keys(op, &columns.strings(), left_width, &row),
+            Some(columns) => {
+                let columns: Vec<&str> = columns.strings().collect();
+                self.join_keys(op, &columns, left_width, &row)
+            }
             None => {
                 self.convert_region(stage.on(), &row, op.location(), Yielded::Body)
                     .0
@@ -358,7 +361,8 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             return;
         };
 
-        let Some(kept) = self.kept_columns(op, &stage.columns().strings(), &row) else {
+        let dropped: Vec<&str> = stage.columns().strings().collect();
+        let Some(kept) = self.kept_columns(op, &dropped, &row) else {
             return;
         };
 
@@ -378,9 +382,9 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             return;
         };
 
-        let columns = stage
+        let columns: Vec<usize> = stage
             .set_cols()
-            .map(|columns| columns.indices())
+            .map(|columns| columns.indices().collect())
             .unwrap_or_default();
         let (region, yielded) = self.convert_region(
             stage.body(),
@@ -409,9 +413,9 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 
         let columns = stage
             .rename_cols()
-            .map(|columns| columns.indices())
-            .unwrap_or_default();
-        for (&index, name) in columns.iter().zip(stage.to().strings()) {
+            .into_iter()
+            .flat_map(|columns| columns.indices());
+        for (index, name) in columns.zip(stage.to().strings()) {
             match row.get_mut(index) {
                 Some(column) => column.0 = name,
                 None => {
