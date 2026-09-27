@@ -175,9 +175,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         ty: Type<'c>,
     ) -> Value<'c, 'a> {
         let loc = self.location_at(range);
-        block
-            .append_operation(yzl::missing(self.context, ty, loc).into())
-            .first_result()
+        let op = yzl::missing(self.context, ty, loc).into();
+        block.append_operation(op).first_result()
     }
 
     fn location(&self, node: &impl AstNode) -> Location<'c> {

@@ -23,9 +23,6 @@ use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 type Item<'c> = (Option<&'c str>, Option<ast::Expr>, TextRange);
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
-    /// A whole query. `convert_rel` leaves the query's scope open, since a
-    /// stage converts its input through it and only the outermost caller
-    /// knows the chain has ended; this is that caller.
     pub(super) fn convert_query<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
@@ -85,24 +82,25 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn convert_where<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
-        stage: &ast::WhereExpr,
+        r#where: &ast::WhereExpr,
         at: TextRange,
     ) -> Value<'c, 'a> {
         let loc = self.location_at(at);
-        let input = self.convert_input(block, stage, "`where`", stage.input());
+        let input = self.convert_input(block, r#where, "`where`", r#where.input());
         let region = Region::new();
         let body = self.stage_block(&region, loc);
-        let predicate = match stage.predicate() {
+        let predicate = match r#where.predicate() {
             Some(expr) => self.convert_expr(body, &Locals::new(), &expr),
             None => self.report_and_hole(
                 body,
-                stage,
+                r#where,
                 "`where` is missing its predicate",
                 UnresolvedType::get(self.context),
             ),
         };
 
         body.append_operation(yzl::r#yield(self.context, &[predicate], loc).into());
+
         block
             .append_operation(
                 yzl::r#where(
@@ -120,12 +118,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn convert_select<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
-        stage: &ast::SelectExpr,
+        select: &ast::SelectExpr,
         at: TextRange,
     ) -> Value<'c, 'a> {
         let loc = self.location_at(at);
-        let input = self.convert_input(block, stage, "`select`", stage.input());
-        let items = stage
+        let input = self.convert_input(block, select, "`select`", select.input());
+        let items = select
             .items()
             .map(|item| {
                 (
@@ -156,12 +154,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn convert_extend<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
-        stage: &ast::ExtendExpr,
+        extend: &ast::ExtendExpr,
         at: TextRange,
     ) -> Value<'c, 'a> {
         let loc = self.location_at(at);
-        let input = self.convert_input(block, stage, "`extend`", stage.input());
-        let items = stage
+        let input = self.convert_input(block, extend, "`extend`", extend.input());
+        let items = extend
             .items()
             .map(|item| {
                 (
@@ -192,14 +190,14 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn convert_aggregate<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
-        stage: &ast::AggregateExpr,
+        agg: &ast::AggregateExpr,
         at: TextRange,
     ) -> Value<'c, 'a> {
         let loc = self.location_at(at);
-        let input = self.convert_input(block, stage, "`aggregate`", stage.input());
+        let input = self.convert_input(block, agg, "`aggregate`", agg.input());
         let mut keys = Vec::new();
         let mut key_names: Vec<&'c str> = Vec::new();
-        for item in stage.group_by().into_iter().flat_map(|group| group.items()) {
+        for item in agg.group_by().into_iter().flat_map(|group| group.items()) {
             let Some(column) = self.read_ident(item.column()) else {
                 self.report(&item, "group by key is missing its column");
                 continue;
@@ -217,7 +215,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             }
         }
 
-        let items = stage
+        let items = agg
             .items()
             .map(|item| {
                 (
@@ -250,19 +248,19 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn convert_limit<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
-        stage: &ast::LimitExpr,
+        limit: &ast::LimitExpr,
         at: TextRange,
     ) -> Value<'c, 'a> {
         let loc = self.location_at(at);
-        let input = self.convert_input(block, stage, "`limit`", stage.input());
-        let count = match stage.count() {
+        let input = self.convert_input(block, limit, "`limit`", limit.input());
+        let count = match limit.count() {
             Some(count) => self.int_literal(&count),
             None => {
                 self.report_at(at, "`limit` is missing its row count");
                 0
             }
         };
-        let offset = stage.offset().map(|offset| self.int_literal(&offset));
+        let offset = limit.offset().map(|offset| self.int_literal(&offset));
 
         let i64 = IntegerType::new(self.context, 64).into();
         let mut builder = yzl::LimitOperationBuilder::new(self.context, loc)
@@ -281,15 +279,15 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn convert_rename<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
-        stage: &ast::RenameExpr,
+        rename: &ast::RenameExpr,
         at: TextRange,
     ) -> Value<'c, 'a> {
         let loc = self.location_at(at);
-        let input = self.convert_input(block, stage, "`rename`", stage.input());
+        let input = self.convert_input(block, rename, "`rename`", rename.input());
         let mut from: Vec<String> = Vec::new();
         let mut to: Vec<&'c str> = Vec::new();
         let mut renames = Vec::new();
-        for item in stage.items() {
+        for item in rename.items() {
             let (Some(old), Some(new)) = (self.read_ident(item.from()), self.read_ident(item.to()))
             else {
                 self.report(&item, "rename item is missing a column name");
@@ -327,12 +325,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn convert_alias<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
-        stage: &ast::AliasExpr,
+        alias: &ast::AliasExpr,
         at: TextRange,
     ) -> Value<'c, 'a> {
         let loc = self.location_at(at);
-        let input = self.convert_input(block, stage, "`as`", stage.input());
-        let Some(alias) = self.read_ident(stage.alias()) else {
+        let input = self.convert_input(block, alias, "`as`", alias.input());
+        let Some(alias) = self.read_ident(alias.alias()) else {
             self.report_at(at, "`as` is missing its alias");
             return input;
         };
@@ -343,34 +341,34 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn convert_join<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
-        stage: &ast::JoinExpr,
+        join: &ast::JoinExpr,
         at: TextRange,
     ) -> Value<'c, 'a> {
         let loc = self.location_at(at);
-        let lhs = self.convert_input(block, stage, "`join`", stage.input());
-        let kind = match stage.kind() {
+        let lhs = self.convert_input(block, join, "`join`", join.input());
+        let kind = match join.kind() {
             Some(ast::JoinKind::Left) => JoinKind::Left,
             Some(ast::JoinKind::Right) => JoinKind::Right,
             Some(ast::JoinKind::Full) => JoinKind::Full,
             Some(ast::JoinKind::Inner) | None => JoinKind::Inner,
         };
-        let Some(relation) = self.read_ident(stage.relation()) else {
+        let Some(relation) = self.read_ident(join.relation()) else {
             return self.report_and_hole(
                 block,
-                stage,
+                join,
                 "`join` is missing its relation",
                 QueryType::get(self.context),
             );
         };
 
-        let alias = self.read_ident(stage.alias());
+        let alias = self.read_ident(join.alias());
         let Some((rhs_symbol, rhs)) = self.symbols.relation(relation, alias) else {
             self.report_at(at, &format!("`{relation}` is not a relation"));
             return self.emit_hole(block, at, QueryType::get(self.context));
         };
 
         let mut using: Vec<&'c str> = Vec::new();
-        if let Some(clause) = stage.using() {
+        if let Some(clause) = join.using() {
             using = clause
                 .columns()
                 .filter_map(|column| self.read_ident(Some(column)))
@@ -393,8 +391,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         // The condition sees both rows, so the row moves first.
         self.symbols.concat(rhs);
         let on = Region::new();
-        if stage.using().is_none() {
-            match stage.on() {
+        if join.using().is_none() {
+            match join.on() {
                 None => self.report_at(at, "`join` is missing its `on` or `using` clause"),
                 Some(clause) => match clause.condition() {
                     None => self.report(&clause, "`on` is missing its condition"),
@@ -413,6 +411,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .kind(StringAttribute::new(self.context, kind.as_str()))
             .rhs(FlatSymbolRefAttribute::new(self.context, rhs_symbol))
             .on(on);
+
         if let Some(alias) = alias {
             builder = builder.rhs_alias(StringAttribute::new(self.context, alias));
         }
@@ -429,12 +428,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn convert_set<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
-        stage: &ast::SetExpr,
+        set: &ast::SetExpr,
         at: TextRange,
     ) -> Value<'c, 'a> {
         let loc = self.location_at(at);
-        let input = self.convert_input(block, stage, "`set`", stage.input());
-        let items: Vec<ast::SetItem> = stage.items().collect();
+        let input = self.convert_input(block, set, "`set`", set.input());
+        let items: Vec<ast::SetItem> = set.items().collect();
         let mut columns = Vec::new();
         for item in &items {
             let Some(name) = self.read_ident(item.column()) else {
@@ -457,8 +456,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 )
             })
             .collect();
+
         let (names, region) = self.convert_items(items.into_iter(), "set item", loc);
         let names = ArrayAttribute::from_strings(self.context, &names);
+
         let mut op: Operation<'c> = yzl::set(
             self.context,
             QueryType::get(self.context),
@@ -468,6 +469,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             loc,
         )
         .into();
+
         op.set_index_array_attribute(self.context, "set_cols", &columns);
         block.append_operation(op).first_result()
     }
@@ -475,11 +477,11 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn convert_distinct<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
-        stage: &ast::DistinctExpr,
+        distinct: &ast::DistinctExpr,
         at: TextRange,
     ) -> Value<'c, 'a> {
         let loc = self.location_at(at);
-        let input = self.convert_input(block, stage, "`distinct`", stage.input());
+        let input = self.convert_input(block, distinct, "`distinct`", distinct.input());
         block
             .append_operation(
                 yzl::distinct(self.context, QueryType::get(self.context), input, loc).into(),
@@ -490,13 +492,13 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn convert_drop<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
-        stage: &ast::DropExpr,
+        drop: &ast::DropExpr,
         at: TextRange,
     ) -> Value<'c, 'a> {
         let loc = self.location_at(at);
-        let input = self.convert_input(block, stage, "`drop`", stage.input());
+        let input = self.convert_input(block, drop, "`drop`", drop.input());
         let mut names: Vec<String> = Vec::new();
-        for column in stage.columns() {
+        for column in drop.columns() {
             let Some(name) = column.clone().text() else {
                 continue;
             };
@@ -604,7 +606,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn convert_input<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
-        stage: &impl AstNode,
+        node: &impl AstNode,
         what: &str,
         input: Option<ast::Expr>,
     ) -> Value<'c, 'a> {
@@ -631,7 +633,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             ),
             None => self.report_and_hole(
                 block,
-                stage,
+                node,
                 &format!("{what} is missing its input relation"),
                 QueryType::get(self.context),
             ),
@@ -676,7 +678,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     _ => None,
                 })
                 .unwrap_or_else(|| self.symbols.intern(&format!("column{index}")));
+
             names.push(name);
+
             let value = match &expr {
                 Some(expr) => self.convert_expr(body, &Locals::new(), expr),
                 None => {

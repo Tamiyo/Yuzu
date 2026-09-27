@@ -86,13 +86,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
 
         let name = self.symbols.symbol_here(name);
-        self.emit_struct(
-            block,
-            name,
-            decl.fields(),
-            decl.visibility(),
-            self.location(decl),
-        );
+        let loc = self.location(decl);
+        self.emit_struct(block, name, decl.fields(), decl.visibility(), loc);
     }
 
     fn convert_table<'a>(&mut self, block: BlockRef<'c, 'a>, decl: &ast::TableStmt) {
@@ -130,25 +125,25 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 let symbol = self
                     .symbols
                     .symbol_here(self.symbols.intern(&format!("{name}_row")));
-                self.emit_struct(
-                    block,
-                    symbol,
-                    decl.inline_fields(),
-                    decl.visibility(),
-                    self.location(decl),
-                );
+
+                let loc = self.location(decl);
+                self.emit_struct(block, symbol, decl.inline_fields(), decl.visibility(), loc);
+
                 symbol
             }
         };
 
         let name = self.symbols.symbol_here(name);
+        let loc = self.location(decl);
+
         let mut table: Operation<'c> = yzl::table(
             self.context,
             StringAttribute::new(self.context, name),
             FlatSymbolRefAttribute::new(self.context, row),
-            self.location(decl),
+            loc,
         )
         .into();
+
         if decl.visibility() != Visibility::Public {
             table.set_private(self.context);
         }
@@ -176,7 +171,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     }
 
     fn convert_method<'a>(&mut self, block: BlockRef<'c, 'a>, decl: &ast::FuncStmt, site: Site) {
-        let location = self.location(decl);
+        let loc = self.location(decl);
 
         let Some(name) = self.read_ident(decl.name()) else {
             self.report(decl, "function is missing its name");
@@ -249,7 +244,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let body = Region::new();
         if let Some(block) = decl.body() {
             let ty = UnresolvedType::get(self.context);
-            let arguments = vec![(ty, location); param_count];
+            let arguments = vec![(ty, loc); param_count];
             let entry = body.append_block(Block::new(&arguments));
 
             let mut locals = Locals::new();
@@ -259,7 +254,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     .argument(index)
                     .expect("the entry block has one argument per parameter")
                     .into();
-                let place = self.emit_local(entry, name, LocalKind::Param, argument, location);
+
+                let place = self.emit_local(entry, name, LocalKind::Param, argument, loc);
                 self.bind_local(&mut locals, name, place);
             }
 
@@ -267,7 +263,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             self.symbols.leave();
         }
 
-        let mut builder = yzl::FnOperationBuilder::new(self.context, location)
+        let mut builder = yzl::FnOperationBuilder::new(self.context, loc)
             .sym_name(StringAttribute::new(self.context, name))
             .params(ArrayAttribute::from_strings(self.context, param_names))
             .signature(TypeAttribute::new(signature.into()))
@@ -400,7 +396,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         locals: &mut Locals<'c, 'a>,
         decl: &ast::LetStmt,
     ) {
-        let location = self.location(decl);
+        let loc = self.location(decl);
 
         let Some(name) = self.read_ident(decl.name()) else {
             self.report(decl, "let binding is missing its name");
@@ -415,7 +411,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         if self.symbols.in_body() {
             let kind = LocalKind::Let(decl.mutability());
             let value = self.convert_expr(block, locals, &expr);
-            let place = self.emit_local(block, name, kind, value, location);
+            let place = self.emit_local(block, name, kind, value, loc);
             self.bind_local(locals, name, place);
             return;
         }
@@ -452,10 +448,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             _ => (self.convert_expr(body, &Locals::new(), &expr), None),
         };
 
-        body.append_operation(yzl::r#yield(self.context, &[value], location).into());
+        body.append_operation(yzl::r#yield(self.context, &[value], loc).into());
 
         let symbol = self.symbols.symbol_here(name);
-        let mut builder = yzl::ConstOperationBuilder::new(self.context, location)
+        let mut builder = yzl::ConstOperationBuilder::new(self.context, loc)
             .sym_name(StringAttribute::new(self.context, symbol))
             .body(region);
 
@@ -515,8 +511,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         };
 
         let value = self.convert_expr(block, locals, &value);
-        let location = self.location(assign);
-        block.append_operation(yzl::store(self.context, locals[slot], value, location).into());
+        let loc = self.location(assign);
+        block.append_operation(yzl::store(self.context, locals[slot], value, loc).into());
     }
 
     fn convert_return<'a>(
@@ -983,9 +979,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         name: &str,
         kind: LocalKind,
         value: Value<'c, 'a>,
-        location: Location<'c>,
+        loc: Location<'c>,
     ) -> Value<'c, 'a> {
-        let builder = yzl::LocalOperationBuilder::new(self.context, location)
+        let builder = yzl::LocalOperationBuilder::new(self.context, loc)
             .place(RefType::get(self.context))
             .var_name(StringAttribute::new(self.context, name));
 
@@ -999,7 +995,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .append_operation(builder.build().into())
             .first_result();
 
-        block.append_operation(yzl::store(self.context, place, value, location).into());
+        block.append_operation(yzl::store(self.context, place, value, loc).into());
         place
     }
 

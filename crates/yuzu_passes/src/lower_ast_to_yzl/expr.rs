@@ -22,26 +22,15 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         locals: &Locals<'c, 'a>,
         expr: &ast::Expr,
     ) -> Value<'c, 'a> {
-        let loc = self.location(expr);
         match expr {
             ast::Expr::Literal(literal) => self.convert_literal(block, literal),
-            ast::Expr::IdentExpr(ident) => self.convert_ident(block, locals, ident, loc),
-            ast::Expr::FieldAccessExpr(access) => {
-                self.convert_field_access(block, locals, access, loc)
-            }
+            ast::Expr::IdentExpr(ident) => self.convert_ident(block, locals, ident),
+            ast::Expr::FieldAccessExpr(access) => self.convert_field_access(block, locals, access),
             ast::Expr::BinaryExpr(binary) => self.convert_binary(block, locals, binary),
-            ast::Expr::UnaryExpr(unary) => self.convert_unary(block, locals, unary, loc),
-            ast::Expr::CallExpr(call) => self.convert_call(block, locals, call, loc),
-            ast::Expr::ListExpr(list) => self.convert_list(block, locals, list, loc),
-            ast::Expr::ParenExpr(paren) => match paren.expr() {
-                Some(inner) => self.convert_expr(block, locals, &inner),
-                None => self.report_and_hole(
-                    block,
-                    paren,
-                    "parenthesized expression is missing its inner expression",
-                    UnresolvedType::get(self.context),
-                ),
-            },
+            ast::Expr::UnaryExpr(unary) => self.convert_unary(block, locals, unary),
+            ast::Expr::CallExpr(call) => self.convert_call(block, locals, call),
+            ast::Expr::ListExpr(list) => self.convert_list(block, locals, list),
+            ast::Expr::ParenExpr(paren) => self.convert_paren_expr(block, locals, paren),
             ast::Expr::Rel(rel) => self.convert_query(block, rel).0,
             ast::Expr::StructExpr(literal) => self.report_and_hole(
                 block,
@@ -101,7 +90,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         block: BlockRef<'c, 'a>,
         locals: &Locals<'c, 'a>,
         ident: &ast::IdentExpr,
-        loc: Location<'c>,
     ) -> Value<'c, 'a> {
         let Some(name) = self.read_ident(ident.name()) else {
             return self.report_and_hole(
@@ -112,6 +100,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             );
         };
 
+        let loc = self.location(ident);
         self.name_ref(block, locals, ident, Reference::unqualified(name), loc)
     }
 
@@ -121,8 +110,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         block: BlockRef<'c, 'a>,
         locals: &Locals<'c, 'a>,
         access: &ast::FieldAccessExpr,
-        loc: Location<'c>,
     ) -> Value<'c, 'a> {
+        let loc = self.location(access);
+
         let base = match access.base() {
             Some(ast::Expr::IdentExpr(ident)) => self.read_ident(ident.name()),
             Some(_) => {
@@ -249,8 +239,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         block: BlockRef<'c, 'a>,
         locals: &Locals<'c, 'a>,
         unary: &ast::UnaryExpr,
-        loc: Location<'c>,
     ) -> Value<'c, 'a> {
+        let loc = self.location(unary);
+
         let value = match unary.expr() {
             Some(expr) => self.convert_expr(block, locals, &expr),
             None => {
@@ -289,8 +280,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         block: BlockRef<'c, 'a>,
         locals: &Locals<'c, 'a>,
         call: &ast::CallExpr,
-        loc: Location<'c>,
     ) -> Value<'c, 'a> {
+        let loc = self.location(call);
+
         let callee = match call.callee() {
             Some(ast::Expr::IdentExpr(ident)) => match self.read_ident(ident.name()) {
                 Some(callee) => callee,
@@ -410,8 +402,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         block: BlockRef<'c, 'a>,
         locals: &Locals<'c, 'a>,
         list: &ast::ListExpr,
-        loc: Location<'c>,
     ) -> Value<'c, 'a> {
+        let loc = self.location(list);
+
         let values: Vec<Value> = list
             .elements()
             .map(|element| self.convert_expr(block, locals, &element))
@@ -427,6 +420,23 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 .into(),
             )
             .first_result()
+    }
+
+    fn convert_paren_expr<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        locals: &Locals<'c, 'a>,
+        paren: &ast::ParenExpr,
+    ) -> Value<'c, 'a> {
+        match paren.expr() {
+            Some(inner) => self.convert_expr(block, locals, &inner),
+            None => self.report_and_hole(
+                block,
+                paren,
+                "parenthesized expression is missing its inner expression",
+                UnresolvedType::get(self.context),
+            ),
+        }
     }
 
     /// A module-level `let` becomes a call for expansion to inline, since a
