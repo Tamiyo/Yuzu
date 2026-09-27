@@ -268,14 +268,14 @@ fn plan_through_mlir(
         }
 
         yuzu_mlir::diagnostics::capture(context, sources, diagnostics, || {
-            let mut lowered = yuzu_passes::lower_yzl_to_yzr(context, &module);
-            yuzu_passes::simplify_yzr(context, &mut lowered);
+            yuzu_passes::lower_yzl_to_yzr(context, &mut module);
+            yuzu_passes::simplify_yzr(context, &mut module);
             if options.debug_plan {
                 println!("=== yzr ===");
-                print!("{}", lowered.as_operation());
+                print!("{}", module.as_operation());
             }
 
-            yuzu_substrait::translate(context, &lowered)
+            yuzu_substrait::translate(context, &module)
         })
         .filter(|_| !has_errors(diagnostics))
     })

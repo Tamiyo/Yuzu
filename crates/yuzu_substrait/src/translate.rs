@@ -9,7 +9,7 @@
 
 use melior::Context;
 use melior::ir::operation::{OperationLike, OperationRef, OperationResult};
-use melior::ir::{Module, Type, Value, ValueLike};
+use melior::ir::{Location, Module, Type, Value, ValueLike};
 use rustc_hash::FxHashMap;
 use substrait::proto::{Plan, PlanRel, Rel, RelRoot, plan_rel};
 use substrait::version;
@@ -39,7 +39,8 @@ pub fn translate<'c>(context: &'c Context, module: &Module<'c>) -> Option<Plan> 
         .operations()
         .find(|op| matches!(op.as_yzr(), Some(YzrOp::Output(_))))
     else {
-        emit_error(module.as_operation().location(), "the program has no query");
+        // The program as a whole lacks it, so no one place is to blame.
+        emit_error(Location::unknown(context), "the program has no query");
         return None;
     };
 
@@ -155,9 +156,9 @@ pub(crate) mod test_support {
             yuzu_passes::infer_types(&context, &mut module, &yuzu_types::Builtins);
             yuzu_passes::check_aggregates(&module);
             yuzu_passes::inline_calls(&context, &mut module);
-            let mut lowered = yuzu_passes::lower_yzl_to_yzr(&context, &module);
-            yuzu_passes::simplify_yzr(&context, &mut lowered);
-            super::translate(&context, &lowered)
+            yuzu_passes::lower_yzl_to_yzr(&context, &mut module);
+            yuzu_passes::simplify_yzr(&context, &mut module);
+            super::translate(&context, &module)
         });
 
         let printer = DiagnosticPrinter::new(&sources);

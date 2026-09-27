@@ -1,7 +1,9 @@
+use melior::Context;
 use melior::ir::attribute::{
     ArrayAttribute, FlatSymbolRefAttribute, StringAttribute, TypeAttribute,
 };
-use melior::ir::{Attribute, BlockLike, BlockRef, Location, Type, Value};
+use melior::ir::operation::Operation;
+use melior::ir::{Attribute, BlockRef, Location, Type, Value};
 use yuzu_mlir::diagnostics::emit_error;
 use yuzu_mlir::ir::block::BlockExt;
 use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
@@ -12,35 +14,33 @@ use yuzu_mlir::{StructType, SymbolTable};
 use crate::lower_yzl_to_yzr::{Row, YzlToYzr, struct_fields};
 
 impl<'c, 'a> YzlToYzr<'c, 'a> {
-    /// A stage whose row matches a declared struct reuses its name.
+    /// A stage whose row matches a declared struct reuses its name. The
+    /// fields are kept by name too: the struct is converted in place, so a
+    /// table read later finds its row here.
     pub(super) fn intern_declared_shapes(&mut self, block: BlockRef<'c, '_>) {
         for op in block.operations() {
             if let Some(YzlOp::Struct(item)) = op.as_yzl() {
-                self.shapes
-                    .entry(struct_fields(&item))
-                    .or_insert_with(|| item.sym_name().value());
+                let name = item.sym_name().value();
+                let fields = struct_fields(&item);
+                self.shapes.entry(fields.clone()).or_insert(name);
+                self.declared.insert(name, fields);
             }
         }
     }
 
-    fn relation_row(&self, name: &str, source: &SymbolTable<'c, '_>) -> Option<Row<'c>> {
-        let table = source.lookup(name)?;
+    fn relation_row(&self, name: &str, symbols: &SymbolTable<'c, 'a>) -> Option<Row<'c>> {
+        let table = symbols.lookup(name)?;
         let YzlOp::Table(table) = table.as_yzl()? else {
             return None;
         };
 
-        let declaration = source.lookup(table.row().value())?;
-        let YzlOp::Struct(item) = declaration.as_yzl()? else {
-            return None;
-        };
-
-        Some(struct_fields(&item))
+        self.declared.get(table.row().value()).cloned()
     }
 
     pub(super) fn row_type(
         &mut self,
         row: &Row<'c>,
-        symbols: &mut SymbolTable<'c, '_>,
+        symbols: &mut SymbolTable<'c, 'a>,
         location: Location<'c>,
     ) -> Type<'c> {
         if let Some(&name) = self.shapes.get(row) {
@@ -56,27 +56,11 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         &self,
         name: &str,
         fields: &Row<'c>,
-        symbols: &mut SymbolTable<'c, '_>,
+        symbols: &mut SymbolTable<'c, 'a>,
         location: Location<'c>,
     ) -> &'c str {
-        let names: Vec<Attribute<'c>> = fields
-            .iter()
-            .map(|(column, _)| StringAttribute::new(self.context, column).into())
-            .collect();
-        let types: Vec<Attribute<'c>> = fields
-            .iter()
-            .map(|(_, ty)| TypeAttribute::new(*ty).into())
-            .collect();
-
-        let declaration = yz::r#struct(
-            self.context,
-            StringAttribute::new(self.context, name),
-            ArrayAttribute::new(self.context, &names),
-            ArrayAttribute::new(self.context, &types),
-            location,
-        );
-
-        let assigned = symbols.insert(declaration.into());
+        let placed = self.insert(struct_declaration(self.context, name, fields, location));
+        let assigned = symbols.insert_placed(placed);
         StringAttribute::try_from(assigned)
             .expect("a symbol name is a string")
             .value()
@@ -87,22 +71,20 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
     pub(super) fn relation_input(
         &mut self,
         name: &str,
-        source: &SymbolTable<'c, '_>,
-        target: BlockRef<'c, 'a>,
-        symbols: &mut SymbolTable<'c, '_>,
+        symbols: &mut SymbolTable<'c, 'a>,
         location: Location<'c>,
     ) -> Option<(Value<'c, 'a>, Row<'c>)> {
         if let Some(bound) = self.bindings.get(name) {
             return Some(bound.clone());
         }
 
-        let Some(row) = self.relation_row(name, source) else {
+        let Some(row) = self.relation_row(name, symbols) else {
             emit_error(location, &format!("`{name}` has no row shape to scan"));
             return None;
         };
 
         let ty = self.row_type(&row, symbols, location);
-        let scanned = target.append_operation(
+        let scanned = self.insert(
             yzr::table(
                 self.context,
                 ty,
@@ -114,4 +96,29 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 
         Some((scanned.first_result(), row))
     }
+}
+
+pub(super) fn struct_declaration<'c>(
+    context: &'c Context,
+    name: &str,
+    fields: &Row<'c>,
+    location: Location<'c>,
+) -> Operation<'c> {
+    let names: Vec<Attribute<'c>> = fields
+        .iter()
+        .map(|(column, _)| StringAttribute::new(context, column).into())
+        .collect();
+    let types: Vec<Attribute<'c>> = fields
+        .iter()
+        .map(|(_, ty)| TypeAttribute::new(*ty).into())
+        .collect();
+
+    yz::r#struct(
+        context,
+        StringAttribute::new(context, name),
+        ArrayAttribute::new(context, &names),
+        ArrayAttribute::new(context, &types),
+        location,
+    )
+    .into()
 }

@@ -122,9 +122,8 @@ pub(crate) fn check_yzr(source: &str, expected: Expect) {
         |context, module| {
             crate::promote_locals(context, module);
             crate::infer_types(context, module, &yuzu_types::Builtins);
-            crate::lower_yzl_to_yzr(context, module)
-                .as_operation()
-                .to_string()
+            crate::lower_yzl_to_yzr(context, module);
+            module.as_operation().to_string()
         },
         expected,
     );
@@ -138,9 +137,9 @@ pub(crate) fn check_simplified(source: &str, expected: Expect) {
             crate::infer_types(context, module, &yuzu_types::Builtins);
             crate::inline_calls(context, module);
             crate::remove_dead_symbols(context, module);
-            let mut yzr = crate::lower_yzl_to_yzr(context, module);
-            crate::simplify_yzr(context, &mut yzr);
-            yzr.as_operation().to_string()
+            crate::lower_yzl_to_yzr(context, module);
+            crate::simplify_yzr(context, module);
+            module.as_operation().to_string()
         },
         expected,
     );

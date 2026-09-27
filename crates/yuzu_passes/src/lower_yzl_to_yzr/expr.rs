@@ -1,6 +1,6 @@
+use melior::IrRewriter;
 use melior::ir::attribute::{FlatSymbolRefAttribute, StringAttribute};
 use melior::ir::operation::{OperationBuilder, OperationLike, OperationRef};
-use melior::IrRewriter;
 use melior::ir::{Attribute, BlockLike, BlockRef, Identifier, Operation, Type, Value, ValueLike};
 use rustc_hash::FxHashMap;
 use yuzu_mlir::ListType;

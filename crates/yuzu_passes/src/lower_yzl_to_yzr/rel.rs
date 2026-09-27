@@ -1,6 +1,6 @@
 use melior::ir::attribute::{DenseI64ArrayAttribute, StringAttribute};
 use melior::ir::operation::{OperationLike, OperationRef};
-use melior::ir::{BlockLike, BlockRef, Region, RegionLike, Value};
+use melior::ir::{BlockLike, Region, RegionLike, Value};
 use yuzu_mlir::SymbolTable;
 use yuzu_mlir::ir::attribute::array::ArrayAttributeExt;
 use yuzu_mlir::ir::block::BlockExt;
@@ -13,32 +13,31 @@ use yuzu_mlir::ops::yzl::{
 };
 use yuzu_mlir::types::BoolType;
 
+use crate::lower_yzl_to_yzr::row::struct_declaration;
 use crate::lower_yzl_to_yzr::{Row, Yielded, YzlToYzr, op_name, struct_fields};
 
 impl<'c, 'a> YzlToYzr<'c, 'a> {
     pub(super) fn convert_op(
         &mut self,
         op: OperationRef<'c, '_>,
-        target: BlockRef<'c, 'a>,
-        source: &SymbolTable<'c, '_>,
-        symbols: &mut SymbolTable<'c, '_>,
+        symbols: &mut SymbolTable<'c, 'a>,
     ) {
         match op.as_yzl() {
-            Some(YzlOp::Struct(item)) => self.convert_struct(symbols, &item),
-            Some(YzlOp::From(from)) => self.convert_from(op, target, source, symbols, &from),
-            Some(YzlOp::Const(binding)) => self.convert_let(op, target, source, symbols, &binding),
-            Some(YzlOp::Where(stage)) => self.convert_where(op, target, &stage),
-            Some(YzlOp::Select(stage)) => self.convert_select(op, target, symbols, &stage),
-            Some(YzlOp::Extend(stage)) => self.convert_extend(op, target, symbols, &stage),
-            Some(YzlOp::Aggregate(stage)) => self.convert_aggregate(op, target, symbols, &stage),
-            Some(YzlOp::Join(stage)) => self.convert_join(op, target, source, symbols, &stage),
-            Some(YzlOp::Limit(stage)) => self.convert_limit(op, target, &stage),
+            Some(YzlOp::Struct(item)) => self.convert_struct(op, symbols, &item),
+            Some(YzlOp::From(from)) => self.convert_from(op, symbols, &from),
+            Some(YzlOp::Const(binding)) => self.convert_let(op, symbols, &binding),
+            Some(YzlOp::Where(stage)) => self.convert_where(op, &stage),
+            Some(YzlOp::Select(stage)) => self.convert_select(op, symbols, &stage),
+            Some(YzlOp::Extend(stage)) => self.convert_extend(op, symbols, &stage),
+            Some(YzlOp::Aggregate(stage)) => self.convert_aggregate(op, symbols, &stage),
+            Some(YzlOp::Join(stage)) => self.convert_join(op, symbols, &stage),
+            Some(YzlOp::Limit(stage)) => self.convert_limit(op, &stage),
             Some(YzlOp::Alias(_)) => self.convert_alias(op),
-            Some(YzlOp::Distinct(_)) => self.convert_distinct(op, target, symbols),
-            Some(YzlOp::Drop(stage)) => self.convert_drop(op, target, symbols, &stage),
-            Some(YzlOp::Set(stage)) => self.convert_set(op, target, symbols, &stage),
-            Some(YzlOp::Rename(stage)) => self.convert_rename(op, target, symbols, &stage),
-            Some(YzlOp::Output(_)) => self.convert_output(op, target),
+            Some(YzlOp::Distinct(_)) => self.convert_distinct(op, symbols),
+            Some(YzlOp::Drop(stage)) => self.convert_drop(op, symbols, &stage),
+            Some(YzlOp::Set(stage)) => self.convert_set(op, symbols, &stage),
+            Some(YzlOp::Rename(stage)) => self.convert_rename(op, symbols, &stage),
+            Some(YzlOp::Output(_)) => self.convert_output(op),
             // `yzr.table` carries the row as its type, so the declaration is
             // not needed.
             Some(YzlOp::Table(_)) => {}
@@ -61,27 +60,34 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         }
     }
 
-    fn convert_struct(&mut self, symbols: &mut SymbolTable<'c, '_>, item: &StructOp<'c, '_>) {
-        self.declare_struct(
-            item.sym_name().value(),
-            &struct_fields(item),
-            symbols,
-            item.operation().location(),
-        );
+    /// The yz struct stands where the yzl one did, under the same name: the
+    /// new one is placed first, and named once the old one is erased.
+    fn convert_struct(
+        &mut self,
+        op: OperationRef<'c, '_>,
+        symbols: &mut SymbolTable<'c, 'a>,
+        item: &StructOp<'c, '_>,
+    ) {
+        let name = item.sym_name().value();
+        let fields = struct_fields(item);
+        let placed = self.insert(struct_declaration(
+            self.context,
+            name,
+            &fields,
+            op.location(),
+        ));
+        symbols.erase(op);
+        symbols.insert_placed(placed);
     }
 
     fn convert_from(
         &mut self,
         op: OperationRef<'c, '_>,
-        target: BlockRef<'c, 'a>,
-        source: &SymbolTable<'c, '_>,
-        symbols: &mut SymbolTable<'c, '_>,
+        symbols: &mut SymbolTable<'c, 'a>,
         from: &FromOp<'c, '_>,
     ) {
         let relation = from.source().value();
-        if let Some((rows, row)) =
-            self.relation_input(relation, source, target, symbols, op.location())
-        {
+        if let Some((rows, row)) = self.relation_input(relation, symbols, op.location()) {
             self.record_stage(op, rows, row);
         }
     }
@@ -89,9 +95,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
     fn convert_let(
         &mut self,
         op: OperationRef<'c, '_>,
-        target: BlockRef<'c, 'a>,
-        source: &SymbolTable<'c, '_>,
-        symbols: &mut SymbolTable<'c, '_>,
+        symbols: &mut SymbolTable<'c, 'a>,
         binding: &ConstOp<'c, '_>,
     ) {
         let Some(block) = binding.body().first_block() else {
@@ -100,7 +104,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         };
 
         for inner in block.operations() {
-            self.convert_op(inner, target, source, symbols);
+            self.convert_op(inner, symbols);
         }
 
         let bound = block
@@ -116,19 +120,13 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         }
     }
 
-    fn convert_where(
-        &mut self,
-        op: OperationRef<'c, '_>,
-        target: BlockRef<'c, 'a>,
-        stage: &WhereOp<'c, '_>,
-    ) {
+    fn convert_where(&mut self, op: OperationRef<'c, '_>, stage: &WhereOp<'c, '_>) {
         let Some((input, row)) = self.input_stage(op) else {
             return;
         };
 
         let (region, _) = self.convert_region(stage.body(), &row, op.location(), Yielded::Body);
-        let filtered =
-            target.append_operation(yzr::filter(self.context, input, region, op.location()).into());
+        let filtered = self.insert(yzr::filter(self.context, input, region, op.location()).into());
 
         self.record_stage(op, filtered.first_result(), row);
     }
@@ -136,8 +134,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
     fn convert_select(
         &mut self,
         op: OperationRef<'c, '_>,
-        target: BlockRef<'c, 'a>,
-        symbols: &mut SymbolTable<'c, '_>,
+        symbols: &mut SymbolTable<'c, 'a>,
         stage: &SelectOp<'c, '_>,
     ) {
         let Some((input, row)) = self.input_stage(op) else {
@@ -147,14 +144,13 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         let (region, yielded) =
             self.convert_region(stage.body(), &row, op.location(), Yielded::Body);
         let produced = stage.names().strings().zip(yielded).collect();
-        self.project(op, target, symbols, input, region, produced);
+        self.project(op, symbols, input, region, produced);
     }
 
     fn convert_extend(
         &mut self,
         op: OperationRef<'c, '_>,
-        target: BlockRef<'c, 'a>,
-        symbols: &mut SymbolTable<'c, '_>,
+        symbols: &mut SymbolTable<'c, 'a>,
         stage: &ExtendOp<'c, '_>,
     ) {
         let Some((input, mut row)) = self.input_stage(op) else {
@@ -165,8 +161,8 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             self.convert_region(stage.body(), &row, op.location(), Yielded::Body);
         row.extend(stage.names().strings().zip(yielded));
         let ty = self.row_type(&row, symbols, op.location());
-        let extended = target
-            .append_operation(yzr::extend(self.context, ty, input, region, op.location()).into());
+        let extended =
+            self.insert(yzr::extend(self.context, ty, input, region, op.location()).into());
 
         self.record_stage(op, extended.first_result(), row);
     }
@@ -174,8 +170,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
     fn convert_aggregate(
         &mut self,
         op: OperationRef<'c, '_>,
-        target: BlockRef<'c, 'a>,
-        symbols: &mut SymbolTable<'c, '_>,
+        symbols: &mut SymbolTable<'c, 'a>,
         stage: &AggregateOp<'c, '_>,
     ) {
         let Some((input, row)) = self.input_stage(op) else {
@@ -216,8 +211,8 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 
         let ty = self.row_type(&grouped, symbols, op.location());
         let indices: Vec<i64> = keys.iter().map(|&index| index as i64).collect();
-        let aggregated = target
-            .append_operation(
+        let aggregated = self
+            .insert(
                 yzr::aggregate(
                     self.context,
                     ty,
@@ -237,15 +232,13 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 
         let mut produced = carried;
         produced.extend(names.into_iter().zip(types[keys.len()..].iter().copied()));
-        self.project(op, target, symbols, aggregated, items, produced);
+        self.project(op, symbols, aggregated, items, produced);
     }
 
     fn convert_join(
         &mut self,
         op: OperationRef<'c, '_>,
-        target: BlockRef<'c, 'a>,
-        source: &SymbolTable<'c, '_>,
-        symbols: &mut SymbolTable<'c, '_>,
+        symbols: &mut SymbolTable<'c, 'a>,
         stage: &JoinOp<'c, '_>,
     ) {
         let Some((lhs, mut row)) = self.input_stage(op) else {
@@ -254,9 +247,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 
         // yzl names the right side; yzr joins two relations.
         let relation = stage.rhs().value();
-        let Some((rows, right)) =
-            self.relation_input(relation, source, target, symbols, op.location())
-        else {
+        let Some((rows, right)) = self.relation_input(relation, symbols, op.location()) else {
             return;
         };
 
@@ -275,7 +266,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         };
 
         let ty = self.row_type(&row, symbols, op.location());
-        let joined = target.append_operation(
+        let joined = self.insert(
             yzr::join(
                 self.context,
                 ty,
@@ -291,12 +282,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         self.record_stage(op, joined.first_result(), row);
     }
 
-    fn convert_limit(
-        &mut self,
-        op: OperationRef<'c, '_>,
-        target: BlockRef<'c, 'a>,
-        stage: &LimitOp<'c, '_>,
-    ) {
+    fn convert_limit(&mut self, op: OperationRef<'c, '_>, stage: &LimitOp<'c, '_>) {
         let Some((input, row)) = self.input_stage(op) else {
             return;
         };
@@ -308,7 +294,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             builder = builder.offset(offset);
         }
 
-        let limited = target.append_operation(builder.build().into());
+        let limited = self.insert(builder.build().into());
         self.record_stage(op, limited.first_result(), row);
     }
 
@@ -322,12 +308,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
     }
 
     /// yzr has no distinct: a group keyed on every column, measuring nothing.
-    fn convert_distinct(
-        &mut self,
-        op: OperationRef<'c, '_>,
-        target: BlockRef<'c, 'a>,
-        symbols: &mut SymbolTable<'c, '_>,
-    ) {
+    fn convert_distinct(&mut self, op: OperationRef<'c, '_>, symbols: &mut SymbolTable<'c, 'a>) {
         let Some((input, row)) = self.input_stage(op) else {
             return;
         };
@@ -335,7 +316,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         let keys: Vec<i64> = (0..row.len() as i64).collect();
         let region = self.column_region(&row, &[], op.location());
         let ty = self.row_type(&row, symbols, op.location());
-        let grouped = target.append_operation(
+        let grouped = self.insert(
             yzr::aggregate(
                 self.context,
                 ty,
@@ -353,8 +334,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
     fn convert_drop(
         &mut self,
         op: OperationRef<'c, '_>,
-        target: BlockRef<'c, 'a>,
-        symbols: &mut SymbolTable<'c, '_>,
+        symbols: &mut SymbolTable<'c, 'a>,
         stage: &DropOp<'c, '_>,
     ) {
         let Some((input, row)) = self.input_stage(op) else {
@@ -368,14 +348,13 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 
         let region = self.column_region(&row, &kept, op.location());
         let produced = kept.iter().map(|&index| row[index]).collect();
-        self.project(op, target, symbols, input, region, produced);
+        self.project(op, symbols, input, region, produced);
     }
 
     fn convert_set(
         &mut self,
         op: OperationRef<'c, '_>,
-        target: BlockRef<'c, 'a>,
-        symbols: &mut SymbolTable<'c, '_>,
+        symbols: &mut SymbolTable<'c, 'a>,
         stage: &SetOp<'c, '_>,
     ) {
         let Some((input, mut row)) = self.input_stage(op) else {
@@ -396,15 +375,14 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             column.1 = *ty;
         }
 
-        self.project(op, target, symbols, input, region, row);
+        self.project(op, symbols, input, region, row);
     }
 
     /// yzr rows are typed by their struct, so new names need a projection.
     fn convert_rename(
         &mut self,
         op: OperationRef<'c, '_>,
-        target: BlockRef<'c, 'a>,
-        symbols: &mut SymbolTable<'c, '_>,
+        symbols: &mut SymbolTable<'c, 'a>,
         stage: &RenameOp<'c, '_>,
     ) {
         let Some((input, mut row)) = self.input_stage(op) else {
@@ -427,29 +405,28 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 
         let all: Vec<usize> = (0..row.len()).collect();
         let region = self.column_region(&row, &all, op.location());
-        self.project(op, target, symbols, input, region, row);
+        self.project(op, symbols, input, region, row);
     }
 
-    fn convert_output(&mut self, op: OperationRef<'c, '_>, target: BlockRef<'c, 'a>) {
+    fn convert_output(&mut self, op: OperationRef<'c, '_>) {
         let Some((query, _)) = self.input_stage(op) else {
             return;
         };
 
-        target.append_operation(yzr::output(self.context, query, op.location()).into());
+        self.insert(yzr::output(self.context, query, op.location()).into());
     }
 
     fn project(
         &mut self,
         op: OperationRef<'c, '_>,
-        target: BlockRef<'c, 'a>,
-        symbols: &mut SymbolTable<'c, '_>,
+        symbols: &mut SymbolTable<'c, 'a>,
         input: Value<'c, 'a>,
         region: Region<'c>,
         produced: Row<'c>,
     ) {
         let ty = self.row_type(&produced, symbols, op.location());
-        let projected = target
-            .append_operation(yzr::project(self.context, ty, input, region, op.location()).into());
+        let projected =
+            self.insert(yzr::project(self.context, ty, input, region, op.location()).into());
 
         self.record_stage(op, projected.first_result(), produced);
     }

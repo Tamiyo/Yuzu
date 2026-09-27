@@ -43,6 +43,25 @@ impl<'c, 'a> SymbolTable<'c, 'a> {
             ))
         }
     }
+
+    /// Adds a symbol op that is already in the module where it should
+    /// stand, renaming it when its name is taken. MLIR moves an op only
+    /// when it has no parent, so this one stays in place.
+    pub fn insert_placed(&mut self, operation: OperationRef<'c, 'a>) -> Attribute<'c> {
+        // SAFETY: the op is live in the borrowed module; the returned attribute is owned by the context.
+        unsafe {
+            Attribute::from_raw(mlir_sys::mlirSymbolTableInsert(
+                self.raw,
+                operation.to_raw(),
+            ))
+        }
+    }
+
+    /// Removes a symbol op from the table and erases it.
+    pub fn erase(&mut self, operation: OperationRef<'c, '_>) {
+        // SAFETY: the op is a live symbol of the borrowed module and is not used after this call.
+        unsafe { mlir_sys::mlirSymbolTableErase(self.raw, operation.to_raw()) }
+    }
 }
 
 impl Drop for SymbolTable<'_, '_> {
@@ -117,5 +136,33 @@ module {
             module.body().first_operation().is_some(),
             "inserted declarations land in the module body"
         );
+    }
+
+    #[test]
+    fn a_placed_symbol_keeps_its_place_and_an_erased_one_frees_its_name() {
+        let context = crate::context();
+        let module = Module::new(Location::unknown(&context));
+        let declaration = |name: &str| {
+            crate::ods::yzl::r#struct(
+                &context,
+                StringAttribute::new(&context, name),
+                ArrayAttribute::new(&context, &[]),
+                ArrayAttribute::new(&context, &[]),
+                Location::unknown(&context),
+            )
+            .into()
+        };
+        let mut symbols = SymbolTable::new(&module);
+        let first = module.body().append_operation(declaration("a"));
+        symbols.insert_placed(first);
+        let second = module.body().append_operation(declaration("b"));
+        symbols.insert_placed(second);
+
+        symbols.erase(first);
+        let third = module.body().append_operation(declaration("a"));
+        let name = symbols.insert_placed(third);
+
+        assert_eq!(StringAttribute::try_from(name).unwrap().value(), "a");
+        assert!(symbols.lookup("a").is_some() && symbols.lookup("b").is_some());
     }
 }
