@@ -146,28 +146,27 @@ structs — and otherwise becomes part of the plan.
 A Yuzu program flows through a fixed pipeline:
 
 ```
-source → tokens → syntax tree → HIR (typed) → ANF → reduced ANF → Substrait plan
+source → tokens → syntax tree → yzl → yzr → Substrait plan
 ```
 
 - The **syntax tree** is a lossless CST (rowan); the AST is a typed view over
   it, so diagnostics can always point back at real source ranges.
-- **HIR** is the typed intermediate representation; type inference and
-  pipe-stage resolution happen here.
-- **ANF** is a normalized form on which a demand-driven partial evaluator runs:
-  constant folding, copy propagation, function inlining, and aggregate
-  scalarization (structs and lists live as their parts and only materialize
-  when a whole value is demanded). Dead code is never emitted rather than
-  eliminated after the fact.
-- The **Substrait** backend maps the reduced query onto Substrait relations
-  (protobuf, with JSON for debugging). Anything a plan cannot express is
-  reported as a source-level diagnostic.
+- **yzl** is an MLIR dialect that holds the program as written: functions,
+  local variables and query stages. The passes over it check mutability,
+  promote local variables to values, infer types, check the aggregate rules
+  and inline every call.
+- **yzr** is an MLIR dialect of relations. It holds only what a plan can
+  express, and MLIR's canonicalization simplifies it.
+- The **Substrait** translation maps yzr onto Substrait relations (protobuf,
+  with JSON for debugging). Anything a plan cannot express is reported as a
+  source-level diagnostic.
 
 ## Everything reduces at compile time
 
 Yuzu rests on one core constraint: **every program must fully evaluate at
-compile time** into a finite relational plan. The reducer folds constants,
-propagates copies, inlines functions, and unrolls computation until nothing
-dynamic remains — and only then emits Substrait.
+compile time** into a finite relational plan. The compiler inlines every
+function call and folds constants until nothing dynamic remains, and only
+then emits Substrait.
 
 This means anything that *can't* be fully evaluated or unrolled — unbounded
 loops, unbounded or dynamic recursion — is rejected rather than deferred to
@@ -193,8 +192,8 @@ not, and skips it.
 Each pipeline stage can be dumped:
 
 ```
-cargo run -p yuzu_driver -- query.yuzu --debug-hir        # the typed HIR
-cargo run -p yuzu_driver -- query.yuzu --debug-reduce     # the reduced ANF
+cargo run -p yuzu_driver -- query.yuzu --debug-yzl        # the module as the frontend lowered it
+cargo run -p yuzu_driver -- query.yuzu --debug-yzr        # the module lowered to relations
 cargo run -p yuzu_driver -- query.yuzu --debug-substrait  # the Substrait plan
 cargo run -p yuzu_driver -- query.yuzu --debug            # all of the above
 ```

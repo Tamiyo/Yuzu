@@ -1,4 +1,4 @@
-//! The Substrait shapes both pipelines build the same way.
+//! Substrait shapes the translation builds in more than one place.
 
 use substrait::proto::{
     Expression, RelCommon,

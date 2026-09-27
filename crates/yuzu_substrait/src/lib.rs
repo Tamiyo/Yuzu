@@ -1,11 +1,9 @@
 use prost::Message;
 
-mod emitter;
 mod extensions;
 mod proto;
 mod translate;
 
-pub use emitter::emit;
 pub use substrait::proto::Plan;
 pub use translate::translate;
 

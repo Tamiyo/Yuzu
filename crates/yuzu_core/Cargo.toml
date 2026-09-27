@@ -1,7 +1,0 @@
-[package]
-name = "yuzu_core"
-version = "0.0.0"
-edition = "2024"
-
-[dependencies]
-string-interner = "0.20.0"

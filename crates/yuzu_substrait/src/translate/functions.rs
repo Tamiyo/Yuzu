@@ -73,8 +73,7 @@ pub(crate) fn of_aggregate(name: &str) -> Aggregate {
             | AggFunc::Sum
             | AggFunc::Min
             | AggFunc::Max
-            | AggFunc::Avg
-            | AggFunc::External(_) => AggregationInvocation::All,
+            | AggFunc::Avg => AggregationInvocation::All,
         },
     }
 }

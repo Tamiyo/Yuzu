@@ -4,5 +4,3 @@ version = "0.0.0"
 edition = "2024"
 
 [dependencies]
-id-arena = "2.3.0"
-string-interner = "0.20.0"

@@ -10,19 +10,10 @@ use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyfunction, gen_stub_pyme
 #[pyclass]
 pub struct CompileOptions {
     #[pyo3(get)]
-    pub debug_tokens: bool,
+    pub debug_yzl: bool,
 
     #[pyo3(get)]
-    pub debug_ast: bool,
-
-    #[pyo3(get)]
-    pub debug_hir: bool,
-
-    #[pyo3(get)]
-    pub debug_anf: bool,
-
-    #[pyo3(get)]
-    pub debug_reduce: bool,
+    pub debug_yzr: bool,
 
     #[pyo3(get)]
     pub debug_substrait: bool,
@@ -32,28 +23,11 @@ pub struct CompileOptions {
 #[pymethods]
 impl CompileOptions {
     #[new]
-    #[pyo3(signature = (
-        debug_tokens = false,
-        debug_ast = false,
-        debug_hir = false,
-        debug_anf = false,
-        debug_reduce = false,
-        debug_substrait = false,
-    ))]
-    fn new(
-        debug_tokens: bool,
-        debug_ast: bool,
-        debug_hir: bool,
-        debug_anf: bool,
-        debug_reduce: bool,
-        debug_substrait: bool,
-    ) -> Self {
+    #[pyo3(signature = (debug_yzl = false, debug_yzr = false, debug_substrait = false))]
+    fn new(debug_yzl: bool, debug_yzr: bool, debug_substrait: bool) -> Self {
         Self {
-            debug_tokens,
-            debug_ast,
-            debug_hir,
-            debug_anf,
-            debug_reduce,
+            debug_yzl,
+            debug_yzr,
             debug_substrait,
         }
     }
@@ -62,14 +36,9 @@ impl CompileOptions {
 impl From<&CompileOptions> for yuzu_driver::CompileOptions {
     fn from(options: &CompileOptions) -> Self {
         Self {
-            debug_tokens: options.debug_tokens,
-            debug_ast: options.debug_ast,
-            debug_hir: options.debug_hir,
-            debug_anf: options.debug_anf,
-            debug_reduce: options.debug_reduce,
-            debug_plan: false,
+            debug_yzl: options.debug_yzl,
+            debug_yzr: options.debug_yzr,
             debug_substrait: options.debug_substrait,
-            time_phases: false,
             target: None,
         }
     }
@@ -88,7 +57,7 @@ fn compile<'py>(
         .map(yuzu_driver::CompileOptions::from)
         .unwrap_or_default();
     let resolver = yuzu_driver::modules::MapResolver(HashMap::new());
-    match yuzu_driver::compile_to_substrait_mlir("<python>", source, &options, &resolver) {
+    match yuzu_driver::compile_to_substrait("<python>", source, &options, &resolver) {
         Ok(plan) => Ok(PyBytes::new(py, &plan)),
         Err(message) => Err(PyValueError::new_err(message)),
     }

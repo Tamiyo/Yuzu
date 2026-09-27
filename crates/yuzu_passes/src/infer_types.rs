@@ -576,7 +576,7 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
                 self.unify(op, rhs, int64);
                 self.unify(op, out, int64);
             }
-            BuiltinFunc::Aggregate(AggFunc::External(_)) | BuiltinFunc::Scalar(_) => {}
+            BuiltinFunc::Scalar(_) => {}
         }
     }
 

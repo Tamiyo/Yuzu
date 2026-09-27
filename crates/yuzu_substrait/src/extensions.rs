@@ -32,7 +32,7 @@ pub(crate) fn function_target(func: Func) -> Option<(&'static str, &'static str)
         Func::And => (BOOLEAN_URN, "and"),
         Func::Or => (BOOLEAN_URN, "or"),
         Func::Not => (BOOLEAN_URN, "not"),
-        Func::Power | Func::In | Func::External(_) => return None,
+        Func::Power | Func::In => return None,
     };
     Some(target)
 }
@@ -46,7 +46,6 @@ pub(crate) fn aggregate_target(func: AggFunc) -> (&'static str, &'static str) {
         AggFunc::Min => (ARITHMETIC_URN, "min"),
         AggFunc::Max => (ARITHMETIC_URN, "max"),
         AggFunc::Avg => (ARITHMETIC_URN, "avg"),
-        AggFunc::External(_) => unreachable!("an external maps through the interner"),
     }
 }
 
