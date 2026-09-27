@@ -104,12 +104,59 @@ fn trees() -> &'static HashMap<&'static str, GreenNode> {
 
 #[cfg(test)]
 mod tests {
-    use super::{MODULES, syntax};
+    use std::collections::HashMap;
+
+    use melior::ir::operation::OperationLike;
+    use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
+    use yuzu_diagnostics::source_map::SourceMap;
+    use yuzu_passes::Lowering;
+
+    use super::{Engine, MODULES, syntax};
+    use crate::modules::{self, MapResolver};
 
     #[test]
     fn each_library_file_parses() {
         for module in MODULES {
             assert!(syntax(module.path).is_some(), "{}", module.name);
         }
+    }
+
+    #[test]
+    fn the_whole_library_lowers_without_diagnostics() {
+        let imports: String = MODULES
+            .iter()
+            .map(|module| format!("import {}\n", module.path))
+            .collect();
+        let mut sources = SourceMap::new();
+        let mut diagnostics = DiagnosticsEngine::new();
+        let entry = sources.add("main.yz".to_string(), imports);
+        let resolver = MapResolver(HashMap::new());
+        let mut files = modules::load(
+            entry,
+            &mut sources,
+            &mut diagnostics,
+            &resolver,
+            Engine::DataFusion,
+        )
+        .expect("the library loads");
+        for file in &mut files {
+            file.set_lowering(Lowering::Eager);
+        }
+
+        let context = yuzu_mlir::context();
+        let module = yuzu_passes::lower_ast_to_yzl(
+            &context,
+            &sources,
+            &files,
+            &mut diagnostics,
+            &yuzu_types::Builtins,
+        );
+        let messages: Vec<&str> = diagnostics
+            .diagnostics()
+            .iter()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect();
+        assert!(messages.is_empty(), "{messages:?}");
+        assert!(module.as_operation().verify());
     }
 }

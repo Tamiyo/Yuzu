@@ -23,7 +23,7 @@ mod rel;
 mod stmt;
 mod symbols;
 
-pub use program::File;
+pub use program::{File, Lowering};
 pub use symbols::PRELUDE;
 
 /// `files` is in the order the imports were resolved, the entry file last,

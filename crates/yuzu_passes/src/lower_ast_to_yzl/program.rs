@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use melior::ir::attribute::StringAttribute;
 use melior::ir::operation::OperationLike;
 use melior::ir::{BlockLike, BlockRef, Location, Module, ValueLike};
@@ -17,6 +19,18 @@ pub struct File {
     pub(crate) source_id: SourceId,
     pub(crate) module: Option<String>,
     pub(crate) root: ast::Root,
+    pub(crate) lowering: Lowering,
+}
+
+/// When a file's declarations are lowered.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Lowering {
+    /// All of them, so an error in one that nothing uses is still reported.
+    Eager,
+    /// Each function, struct, table and trait only when a reference names
+    /// it. The library is lowered this way: a program uses a few of its
+    /// functions, and a declaration no one names would only be removed again.
+    OnDemand,
 }
 
 impl File {
@@ -25,6 +39,7 @@ impl File {
             source_id,
             module,
             root,
+            lowering: Lowering::Eager,
         }
     }
 
@@ -35,6 +50,10 @@ impl File {
     /// The module this file is, or `None` for the entry file.
     pub fn module(&self) -> Option<&str> {
         self.module.as_deref()
+    }
+
+    pub fn set_lowering(&mut self, lowering: Lowering) {
+        self.lowering = lowering;
     }
 }
 
@@ -55,11 +74,34 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
 
         let body = module.body();
+        let mut on_demand = HashMap::new();
         for file in files {
             self.set_file(file);
             let mut locals = Locals::new();
             for stmt in file.root.stmts() {
+                if file.lowering == Lowering::OnDemand
+                    && let Some(name) = self.read_ident(on_demand_name(&stmt))
+                {
+                    on_demand.insert(self.symbols.module().declares(name), (file, stmt));
+                    continue;
+                }
+
                 self.convert_stmt(body, &mut locals, &stmt);
+            }
+        }
+
+        // A declaration lowered on demand may name others in turn.
+        loop {
+            let used = self.symbols.take_used();
+            if used.is_empty() {
+                break;
+            }
+
+            for at in used {
+                if let Some((file, stmt)) = on_demand.remove(&at) {
+                    self.set_file(file);
+                    self.convert_stmt(body, &mut Locals::new(), &stmt);
+                }
             }
         }
 
@@ -89,6 +131,27 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         if let Some((value, loc)) = query {
             top.append_operation(yzl::output(self.context, value, loc).into());
         }
+    }
+}
+
+/// The name of a declaration that can wait until a reference names it. A
+/// `let` cannot: the hoist leaves it pending, and a lookup of a pending
+/// `let` is reported until its body is lowered.
+fn on_demand_name(stmt: &ast::Stmt) -> Option<ast::Ident> {
+    match stmt {
+        ast::Stmt::StructStmt(decl) => decl.name(),
+        ast::Stmt::TableStmt(decl) => decl.name(),
+        ast::Stmt::FuncStmt(decl) => decl.name(),
+        ast::Stmt::TraitStmt(decl) => decl.name(),
+        ast::Stmt::LetStmt(_)
+        | ast::Stmt::ImplStmt(_)
+        | ast::Stmt::ExprStmt(_)
+        | ast::Stmt::BlockStmt(_)
+        | ast::Stmt::AssignStmt(_)
+        | ast::Stmt::ReturnStmt(_)
+        | ast::Stmt::ImportStmt(_)
+        | ast::Stmt::FromImportStmt(_)
+        | ast::Stmt::ModStmt(_) => None,
     }
 }
 

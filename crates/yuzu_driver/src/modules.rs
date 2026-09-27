@@ -16,7 +16,7 @@ use yuzu_diagnostics::diagnostics::builder::DiagnosticBuilder;
 use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
 use yuzu_diagnostics::source_map::{SourceId, SourceMap};
 use yuzu_lexer::lexer::{Lexer, Token};
-use yuzu_passes::File;
+use yuzu_passes::{File, Lowering};
 
 use crate::stdlib::{self, Engine};
 
@@ -243,8 +243,12 @@ impl Loader<'_> {
         self.loading.pop();
 
         self.loaded.insert(path.to_string());
-        self.files
-            .push(File::new(source_id, Some(path.to_string()), root));
+        let mut file = File::new(source_id, Some(path.to_string()), root);
+        if stdlib::reserves(path) {
+            file.set_lowering(Lowering::OnDemand);
+        }
+
+        self.files.push(file);
     }
 
     fn follow_imports(&mut self, source_id: SourceId, root: &ast::Root, asking: &str) {

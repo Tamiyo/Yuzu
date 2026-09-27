@@ -313,6 +313,9 @@ pub(super) struct SymbolTable<'c> {
     modules: HashMap<ModulePath<'c>, HashMap<&'c str, Binding<'c>>>,
     module: ModulePath<'c>,
     scopes: Vec<Scope<'c>>,
+    /// The declarations a reference has named since the lowering last
+    /// asked, so the library's can be lowered on demand.
+    used: Vec<Declared<'c>>,
 }
 
 impl<'c> SymbolTable<'c> {
@@ -322,6 +325,7 @@ impl<'c> SymbolTable<'c> {
             modules: HashMap::new(),
             module: ModulePath::entry(),
             scopes: Vec::new(),
+            used: Vec::new(),
         }
     }
 
@@ -339,6 +343,17 @@ impl<'c> SymbolTable<'c> {
             Some(path) => self.intern(&format!("{path}.{}", at.name)),
             None => at.name,
         }
+    }
+
+    /// The symbol a reference names, recorded as a use.
+    fn refer(&mut self, at: Declared<'c>) -> &'c str {
+        self.used.push(at);
+        self.symbol(at)
+    }
+
+    /// The declarations references have named since the last call.
+    pub(super) fn take_used(&mut self) -> Vec<Declared<'c>> {
+        std::mem::take(&mut self.used)
     }
 
     /// The symbol this file declares a name under.
@@ -429,30 +444,22 @@ impl<'c> SymbolTable<'c> {
         self.find(name).map(|(_, binding)| &binding.kind)
     }
 
-    pub(super) fn struct_symbol(&self, name: &str) -> Option<&'c str> {
-        match self.find(name)? {
-            (
-                at,
-                Binding {
-                    kind: BindingKind::Struct { .. },
-                    ..
-                },
-            ) => Some(self.symbol(at)),
-            _ => None,
+    pub(super) fn struct_symbol(&mut self, name: &str) -> Option<&'c str> {
+        let (at, binding) = self.find(name)?;
+        if !matches!(binding.kind, BindingKind::Struct { .. }) {
+            return None;
         }
+
+        Some(self.refer(at))
     }
 
-    pub(super) fn trait_symbol(&self, name: &str) -> Option<&'c str> {
-        match self.find(name)? {
-            (
-                at,
-                Binding {
-                    kind: BindingKind::Trait { .. },
-                    ..
-                },
-            ) => Some(self.symbol(at)),
-            _ => None,
+    pub(super) fn trait_symbol(&mut self, name: &str) -> Option<&'c str> {
+        let (at, binding) = self.find(name)?;
+        if !matches!(binding.kind, BindingKind::Trait { .. }) {
+            return None;
         }
+
+        Some(self.refer(at))
     }
 
     pub(super) fn module_of(&self, name: &str) -> Option<&'c str> {
@@ -463,18 +470,12 @@ impl<'c> SymbolTable<'c> {
     }
 
     pub(super) fn relation(
-        &self,
+        &mut self,
         name: &str,
         alias: Option<&'c str>,
     ) -> Option<(&'c str, Row<'c>)> {
-        let (
-            at,
-            Binding {
-                kind: BindingKind::Relation { row },
-                ..
-            },
-        ) = self.find(name)?
-        else {
+        let (at, binding) = self.find(name)?;
+        let BindingKind::Relation { row } = &binding.kind else {
             return None;
         };
 
@@ -483,78 +484,67 @@ impl<'c> SymbolTable<'c> {
             row.qualify(alias);
         }
 
-        Some((self.symbol(at), row))
+        Some((self.refer(at), row))
     }
 
     pub(super) fn callable(
-        &self,
+        &mut self,
         name: &str,
         registry: &dyn FunctionRegistry,
     ) -> Option<Callable<'c>> {
-        match self.find(name) {
-            Some((
-                at,
-                Binding {
-                    kind: BindingKind::Let,
-                    ..
-                },
-            )) => Some(Callable::constant(self.symbol(at))),
-            _ => self.operator(name, registry),
+        if let Some((at, binding)) = self.find(name)
+            && matches!(binding.kind, BindingKind::Let)
+        {
+            return Some(Callable::constant(self.refer(at)));
         }
+
+        self.operator(name, registry)
     }
 
     /// The function declared at a place in another module, as a call names it.
-    pub(super) fn callable_in(&self, at: Declared<'c>) -> Option<Callable<'c>> {
-        match self.find_in(at)? {
-            (
-                at,
-                Binding {
-                    kind:
-                        BindingKind::Func {
-                            source,
-                            kind,
-                            arity,
-                        },
-                    ..
-                },
-            ) => Some(Callable {
-                symbol: self.symbol(at),
-                source: *source,
-                kind: *kind,
-                min_args: *arity,
-                max_args: *arity,
-            }),
-            _ => None,
-        }
+    pub(super) fn callable_in(&mut self, at: Declared<'c>) -> Option<Callable<'c>> {
+        let (at, binding) = self.find_in(at)?;
+        let BindingKind::Func {
+            source,
+            kind,
+            arity,
+        } = binding.kind
+        else {
+            return None;
+        };
+
+        Some(Callable {
+            symbol: self.refer(at),
+            source,
+            kind,
+            min_args: arity,
+            max_args: arity,
+        })
     }
 
     /// Like `callable`, except a `let` sharing the name does not stand in.
     pub(super) fn operator(
-        &self,
+        &mut self,
         name: &str,
         registry: &dyn FunctionRegistry,
     ) -> Option<Callable<'c>> {
-        match self.find(name) {
-            Some((
-                at,
-                Binding {
-                    kind:
-                        BindingKind::Func {
-                            source,
-                            kind,
-                            arity,
-                        },
-                    ..
-                },
-            )) => Some(Callable {
-                symbol: self.symbol(at),
-                source: *source,
-                kind: *kind,
-                min_args: *arity,
-                max_args: *arity,
-            }),
-            _ => self.builtin(name, registry),
+        if let Some((at, binding)) = self.find(name)
+            && let BindingKind::Func {
+                source,
+                kind,
+                arity,
+            } = binding.kind
+        {
+            return Some(Callable {
+                symbol: self.refer(at),
+                source,
+                kind,
+                min_args: arity,
+                max_args: arity,
+            });
         }
+
+        self.builtin(name, registry)
     }
 
     fn builtin(&self, name: &str, registry: &dyn FunctionRegistry) -> Option<Callable<'c>> {
@@ -633,7 +623,7 @@ impl<'c> SymbolTable<'c> {
     /// The walk stops at the first isolated scope: a function body and a
     /// stage's region are both `IsolatedFromAbove`. The module's declarations
     /// are symbols, not values, so they answer from any depth.
-    pub(super) fn lookup(&self, reference: Reference<'_>) -> Lookup<'c> {
+    pub(super) fn lookup(&mut self, reference: Reference<'_>) -> Lookup<'c> {
         for scope in self.scopes.iter().rev() {
             match scope {
                 Scope::TypeParams { .. } => {}
@@ -665,29 +655,22 @@ impl<'c> SymbolTable<'c> {
         self.module_lookup(reference)
     }
 
-    fn module_lookup(&self, reference: Reference<'_>) -> Lookup<'c> {
+    fn module_lookup(&mut self, reference: Reference<'_>) -> Lookup<'c> {
         if reference.qualifier.is_some() {
             return Lookup::Unknown;
         }
 
-        match self.find(reference.name) {
-            Some((
-                at,
-                Binding {
-                    kind: BindingKind::Let,
-                    ..
-                },
-            )) => Lookup::Let(self.symbol(at)),
-            Some((
-                _,
-                Binding {
-                    kind: BindingKind::Pending,
-                    ..
-                },
-            )) => Lookup::NotYet,
-            Some((_, binding)) => Lookup::NotAValue(binding.kind.name()),
-            None => Lookup::Unknown,
+        let Some((at, binding)) = self.find(reference.name) else {
+            return Lookup::Unknown;
+        };
+
+        match &binding.kind {
+            BindingKind::Let => {}
+            BindingKind::Pending => return Lookup::NotYet,
+            kind => return Lookup::NotAValue(kind.name()),
         }
+
+        Lookup::Let(self.refer(at))
     }
 
     pub(super) fn column(&self, reference: Reference<'_>) -> ColumnLookup {
@@ -901,7 +884,7 @@ mod tests {
 
     #[test]
     fn a_declaration_that_is_not_a_value_says_so() {
-        let symbols = symbols();
+        let mut symbols = symbols();
 
         assert_eq!(symbols.lookup(bare("t")), Lookup::NotAValue("relation"));
         assert_eq!(symbols.lookup(bare("Row")), Lookup::NotAValue("struct"));
