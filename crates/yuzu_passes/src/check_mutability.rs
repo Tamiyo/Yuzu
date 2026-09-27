@@ -1,10 +1,9 @@
 //! A place without `mut` has one store, its initializer. Each later store
 //! is an assignment the program may not make.
 
-use std::collections::HashMap;
-
 use melior::ir::operation::OperationLike;
 use melior::ir::{BlockRef, Module};
+use rustc_hash::FxHashMap;
 use yuzu_mlir::diagnostics::emit_error;
 use yuzu_mlir::ir::block::BlockExt;
 use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
@@ -14,7 +13,7 @@ use yuzu_mlir::ops::yzl::YzlOp;
 
 pub fn check_mutability(module: &Module) {
     let mut checker = MutabilityChecker {
-        variables: HashMap::new(),
+        variables: FxHashMap::default(),
     };
 
     checker.check_block(module.body());
@@ -39,7 +38,7 @@ struct Variable<'c> {
 }
 
 struct MutabilityChecker<'c> {
-    variables: HashMap<ValueId, Variable<'c>>,
+    variables: FxHashMap<ValueId, Variable<'c>>,
 }
 
 impl<'c> MutabilityChecker<'c> {

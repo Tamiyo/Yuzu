@@ -1,8 +1,7 @@
-use std::collections::HashMap;
-
 use melior::ir::attribute::{FlatSymbolRefAttribute, StringAttribute};
 use melior::ir::operation::{OperationBuilder, OperationLike, OperationRef};
 use melior::ir::{Attribute, BlockLike, BlockRef, Identifier, Operation, Type, Value, ValueLike};
+use rustc_hash::FxHashMap;
 use yuzu_mlir::ListType;
 use yuzu_mlir::attributes::CalleeSource;
 use yuzu_mlir::ir::block::BlockExt;
@@ -18,7 +17,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         &mut self,
         op: OperationRef<'c, '_>,
         body: BlockRef<'c, 'b>,
-        values: &mut HashMap<ValueId, Value<'c, 'b>>,
+        values: &mut FxHashMap<ValueId, Value<'c, 'b>>,
         produced: &mut Vec<Value<'c, 'b>>,
     ) {
         match op.as_yzl() {
@@ -191,7 +190,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 /// already reported.
 fn lowered_operands<'c, 'b>(
     op: OperationRef<'c, '_>,
-    values: &HashMap<ValueId, Value<'c, 'b>>,
+    values: &FxHashMap<ValueId, Value<'c, 'b>>,
 ) -> Option<Vec<Value<'c, 'b>>> {
     op.operands()
         .map(|operand| values.get(&operand.id()).copied())

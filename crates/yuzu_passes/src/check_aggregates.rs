@@ -2,11 +2,11 @@
 //! never in another aggregate's arguments, and an `agg fn` must use an
 //! aggregate without calling itself.
 
-use std::collections::{HashMap, HashSet};
 use std::mem;
 
 use melior::ir::operation::{OperationLike, OperationRef, OperationResult};
 use melior::ir::{BlockRef, Location, Module, RegionLike};
+use rustc_hash::{FxHashMap, FxHashSet};
 use yuzu_mlir::diagnostics::emit_error;
 use yuzu_mlir::ir::block::BlockExt;
 use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
@@ -16,9 +16,9 @@ use yuzu_mlir::ops::yzl::YzlOp;
 
 pub fn check_aggregates(module: &Module) {
     let mut checker = AggregateChecker {
-        group_values: HashMap::new(),
-        aggregate_calls: HashMap::new(),
-        nested: HashSet::new(),
+        group_values: FxHashMap::default(),
+        aggregate_calls: FxHashMap::default(),
+        nested: FxHashSet::default(),
         saw_aggregate: false,
     };
 
@@ -35,10 +35,10 @@ enum Grouping<'c> {
 
 struct AggregateChecker<'c> {
     /// Each group-level value, with the aggregate calls it came from.
-    group_values: HashMap<ValueId, Vec<ValueId>>,
+    group_values: FxHashMap<ValueId, Vec<ValueId>>,
     /// The location and callee of each aggregate call, by its result.
-    aggregate_calls: HashMap<ValueId, (Location<'c>, &'c str)>,
-    nested: HashSet<ValueId>,
+    aggregate_calls: FxHashMap<ValueId, (Location<'c>, &'c str)>,
+    nested: FxHashSet<ValueId>,
     saw_aggregate: bool,
 }
 

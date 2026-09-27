@@ -4,11 +4,11 @@
 //! A name is held as the source wrote it. Only a symbol, the name an op is
 //! built under, is interned, since that is the only name MLIR ever sees.
 
-use std::collections::HashMap;
 use std::fmt;
 
 use melior::Context;
 use melior::ir::attribute::StringAttribute;
+use rustc_hash::FxHashMap;
 use text_size::TextRange;
 use yuzu_ast::Visibility;
 use yuzu_mlir::attributes::CalleeSource;
@@ -310,7 +310,7 @@ pub(super) struct Declared<'c> {
 pub(super) struct SymbolTable<'c> {
     context: &'c Context,
     /// What each module declares, by the name the source wrote.
-    modules: HashMap<ModulePath<'c>, HashMap<&'c str, Binding<'c>>>,
+    modules: FxHashMap<ModulePath<'c>, FxHashMap<&'c str, Binding<'c>>>,
     module: ModulePath<'c>,
     scopes: Vec<Scope<'c>>,
     /// The declarations a reference has named since the lowering last
@@ -322,7 +322,7 @@ impl<'c> SymbolTable<'c> {
     pub(super) fn new(context: &'c Context) -> Self {
         Self {
             context,
-            modules: HashMap::new(),
+            modules: FxHashMap::default(),
             module: ModulePath::entry(),
             scopes: Vec::new(),
             used: Vec::new(),

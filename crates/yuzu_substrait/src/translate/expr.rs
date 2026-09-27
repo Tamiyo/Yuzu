@@ -2,10 +2,9 @@
 //! the row the region sees, by position; everything else is an operation
 //! whose operands were translated before it, the region being in order.
 
-use std::collections::HashMap;
-
 use melior::ir::operation::{OperationLike, OperationRef};
 use melior::ir::{RegionLike, Value, ValueLike};
+use rustc_hash::FxHashMap;
 use substrait::proto::{
     Expression, FunctionArgument,
     expression::{RexType, ScalarFunction, SingularOrList, literal::LiteralType},
@@ -28,7 +27,7 @@ use crate::translate::types::{emit_type, type_code};
 /// `yzr.yield` named. The yields stay as values because what they mean is
 /// the stage's business — a grouping yields measures, not expressions.
 pub(crate) struct Region<'c, 'a> {
-    pub(crate) values: HashMap<ValueId, Expression>,
+    pub(crate) values: FxHashMap<ValueId, Expression>,
     pub(crate) yielded: Vec<Value<'c, 'a>>,
 }
 
@@ -36,12 +35,12 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
     pub(crate) fn translate_region(&mut self, op: OperationRef<'c, 'a>) -> Option<Region<'c, 'a>> {
         let Some(block) = op.regions().next().and_then(|region| region.first_block()) else {
             return Some(Region {
-                values: HashMap::new(),
+                values: FxHashMap::default(),
                 yielded: Vec::new(),
             });
         };
 
-        let mut values: HashMap<ValueId, Expression> = block
+        let mut values: FxHashMap<ValueId, Expression> = block
             .arguments()
             .enumerate()
             .map(|(index, argument)| (argument.id(), selection(index as i32)))
@@ -68,7 +67,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
     fn translate_value(
         &mut self,
         op: OperationRef<'c, '_>,
-        values: &HashMap<ValueId, Expression>,
+        values: &FxHashMap<ValueId, Expression>,
     ) -> Option<Expression> {
         match op.as_yz()? {
             YzOp::ConstantInt(constant) => {
@@ -128,7 +127,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
     fn translate_membership(
         &mut self,
         op: OperationRef<'c, '_>,
-        values: &HashMap<ValueId, Expression>,
+        values: &FxHashMap<ValueId, Expression>,
     ) -> Option<Expression> {
         let value = self.expression_of(op, op.operand(0).ok()?, values)?;
         let list = op.operand(1).ok()?;
@@ -154,7 +153,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         &mut self,
         op: OperationRef<'c, '_>,
         func: Func,
-        values: &HashMap<ValueId, Expression>,
+        values: &FxHashMap<ValueId, Expression>,
     ) -> Option<Expression> {
         let Some((urn, base)) = function_target(func) else {
             let symbol = func.symbol();
@@ -175,7 +174,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         op: OperationRef<'c, '_>,
         urn: &'static str,
         base: String,
-        values: &HashMap<ValueId, Expression>,
+        values: &FxHashMap<ValueId, Expression>,
     ) -> Option<Expression> {
         let mut signature = Vec::new();
         let mut arguments = Vec::new();
@@ -228,7 +227,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         &self,
         op: OperationRef<'c, '_>,
         value: Value<'c, '_>,
-        values: &HashMap<ValueId, Expression>,
+        values: &FxHashMap<ValueId, Expression>,
     ) -> Option<Expression> {
         match values.get(&value.id()) {
             Some(expression) => Some(expression.clone()),

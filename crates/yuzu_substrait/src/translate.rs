@@ -7,11 +7,10 @@
 //! is one relation read twice. Substrait nests instead of sharing, so a
 //! relation read twice is translated once and written out at both uses.
 
-use std::collections::HashMap;
-
 use melior::Context;
 use melior::ir::operation::{OperationLike, OperationRef, OperationResult};
 use melior::ir::{Module, Type, Value, ValueLike};
+use rustc_hash::FxHashMap;
 use substrait::proto::{Plan, PlanRel, Rel, RelRoot, plan_rel};
 use substrait::version;
 use yuzu_mlir::StructType;
@@ -48,7 +47,7 @@ pub fn translate<'c>(context: &'c Context, module: &Module<'c>) -> Option<Plan> 
     let mut translator = Translator {
         context,
         symbols: &symbols,
-        translated: HashMap::new(),
+        translated: FxHashMap::default(),
         extensions: Extensions::default(),
     };
 
@@ -81,7 +80,7 @@ struct Translator<'c, 'a, 's> {
     symbols: &'s SymbolTable<'c, 'a>,
     /// What each relational value already translated to, so a relation two
     /// stages read is walked once.
-    translated: HashMap<ValueId, Rel>,
+    translated: FxHashMap<ValueId, Rel>,
     extensions: Extensions,
 }
 

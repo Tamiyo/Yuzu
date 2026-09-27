@@ -3,7 +3,7 @@
 //! whether a function reaches itself: a call that reduces is fine, and the
 //! budget stops one that never finishes.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 
 use melior::ir::attribute::TypeAttribute;
 use melior::ir::operation::{OperationBuilder, OperationLike, OperationRef};
@@ -12,6 +12,7 @@ use melior::ir::{
     ValueLike,
 };
 use melior::{Context, IrRewriter, RewriterBase};
+use rustc_hash::FxHashMap;
 use yuzu_mlir::attributes::CalleeSource;
 use yuzu_mlir::diagnostics::emit_error;
 use yuzu_mlir::ir::attribute::array::ArrayAttributeExt;
@@ -105,7 +106,7 @@ fn expand<'c, 'a>(
             function.body().first_block(),
             type_arguments(&function, &site, call.location(), callee)?,
         ),
-        Some(YzlOp::Const(binding)) => (binding.body().first_block(), HashMap::new()),
+        Some(YzlOp::Const(binding)) => (binding.body().first_block(), FxHashMap::default()),
         _ => return error(call.location(), &format!("`{callee}` is not a function")),
     };
     let body = body.or_else(|| {
@@ -129,7 +130,7 @@ fn expand<'c, 'a>(
 
     rewriter.set_insertion_point_before(call);
 
-    let mut values: HashMap<ValueId, Value> = body
+    let mut values: FxHashMap<ValueId, Value> = body
         .arguments()
         .map(|parameter| parameter.id())
         .zip(arguments)
@@ -184,8 +185,8 @@ fn expand<'c, 'a>(
 fn copy<'c, 'a>(
     rewriter: &'a RewriterBase<'c, 'a>,
     op: OperationRef<'c, '_>,
-    values: &HashMap<ValueId, Value<'c, 'a>>,
-    types: &HashMap<&str, Type<'c>>,
+    values: &FxHashMap<ValueId, Value<'c, 'a>>,
+    types: &FxHashMap<&str, Type<'c>>,
 ) -> Option<OperationRef<'c, 'a>> {
     let operands: Vec<Value> = op
         .operands()
@@ -236,9 +237,9 @@ fn type_arguments<'c>(
     site: &CallOp<'c, '_>,
     location: Location<'c>,
     callee: &str,
-) -> Option<HashMap<&'c str, Type<'c>>> {
+) -> Option<FxHashMap<&'c str, Type<'c>>> {
     let Some(parameters) = function.type_params() else {
-        return Some(HashMap::new());
+        return Some(FxHashMap::default());
     };
 
     let parameters = parameters.strings();
@@ -261,7 +262,7 @@ fn type_arguments<'c>(
     Some(parameters.into_iter().zip(arguments).collect())
 }
 
-fn substitute<'c>(ty: Type<'c>, types: &HashMap<&str, Type<'c>>) -> Type<'c> {
+fn substitute<'c>(ty: Type<'c>, types: &FxHashMap<&str, Type<'c>>) -> Type<'c> {
     ParamType::from_type(ty)
         .and_then(|param| types.get(param.name()).copied())
         .unwrap_or(ty)

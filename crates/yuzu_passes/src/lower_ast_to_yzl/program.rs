@@ -1,8 +1,7 @@
-use std::collections::HashMap;
-
 use melior::ir::attribute::StringAttribute;
 use melior::ir::operation::OperationLike;
 use melior::ir::{BlockLike, BlockRef, Location, Module, ValueLike};
+use rustc_hash::FxHashMap;
 use yuzu_ast::ast;
 use yuzu_diagnostics::source_map::SourceId;
 use yuzu_mlir::ir::block::BlockExt;
@@ -74,7 +73,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
 
         let body = module.body();
-        let mut on_demand = HashMap::new();
+        let mut on_demand = FxHashMap::default();
         for file in files {
             self.set_file(file);
             let mut locals = Locals::new();

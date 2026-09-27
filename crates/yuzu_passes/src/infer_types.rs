@@ -2,7 +2,6 @@
 //! is a type variable, and the answers are written onto the values, so
 //! `!yzl.unresolved` is gone by the end.
 
-use std::collections::{HashMap, HashSet};
 use std::mem;
 
 use melior::Context;
@@ -10,6 +9,7 @@ use melior::ir::attribute::{ArrayAttribute, TypeAttribute};
 use melior::ir::operation::{OperationLike, OperationMutLike, OperationRef, OperationRefMut};
 use melior::ir::r#type::FunctionType;
 use melior::ir::{Attribute, BlockRef, Location, Module, RegionLike, Type, Value, ValueLike};
+use rustc_hash::{FxHashMap, FxHashSet};
 use yuzu_mlir::attributes::CalleeSource;
 use yuzu_mlir::diagnostics::emit_error;
 use yuzu_mlir::ir::attribute::array::ArrayAttributeExt;
@@ -34,12 +34,12 @@ pub fn infer_types<'c>(
         declared: &declared,
         registry,
         filled: Vec::new(),
-        vars: HashMap::new(),
-        rows: HashMap::new(),
-        bindings: HashMap::new(),
-        relations: HashMap::new(),
+        vars: FxHashMap::default(),
+        rows: FxHashMap::default(),
+        bindings: FxHashMap::default(),
+        relations: FxHashMap::default(),
         pending: Vec::new(),
-        instances: HashMap::new(),
+        instances: FxHashMap::default(),
     };
 
     inferrer.infer_block(module.body());
@@ -69,10 +69,10 @@ struct Signature<'c> {
 
 #[derive(Default)]
 struct Declarations<'c> {
-    signatures: HashMap<&'c str, Signature<'c>>,
+    signatures: FxHashMap<&'c str, Signature<'c>>,
     /// The `(trait, type)` pairs the implementations supply.
-    impls: HashSet<(&'c str, &'c str)>,
-    rows: HashMap<&'c str, Row<'c>>,
+    impls: FxHashSet<(&'c str, &'c str)>,
+    rows: FxHashMap<&'c str, Row<'c>>,
 }
 
 impl<'c> Declarations<'c> {
@@ -133,17 +133,17 @@ struct TypeInferrer<'c, 'd> {
     /// One slot per type variable: unbound, substituted by another variable,
     /// or filled with its concrete type.
     filled: Vec<Option<Term<'c>>>,
-    vars: HashMap<ValueId, TypeVar>,
-    rows: HashMap<ValueId, Row<'c>>,
+    vars: FxHashMap<ValueId, TypeVar>,
+    rows: FxHashMap<ValueId, Row<'c>>,
     /// What each `let` yields, by symbol: the types a call to it gives.
-    bindings: HashMap<&'c str, Row<'c>>,
+    bindings: FxHashMap<&'c str, Row<'c>>,
     /// The row of each `let` that yields a query, by symbol: what `from`
     /// reads. A query `let` yields one value, the query, so its row is not
     /// its yielded types.
-    relations: HashMap<&'c str, Row<'c>>,
+    relations: FxHashMap<&'c str, Row<'c>>,
     pending: Vec<PendingBound<'c>>,
     /// The type variables each generic call minted, in declaration order.
-    instances: HashMap<ValueId, Vec<TypeVar>>,
+    instances: FxHashMap<ValueId, Vec<TypeVar>>,
 }
 
 impl<'c, 'd> TypeInferrer<'c, 'd> {
@@ -454,8 +454,8 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
         op: OperationRef<'c, '_>,
         callee: &'c str,
         signature: &Signature<'c>,
-    ) -> HashMap<&'c str, TypeVar> {
-        let mut bindings = HashMap::new();
+    ) -> FxHashMap<&'c str, TypeVar> {
+        let mut bindings = FxHashMap::default();
         let mut ordered = Vec::new();
         for name in &signature.type_params {
             let var = self.fresh();
@@ -483,7 +483,7 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
         bindings
     }
 
-    fn substitute(&self, ty: Type<'c>, bindings: &HashMap<&'c str, TypeVar>) -> Term<'c> {
+    fn substitute(&self, ty: Type<'c>, bindings: &FxHashMap<&'c str, TypeVar>) -> Term<'c> {
         if let Some(param) = ParamType::from_type(ty)
             && let Some(&var) = bindings.get(param.name())
         {

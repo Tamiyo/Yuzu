@@ -1,9 +1,8 @@
-use std::collections::{HashMap, HashSet};
-
 use melior::ir::operation::{OperationLike, OperationResult};
 use melior::ir::{
     Block, BlockLike, BlockRef, Location, Region, RegionLike, RegionRef, Type, Value, ValueLike,
 };
+use rustc_hash::{FxHashMap, FxHashSet};
 use yuzu_mlir::ir::block::BlockExt;
 use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
 use yuzu_mlir::ir::value::{ValueExt, ValueId};
@@ -76,7 +75,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             .collect();
         let feeds_a_measure = rests_on(
             measures.iter().flat_map(|op| op.operands()),
-            &HashSet::new(),
+            &FxHashSet::default(),
         );
 
         let region = Region::new();
@@ -85,8 +84,8 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 
         // Two items naming the same measure share one column: a target that
         // names columns after measures will not take the same one twice.
-        let mut columns: HashMap<ValueId, usize> = HashMap::new();
-        let mut distinct: HashMap<(&'c str, Vec<ValueId>), usize> = HashMap::new();
+        let mut columns: FxHashMap<ValueId, usize> = FxHashMap::default();
+        let mut distinct: FxHashMap<(&'c str, Vec<ValueId>), usize> = FxHashMap::default();
         let mut measured: Vec<Value<'c, '_>> = Vec::new();
         let mut discard = Vec::new();
         for op in block.operations() {
@@ -147,7 +146,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         block: BlockRef<'c, '_>,
         row: &Row<'c>,
         keys: &[usize],
-        columns: &HashMap<ValueId, usize>,
+        columns: &FxHashMap<ValueId, usize>,
         measures: &[Type<'c>],
         location: Location<'c>,
     ) -> Option<(Region<'c>, Vec<Type<'c>>)> {
@@ -174,7 +173,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 
         let region = Region::new();
         let body = self.row_block(&region, &grouped, location);
-        let mut values = HashMap::new();
+        let mut values = FxHashMap::default();
         for (position, &index) in keys.iter().enumerate() {
             let column = block
                 .argument(index)
@@ -191,7 +190,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         }
 
         let mut produced = Vec::new();
-        let seeded: HashSet<ValueId> = values.keys().copied().collect();
+        let seeded: FxHashSet<ValueId> = values.keys().copied().collect();
         let needed = rests_on(yielded.iter().copied(), &seeded);
         for op in block.operations() {
             let wanted = op
@@ -275,7 +274,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 fn argument_map<'c, 'b>(
     source: BlockRef<'c, '_>,
     target: BlockRef<'c, 'b>,
-) -> HashMap<ValueId, Value<'c, 'b>> {
+) -> FxHashMap<ValueId, Value<'c, 'b>> {
     source
         .arguments()
         .zip(target.arguments())
@@ -287,9 +286,9 @@ fn argument_map<'c, 'b>(
 /// at values the caller already holds.
 fn rests_on<'c: 'a, 'a>(
     roots: impl IntoIterator<Item = Value<'c, 'a>>,
-    held: &HashSet<ValueId>,
-) -> HashSet<ValueId> {
-    let mut reached = HashSet::new();
+    held: &FxHashSet<ValueId>,
+) -> FxHashSet<ValueId> {
+    let mut reached = FxHashSet::default();
     let mut pending: Vec<Value<'c, 'a>> = roots.into_iter().collect();
     while let Some(value) = pending.pop() {
         if held.contains(&value.id()) {

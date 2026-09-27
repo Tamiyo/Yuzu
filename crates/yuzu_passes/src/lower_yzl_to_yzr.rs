@@ -3,12 +3,11 @@
 //! module is built rather than rewritten in place, so no operand is
 //! remapped under its own use.
 
-use std::collections::HashMap;
-
 use melior::Context;
 use melior::ir::attribute::StringAttribute;
 use melior::ir::operation::{OperationLike, OperationRef};
 use melior::ir::{BlockRef, Location, Module, Type, Value};
+use rustc_hash::FxHashMap;
 use yuzu_mlir::SymbolTable;
 use yuzu_mlir::diagnostics::emit_error;
 use yuzu_mlir::ir::attribute::array::ArrayAttributeExt;
@@ -29,10 +28,10 @@ pub fn lower_yzl_to_yzr<'c>(context: &'c Context, module: &Module<'c>) -> Module
         let mut symbols = SymbolTable::new(&lowered);
         let mut lowering = YzlToYzr {
             context,
-            stages: HashMap::new(),
-            shapes: HashMap::new(),
-            bindings: HashMap::new(),
-            externals: HashMap::new(),
+            stages: FxHashMap::default(),
+            shapes: FxHashMap::default(),
+            bindings: FxHashMap::default(),
+            externals: FxHashMap::default(),
         };
 
         let source = SymbolTable::new(module);
@@ -55,13 +54,13 @@ enum Yielded<'k> {
 
 struct YzlToYzr<'c, 'a> {
     context: &'c Context,
-    stages: HashMap<ValueId, (Value<'c, 'a>, Row<'c>)>,
+    stages: FxHashMap<ValueId, (Value<'c, 'a>, Row<'c>)>,
     /// The struct declaring each row shape; one nobody declared is declared
     /// once.
-    shapes: HashMap<Row<'c>, &'c str>,
-    bindings: HashMap<&'c str, (Value<'c, 'a>, Row<'c>)>,
+    shapes: FxHashMap<Row<'c>, &'c str>,
+    bindings: FxHashMap<&'c str, (Value<'c, 'a>, Row<'c>)>,
     /// The engine's name for each external function, by its symbol.
-    externals: HashMap<&'c str, &'c str>,
+    externals: FxHashMap<&'c str, &'c str>,
 }
 
 impl<'c, 'a> YzlToYzr<'c, 'a> {

@@ -2,10 +2,9 @@
 //! `drop`, `rename`, `set` and `distinct` into projections and groupings —
 //! so each op here is one Substrait relation.
 
-use std::collections::HashMap;
-
 use melior::ir::operation::{OperationLike, OperationRef};
 use melior::ir::{Value, ValueLike};
+use rustc_hash::FxHashMap;
 use substrait::proto::{
     AggregateFunction, AggregateRel, AggregationPhase, Expression, FetchRel, FilterRel,
     FunctionArgument, JoinRel, NamedStruct, ProjectRel, ReadRel, Rel,
@@ -223,7 +222,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         op: OperationRef<'c, '_>,
         func: functions::Aggregate,
         arguments: &[Value<'c, '_>],
-        values: &HashMap<ValueId, Expression>,
+        values: &FxHashMap<ValueId, Expression>,
     ) -> Option<Measure> {
         let mut signature = Vec::new();
         let mut emitted = Vec::new();

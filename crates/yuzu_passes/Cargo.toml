@@ -4,6 +4,7 @@ version = "0.0.0"
 edition = "2024"
 
 [dependencies]
+rustc-hash = "2"
 melior = { version = "0.27.6", features = ["ods-dialects"] }
 text-size = "1.1.1"
 yuzu_ast = { path = "../yuzu_ast" }
