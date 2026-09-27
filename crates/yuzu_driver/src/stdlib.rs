@@ -79,19 +79,19 @@ pub(crate) fn resolve(path: &str, engine: Engine) -> Option<ModuleSource> {
 }
 
 /// The library as every compile on the thread starts from it: its files
-/// loaded, what each of its modules declares, and its names bound.
+/// loaded and what each of its modules declares.
 pub(crate) struct Library {
     pub(crate) sources: SourceMap,
     pub(crate) files: Vec<File>,
     pub(crate) submodules: HashMap<String, Vec<Submodule>>,
-    pub(crate) bound: &'static BoundLibrary<'static>,
 }
 
 thread_local! {
     static LIBRARIES: RefCell<HashMap<Engine, Rc<Library>>> = RefCell::new(HashMap::new());
 }
 
-/// The library for an engine, loaded and bound once for the thread.
+/// The library for an engine, loaded once for the thread. A syntax tree
+/// cannot cross threads, so each thread loads its own.
 pub(crate) fn library(engine: Engine) -> Rc<Library> {
     LIBRARIES.with(|libraries| {
         libraries
@@ -102,13 +102,16 @@ pub(crate) fn library(engine: Engine) -> Rc<Library> {
     })
 }
 
-/// The library's names for an engine, bound once for the thread.
+/// The library's names for an engine, bound once for the process.
 pub(crate) fn bound_library(engine: Engine) -> &'static BoundLibrary<'static> {
-    library(engine).bound
+    static DATAFUSION: OnceLock<BoundLibrary<'static>> = OnceLock::new();
+    let bound = match engine {
+        Engine::DataFusion => &DATAFUSION,
+    };
+    bound.get_or_init(|| bind_library(engine))
 }
 
-/// The names live in a context made for them and never dropped. It holds
-/// only the library, which is fixed, so it does not grow.
+/// Loads the library's files for an engine.
 fn load_library(engine: Engine) -> Library {
     let mut sources = SourceMap::new();
     let mut diagnostics = DiagnosticsEngine::new();
@@ -122,12 +125,28 @@ fn load_library(engine: Engine) -> Library {
         None,
     )
     .expect("the library loads");
+    assert!(
+        diagnostics.diagnostics().is_empty(),
+        "the library loads without diagnostics"
+    );
     submodules.remove("");
     let files: Vec<File> = files
         .into_iter()
         .filter(|file| file.module().is_some())
         .collect();
 
+    Library {
+        sources,
+        files,
+        submodules,
+    }
+}
+
+/// Binds the library's names for an engine. The names live in a context
+/// made for them and never dropped: one for each engine, for the process.
+fn bind_library(engine: Engine) -> BoundLibrary<'static> {
+    let Library { sources, files, .. } = load_library(engine);
+    let mut diagnostics = DiagnosticsEngine::new();
     let context: &'static Context = Box::leak(Box::new(yuzu_mlir::context()));
     let bound = yuzu_passes::bind_library(
         context,
@@ -138,15 +157,9 @@ fn load_library(engine: Engine) -> Library {
     );
     assert!(
         diagnostics.diagnostics().is_empty(),
-        "the library loads and binds without diagnostics"
+        "the library binds without diagnostics"
     );
-
-    Library {
-        sources,
-        files,
-        submodules,
-        bound: Box::leak(Box::new(bound)),
-    }
+    bound
 }
 
 /// A library file's syntax tree. Each file is parsed once for the process;
