@@ -167,6 +167,51 @@ impl SyntaxKind {
             SyntaxKind::Comment | SyntaxKind::Space | SyntaxKind::Newline
         )
     }
+
+    pub fn is_keyword(self) -> bool {
+        matches!(
+            self,
+            SyntaxKind::AggKw
+                | SyntaxKind::AggregateKw
+                | SyntaxKind::AndKw
+                | SyntaxKind::AsKw
+                | SyntaxKind::ByKw
+                | SyntaxKind::DefKw
+                | SyntaxKind::DistinctKw
+                | SyntaxKind::DropKw
+                | SyntaxKind::ExtendKw
+                | SyntaxKind::ExternalKw
+                | SyntaxKind::ForKw
+                | SyntaxKind::FromKw
+                | SyntaxKind::FullKw
+                | SyntaxKind::GroupKw
+                | SyntaxKind::ImplKw
+                | SyntaxKind::ImportKw
+                | SyntaxKind::InKw
+                | SyntaxKind::InnerKw
+                | SyntaxKind::JoinKw
+                | SyntaxKind::LeftKw
+                | SyntaxKind::LetKw
+                | SyntaxKind::LimitKw
+                | SyntaxKind::ModKw
+                | SyntaxKind::MutKw
+                | SyntaxKind::NotKw
+                | SyntaxKind::OffsetKw
+                | SyntaxKind::OnKw
+                | SyntaxKind::OrKw
+                | SyntaxKind::PubKw
+                | SyntaxKind::RenameKw
+                | SyntaxKind::ReturnKw
+                | SyntaxKind::RightKw
+                | SyntaxKind::SelectKw
+                | SyntaxKind::SetKw
+                | SyntaxKind::StructKw
+                | SyntaxKind::TableKw
+                | SyntaxKind::TraitKw
+                | SyntaxKind::UsingKw
+                | SyntaxKind::WhereKw
+        )
+    }
 }
 
 impl From<TokenKind> for SyntaxKind {

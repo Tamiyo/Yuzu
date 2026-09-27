@@ -43,6 +43,12 @@ RUN wget -qO /etc/apt/trusted.gpg.d/apt-llvm-org.asc https://apt.llvm.org/llvm-s
   mlir-22-tools \
   && rm -rf /var/lib/apt/lists/*
 
+# Node.js 22 LTS from NodeSource — builds the VS Code extension's language
+# client in editors/vscode.
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+  && apt-get install -y --no-install-recommends nodejs \
+  && rm -rf /var/lib/apt/lists/*
+
 # Starship prompt (matches the host setup).
 RUN curl -fsSL https://starship.rs/install.sh | sh -s -- -y
 

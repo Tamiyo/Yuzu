@@ -9,7 +9,7 @@ use melior::Context;
 use melior::ir::Type;
 
 pub use yz::{BoolType, Float64Type, Int64Type, ListType, StrType, StructType};
-pub use yzl::{ParamType, QueryType, RefType, UnresolvedType};
+pub use yzl::{ErrorType, ParamType, QueryType, RefType, UnresolvedType};
 
 /// A scalar type's spelling in source, and the lookup returning it.
 type Scalar = (&'static str, fn(&Context) -> Type<'_>);

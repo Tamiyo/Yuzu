@@ -39,7 +39,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     "a query is missing its `from`",
                     QueryType::get(self.context),
                 );
-                (hole, Row::new())
+                (hole, Row::lost())
             }
         };
 
@@ -73,8 +73,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     }
 
     /// The relation a pipeline reads, and the row it starts from. An unknown
-    /// relation starts from an empty row, so the stages after it are still
-    /// checked.
+    /// relation starts from a lost row, so the stages after it are still
+    /// checked, and a column they name is not reported against it.
     fn convert_from<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
@@ -82,13 +82,13 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     ) -> (Value<'c, 'a>, Row<'c>) {
         let loc = self.location(from);
         let Some(source) = self.read_ident(from.relation()) else {
-            let hole = self.report_and_hole(
+            let hole = self.parser_hole(
                 block,
                 from,
                 "`from` is missing its relation",
                 QueryType::get(self.context),
             );
-            return (hole, Row::new());
+            return (hole, Row::lost());
         };
 
         let Some((symbol, mut row)) = self.symbols.relation(source, None) else {
@@ -98,7 +98,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 &format!("`{source}` is not a relation"),
                 QueryType::get(self.context),
             );
-            return (hole, Row::new());
+            return (hole, Row::lost());
         };
 
         let mut value = block
@@ -131,7 +131,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let body = self.stage_block(&region, loc);
         let predicate = match r#where.predicate() {
             Some(expr) => self.convert_expr(body, &Locals::new(), &expr),
-            None => self.report_and_hole(
+            None => self.parser_hole(
                 body,
                 r#where,
                 "`where` is missing its predicate",
@@ -236,7 +236,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let mut key_names: Vec<&'c str> = Vec::new();
         for item in agg.group_by().into_iter().flat_map(|group| group.items()) {
             let Some(column) = self.read_ident(item.column()) else {
-                self.report(&item, "group by key is missing its column");
+                self.reported_by_parser("group by key is missing its column");
                 continue;
             };
 
@@ -292,7 +292,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let count = match limit.count() {
             Some(count) => self.int_literal(&count),
             None => {
-                self.report(limit, "`limit` is missing its row count");
+                self.reported_by_parser("`limit` is missing its row count");
                 0
             }
         };
@@ -365,7 +365,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     ) -> Value<'c, 'a> {
         let loc = self.location(alias);
         let Some(alias) = self.read_ident(alias.alias()) else {
-            self.report(alias, "`as` is missing its alias");
+            self.reported_by_parser("`as` is missing its alias");
             return input;
         };
 
@@ -387,7 +387,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             Some(ast::JoinKind::Inner) | None => JoinKind::Inner,
         };
         let Some(relation) = self.read_ident(join.relation()) else {
-            return self.report_and_hole(
+            return self.parser_hole(
                 block,
                 join,
                 "`join` is missing its relation",
@@ -431,9 +431,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let on = Region::new();
         if join.using().is_none() {
             match join.on() {
-                None => self.report(join, "`join` is missing its `on` or `using` clause"),
+                None => self.reported_by_parser("`join` is missing its `on` or `using` clause"),
                 Some(clause) => match clause.condition() {
-                    None => self.report(&clause, "`on` is missing its condition"),
+                    None => self.reported_by_parser("`on` is missing its condition"),
                     Some(condition) => {
                         let body = self.stage_block(&on, loc);
                         let value = self.convert_expr(body, &Locals::new(), &condition);
@@ -610,6 +610,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     ) -> Option<usize> {
         let message = match self.symbols.column(reference) {
             ColumnLookup::Unique(index) => return Some(index),
+            ColumnLookup::Lost => return None,
             ColumnLookup::Ambiguous => {
                 format!("{what} `{reference}` is ambiguous; qualify it with a relation alias")
             }
@@ -646,7 +647,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             let value = match expr {
                 Some(expr) => self.convert_expr(body, &Locals::new(), expr),
                 None => {
-                    self.report_at(*range, &format!("{what} is missing its expression"));
+                    self.reported_by_parser(&format!("{what} is missing its expression"));
                     self.emit_hole(body, *range, UnresolvedType::get(self.context))
                 }
             };

@@ -49,5 +49,10 @@ fn main() -> ExitCode {
     let resolver = FsResolver {
         base: base_of(&cli.file),
     };
-    compile(&cli.file.display().to_string(), &source, &options, &resolver)
+    compile(
+        &cli.file.display().to_string(),
+        &source,
+        &options,
+        &resolver,
+    )
 }

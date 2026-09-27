@@ -1,5 +1,9 @@
+mod check;
+pub mod index;
 pub mod modules;
 pub mod stdlib;
+
+pub use check::{Checked, Focus, check};
 
 use yuzu_diagnostics::{
     diagnostics::{Severity, engine::DiagnosticsEngine, printer::DiagnosticPrinter},
@@ -73,41 +77,19 @@ fn plan_through_mlir(
     options: &CompileOptions,
     resolver: &dyn modules::ModuleResolver,
 ) -> Option<yuzu_substrait::Plan> {
-    use melior::ir::operation::OperationLike;
-
     let engine = read_engine(options, diagnostics, source_id)?;
     let files = modules::load(source_id, sources, diagnostics, resolver, engine)?;
-    with_context(|context| {
-        let mut module = yuzu_passes::lower_ast_to_yzl(
+    in_thread_context(|context| {
+        let mut module = lower_and_check(
             context,
             sources,
             &files,
             diagnostics,
-            &yuzu_types::Builtins,
             Some(stdlib::bound_library(engine)),
-        );
-
-        if options.debug_yzl {
-            println!("=== yzl ===");
-            print!("{}", module.as_operation());
-        }
-
-        let verified = yuzu_mlir::diagnostics::capture(context, sources, diagnostics, || {
-            module.as_operation().verify()
-        });
-        if !verified || has_errors(diagnostics) {
-            return None;
-        }
-
-        yuzu_mlir::diagnostics::capture(context, sources, diagnostics, || {
-            yuzu_passes::check_mutability(&module);
-            yuzu_passes::promote_locals(context, &mut module);
-            yuzu_passes::infer_types(context, &mut module, &yuzu_types::Builtins);
-            yuzu_passes::check_aggregates(&module);
-        });
-        if has_errors(diagnostics) {
-            return None;
-        }
+            options,
+            None,
+        )
+        .filter(|_| !has_errors(diagnostics))?;
 
         // Expansion runs after the aggregate rules, which read an `agg fn` body
         // while it is still a body, and before the lowering, which has no way to
@@ -134,19 +116,77 @@ fn plan_through_mlir(
     })
 }
 
+/// The frontend and the checks after it, through `check_aggregates`: what
+/// a compile and an editor's check share. Each check runs even after an
+/// error, and passes over what the error left behind; `None` only when the
+/// module does not verify, which no pass can read.
+///
+/// `library` is the library's names bound ahead of time; without it, the
+/// lowering binds them from the library files among `files`. `index` reads
+/// the module after lowering and after inference, when a caller wants it.
+pub(crate) fn lower_and_check<'c>(
+    context: &'c melior::Context,
+    sources: &SourceMap,
+    files: &[yuzu_passes::File],
+    diagnostics: &mut DiagnosticsEngine,
+    library: Option<&'c yuzu_passes::BoundLibrary<'c>>,
+    options: &CompileOptions,
+    mut index: Option<&mut index::IndexReader<'_>>,
+) -> Option<melior::ir::Module<'c>> {
+    use melior::ir::operation::OperationLike;
+
+    let mut module = yuzu_passes::lower_ast_to_yzl(
+        context,
+        sources,
+        files,
+        diagnostics,
+        &yuzu_types::Builtins,
+        library,
+    );
+
+    if options.debug_yzl {
+        println!("=== yzl ===");
+        print!("{}", module.as_operation());
+    }
+
+    let verified = yuzu_mlir::diagnostics::capture(context, sources, diagnostics, || {
+        module.as_operation().verify()
+    });
+    if !verified {
+        return None;
+    }
+    if let Some(reader) = index.as_deref_mut() {
+        reader.read_lowered(&module);
+    }
+
+    yuzu_mlir::diagnostics::capture(context, sources, diagnostics, || {
+        yuzu_passes::check_mutability(&module);
+        yuzu_passes::promote_locals(context, &mut module);
+        yuzu_passes::infer_types(context, &mut module, &yuzu_types::Builtins);
+    });
+    if let Some(reader) = index {
+        reader.read_inferred(context, &module);
+    }
+
+    yuzu_mlir::diagnostics::capture(context, sources, diagnostics, || {
+        yuzu_passes::check_aggregates(&module);
+    });
+    Some(module)
+}
+
 /// How many compiles one thread's context serves. A context keeps every
 /// attribute it has uniqued until it is dropped, so a long-lived process
 /// replaces it now and then.
 const CONTEXT_COMPILES: usize = 1000;
 
-/// The context this thread compiles in.
-struct Reused {
+/// The context this thread compiles in, and how many compiles it has served.
+struct ThreadContext {
     context: melior::Context,
     compiles: usize,
 }
 
 thread_local! {
-    static CONTEXT: std::cell::RefCell<Reused> = std::cell::RefCell::new(Reused {
+    static CONTEXT: std::cell::RefCell<ThreadContext> = std::cell::RefCell::new(ThreadContext {
         context: yuzu_mlir::context(),
         compiles: 0,
     });
@@ -154,18 +194,18 @@ thread_local! {
 
 /// Runs a compile in this thread's context. Making a context registers every
 /// op of the dialects, which was a sixth of a compile.
-fn with_context<T>(compile: impl FnOnce(&melior::Context) -> T) -> T {
-    CONTEXT.with(|reused| {
-        let mut reused = reused.borrow_mut();
-        if reused.compiles == CONTEXT_COMPILES {
-            *reused = Reused {
+fn in_thread_context<T>(compile: impl FnOnce(&melior::Context) -> T) -> T {
+    CONTEXT.with(|thread| {
+        let mut thread = thread.borrow_mut();
+        if thread.compiles == CONTEXT_COMPILES {
+            *thread = ThreadContext {
                 context: yuzu_mlir::context(),
                 compiles: 0,
             };
         }
 
-        reused.compiles += 1;
-        compile(&reused.context)
+        thread.compiles += 1;
+        compile(&thread.context)
     })
 }
 

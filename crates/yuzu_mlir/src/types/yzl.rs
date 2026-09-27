@@ -21,6 +21,22 @@ impl UnresolvedType {
     }
 }
 
+/// `!yzl.error`, the type of a value an error left behind.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ErrorType;
+
+impl ErrorType {
+    pub fn get(context: &Context) -> Type<'_> {
+        // SAFETY: the context is live for the returned lifetime and the type is uniqued in it.
+        unsafe { Type::from_raw(yuzu_mlir_sys::yzuErrorTypeGet(context.to_raw())) }
+    }
+
+    pub fn is(ty: Type<'_>) -> bool {
+        // SAFETY: `ty` is a live type; the query only reads it.
+        unsafe { yuzu_mlir_sys::yzuTypeIsErrorType(ty.to_raw()) }
+    }
+}
+
 /// `!yzl.query`, a relation before its schema is known.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct QueryType;

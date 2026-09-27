@@ -22,6 +22,17 @@ def Yzl_UnresolvedType : Yzl_Type<"Unresolved", "unresolved"> {
   let summary = "a unification variable: a type inference has not resolved yet";
 }
 
+def Yzl_ErrorType : Yzl_Type<"Error", "error"> {
+  let summary = "the type of a value an error left behind";
+  let description = [{
+    What a type annotation the lowering could not resolve stands for, and
+    what inference gives a value computed from a `yzl.missing` hole. It
+    matches every type, so the error that made it is reported once and not
+    again by each value that reads it. A module that holds it has reported
+    an error, and never lowers to `yzr`.
+  }];
+}
+
 def Yzl_QueryType : Yzl_Type<"Query", "query"> {
   let summary = "a relation whose schema resolution has not computed yet";
 }

@@ -15,7 +15,7 @@ use yuzu_lexer::lexer::{Lexer, Token};
 use yuzu_passes::{BoundLibrary, File};
 use yuzu_syntax::{GreenNode, SyntaxNode};
 
-use crate::modules::{self, MapResolver, ModuleSource, Submodule};
+use crate::modules::{self, Loaded, MapResolver, ModuleSource, Submodule};
 
 /// One library file: its module path, the name a diagnostic shows for it,
 /// and its text.
@@ -56,7 +56,7 @@ impl Engine {
 
 /// Whether a path belongs to the library. A program's own module cannot
 /// take such a path, so it cannot stand in for a library module.
-pub(crate) fn reserves(path: &str) -> bool {
+pub fn reserves(path: &str) -> bool {
     path.split('.').next() == Some(ROOT)
 }
 
@@ -90,16 +90,52 @@ thread_local! {
     static LIBRARIES: RefCell<HashMap<Engine, Rc<Library>>> = RefCell::new(HashMap::new());
 }
 
-/// The library for an engine, loaded once for the thread. A syntax tree
-/// cannot cross threads, so each thread loads its own.
-pub(crate) fn library(engine: Engine) -> Rc<Library> {
-    LIBRARIES.with(|libraries| {
-        libraries
-            .borrow_mut()
-            .entry(engine)
-            .or_insert_with(|| Rc::new(load_library(engine)))
-            .clone()
-    })
+impl Library {
+    /// The library for an engine, loaded once for the thread. A syntax tree
+    /// cannot cross threads, so each thread loads its own.
+    pub(crate) fn for_thread(engine: Engine) -> Rc<Self> {
+        LIBRARIES.with(|libraries| {
+            libraries
+                .borrow_mut()
+                .entry(engine)
+                .or_insert_with(|| Rc::new(Self::load(engine)))
+                .clone()
+        })
+    }
+
+    /// Loads the library's files for an engine.
+    fn load(engine: Engine) -> Self {
+        let mut sources = SourceMap::new();
+        let mut diagnostics = DiagnosticsEngine::new();
+        let entry = sources.add("<library>".to_string(), String::new());
+        let Loaded {
+            files,
+            mut submodules,
+        } = modules::load_program(
+            entry,
+            &mut sources,
+            &mut diagnostics,
+            &MapResolver(HashMap::new()),
+            engine,
+            None,
+            None,
+        );
+        assert!(
+            diagnostics.diagnostics().is_empty(),
+            "the library loads without diagnostics"
+        );
+        submodules.remove("");
+        let files: Vec<File> = files
+            .into_iter()
+            .filter(|file| file.module().is_some())
+            .collect();
+
+        Self {
+            sources,
+            files,
+            submodules,
+        }
+    }
 }
 
 /// The library's names for an engine, bound once for the process.
@@ -111,41 +147,10 @@ pub(crate) fn bound_library(engine: Engine) -> &'static BoundLibrary<'static> {
     bound.get_or_init(|| bind_library(engine))
 }
 
-/// Loads the library's files for an engine.
-fn load_library(engine: Engine) -> Library {
-    let mut sources = SourceMap::new();
-    let mut diagnostics = DiagnosticsEngine::new();
-    let entry = sources.add("<library>".to_string(), String::new());
-    let (files, mut submodules) = modules::load_with(
-        entry,
-        &mut sources,
-        &mut diagnostics,
-        &MapResolver(HashMap::new()),
-        engine,
-        None,
-    )
-    .expect("the library loads");
-    assert!(
-        diagnostics.diagnostics().is_empty(),
-        "the library loads without diagnostics"
-    );
-    submodules.remove("");
-    let files: Vec<File> = files
-        .into_iter()
-        .filter(|file| file.module().is_some())
-        .collect();
-
-    Library {
-        sources,
-        files,
-        submodules,
-    }
-}
-
 /// Binds the library's names for an engine. The names live in a context
 /// made for them and never dropped: one for each engine, for the process.
 fn bind_library(engine: Engine) -> BoundLibrary<'static> {
-    let Library { sources, files, .. } = load_library(engine);
+    let Library { sources, files, .. } = Library::load(engine);
     let mut diagnostics = DiagnosticsEngine::new();
     let context: &'static Context = Box::leak(Box::new(yuzu_mlir::context()));
     let bound = yuzu_passes::bind_library(

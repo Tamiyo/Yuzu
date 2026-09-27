@@ -223,7 +223,15 @@ fn parse_arg_list(p: &mut Parser) -> CompletedMarker {
     p.complete(m, SyntaxKind::ArgList)
 }
 
-const EXPR_RECOVERY_SET: [TokenKind; 0] = [];
+/// What a missing expression also leaves in place: the close of the list or
+/// block around it, and the next pipeline stage.
+const EXPR_RECOVERY_SET: [TokenKind; 5] = [
+    TokenKind::RightParen,
+    TokenKind::RightSquare,
+    TokenKind::RightCurly,
+    TokenKind::Comma,
+    TokenKind::Pipe,
+];
 
 #[derive(Clone, Copy)]
 #[repr(u8)]

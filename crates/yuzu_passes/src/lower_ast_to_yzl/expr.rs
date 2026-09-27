@@ -92,7 +92,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         ident: &ast::IdentExpr,
     ) -> Value<'c, 'a> {
         let Some(name) = self.read_ident(ident.name()) else {
-            return self.report_and_hole(
+            return self.parser_hole(
                 block,
                 ident,
                 "identifier expression is missing its name",
@@ -127,7 +127,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         };
 
         let Some(base) = base else {
-            return self.report_and_hole(
+            return self.parser_hole(
                 block,
                 access,
                 "field access is missing its base",
@@ -136,7 +136,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         };
 
         let Some(field) = self.read_ident(access.field()) else {
-            return self.report_and_hole(
+            return self.parser_hole(
                 block,
                 access,
                 "field access is missing its field",
@@ -162,7 +162,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let lhs = match binary.lhs() {
             Some(expr) => self.convert_expr(block, locals, &expr),
             None => {
-                return self.report_and_hole(
+                return self.parser_hole(
                     block,
                     binary,
                     "binary expression is missing its left operand",
@@ -174,7 +174,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let rhs = match binary.rhs() {
             Some(expr) => self.convert_expr(block, locals, &expr),
             None => {
-                return self.report_and_hole(
+                return self.parser_hole(
                     block,
                     binary,
                     "binary expression is missing its right operand",
@@ -222,7 +222,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 yz::not(self.context, var, contains, loc).into()
             }
             None => {
-                return self.report_and_hole(
+                return self.parser_hole(
                     block,
                     binary,
                     "binary expression is missing its operator",
@@ -245,7 +245,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let value = match unary.expr() {
             Some(expr) => self.convert_expr(block, locals, &expr),
             None => {
-                return self.report_and_hole(
+                return self.parser_hole(
                     block,
                     unary,
                     "unary expression is missing its operand",
@@ -263,7 +263,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             }
             Some(UnaryOp::Pos) => return value,
             None => {
-                return self.report_and_hole(
+                return self.parser_hole(
                     block,
                     unary,
                     "unary expression is missing its operator",
@@ -287,7 +287,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             Some(ast::Expr::IdentExpr(ident)) => match self.read_ident(ident.name()) {
                 Some(callee) => callee,
                 None => {
-                    return self.report_and_hole(
+                    return self.parser_hole(
                         block,
                         call,
                         "call is missing its callee",
@@ -307,7 +307,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 );
             }
             None => {
-                return self.report_and_hole(
+                return self.parser_hole(
                     block,
                     call,
                     "call is missing its callee",
@@ -430,7 +430,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     ) -> Value<'c, 'a> {
         match paren.expr() {
             Some(inner) => self.convert_expr(block, locals, &inner),
-            None => self.report_and_hole(
+            None => self.parser_hole(
                 block,
                 paren,
                 "parenthesized expression is missing its inner expression",
@@ -468,6 +468,13 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             }
             Lookup::Let(symbol) => {
                 return self.call(block, Callable::constant(symbol), &[], loc);
+            }
+            Lookup::Lost => {
+                return self.emit_hole(
+                    block,
+                    node.syntax().text_range(),
+                    UnresolvedType::get(self.context),
+                );
             }
             Lookup::Ambiguous => {
                 format!("column `{name}` is ambiguous; qualify it with a relation alias")
@@ -669,7 +676,7 @@ from t
     }
 
     #[test]
-    fn reports_missing_pieces() {
+    fn a_missing_piece_lowers_to_a_hole() {
         let context = yuzu_mlir::context();
         let lowered = lower(
             &context,
@@ -685,12 +692,6 @@ from t
               |
             5 | |> where a >
               | 
-
-            error: binary expression is missing its right operand
-             --> test.yz:5:10
-              |
-            5 | |> where a >
-              |          ^^^
         "#]]
         .assert_eq(&rendered(&lowered.sources, &lowered.diagnostics));
         assert!(

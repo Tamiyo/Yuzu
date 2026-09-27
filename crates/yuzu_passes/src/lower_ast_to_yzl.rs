@@ -13,6 +13,7 @@ use yuzu_diagnostics::source_map::{SourceId, SourceMap};
 use yuzu_mlir::ir::location::LocationExt;
 use yuzu_mlir::ir::operation::OperationExt;
 use yuzu_mlir::ods::yzl;
+use yuzu_syntax::SyntaxKind;
 use yuzu_types::FunctionRegistry;
 
 use crate::lower_ast_to_yzl::symbols::SymbolTable;
@@ -168,6 +169,36 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         self.emit_hole(block, node.syntax().text_range(), ty)
     }
 
+    /// A piece of syntax the tree lacks. Only a syntax error leaves one, and
+    /// the parser reported it, so the lowering adds nothing.
+    fn reported_by_parser(&self, what: &str) {
+        debug_assert!(
+            self.has_syntax_error(),
+            "{what}, which only a syntax error leaves"
+        );
+    }
+
+    /// A hole for a piece of syntax the tree lacks.
+    fn parser_hole<'a>(
+        &self,
+        block: BlockRef<'c, 'a>,
+        node: &impl AstNode,
+        what: &str,
+        ty: Type<'c>,
+    ) -> Value<'c, 'a> {
+        self.reported_by_parser(what);
+        self.emit_hole(block, node.syntax().text_range(), ty)
+    }
+
+    fn has_syntax_error(&self) -> bool {
+        self.diagnostics.diagnostics().iter().any(|diagnostic| {
+            diagnostic
+                .labels
+                .iter()
+                .any(|label| label.span.source_id == self.source_id)
+        })
+    }
+
     fn emit_hole<'a>(
         &self,
         block: BlockRef<'c, 'a>,
@@ -196,10 +227,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         (at.line, at.col)
     }
 
-    /// A name the source wrote, interned for the rest of the pass.
+    /// A name the source wrote, interned for the rest of the pass. Parse
+    /// recovery can leave an `Ident` holding an error token, which is no
+    /// name.
     fn read_ident(&self, ident: Option<ast::Ident>) -> Option<&'c str> {
         let token = ident?.token()?;
-        Some(self.symbols.intern(token.text()))
+        (token.kind() == SyntaxKind::Identifier).then(|| self.symbols.intern(token.text()))
     }
 
     fn name(&self) -> &str {

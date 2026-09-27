@@ -79,6 +79,7 @@ YZU_SINGLETON_TYPE(yzuBoolTypeGet, yzuTypeIsBoolType, yuzu::yz::BoolType)
 YZU_SINGLETON_TYPE(yzuStrTypeGet, yzuTypeIsStrType, yuzu::yz::StrType)
 YZU_SINGLETON_TYPE(yzuUnresolvedTypeGet, yzuTypeIsUnresolvedType,
                    yuzu::yzl::UnresolvedType)
+YZU_SINGLETON_TYPE(yzuErrorTypeGet, yzuTypeIsErrorType, yuzu::yzl::ErrorType)
 YZU_SINGLETON_TYPE(yzuQueryTypeGet, yzuTypeIsQueryType, yuzu::yzl::QueryType)
 YZU_SINGLETON_TYPE(yzuRefTypeGet, yzuTypeIsRefType, yuzu::yzl::RefType)
 

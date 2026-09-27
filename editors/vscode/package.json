@@ -1,16 +1,32 @@
 {
   "name": "yuzu",
   "displayName": "Yuzu",
-  "description": "Syntax highlighting for the Yuzu language",
+  "description": "Language support for Yuzu",
   "version": "0.0.1",
   "publisher": "yuzu",
   "license": "UNLICENSED",
   "engines": {
-    "vscode": "^1.75.0"
+    "vscode": "^1.82.0"
   },
   "categories": [
     "Programming Languages"
   ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:yuzu"
+  ],
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "~1.82.0",
+    "typescript": "^5.6.0"
+  },
   "contributes": {
     "languages": [
       {
@@ -30,6 +46,57 @@
         "language": "yuzu",
         "scopeName": "source.yuzu",
         "path": "./syntaxes/yuzu.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Yuzu",
+      "properties": {
+        "yuzu.server.path": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the yuzu-lsp binary. When empty, the extension uses target/debug/yuzu-lsp in the workspace, then yuzu-lsp on the PATH."
+        },
+        "yuzu.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Traces the messages between VS Code and the language server."
+        }
+      }
+    },
+    "semanticTokenTypes": [
+      {
+        "id": "boolean",
+        "superType": "keyword",
+        "description": "A boolean literal."
+      },
+      {
+        "id": "table",
+        "superType": "struct",
+        "description": "A table."
+      }
+    ],
+    "semanticTokenModifiers": [
+      {
+        "id": "mutable",
+        "description": "A binding declared with `mut`."
+      }
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "yuzu",
+        "scopes": {
+          "boolean": [
+            "constant.language.boolean.yuzu"
+          ],
+          "table": [
+            "entity.name.type.table.yuzu"
+          ]
+        }
       }
     ]
   }

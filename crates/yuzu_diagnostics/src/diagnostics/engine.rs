@@ -1,5 +1,6 @@
 use crate::diagnostics::{Diagnostic, Severity};
 
+#[derive(Debug)]
 pub struct DiagnosticsEngine {
     diagnostics: Vec<Diagnostic>,
 }
@@ -29,6 +30,10 @@ impl DiagnosticsEngine {
 
     pub fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics
+    }
+
+    pub fn into_diagnostics(self) -> Vec<Diagnostic> {
+        self.diagnostics
     }
 }
 

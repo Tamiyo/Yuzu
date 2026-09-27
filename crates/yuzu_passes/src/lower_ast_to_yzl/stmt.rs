@@ -11,7 +11,7 @@ use yuzu_mlir::attributes::CalleeSource;
 use yuzu_mlir::ir::attribute::array::ArrayAttributeExt;
 use yuzu_mlir::ir::operation::{OperationExt, OperationMutExt};
 use yuzu_mlir::ods::yzl;
-use yuzu_mlir::types::{self, RefType, UnresolvedType};
+use yuzu_mlir::types::{self, ErrorType, RefType, UnresolvedType};
 use yuzu_mlir::{ListType, ParamType, StructType};
 
 use crate::lower_ast_to_yzl::symbols::{
@@ -73,7 +73,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
 
         let Some(name) = self.read_ident(decl.name()) else {
-            self.report(decl, "struct is missing its name");
+            self.reported_by_parser("struct is missing its name");
             return;
         };
 
@@ -96,7 +96,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
 
         let Some(name) = self.read_ident(decl.name()) else {
-            self.report(decl, "table is missing its name");
+            self.reported_by_parser("table is missing its name");
             return;
         };
 
@@ -174,7 +174,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let loc = self.location(decl);
 
         let Some(name) = self.read_ident(decl.name()) else {
-            self.report(decl, "function is missing its name");
+            self.reported_by_parser("function is missing its name");
             return;
         };
 
@@ -200,7 +200,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let mut has_error = false;
         for param in decl.params() {
             let Some(name) = self.read_ident(param.name()) else {
-                self.report(&param, "parameter is missing its name");
+                self.reported_by_parser("parameter is missing its name");
                 has_error = true;
                 continue;
             };
@@ -302,7 +302,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
 
         let Some(name) = self.read_ident(decl.name()) else {
-            self.report(decl, "trait is missing its name");
+            self.reported_by_parser("trait is missing its name");
             return;
         };
 
@@ -344,12 +344,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .trait_()
             .and_then(|trait_ref| self.read_ident(trait_ref.name()))
         else {
-            self.report(decl, "`impl` is missing its trait");
+            self.reported_by_parser("`impl` is missing its trait");
             return;
         };
 
         let Some(target) = self.read_ident(decl.ty()) else {
-            self.report(decl, "`impl` is missing its type name");
+            self.reported_by_parser("`impl` is missing its type name");
             return;
         };
 
@@ -399,12 +399,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let loc = self.location(decl);
 
         let Some(name) = self.read_ident(decl.name()) else {
-            self.report(decl, "let binding is missing its name");
+            self.reported_by_parser("let binding is missing its name");
             return;
         };
 
         let Some(expr) = decl.expr() else {
-            self.report(decl, "let binding is missing its expression");
+            self.reported_by_parser("let binding is missing its expression");
             return;
         };
 
@@ -502,7 +502,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         };
 
         let Some(value) = assign.value() else {
-            self.report(assign, "assignment is missing its value");
+            self.reported_by_parser("assignment is missing its value");
             return;
         };
 
@@ -755,7 +755,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 }
                 ast::Stmt::ModStmt(decl) => {
                     let Some(name) = self.read_ident(decl.name()) else {
-                        self.report(decl, "module declaration is missing its name");
+                        self.reported_by_parser("module declaration is missing its name");
                         continue;
                     };
 
@@ -783,7 +783,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
     fn bind_import(&mut self, path: &'c str, item: &ast::ImportItem) {
         let Some(name) = self.read_ident(item.name()) else {
-            self.report(item, "import item is missing its name");
+            self.reported_by_parser("import item is missing its name");
             return;
         };
 
@@ -881,7 +881,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let mut traits = Vec::new();
         for bound in decl.bounds() {
             let Some(subject) = self.read_ident(bound.subject()) else {
-                self.report(&bound, "type bound is missing its subject");
+                self.reported_by_parser("type bound is missing its subject");
                 continue;
             };
 
@@ -891,7 +891,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
             for trait_ref in bound.traits() {
                 let Some(name) = self.read_ident(trait_ref.name()) else {
-                    self.report(&trait_ref, "trait reference is missing its name");
+                    self.reported_by_parser("trait reference is missing its name");
                     continue;
                 };
 
@@ -907,18 +907,20 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         (subjects, traits)
     }
 
+    /// `!yzl.error` for an annotation that names no type, so inference takes
+    /// it as the error it is rather than as a type to infer.
     fn read_type_annotation(&mut self, annotation: ast::TypeAnnotation) -> Type<'c> {
         let named = match annotation {
             ast::TypeAnnotation::NamedTypeAnnotation(named) => named,
             ast::TypeAnnotation::FuncTypeAnnotation(func) => {
                 self.report(&func, "function types are not supported yet");
-                return UnresolvedType::get(self.context);
+                return ErrorType::get(self.context);
             }
         };
 
         let Some(name) = self.read_ident(named.name()) else {
-            self.report(&named, "type is missing its name");
-            return UnresolvedType::get(self.context);
+            self.reported_by_parser("type is missing its name");
+            return ErrorType::get(self.context);
         };
 
         if self.symbols.is_type_param(name) {
@@ -929,7 +931,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             let mut args = named.args();
             let (Some(inner), None) = (args.next(), args.next()) else {
                 self.report(&named, "`List` takes exactly one type argument");
-                return UnresolvedType::get(self.context);
+                return ErrorType::get(self.context);
             };
 
             let inner = self.read_type_annotation(inner);
@@ -945,7 +947,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
 
         self.report(&named, &format!("unknown type `{name}`"));
-        UnresolvedType::get(self.context)
+        ErrorType::get(self.context)
     }
 
     fn read_path(&self, path: &ast::ModulePath) -> &'c str {
@@ -957,6 +959,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn read_place(&mut self, node: &impl AstNode, name: &str) -> Option<usize> {
         let message = match self.symbols.lookup(Reference::unqualified(name)) {
             Lookup::Local(slot) => return Some(slot),
+            Lookup::Lost => return None,
             Lookup::Column(_) | Lookup::Ambiguous | Lookup::NarrowedAway => {
                 format!("`{name}` is a column; `set` is how a query writes one")
             }

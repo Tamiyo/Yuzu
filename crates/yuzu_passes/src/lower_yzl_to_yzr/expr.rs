@@ -295,12 +295,6 @@ from t
                 6 | |> where a >
                   | 
 
-                error: binary expression is missing its right operand
-                 --> test.yz:6:10
-                  |
-                6 | |> where a >
-                  |          ^^^
-
                 error: this part of the query is missing
                  --> test.yz:6:10
                   |

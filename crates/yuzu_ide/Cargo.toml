@@ -1,0 +1,19 @@
+[package]
+name = "yuzu_ide"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+rowan = "0.16.1"
+rustc-hash = "2"
+text-size = "1.1.1"
+
+yuzu_ast = { path = "../yuzu_ast" }
+yuzu_diagnostics = { path = "../yuzu_diagnostics" }
+yuzu_driver = { path = "../yuzu_driver" }
+yuzu_lexer = { path = "../yuzu_lexer" }
+yuzu_parser = { path = "../yuzu_parser" }
+yuzu_syntax = { path = "../yuzu_syntax" }
+
+[dev-dependencies]
+expect-test = "1.5.1"

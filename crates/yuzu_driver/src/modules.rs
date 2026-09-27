@@ -39,6 +39,13 @@ pub struct ModuleSource {
 /// asked for it.
 pub trait ModuleResolver {
     fn resolve(&self, path: &str) -> Option<ModuleSource>;
+
+    /// A library module's source when the caller holds its own copy, as an
+    /// editor does for a library file it has open. `None` reads the copy
+    /// built into the compiler.
+    fn resolve_library(&self, _path: &str) -> Option<ModuleSource> {
+        None
+    }
 }
 
 /// The file that marks a directory as a module and declares what it holds.
@@ -51,19 +58,27 @@ pub struct FsResolver {
     pub base: PathBuf,
 }
 
-impl ModuleResolver for FsResolver {
-    fn resolve(&self, path: &str) -> Option<ModuleSource> {
+impl FsResolver {
+    /// The files that can hold a module, in the order they are tried.
+    pub fn candidates(&self, path: &str) -> [PathBuf; 2] {
         let mut directory = self.base.clone();
         for segment in path.split('.') {
             directory.push(segment);
         }
 
-        let leaf = directory.with_extension("yz");
-        let marked = directory.join(MARKER);
         // A leaf file first: a directory and a file of the same name are
         // two modules under one path, and the file is the one written on
         // purpose.
-        let file = [leaf, marked].into_iter().find(|file| file.is_file())?;
+        [directory.with_extension("yz"), directory.join(MARKER)]
+    }
+}
+
+impl ModuleResolver for FsResolver {
+    fn resolve(&self, path: &str) -> Option<ModuleSource> {
+        let file = self
+            .candidates(path)
+            .into_iter()
+            .find(|file| file.is_file())?;
         let source = std::fs::read_to_string(&file).ok()?;
         Some(ModuleSource {
             name: file.display().to_string(),
@@ -99,31 +114,45 @@ pub fn load(
 ) -> Option<Vec<File>> {
     // The cached library's sources follow its own entry, so they keep their
     // ids only in a map that holds nothing but this program's entry.
-    let library = (sources.len() == 1).then(|| stdlib::library(engine));
-    load_with(
+    let library = (sources.len() == 1).then(|| stdlib::Library::for_thread(engine));
+    let Loaded { files, .. } = load_program(
         entry,
         sources,
         diagnostics,
         resolver,
         engine,
         library.as_deref(),
-    )
-    .map(|(files, _)| files)
+        None,
+    );
+    (!has_errors(diagnostics)).then_some(files)
 }
 
-/// What loading gave: the files, and the submodules each module declares.
-pub(crate) type Loaded = (Vec<File>, HashMap<String, Vec<Submodule>>);
+/// What loading gave.
+pub(crate) struct Loaded {
+    pub(crate) files: Vec<File>,
+    /// The submodules each module declares, by the module's path.
+    pub(crate) submodules: HashMap<String, Vec<Submodule>>,
+}
 
-/// Loads with the library read from `library` when it is given, and from
-/// its files when it is not, which is how the cached library is made.
-pub(crate) fn load_with(
+/// Loads the whole program: the library, then the focus module if there is
+/// one, then the entry file and what it imports. The library comes from
+/// `library` when it is given, and from its files when it is not, which is
+/// how the cached library is made.
+///
+/// `focus` is a module loaded whether or not anything imports it, and
+/// lowered in full: the one a check asks about.
+///
+/// Every file that could be read comes back, even when loading reported:
+/// a file with a syntax error still lowers, with a hole where the error is.
+pub(crate) fn load_program(
     entry: SourceId,
     sources: &mut SourceMap,
     diagnostics: &mut DiagnosticsEngine,
     resolver: &dyn ModuleResolver,
     engine: Engine,
     library: Option<&stdlib::Library>,
-) -> Option<Loaded> {
+    focus: Option<&str>,
+) -> Loaded {
     let mut loader = Loader {
         sources,
         diagnostics,
@@ -142,11 +171,26 @@ pub(crate) fn load_with(
         None => loader.load_path(yuzu_passes::PRELUDE, &root, entry, ""),
     }
 
+    if let Some(path) = focus {
+        loader.load_module(path, &root, entry);
+    }
+
     // The entry file belongs to no module, so nothing keeps anything from
     // it beyond what `pub` already governs.
     loader.follow_imports(entry, &root, "");
     loader.files.push(File::entry(entry, root));
-    (!has_errors(loader.diagnostics)).then_some((loader.files, loader.submodules))
+    if let Some(path) = focus
+        && let Some(file) = loader
+            .files
+            .iter_mut()
+            .find(|file| file.module() == Some(path))
+    {
+        file.set_lowering(Lowering::Eager);
+    }
+    Loaded {
+        files: loader.files,
+        submodules: loader.submodules,
+    }
 }
 
 struct Loader<'a> {
@@ -271,10 +315,12 @@ impl Loader<'_> {
             return;
         }
 
-        let module = if stdlib::reserves(path) {
-            stdlib::resolve(path, self.engine)
+        let (module, built_in) = if !stdlib::reserves(path) {
+            (self.resolver.resolve(path), false)
+        } else if let Some(copy) = self.resolver.resolve_library(path) {
+            (Some(copy), false)
         } else {
-            self.resolver.resolve(path)
+            (stdlib::resolve(path, self.engine), true)
         };
 
         let Some(module) = module else {
@@ -283,7 +329,10 @@ impl Loader<'_> {
         };
 
         let source_id = self.sources.add(module.name, module.source);
-        let root = stdlib::syntax(path).unwrap_or_else(|| self.parse(source_id));
+        let root = match built_in.then(|| stdlib::syntax(path)).flatten() {
+            Some(root) => root,
+            None => self.parse(source_id),
+        };
         self.submodules.insert(path.to_string(), submodules(&root));
         self.loading.push(path.to_string());
         self.follow_imports(source_id, &root, path);

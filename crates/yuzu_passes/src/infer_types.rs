@@ -6,7 +6,9 @@ use std::mem;
 
 use melior::Context;
 use melior::ir::attribute::{ArrayAttribute, TypeAttribute};
-use melior::ir::operation::{OperationLike, OperationMutLike, OperationRef, OperationRefMut};
+use melior::ir::operation::{
+    OperationLike, OperationMutLike, OperationRef, OperationRefMut, OperationResult,
+};
 use melior::ir::r#type::FunctionType;
 use melior::ir::{Attribute, BlockRef, Location, Module, RegionLike, Type, Value, ValueLike};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -19,7 +21,7 @@ use yuzu_mlir::ir::region::RegionExt;
 use yuzu_mlir::ir::value::{ValueExt, ValueId};
 use yuzu_mlir::ops::yz::YzOp;
 use yuzu_mlir::ops::yzl::{FnOp, YzlOp};
-use yuzu_mlir::types::{self, BoolType, Float64Type, Int64Type, UnresolvedType};
+use yuzu_mlir::types::{self, BoolType, ErrorType, Float64Type, Int64Type, UnresolvedType};
 use yuzu_mlir::{ListType, ParamType};
 use yuzu_types::{AggFunc, BuiltinFunc, Func, FunctionRegistry};
 
@@ -148,6 +150,10 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
             return Term::Concrete(ty);
         }
 
+        if is_hole(value) {
+            return Term::Concrete(ErrorType::get(self.context));
+        }
+
         let key = value.id();
         if let Some(&var) = self.vars.get(&key) {
             return Term::Var(var);
@@ -184,9 +190,20 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
         }
     }
 
+    /// An error matches every type. A variable it meets takes it, so the
+    /// values that read the variable are not reported again.
     fn unify(&mut self, op: OperationRef<'c, '_>, a: Term<'c>, b: Term<'c>) {
         let a = self.shallow(a);
         let b = self.shallow(b);
+        if let Some(error) = [a, b].into_iter().find(|&term| is_error(term)) {
+            for term in [a, b] {
+                if let Term::Var(var) = term {
+                    self.filled[var.0] = Some(error);
+                }
+            }
+            return;
+        }
+
         match (a, b) {
             (Term::Var(a), Term::Var(b)) if a == b => {}
             (Term::Var(var), term) | (term, Term::Var(var)) => self.filled[var.0] = Some(term),
@@ -217,7 +234,7 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
 
         let term = self.term_of(value);
         match self.resolve(term) {
-            Some(found) if found != expected => {
+            Some(found) if found != expected && !ErrorType::is(found) => {
                 let (expected, found) = (
                     self.display(Term::Concrete(expected)),
                     self.display(Term::Concrete(found)),
@@ -408,7 +425,21 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
         }
     }
 
+    /// An operator with an error operand gives an error, whatever its rule
+    /// would give: `nosuch + 1` is not an `int64` for having a `1`.
     fn infer_yz_op(&mut self, op: OperationRef<'c, '_>) {
+        let error = Term::Concrete(ErrorType::get(self.context));
+        if let Some(out) = op.try_first_result()
+            && op.operands().any(|operand| {
+                let term = self.term_of(operand);
+                is_error(self.shallow(term))
+            })
+        {
+            let out = self.term_of(out);
+            self.unify(op, out, error);
+            return;
+        }
+
         let boolean = Term::Concrete(BoolType::get(self.context));
         match op.as_yz() {
             Some(YzOp::Add(_) | YzOp::Sub(_) | YzOp::Mul(_) | YzOp::Div(_) | YzOp::Rem(_)) => {
@@ -542,7 +573,7 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
                 if let Some(argument) = op.try_first_operand() {
                     let term = self.term_of(argument);
                     if let Some(ty) = self.resolve(term) {
-                        let result = if ty == Float64Type::get(self.context) {
+                        let result = if ty == Float64Type::get(self.context) || ErrorType::is(ty) {
                             Term::Concrete(ty)
                         } else {
                             int64
@@ -691,6 +722,17 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
     fn report(&self, op: OperationRef<'c, '_>, message: &str) {
         emit_error(op.location(), message);
     }
+}
+
+fn is_error(term: Term<'_>) -> bool {
+    matches!(term, Term::Concrete(ty) if ErrorType::is(ty))
+}
+
+/// The result of a `yzl.missing`: what the lowering stood in for what it
+/// could not lower.
+fn is_hole(value: Value<'_, '_>) -> bool {
+    OperationResult::try_from(value)
+        .is_ok_and(|result| matches!(result.owner().as_yzl(), Some(YzlOp::Missing(_))))
 }
 
 fn element(term: Term<'_>) -> Option<Term<'_>> {

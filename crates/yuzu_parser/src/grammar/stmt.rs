@@ -2,9 +2,9 @@ use yuzu_lexer::token_kind::TokenKind;
 use yuzu_syntax::SyntaxKind;
 
 use crate::grammar::expr::parse_expr;
-use crate::grammar::parse_ident;
 use crate::grammar::rel::parse_query;
 use crate::grammar::ty::parse_type;
+use crate::grammar::{parse_ident, parse_stmts};
 use crate::parser::{Parser, marker::CompletedMarker};
 
 pub(crate) fn parse_stmt(p: &mut Parser) -> CompletedMarker {
@@ -185,11 +185,7 @@ fn parse_block_stmt(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
 
     p.expect(TokenKind::LeftCurly);
-
-    while !p.at(TokenKind::RightCurly) && !p.at_end() {
-        parse_stmt(p);
-    }
-
+    parse_stmts(p, |p| p.at(TokenKind::RightCurly) || p.at_end());
     p.expect(TokenKind::RightCurly);
 
     p.complete(m, SyntaxKind::BlockStmt)

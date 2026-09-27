@@ -70,11 +70,25 @@ impl<'c> Column<'c> {
 #[derive(Clone, Default, PartialEq, Eq, Debug)]
 pub(super) struct Row<'c> {
     columns: Vec<Column<'c>>,
+    schema: Schema,
+}
+
+/// Whether a row's columns are known. A relation an error left behind has
+/// columns nobody knows, so a name read in it is not reported again.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+enum Schema {
+    #[default]
+    Known,
+    Lost,
 }
 
 impl<'c> Row<'c> {
-    pub(super) fn new() -> Self {
-        Self::default()
+    /// The row of a relation an error left behind.
+    pub(super) fn lost() -> Self {
+        Self {
+            columns: Vec::new(),
+            schema: Schema::Lost,
+        }
     }
 
     pub(super) fn len(&self) -> usize {
@@ -96,10 +110,11 @@ impl<'c> Row<'c> {
             .enumerate()
             .filter(|(_, column)| column.matches(reference));
 
-        match (matches.next(), matches.next()) {
-            (Some((index, _)), None) => ColumnLookup::Unique(index),
-            (Some(_), Some(_)) => ColumnLookup::Ambiguous,
-            (None, _) => ColumnLookup::Absent,
+        match (matches.next(), matches.next(), self.schema) {
+            (Some((index, _)), None, _) => ColumnLookup::Unique(index),
+            (Some(_), Some(_), _) => ColumnLookup::Ambiguous,
+            (None, _, Schema::Known) => ColumnLookup::Absent,
+            (None, _, Schema::Lost) => ColumnLookup::Lost,
         }
     }
 
@@ -123,6 +138,9 @@ impl<'c> Row<'c> {
 
     pub(super) fn append(&mut self, other: Row<'c>) {
         self.columns.extend(other.columns);
+        if other.schema == Schema::Lost {
+            self.schema = Schema::Lost;
+        }
     }
 }
 
@@ -136,6 +154,7 @@ impl<'c> From<Vec<&'c str>> for Row<'c> {
                     name,
                 })
                 .collect(),
+            schema: Schema::Known,
         }
     }
 }
@@ -249,6 +268,8 @@ pub(super) enum Lookup<'c> {
     /// A `let` further down the file: a name the file declares, not yet
     /// bound where it is read.
     NotYet,
+    /// A name read in a relation an error left behind: not reported again.
+    Lost,
     Unknown,
 }
 
@@ -257,6 +278,8 @@ pub(super) enum ColumnLookup {
     Unique(usize),
     Ambiguous,
     Absent,
+    /// The row an error left behind: any column may be in it.
+    Lost,
 }
 
 enum Scope<'c> {
@@ -684,6 +707,7 @@ impl<'c> SymbolTable<'c> {
                     match row.column(reference) {
                         ColumnLookup::Unique(index) => return Lookup::Column(index),
                         ColumnLookup::Ambiguous => return Lookup::Ambiguous,
+                        ColumnLookup::Lost => return Lookup::Lost,
                         ColumnLookup::Absent if narrowed.contains(&reference.name) => {
                             return Lookup::NarrowedAway;
                         }

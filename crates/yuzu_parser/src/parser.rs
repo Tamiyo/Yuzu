@@ -6,6 +6,7 @@ use yuzu_lexer::token_kind::TokenKind;
 use yuzu_syntax::SyntaxKind;
 
 use crate::{
+    grammar::{EXPECT_RECOVERY_SET, STMT_RECOVERY_SET},
     parser::{
         error::ParseError,
         event::Event,
@@ -18,13 +19,15 @@ pub(crate) mod error;
 pub(crate) mod event;
 pub(crate) mod marker;
 
-const EMPTY_RECOVERY_SET: [TokenKind; 0] = [];
-
 pub(crate) struct Parser<'t, 'input> {
     source: TokenSource<'t, 'input>,
     events: Vec<Event>,
     expected_kinds: Vec<TokenKind>,
     source_id: SourceId,
+    consumed: usize,
+    /// Where the last error was reported. A second error at the same token
+    /// only restates the first in other words.
+    last_error_range: Option<TextRange>,
 }
 
 impl<'t, 'input> Parser<'t, 'input> {
@@ -34,6 +37,8 @@ impl<'t, 'input> Parser<'t, 'input> {
             events: Vec::new(),
             expected_kinds: Vec::new(),
             source_id,
+            consumed: 0,
+            last_error_range: None,
         }
     }
 
@@ -89,24 +94,26 @@ impl<'t, 'input> Parser<'t, 'input> {
         self.peek_kind().is_none()
     }
 
+    /// Whether an error leaves the next token in place: a statement's start
+    /// always, and whatever `set` adds for the error at hand.
     pub(crate) fn at_recovery_set(&mut self, set: &[TokenKind]) -> bool {
-        self.peek_kind().is_some_and(|k| set.contains(&k))
+        self.peek_kind()
+            .is_some_and(|k| set.contains(&k) || STMT_RECOVERY_SET.contains(&k))
     }
 
     pub(crate) fn error(&mut self, set: &[TokenKind]) {
-        let info = inspect_found_token(&mut self.source);
-        let error = ParseError::ExpectedKind {
-            expected: mem::take(&mut self.expected_kinds),
-            found: info.kind,
-            range: info.range,
-            source_id: self.source_id,
-        };
-        self.events.push(Event::Error { error });
-
+        self.report_expected_kind();
         if !self.at_recovery_set(set) && !self.at_end() {
-            let m = self.start();
-            self.bump();
-            self.complete(m, SyntaxKind::Error);
+            self.bump_as_error();
+        }
+    }
+
+    /// Reports the next token and takes it whatever it is, for a caller
+    /// that knows it is misplaced even where it would start a statement.
+    pub(crate) fn error_and_bump(&mut self) {
+        self.report_expected_kind();
+        if !self.at_end() {
+            self.bump_as_error();
         }
     }
 
@@ -119,12 +126,10 @@ impl<'t, 'input> Parser<'t, 'input> {
             range: info.range,
             source_id: self.source_id,
         };
-        self.events.push(Event::Error { error });
+        self.report(info.range, error);
 
         if !self.at_recovery_set(set) && !self.at_end() {
-            let m = self.start();
-            self.bump();
-            self.complete(m, SyntaxKind::Error);
+            self.bump_as_error();
         }
     }
 
@@ -132,18 +137,50 @@ impl<'t, 'input> Parser<'t, 'input> {
         self.expected_kinds.clear();
         self.source.next_token();
         self.events.push(Event::Token);
+        self.consumed += 1;
+    }
+
+    /// Takes the next token into an error node, for an error already
+    /// reported against it.
+    pub(crate) fn bump_as_error(&mut self) {
+        let m = self.start();
+        self.bump();
+        self.complete(m, SyntaxKind::Error);
     }
 
     pub(crate) fn expect(&mut self, kind: TokenKind) {
         if self.at(kind) {
             self.bump();
         } else {
-            self.error(&EMPTY_RECOVERY_SET);
+            self.error(&EXPECT_RECOVERY_SET);
         }
+    }
+
+    /// How many tokens the parse has taken so far.
+    pub(crate) fn consumed(&self) -> usize {
+        self.consumed
     }
 
     pub(crate) fn finish(self) -> Vec<Event> {
         self.events
+    }
+
+    fn report_expected_kind(&mut self) {
+        let info = inspect_found_token(&mut self.source);
+        let error = ParseError::ExpectedKind {
+            expected: mem::take(&mut self.expected_kinds),
+            found: info.kind,
+            range: info.range,
+            source_id: self.source_id,
+        };
+        self.report(info.range, error);
+    }
+
+    fn report(&mut self, range: TextRange, error: ParseError) {
+        if self.last_error_range != Some(range) {
+            self.last_error_range = Some(range);
+            self.events.push(Event::Error { error });
+        }
     }
 }
 

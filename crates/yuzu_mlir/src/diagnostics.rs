@@ -8,7 +8,7 @@ use std::ffi::CString;
 use std::rc::Rc;
 
 use melior::Context;
-use melior::diagnostic::{Diagnostic, DiagnosticSeverity};
+use melior::diagnostic::{Diagnostic, DiagnosticHandlerId, DiagnosticSeverity};
 use melior::ir::Location;
 use text_size::{TextRange, TextSize};
 use yuzu_diagnostics::diagnostics::Span;
@@ -40,13 +40,28 @@ pub fn capture<T>(
         true
     });
 
-    let result = f();
-    context.detach_diagnostic_handler(handler);
+    let result = {
+        let _attached = Attached { context, handler };
+        f()
+    };
     for reported in collected.take() {
         engine.emit(reported.build(sources));
     }
 
     result
+}
+
+/// A handler attached to a context. It is detached on drop, so a panic in
+/// `f` does not leave it on a context the thread reuses.
+struct Attached<'c> {
+    context: &'c Context,
+    handler: DiagnosticHandlerId,
+}
+
+impl Drop for Attached<'_> {
+    fn drop(&mut self) {
+        self.context.detach_diagnostic_handler(self.handler);
+    }
 }
 
 /// What a handler saw. The handler has to outlive this call as far as the
@@ -119,6 +134,13 @@ impl Reported {
 
         builder
     }
+}
+
+/// The span a location names in `sources`: what an op's location says it
+/// was lowered from. `None` for a location that is no file range, or that
+/// names a file no source was added under.
+pub fn span(sources: &SourceMap, location: Location) -> Option<Span> {
+    span_of(sources, Position::of(&location).as_ref())
 }
 
 /// The span a position names.
