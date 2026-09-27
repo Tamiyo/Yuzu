@@ -20,7 +20,7 @@ use crate::lower_ast_to_yzl::symbols::{ColumnLookup, Reference, Row};
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 
 /// A stage item: its alias, its expression, and where it was written.
-type Item = (Option<String>, Option<ast::Expr>, TextRange);
+type Item<'c> = (Option<&'c str>, Option<ast::Expr>, TextRange);
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
     /// A whole query. `convert_rel` leaves the query's scope open, since a
@@ -30,7 +30,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         rel: &ast::Rel,
-    ) -> (Value<'c, 'a>, Row) {
+    ) -> (Value<'c, 'a>, Row<'c>) {
         let value = self.convert_rel(block, rel);
         let row = self.symbols.row().clone();
         self.symbols.leave();
@@ -66,7 +66,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         at: TextRange,
     ) -> Value<'c, 'a> {
         let loc = self.location_at(at);
-        let Some(source) = from.relation_text() else {
+        let Some(source) = self.read_ident(from.relation()) else {
             return self.report_and_hole(
                 block,
                 from,
@@ -75,9 +75,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             );
         };
 
-        let value = self.scan(block, from, &source, loc);
-        match from.alias_text() {
-            Some(alias) => self.qualify(block, value, &alias, loc),
+        let value = self.scan(block, from, source, loc);
+        match self.read_ident(from.alias()) {
+            Some(alias) => self.qualify(block, value, alias, loc),
             None => value,
         }
     }
@@ -127,8 +127,15 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let input = self.convert_input(block, stage, "`select`", stage.input());
         let items = stage
             .items()
-            .map(|item| (item.alias_text(), item.expr(), item.syntax().text_range()));
-        let (names, region) = self.convert_items(items, "select item", loc);
+            .map(|item| {
+                (
+                    self.read_ident(item.alias()),
+                    item.expr(),
+                    item.syntax().text_range(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let (names, region) = self.convert_items(items.into_iter(), "select item", loc);
         let columns = ArrayAttribute::from_strings(self.context, &names);
         self.symbols.replace(names);
         block
@@ -156,8 +163,15 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let input = self.convert_input(block, stage, "`extend`", stage.input());
         let items = stage
             .items()
-            .map(|item| (item.alias_text(), item.expr(), item.syntax().text_range()));
-        let (names, region) = self.convert_items(items, "extend item", loc);
+            .map(|item| {
+                (
+                    self.read_ident(item.alias()),
+                    item.expr(),
+                    item.syntax().text_range(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let (names, region) = self.convert_items(items.into_iter(), "extend item", loc);
         let columns = ArrayAttribute::from_strings(self.context, &names);
         self.symbols.extend(names);
         block
@@ -184,29 +198,36 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let loc = self.location_at(at);
         let input = self.convert_input(block, stage, "`aggregate`", stage.input());
         let mut keys = Vec::new();
-        let mut key_names: Vec<String> = Vec::new();
+        let mut key_names: Vec<&'c str> = Vec::new();
         for item in stage.group_by().into_iter().flat_map(|group| group.items()) {
-            let Some(column) = item.column_text() else {
+            let Some(column) = self.read_ident(item.column()) else {
                 self.report(&item, "group by key is missing its column");
                 continue;
             };
 
-            let qualifier = item.qualifier_text();
+            let qualifier = self.read_ident(item.qualifier());
 
             let reference = Reference {
-                qualifier: qualifier.as_deref(),
-                name: &column,
+                qualifier,
+                name: column,
             };
             if let Some(index) = self.column(&item, "group key", reference) {
                 keys.push(index);
-                key_names.push(item.alias_text().unwrap_or(column));
+                key_names.push(self.read_ident(item.alias()).unwrap_or(column));
             }
         }
 
         let items = stage
             .items()
-            .map(|item| (item.alias_text(), item.expr(), item.syntax().text_range()));
-        let (names, region) = self.convert_items(items, "aggregate item", loc);
+            .map(|item| {
+                (
+                    self.read_ident(item.alias()),
+                    item.expr(),
+                    item.syntax().text_range(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let (names, region) = self.convert_items(items.into_iter(), "aggregate item", loc);
         let group_by = ArrayAttribute::from_strings(self.context, &key_names);
         let measures = ArrayAttribute::from_strings(self.context, &names);
         key_names.extend(names);
@@ -266,22 +287,23 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let loc = self.location_at(at);
         let input = self.convert_input(block, stage, "`rename`", stage.input());
         let mut from: Vec<String> = Vec::new();
-        let mut to: Vec<String> = Vec::new();
+        let mut to: Vec<&'c str> = Vec::new();
         let mut renames = Vec::new();
         for item in stage.items() {
-            let (Some(old), Some(new)) = (item.from_text(), item.to_text()) else {
+            let (Some(old), Some(new)) = (self.read_ident(item.from()), self.read_ident(item.to()))
+            else {
                 self.report(&item, "rename item is missing a column name");
                 continue;
             };
 
-            let qualifier = item.qualifier_text();
+            let qualifier = self.read_ident(item.qualifier());
 
             let reference = Reference {
-                qualifier: qualifier.as_deref(),
-                name: &old,
+                qualifier,
+                name: old,
             };
             if let Some(index) = self.column(&item, "column", reference) {
-                renames.push((index, new.clone()));
+                renames.push((index, new));
                 from.push(reference.to_string());
                 to.push(new);
             }
@@ -310,12 +332,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     ) -> Value<'c, 'a> {
         let loc = self.location_at(at);
         let input = self.convert_input(block, stage, "`as`", stage.input());
-        let Some(alias) = stage.alias_text() else {
+        let Some(alias) = self.read_ident(stage.alias()) else {
             self.report_at(at, "`as` is missing its alias");
             return input;
         };
 
-        self.qualify(block, input, &alias, loc)
+        self.qualify(block, input, alias, loc)
     }
 
     fn convert_join<'a>(
@@ -332,7 +354,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             Some(ast::JoinKind::Full) => JoinKind::Full,
             Some(ast::JoinKind::Inner) | None => JoinKind::Inner,
         };
-        let Some(relation) = stage.relation_text() else {
+        let Some(relation) = self.read_ident(stage.relation()) else {
             return self.report_and_hole(
                 block,
                 stage,
@@ -341,15 +363,18 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             );
         };
 
-        let alias = stage.alias_text();
-        let Some((rhs_symbol, rhs)) = self.symbols.relation(&relation, alias.as_deref()) else {
+        let alias = self.read_ident(stage.alias());
+        let Some((rhs_symbol, rhs)) = self.symbols.relation(relation, alias) else {
             self.report_at(at, &format!("`{relation}` is not a relation"));
             return self.emit_hole(block, at, QueryType::get(self.context));
         };
 
-        let mut using: Vec<String> = Vec::new();
+        let mut using: Vec<&'c str> = Vec::new();
         if let Some(clause) = stage.using() {
-            using = clause.columns_text().collect();
+            using = clause
+                .columns()
+                .filter_map(|column| self.read_ident(Some(column)))
+                .collect();
             if using.is_empty() {
                 self.report(&clause, "`using` needs at least one column");
             }
@@ -386,10 +411,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .result(QueryType::get(self.context))
             .lhs(lhs)
             .kind(StringAttribute::new(self.context, kind.as_str()))
-            .rhs(FlatSymbolRefAttribute::new(self.context, &rhs_symbol))
+            .rhs(FlatSymbolRefAttribute::new(self.context, rhs_symbol))
             .on(on);
         if let Some(alias) = alias {
-            builder = builder.rhs_alias(StringAttribute::new(self.context, &alias));
+            builder = builder.rhs_alias(StringAttribute::new(self.context, alias));
         }
         if !using.is_empty() {
             let columns = ArrayAttribute::from_strings(self.context, &using);
@@ -412,20 +437,27 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let items: Vec<ast::SetItem> = stage.items().collect();
         let mut columns = Vec::new();
         for item in &items {
-            let Some(name) = item.column_text() else {
+            let Some(name) = self.read_ident(item.column()) else {
                 self.report(item, "set item is incomplete");
                 continue;
             };
 
-            if let Some(index) = self.column(item, "column", Reference::unqualified(&name)) {
+            if let Some(index) = self.column(item, "column", Reference::unqualified(name)) {
                 columns.push(index);
             }
         }
 
-        let items = items
+        let items: Vec<_> = items
             .iter()
-            .map(|item| (item.column_text(), item.value(), item.syntax().text_range()));
-        let (names, region) = self.convert_items(items, "set item", loc);
+            .map(|item| {
+                (
+                    self.read_ident(item.column()),
+                    item.value(),
+                    item.syntax().text_range(),
+                )
+            })
+            .collect();
+        let (names, region) = self.convert_items(items.into_iter(), "set item", loc);
         let names = ArrayAttribute::from_strings(self.context, &names);
         let mut op: Operation<'c> = yzl::set(
             self.context,
@@ -530,7 +562,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 yzl::from(
                     self.context,
                     QueryType::get(self.context),
-                    FlatSymbolRefAttribute::new(self.context, &symbol),
+                    FlatSymbolRefAttribute::new(self.context, symbol),
                     loc,
                 )
                 .into(),
@@ -542,7 +574,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         input: Value<'c, 'a>,
-        alias: &str,
+        alias: &'c str,
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         self.symbols.alias(alias);
@@ -579,7 +611,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         match input {
             Some(ast::Expr::Rel(rel)) => self.convert_rel(block, &rel),
             Some(ast::Expr::IdentExpr(ident)) => {
-                let Some(name) = ident.name_text() else {
+                let Some(name) = self.read_ident(ident.name()) else {
                     return self.report_and_hole(
                         block,
                         &ident,
@@ -589,7 +621,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 };
 
                 let loc = self.location(&ident);
-                self.scan(block, &ident, &name, loc)
+                self.scan(block, &ident, name, loc)
             }
             Some(other) => self.report_and_hole(
                 block,
@@ -629,10 +661,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
     fn convert_items(
         &mut self,
-        items: impl Iterator<Item = Item>,
+        items: impl Iterator<Item = Item<'c>>,
         what: &str,
         loc: Location<'c>,
-    ) -> (Vec<String>, Region<'c>) {
+    ) -> (Vec<&'c str>, Region<'c>) {
         let region = Region::new();
         let body = self.stage_block(&region, loc);
         let mut names = Vec::new();
@@ -640,10 +672,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         for (index, (alias, expr, range)) in items.enumerate() {
             let name = alias
                 .or_else(|| match &expr {
-                    Some(ast::Expr::IdentExpr(ident)) => ident.name_text(),
+                    Some(ast::Expr::IdentExpr(ident)) => self.read_ident(ident.name()),
                     _ => None,
                 })
-                .unwrap_or_else(|| format!("column{index}"));
+                .unwrap_or_else(|| self.symbols.intern(&format!("column{index}")));
             names.push(name);
             let value = match &expr {
                 Some(expr) => self.convert_expr(body, &Locals::new(), expr),

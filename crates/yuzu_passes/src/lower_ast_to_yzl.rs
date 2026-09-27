@@ -5,7 +5,7 @@ use melior::Context;
 use melior::ir::attribute::StringAttribute;
 use melior::ir::{BlockLike, BlockRef, Location, Module, Type, Value};
 use text_size::TextRange;
-use yuzu_ast::AstNode;
+use yuzu_ast::{AstNode, ast};
 use yuzu_diagnostics::diagnostics::Span;
 use yuzu_diagnostics::diagnostics::builder::DiagnosticBuilder;
 use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
@@ -47,7 +47,7 @@ pub fn lower_ast_to_yzl<'c>(
     let entry = files.last().expect("a program has an entry file");
     let mut lowerer = AstToYzl {
         context,
-        symbols: SymbolTable::new(),
+        symbols: SymbolTable::new(context),
         registry,
         sources,
         source_id: entry.source_id,
@@ -61,7 +61,7 @@ pub fn lower_ast_to_yzl<'c>(
 struct AstToYzl<'c, 'd> {
     // What the whole run is given.
     context: &'c Context,
-    symbols: SymbolTable,
+    symbols: SymbolTable<'c>,
     registry: &'d dyn FunctionRegistry,
     sources: &'d SourceMap,
     source_id: SourceId,
@@ -165,6 +165,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn line_col(&self, offset: usize) -> (usize, usize) {
         let at = self.sources.line_col(self.source_id, offset);
         (at.line, at.col)
+    }
+
+    /// A name the source wrote, interned for the rest of the pass.
+    fn read_ident(&self, ident: Option<ast::Ident>) -> Option<&'c str> {
+        let token = ident?.token()?;
+        Some(self.symbols.intern(token.text()))
     }
 
     fn name(&self) -> &str {

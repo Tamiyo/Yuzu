@@ -103,7 +103,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         ident: &ast::IdentExpr,
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
-        let Some(name) = ident.name_text() else {
+        let Some(name) = self.read_ident(ident.name()) else {
             return self.report_and_hole(
                 block,
                 ident,
@@ -112,7 +112,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             );
         };
 
-        self.name_ref(block, locals, ident, Reference::unqualified(&name), loc)
+        self.name_ref(block, locals, ident, Reference::unqualified(name), loc)
     }
 
     /// `t.a` is a qualified column reference, not a load.
@@ -124,7 +124,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         let base = match access.base() {
-            Some(ast::Expr::IdentExpr(ident)) => ident.name_text(),
+            Some(ast::Expr::IdentExpr(ident)) => self.read_ident(ident.name()),
             Some(_) => {
                 return self.report_and_hole(
                     block,
@@ -145,7 +145,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             );
         };
 
-        let Some(field) = access.field_text() else {
+        let Some(field) = self.read_ident(access.field()) else {
             return self.report_and_hole(
                 block,
                 access,
@@ -155,8 +155,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         };
 
         let reference = Reference {
-            qualifier: Some(&base),
-            name: &field,
+            qualifier: Some(base),
+            name: field,
         };
         self.name_ref(block, locals, access, reference, loc)
     }
@@ -292,7 +292,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         let callee = match call.callee() {
-            Some(ast::Expr::IdentExpr(ident)) => match ident.name_text() {
+            Some(ast::Expr::IdentExpr(ident)) => match self.read_ident(ident.name()) {
                 Some(callee) => callee,
                 None => {
                     return self.report_and_hole(
@@ -330,11 +330,11 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .flat_map(|args| args.args())
             .map(|arg| self.convert_expr(block, locals, &arg))
             .collect();
-        let Some(callable) = self.symbols.callable(&callee, self.registry) else {
-            let message = match self.symbols.kind(&callee) {
+        let Some(callable) = self.symbols.callable(callee, self.registry) else {
+            let message = match self.symbols.kind(callee) {
                 Some(BindingKind::Pending) => format!("`{callee}` is bound further down the file"),
                 Some(kind) => format!("`{callee}` is a {kind}, not a function"),
-                None if self.symbols.is_method(&callee) => {
+                None if self.symbols.is_method(callee) => {
                     format!("`{callee}` is a trait method, and calling one is not supported yet")
                 }
                 None => format!("unresolved identifier `{callee}`"),
@@ -342,7 +342,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             return self.report_and_hole(block, call, &message, UnresolvedType::get(self.context));
         };
 
-        self.check_arity(call, &callee, &callable, operands.len());
+        self.check_arity(call, callee, &callable, operands.len());
         self.call(block, callable, &operands, loc)
     }
 
@@ -355,11 +355,11 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         let base = match access.base() {
-            Some(ast::Expr::IdentExpr(ident)) => ident.name_text(),
+            Some(ast::Expr::IdentExpr(ident)) => self.read_ident(ident.name()),
             _ => None,
         };
 
-        let (Some(base), Some(name)) = (base, access.field_text()) else {
+        let (Some(base), Some(name)) = (base, self.read_ident(access.field())) else {
             return self.report_and_hole(
                 block,
                 call,
@@ -368,7 +368,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             );
         };
 
-        let Some(path) = self.symbols.module_of(&base) else {
+        let Some(path) = self.symbols.module_of(base) else {
             return self.report_and_hole(
                 block,
                 call,
@@ -376,7 +376,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 UnresolvedType::get(self.context),
             );
         };
-        let path = path.to_string();
 
         let operands: Vec<Value> = call
             .args()
@@ -385,7 +384,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .map(|arg| self.convert_expr(block, locals, &arg))
             .collect();
 
-        let Some((at, binding)) = self.read_export(call, &path, &name) else {
+        let Some((at, binding)) = self.read_export(call, path, name) else {
             return self.emit_hole(
                 block,
                 call.syntax().text_range(),
@@ -393,7 +392,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             );
         };
 
-        let Some(callable) = self.symbols.callable_in(&at) else {
+        let Some(callable) = self.symbols.callable_in(at) else {
             return self.report_and_hole(
                 block,
                 call,
@@ -402,7 +401,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             );
         };
 
-        self.check_arity(call, &name, &callable, operands.len());
+        self.check_arity(call, name, &callable, operands.len());
         self.call(block, callable, &operands, loc)
     }
 
@@ -458,7 +457,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 return block.append_operation(load.into()).first_result();
             }
             Lookup::Let(symbol) => {
-                return self.call(block, Callable::constant(&symbol), &[], loc);
+                return self.call(block, Callable::constant(symbol), &[], loc);
             }
             Lookup::Ambiguous => {
                 format!("column `{name}` is ambiguous; qualify it with a relation alias")
@@ -484,14 +483,14 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn call<'a>(
         &self,
         block: BlockRef<'c, 'a>,
-        callable: Callable,
+        callable: Callable<'c>,
         operands: &[Value<'c, 'a>],
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         let mut builder = yzl::CallOperationBuilder::new(self.context, loc)
             .result(UnresolvedType::get(self.context))
             .operands(operands)
-            .callee(FlatSymbolRefAttribute::new(self.context, &callable.symbol))
+            .callee(FlatSymbolRefAttribute::new(self.context, callable.symbol))
             .callee_source(StringAttribute::new(self.context, callable.source.as_str()));
         if callable.kind == FunctionKind::Aggregate {
             builder = builder.is_agg(Attribute::unit(self.context));
@@ -527,7 +526,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         call: &impl AstNode,
         callee: &str,
-        callable: &Callable,
+        callable: &Callable<'c>,
         given: usize,
     ) {
         let (min, max) = (callable.min_args, callable.max_args);

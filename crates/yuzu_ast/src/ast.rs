@@ -186,8 +186,14 @@ impl Root {
 
 ast_node!(Ident);
 impl Ident {
+    /// The identifier's token. Its text can be read without a copy while
+    /// the caller holds the token.
+    pub fn token(&self) -> Option<SyntaxToken> {
+        self.0.first_token()
+    }
+
     pub fn text(&self) -> Option<String> {
-        Some(self.0.first_token()?.text().to_string())
+        Some(self.token()?.text().to_string())
     }
 }
 

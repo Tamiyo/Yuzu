@@ -71,7 +71,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         self.source_id = file.source_id;
         self.file = StringAttribute::new(self.context, self.sources.name(file.source_id));
         self.symbols.set_module(match file.module.as_deref() {
-            Some(module) => ModulePath::from_path(module),
+            Some(module) => ModulePath::from_path(self.symbols.intern(module)),
             None => ModulePath::entry(),
         });
     }

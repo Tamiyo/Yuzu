@@ -7,6 +7,8 @@
 use std::collections::HashMap;
 use std::fmt;
 
+use melior::Context;
+use melior::ir::attribute::StringAttribute;
 use text_size::TextRange;
 use yuzu_ast::Visibility;
 use yuzu_mlir::attributes::CalleeSource;
@@ -41,24 +43,24 @@ impl fmt::Display for Reference<'_> {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
-struct Column {
-    qualifier: Option<String>,
-    name: String,
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct Column<'c> {
+    qualifier: Option<&'c str>,
+    name: &'c str,
 }
 
-impl Column {
+impl<'c> Column<'c> {
     fn matches(&self, reference: Reference<'_>) -> bool {
         self.name == reference.name
             && reference
                 .qualifier
-                .is_none_or(|qualifier| self.qualifier.as_deref() == Some(qualifier))
+                .is_none_or(|qualifier| self.qualifier == Some(qualifier))
     }
 
-    fn reference(&self) -> Reference<'_> {
+    fn reference(&self) -> Reference<'c> {
         Reference {
-            qualifier: self.qualifier.as_deref(),
-            name: &self.name,
+            qualifier: self.qualifier,
+            name: self.name,
         }
     }
 }
@@ -66,11 +68,11 @@ impl Column {
 /// Two columns may share a name, since a join concatenates both sides, so a
 /// column is addressed by position.
 #[derive(Clone, Default, PartialEq, Eq, Debug)]
-pub(super) struct Row {
-    columns: Vec<Column>,
+pub(super) struct Row<'c> {
+    columns: Vec<Column<'c>>,
 }
 
-impl Row {
+impl<'c> Row<'c> {
     pub(super) fn new() -> Self {
         Self::default()
     }
@@ -79,11 +81,11 @@ impl Row {
         self.columns.len()
     }
 
-    pub(super) fn names(&self) -> impl Iterator<Item = &str> {
-        self.columns.iter().map(|column| column.name.as_str())
+    pub(super) fn names(&self) -> impl Iterator<Item = &'c str> + use<'_, 'c> {
+        self.columns.iter().map(|column| column.name)
     }
 
-    pub(super) fn references(&self) -> impl Iterator<Item = Reference<'_>> {
+    pub(super) fn references(&self) -> impl Iterator<Item = Reference<'c>> + use<'_, 'c> {
         self.columns.iter().map(Column::reference)
     }
 
@@ -105,27 +107,27 @@ impl Row {
         !matches!(self.column(reference), ColumnLookup::Absent)
     }
 
-    pub(super) fn qualify(&mut self, alias: &str) {
+    pub(super) fn qualify(&mut self, alias: &'c str) {
         for column in &mut self.columns {
-            column.qualifier = Some(alias.to_string());
+            column.qualifier = Some(alias);
         }
     }
 
-    pub(super) fn rename(&mut self, index: usize, name: &str) {
-        self.columns[index].name = name.to_string();
+    pub(super) fn rename(&mut self, index: usize, name: &'c str) {
+        self.columns[index].name = name;
     }
 
     pub(super) fn remove(&mut self, index: usize) {
         self.columns.remove(index);
     }
 
-    pub(super) fn append(&mut self, other: Row) {
+    pub(super) fn append(&mut self, other: Row<'c>) {
         self.columns.extend(other.columns);
     }
 }
 
-impl From<Vec<String>> for Row {
-    fn from(names: Vec<String>) -> Self {
+impl<'c> From<Vec<&'c str>> for Row<'c> {
+    fn from(names: Vec<&'c str>) -> Self {
         Self {
             columns: names
                 .into_iter()
@@ -138,27 +140,21 @@ impl From<Vec<String>> for Row {
     }
 }
 
-impl From<Vec<&str>> for Row {
-    fn from(names: Vec<&str>) -> Self {
-        Self::from(names.into_iter().map(String::from).collect::<Vec<_>>())
-    }
-}
-
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub(super) struct Binding {
-    pub(super) kind: BindingKind,
+pub(super) struct Binding<'c> {
+    pub(super) kind: BindingKind<'c>,
     pub(super) text_range: TextRange,
     pub(super) visibility: Visibility,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub(super) enum BindingKind {
+pub(super) enum BindingKind<'c> {
     Struct {
-        fields: Vec<String>,
+        fields: Vec<&'c str>,
     },
     /// A table, or a `let` bound to a query: what `from` and `join` name.
     Relation {
-        row: Row,
+        row: Row<'c>,
     },
     Func {
         source: CalleeSource,
@@ -167,13 +163,13 @@ pub(super) enum BindingKind {
     },
     /// The methods are not names of their own: dispatch is not written yet.
     Trait {
-        methods: Vec<String>,
+        methods: Vec<&'c str>,
     },
     /// A `let` bound to a value; the inliner expands it where it is used.
     Let,
     /// A module this file named; what it declares is not in this scope.
     Module {
-        path: String,
+        path: &'c str,
     },
     /// A `let` the hoist has seen and the second walk has not reached. Its
     /// row is known only once its body is converted.
@@ -181,11 +177,11 @@ pub(super) enum BindingKind {
     /// A declaration in another file. A lookup follows it to where it was
     /// written.
     Import {
-        from: Declared,
+        from: Declared<'c>,
     },
 }
 
-impl BindingKind {
+impl BindingKind<'_> {
     /// The word a diagnostic uses for it.
     pub(super) fn name(&self) -> &'static str {
         match self {
@@ -203,15 +199,15 @@ impl BindingKind {
     }
 }
 
-impl fmt::Display for BindingKind {
+impl fmt::Display for BindingKind<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.name())
     }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub(super) struct Local {
-    pub(super) name: String,
+pub(super) struct Local<'c> {
+    pub(super) name: &'c str,
     pub(super) slot: usize,
 }
 
@@ -222,18 +218,18 @@ pub(super) enum FunctionKind {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub(super) struct Callable {
-    pub(super) symbol: String,
+pub(super) struct Callable<'c> {
+    pub(super) symbol: &'c str,
     pub(super) source: CalleeSource,
     pub(super) kind: FunctionKind,
     pub(super) min_args: usize,
     pub(super) max_args: usize,
 }
 
-impl Callable {
-    pub(super) fn constant(symbol: &str) -> Self {
+impl<'c> Callable<'c> {
+    pub(super) fn constant(symbol: &'c str) -> Self {
         Self {
-            symbol: symbol.to_string(),
+            symbol,
             source: CalleeSource::Const,
             kind: FunctionKind::Scalar,
             min_args: 0,
@@ -243,10 +239,10 @@ impl Callable {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub(super) enum Lookup {
+pub(super) enum Lookup<'c> {
     Column(usize),
     Local(usize),
-    Let(String),
+    Let(&'c str),
     Ambiguous,
     NarrowedAway,
     NotAValue(&'static str),
@@ -263,107 +259,119 @@ pub(super) enum ColumnLookup {
     Absent,
 }
 
-enum Scope {
+enum Scope<'c> {
     /// The outermost block of a function body holds its parameters.
-    Block { locals: Vec<Local> },
+    Block { locals: Vec<Local<'c>> },
     /// The type parameters of the function being read. Names in the type
     /// namespace, so value lookups pass through it.
-    TypeParams { names: Vec<String> },
+    TypeParams { names: Vec<&'c str> },
     /// `narrowed` is the names earlier stages stopped carrying, which get a
     /// diagnostic of their own.
-    Relation { row: Row, narrowed: Vec<String> },
+    Relation {
+        row: Row<'c>,
+        narrowed: Vec<&'c str>,
+    },
 }
 
 /// Which module a declaration lives in. The entry file has no path, since
 /// nothing can import from it.
-#[derive(Clone, Default, PartialEq, Eq, Hash, Debug)]
-pub(super) struct ModulePath(Option<String>);
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Debug)]
+pub(super) struct ModulePath<'c>(Option<&'c str>);
 
-impl ModulePath {
+impl<'c> ModulePath<'c> {
     pub(super) fn entry() -> Self {
         Self(None)
     }
 
-    pub(super) fn from_path(path: &str) -> Self {
-        Self(Some(path.to_string()))
+    pub(super) fn from_path(path: &'c str) -> Self {
+        Self(Some(path))
     }
 
     pub(super) fn is_entry(&self) -> bool {
         self.0.is_none()
     }
 
-    pub(super) fn qualify(&self, name: &str) -> Option<String> {
-        self.0.as_ref().map(|path| format!("{path}.{name}"))
-    }
-
-    pub(super) fn declares(&self, name: &str) -> Declared {
+    pub(super) fn declares(&self, name: &'c str) -> Declared<'c> {
         Declared {
-            module: self.clone(),
-            name: name.to_string(),
+            module: *self,
+            name,
         }
     }
 }
 
 /// Where a declaration was written: which file, and the name written there.
 /// A module declares a name once, so the pair is unique.
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub(super) struct Declared {
-    pub(super) module: ModulePath,
-    pub(super) name: String,
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(super) struct Declared<'c> {
+    pub(super) module: ModulePath<'c>,
+    pub(super) name: &'c str,
 }
 
-impl Declared {
-    /// The name its op is built under. MLIR has one namespace for the whole
-    /// program, so the module qualifies it.
-    pub(super) fn symbol(&self) -> String {
-        self.module
-            .qualify(&self.name)
-            .unwrap_or_else(|| self.name.clone())
-    }
-}
-
-pub(super) struct SymbolTable {
+pub(super) struct SymbolTable<'c> {
+    context: &'c Context,
     /// What each module declares, by the name the source wrote.
-    modules: HashMap<ModulePath, HashMap<String, Binding>>,
-    module: ModulePath,
-    scopes: Vec<Scope>,
+    modules: HashMap<ModulePath<'c>, HashMap<&'c str, Binding<'c>>>,
+    module: ModulePath<'c>,
+    scopes: Vec<Scope<'c>>,
 }
 
-impl SymbolTable {
-    pub(super) fn new() -> Self {
+impl<'c> SymbolTable<'c> {
+    pub(super) fn new(context: &'c Context) -> Self {
         Self {
+            context,
             modules: HashMap::new(),
             module: ModulePath::entry(),
             scopes: Vec::new(),
         }
     }
 
-    pub(super) fn module(&self) -> &ModulePath {
-        &self.module
+    /// A name as the context holds it. This is the one place the pass
+    /// interns: a name read from the syntax, a module path, and a symbol
+    /// the module qualifies all come through here.
+    pub(super) fn intern(&self, text: &str) -> &'c str {
+        StringAttribute::new(self.context, text).value()
+    }
+
+    /// The name a declaration's op is built under. MLIR has one namespace
+    /// for the whole program, so the module qualifies it.
+    pub(super) fn symbol(&self, at: Declared<'c>) -> &'c str {
+        match at.module.0 {
+            Some(path) => self.intern(&format!("{path}.{}", at.name)),
+            None => at.name,
+        }
+    }
+
+    /// The symbol this file declares a name under.
+    pub(super) fn symbol_here(&self, name: &'c str) -> &'c str {
+        self.symbol(self.module.declares(name))
+    }
+
+    pub(super) fn module(&self) -> ModulePath<'c> {
+        self.module
     }
 
     /// An import names a declaration in a file read earlier, so what it
     /// names is known by the time this file is walked, and the binding
     /// itself stands in the import's place from here on.
-    pub(super) fn set_module(&mut self, module: ModulePath) {
-        self.modules.entry(module.clone()).or_default();
+    pub(super) fn set_module(&mut self, module: ModulePath<'c>) {
+        self.modules.entry(module).or_default();
         self.scopes.clear();
         self.module = module;
     }
 
-    pub(super) fn contains_module(&self, module: &ModulePath) -> bool {
-        self.modules.contains_key(module)
+    pub(super) fn contains_module(&self, module: ModulePath<'c>) -> bool {
+        self.modules.contains_key(&module)
     }
 
-    pub(super) fn bind(&mut self, name: &str, binding: Binding) {
+    pub(super) fn bind(&mut self, name: &'c str, binding: Binding<'c>) {
         self.modules
-            .entry(self.module.clone())
+            .entry(self.module)
             .or_default()
-            .insert(name.to_string(), binding);
+            .insert(name, binding);
     }
 
     /// What this file holds under a name, an import left as it is.
-    pub(super) fn binding(&self, name: &str) -> Option<&Binding> {
+    pub(super) fn binding(&self, name: &str) -> Option<&Binding<'c>> {
         self.modules.get(&self.module)?.get(name)
     }
 
@@ -371,27 +379,37 @@ impl SymbolTable {
     /// following an import to the file that wrote it.
     /// A name the file does not declare or import is looked up among the
     /// prelude's public names.
-    pub(super) fn find(&self, name: &str) -> Option<(Declared, &Binding)> {
-        self.find_in(self.module.declares(name))
+    pub(super) fn find(&self, name: &str) -> Option<(Declared<'c>, &Binding<'c>)> {
+        self.find_declared(self.module, name)
             .or_else(|| self.find_in_prelude(name))
     }
 
-    fn find_in_prelude(&self, name: &str) -> Option<(Declared, &Binding)> {
+    fn find_in_prelude(&self, name: &str) -> Option<(Declared<'c>, &Binding<'c>)> {
         let prelude = ModulePath::from_path(PRELUDE);
         let binding = self.modules.get(&prelude)?.get(name)?;
         if binding.visibility != Visibility::Public {
             return None;
         }
 
-        self.find_in(prelude.declares(name))
+        self.find_declared(prelude, name)
+    }
+
+    /// A name a module declares, with the name as the table holds it.
+    pub(super) fn find_declared(
+        &self,
+        module: ModulePath<'c>,
+        name: &str,
+    ) -> Option<(Declared<'c>, &Binding<'c>)> {
+        let (&name, _) = self.modules.get(&module)?.get_key_value(name)?;
+        self.find_in(module.declares(name))
     }
 
     /// Where a declaration was written, following imports. Each link points
     /// at a file read earlier, so a chain cannot come back around.
-    pub(super) fn find_in(&self, at: Declared) -> Option<(Declared, &Binding)> {
-        let binding = self.modules.get(&at.module)?.get(&at.name)?;
+    pub(super) fn find_in(&self, at: Declared<'c>) -> Option<(Declared<'c>, &Binding<'c>)> {
+        let binding = self.modules.get(&at.module)?.get(at.name)?;
         match &binding.kind {
-            BindingKind::Import { from } => self.find_in(from.clone()),
+            BindingKind::Import { from } => self.find_in(*from),
             _ => Some((at, binding)),
         }
     }
@@ -401,17 +419,17 @@ impl SymbolTable {
             declarations.keys().any(|declared| {
                 matches!(
                     self.find(declared).map(|(_, binding)| &binding.kind),
-                    Some(BindingKind::Trait { methods }) if methods.iter().any(|method| method == name)
+                    Some(BindingKind::Trait { methods }) if methods.contains(&name)
                 )
             })
         })
     }
 
-    pub(super) fn kind(&self, name: &str) -> Option<&BindingKind> {
+    pub(super) fn kind(&self, name: &str) -> Option<&BindingKind<'c>> {
         self.find(name).map(|(_, binding)| &binding.kind)
     }
 
-    pub(super) fn struct_symbol(&self, name: &str) -> Option<String> {
+    pub(super) fn struct_symbol(&self, name: &str) -> Option<&'c str> {
         match self.find(name)? {
             (
                 at,
@@ -419,12 +437,12 @@ impl SymbolTable {
                     kind: BindingKind::Struct { .. },
                     ..
                 },
-            ) => Some(at.symbol()),
+            ) => Some(self.symbol(at)),
             _ => None,
         }
     }
 
-    pub(super) fn trait_symbol(&self, name: &str) -> Option<String> {
+    pub(super) fn trait_symbol(&self, name: &str) -> Option<&'c str> {
         match self.find(name)? {
             (
                 at,
@@ -432,19 +450,23 @@ impl SymbolTable {
                     kind: BindingKind::Trait { .. },
                     ..
                 },
-            ) => Some(at.symbol()),
+            ) => Some(self.symbol(at)),
             _ => None,
         }
     }
 
-    pub(super) fn module_of(&self, name: &str) -> Option<&str> {
+    pub(super) fn module_of(&self, name: &str) -> Option<&'c str> {
         match self.kind(name)? {
-            BindingKind::Module { path } => Some(path),
+            BindingKind::Module { path } => Some(*path),
             _ => None,
         }
     }
 
-    pub(super) fn relation(&self, name: &str, alias: Option<&str>) -> Option<(String, Row)> {
+    pub(super) fn relation(
+        &self,
+        name: &str,
+        alias: Option<&'c str>,
+    ) -> Option<(&'c str, Row<'c>)> {
         let (
             at,
             Binding {
@@ -461,10 +483,14 @@ impl SymbolTable {
             row.qualify(alias);
         }
 
-        Some((at.symbol(), row))
+        Some((self.symbol(at), row))
     }
 
-    pub(super) fn callable(&self, name: &str, registry: &dyn FunctionRegistry) -> Option<Callable> {
+    pub(super) fn callable(
+        &self,
+        name: &str,
+        registry: &dyn FunctionRegistry,
+    ) -> Option<Callable<'c>> {
         match self.find(name) {
             Some((
                 at,
@@ -472,14 +498,14 @@ impl SymbolTable {
                     kind: BindingKind::Let,
                     ..
                 },
-            )) => Some(Callable::constant(&at.symbol())),
+            )) => Some(Callable::constant(self.symbol(at))),
             _ => self.operator(name, registry),
         }
     }
 
     /// The function declared at a place in another module, as a call names it.
-    pub(super) fn callable_in(&self, at: &Declared) -> Option<Callable> {
-        match self.find_in(at.clone())? {
+    pub(super) fn callable_in(&self, at: Declared<'c>) -> Option<Callable<'c>> {
+        match self.find_in(at)? {
             (
                 at,
                 Binding {
@@ -492,7 +518,7 @@ impl SymbolTable {
                     ..
                 },
             ) => Some(Callable {
-                symbol: at.symbol(),
+                symbol: self.symbol(at),
                 source: *source,
                 kind: *kind,
                 min_args: *arity,
@@ -503,7 +529,11 @@ impl SymbolTable {
     }
 
     /// Like `callable`, except a `let` sharing the name does not stand in.
-    pub(super) fn operator(&self, name: &str, registry: &dyn FunctionRegistry) -> Option<Callable> {
+    pub(super) fn operator(
+        &self,
+        name: &str,
+        registry: &dyn FunctionRegistry,
+    ) -> Option<Callable<'c>> {
         match self.find(name) {
             Some((
                 at,
@@ -517,7 +547,7 @@ impl SymbolTable {
                     ..
                 },
             )) => Some(Callable {
-                symbol: at.symbol(),
+                symbol: self.symbol(at),
                 source: *source,
                 kind: *kind,
                 min_args: *arity,
@@ -527,10 +557,10 @@ impl SymbolTable {
         }
     }
 
-    fn builtin(&self, name: &str, registry: &dyn FunctionRegistry) -> Option<Callable> {
+    fn builtin(&self, name: &str, registry: &dyn FunctionRegistry) -> Option<Callable<'c>> {
         let entry = registry.entries().iter().find(|entry| entry.name == name)?;
         Some(Callable {
-            symbol: entry.name.to_string(),
+            symbol: entry.name,
             source: CalleeSource::Builtin,
             kind: match entry.func {
                 yuzu_types::BuiltinFunc::Scalar(_) => FunctionKind::Scalar,
@@ -543,15 +573,16 @@ impl SymbolTable {
 
     // --- scopes ---
 
-    pub(super) fn enter_type_params(&mut self, names: Vec<String>) {
+    pub(super) fn enter_type_params(&mut self, names: Vec<&'c str>) {
         self.scopes.push(Scope::TypeParams { names });
     }
 
     /// A type parameter is not a value, so this walks past isolated scopes.
     pub(super) fn is_type_param(&self, name: &str) -> bool {
-        self.scopes.iter().rev().any(|scope| {
-            matches!(scope, Scope::TypeParams { names } if names.iter().any(|param| param == name))
-        })
+        self.scopes
+            .iter()
+            .rev()
+            .any(|scope| matches!(scope, Scope::TypeParams { names } if names.contains(&name)))
     }
 
     /// A function body is open, so a statement is local to it.
@@ -566,18 +597,15 @@ impl SymbolTable {
     }
 
     /// Binding a name twice shadows it.
-    pub(super) fn bind_local(&mut self, name: &str, slot: usize) {
+    pub(super) fn bind_local(&mut self, name: &'c str, slot: usize) {
         let Some(Scope::Block { locals }) = self.scopes.last_mut() else {
             panic!("a local is being bound outside a block")
         };
 
-        locals.push(Local {
-            name: name.to_string(),
-            slot,
-        });
+        locals.push(Local { name, slot });
     }
 
-    pub(super) fn enter_relation(&mut self, row: Row) {
+    pub(super) fn enter_relation(&mut self, row: Row<'c>) {
         self.scopes.push(Scope::Relation {
             row,
             narrowed: Vec::new(),
@@ -588,12 +616,12 @@ impl SymbolTable {
         self.scopes.pop();
     }
 
-    pub(super) fn row(&self) -> &Row {
+    pub(super) fn row(&self) -> &Row<'c> {
         self.current_row()
             .expect("a stage is being lowered outside a relation")
     }
 
-    pub(super) fn current_row(&self) -> Option<&Row> {
+    pub(super) fn current_row(&self) -> Option<&Row<'c>> {
         match self.scopes.last() {
             Some(Scope::Relation { row, .. }) => Some(row),
             _ => None,
@@ -605,7 +633,7 @@ impl SymbolTable {
     /// The walk stops at the first isolated scope: a function body and a
     /// stage's region are both `IsolatedFromAbove`. The module's declarations
     /// are symbols, not values, so they answer from any depth.
-    pub(super) fn lookup(&self, reference: Reference<'_>) -> Lookup {
+    pub(super) fn lookup(&self, reference: Reference<'_>) -> Lookup<'c> {
         for scope in self.scopes.iter().rev() {
             match scope {
                 Scope::TypeParams { .. } => {}
@@ -613,9 +641,7 @@ impl SymbolTable {
                     match row.column(reference) {
                         ColumnLookup::Unique(index) => return Lookup::Column(index),
                         ColumnLookup::Ambiguous => return Lookup::Ambiguous,
-                        ColumnLookup::Absent
-                            if narrowed.iter().any(|name| name == reference.name) =>
-                        {
+                        ColumnLookup::Absent if narrowed.contains(&reference.name) => {
                             return Lookup::NarrowedAway;
                         }
                         ColumnLookup::Absent => {}
@@ -639,7 +665,7 @@ impl SymbolTable {
         self.module_lookup(reference)
     }
 
-    fn module_lookup(&self, reference: Reference<'_>) -> Lookup {
+    fn module_lookup(&self, reference: Reference<'_>) -> Lookup<'c> {
         if reference.qualifier.is_some() {
             return Lookup::Unknown;
         }
@@ -651,7 +677,7 @@ impl SymbolTable {
                     kind: BindingKind::Let,
                     ..
                 },
-            )) => Lookup::Let(at.symbol()),
+            )) => Lookup::Let(self.symbol(at)),
             Some((
                 _,
                 Binding {
@@ -670,23 +696,21 @@ impl SymbolTable {
 
     // --- what each stage does to the row ---
 
-    fn replace_row(&mut self, next: Row) {
+    fn replace_row(&mut self, next: Row<'c>) {
         let Some(Scope::Relation { row, narrowed }) = self.scopes.last_mut() else {
             panic!("a stage is being lowered outside a relation")
         };
 
         for name in row.names() {
-            if !next.has(Reference::unqualified(name))
-                && !narrowed.iter().any(|narrowed| narrowed == name)
-            {
-                narrowed.push(name.to_string());
+            if !next.has(Reference::unqualified(name)) && !narrowed.contains(&name) {
+                narrowed.push(name);
             }
         }
 
         *row = next;
     }
 
-    pub(super) fn alias(&mut self, alias: &str) {
+    pub(super) fn alias(&mut self, alias: &'c str) {
         let Some(Scope::Relation { row, .. }) = self.scopes.last_mut() else {
             panic!("a stage is being lowered outside a relation")
         };
@@ -694,11 +718,11 @@ impl SymbolTable {
         row.qualify(alias);
     }
 
-    pub(super) fn replace(&mut self, names: Vec<String>) {
+    pub(super) fn replace(&mut self, names: Vec<&'c str>) {
         self.replace_row(Row::from(names));
     }
 
-    pub(super) fn extend(&mut self, names: Vec<String>) {
+    pub(super) fn extend(&mut self, names: Vec<&'c str>) {
         let mut next = self.row().clone();
         next.append(Row::from(names));
         self.replace_row(next);
@@ -710,7 +734,7 @@ impl SymbolTable {
         self.replace_row(next);
     }
 
-    pub(super) fn rename(&mut self, renames: &[(usize, String)]) {
+    pub(super) fn rename(&mut self, renames: &[(usize, &'c str)]) {
         let mut next = self.row().clone();
         for (index, to) in renames {
             next.rename(*index, to);
@@ -719,7 +743,7 @@ impl SymbolTable {
         self.replace_row(next);
     }
 
-    pub(super) fn concat(&mut self, rhs: Row) {
+    pub(super) fn concat(&mut self, rhs: Row<'c>) {
         let mut next = self.row().clone();
         next.append(rhs);
         self.replace_row(next);
@@ -737,17 +761,17 @@ mod tests {
         Row, SymbolTable,
     };
 
-    fn strings(names: &[&str]) -> Vec<String> {
-        names.iter().map(|name| name.to_string()).collect()
+    fn table() -> SymbolTable<'static> {
+        SymbolTable::new(Box::leak(Box::new(yuzu_mlir::context())))
     }
 
-    fn symbols() -> SymbolTable {
-        let mut symbols = SymbolTable::new();
+    fn symbols() -> SymbolTable<'static> {
+        let mut symbols = table();
         symbols.bind(
             "Row",
             Binding {
                 kind: BindingKind::Struct {
-                    fields: strings(&["id", "dept_id"]),
+                    fields: vec!["id", "dept_id"],
                 },
                 text_range: TextRange::default(),
                 visibility: Visibility::Private,
@@ -757,7 +781,11 @@ mod tests {
         symbols
     }
 
-    fn bind_relation(symbols: &mut SymbolTable, name: &'static str, row: Vec<&'static str>) {
+    fn bind_relation(
+        symbols: &mut SymbolTable<'static>,
+        name: &'static str,
+        row: Vec<&'static str>,
+    ) {
         symbols.bind(
             name,
             Binding {
@@ -770,7 +798,7 @@ mod tests {
         );
     }
 
-    fn bind_let(symbols: &mut SymbolTable, name: &'static str) {
+    fn bind_let(symbols: &mut SymbolTable<'static>, name: &'static str) {
         symbols.bind(
             name,
             Binding {
@@ -781,7 +809,7 @@ mod tests {
         );
     }
 
-    fn enter_relation(symbols: &mut SymbolTable, relation: &'static str) {
+    fn enter_relation(symbols: &mut SymbolTable<'static>, relation: &'static str) {
         let (_, row) = symbols
             .relation(relation, None)
             .expect("the relation is declared");
@@ -840,7 +868,7 @@ mod tests {
         bind_let(&mut symbols, "cap");
         bind_let(&mut symbols, "id");
 
-        assert_eq!(symbols.lookup(bare("cap")), Lookup::Let("cap".to_string()));
+        assert_eq!(symbols.lookup(bare("cap")), Lookup::Let("cap"));
         symbols.enter_block();
         symbols.bind_local("cap", 0);
         assert_eq!(symbols.lookup(bare("cap")), Lookup::Local(0));
@@ -850,7 +878,7 @@ mod tests {
         symbols.leave();
         assert_eq!(symbols.lookup(bare("cap")), Lookup::Local(0));
         symbols.leave();
-        assert_eq!(symbols.lookup(bare("cap")), Lookup::Let("cap".to_string()));
+        assert_eq!(symbols.lookup(bare("cap")), Lookup::Let("cap"));
         enter_relation(&mut symbols, "t");
         assert_eq!(symbols.lookup(bare("id")), Lookup::Column(0));
     }
@@ -868,7 +896,7 @@ mod tests {
         assert_eq!(symbols.lookup(bare("id")), Lookup::Column(0));
         assert_eq!(symbols.lookup(bare("x")), Lookup::Unknown);
         assert_eq!(symbols.lookup(bare("local")), Lookup::Unknown);
-        assert_eq!(symbols.lookup(bare("cap")), Lookup::Let("cap".to_string()));
+        assert_eq!(symbols.lookup(bare("cap")), Lookup::Let("cap"));
     }
 
     #[test]
@@ -881,14 +909,12 @@ mod tests {
 
     #[test]
     fn a_symbol_is_qualified_by_the_module_that_declared_it() {
-        let mut symbols = SymbolTable::new();
+        let mut symbols = table();
         symbols.set_module(ModulePath::from_path("helpers"));
         symbols.bind(
             "Row",
             Binding {
-                kind: BindingKind::Struct {
-                    fields: strings(&["a"]),
-                },
+                kind: BindingKind::Struct { fields: vec!["a"] },
                 text_range: TextRange::default(),
                 visibility: Visibility::Private,
             },
@@ -897,7 +923,7 @@ mod tests {
             "Show",
             Binding {
                 kind: BindingKind::Trait {
-                    methods: strings(&["show"]),
+                    methods: vec!["show"],
                 },
                 text_range: TextRange::default(),
                 visibility: Visibility::Private,
@@ -916,16 +942,13 @@ mod tests {
             },
         );
 
-        assert_eq!(symbols.struct_symbol("Row").as_deref(), Some("helpers.Row"));
-        assert_eq!(
-            symbols.trait_symbol("Show").as_deref(),
-            Some("helpers.Show")
-        );
+        assert_eq!(symbols.struct_symbol("Row"), Some("helpers.Row"));
+        assert_eq!(symbols.trait_symbol("Show"), Some("helpers.Show"));
         assert_eq!(
             symbols
                 .callable("f", &yuzu_types::Builtins)
                 .map(|callable| callable.symbol),
-            Some("helpers.f".to_string())
+            Some("helpers.f")
         );
         assert_eq!(symbols.trait_symbol("Row"), None);
         assert_eq!(symbols.struct_symbol("Show"), None);
@@ -951,7 +974,7 @@ mod tests {
             "Zero",
             Binding {
                 kind: BindingKind::Trait {
-                    methods: strings(&["zero"]),
+                    methods: vec!["zero"],
                 },
                 text_range: TextRange::default(),
                 visibility: Visibility::Private,
@@ -968,7 +991,7 @@ mod tests {
         assert_eq!(
             symbols.callable("f", registry),
             Some(Callable {
-                symbol: "f".to_string(),
+                symbol: "f",
                 source: CalleeSource::Fn,
                 kind: FunctionKind::Scalar,
                 min_args: 2,
@@ -993,7 +1016,7 @@ mod tests {
         let mut symbols = symbols();
         enter_relation(&mut symbols, "t");
         assert_eq!(symbols.column(bare("dept_id")), ColumnLookup::Unique(1));
-        symbols.replace(strings(&["dept_id", "n"]));
+        symbols.replace(vec!["dept_id", "n"]);
 
         assert_eq!(symbols.lookup(bare("dept_id")), Lookup::Column(0));
         assert_eq!(symbols.lookup(bare("n")), Lookup::Column(1));

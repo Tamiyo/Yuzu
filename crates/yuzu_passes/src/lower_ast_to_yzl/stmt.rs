@@ -72,12 +72,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             return;
         }
 
-        let Some(name) = decl.name_text() else {
+        let Some(name) = self.read_ident(decl.name()) else {
             self.report(decl, "struct is missing its name");
             return;
         };
 
-        if !self.is_bound(decl, &name) {
+        if !self.is_bound(decl, name) {
             debug_assert!(
                 self.diagnostics.has_errors(),
                 "`{name}` was not bound by the hoist and nothing reported why"
@@ -85,10 +85,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             return;
         }
 
-        let name = self.symbols.module().declares(&name).symbol();
+        let name = self.symbols.symbol_here(name);
         self.emit_struct(
             block,
-            &name,
+            name,
             decl.fields(),
             decl.visibility(),
             self.location(decl),
@@ -100,12 +100,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             return;
         }
 
-        let Some(name) = decl.name_text() else {
+        let Some(name) = self.read_ident(decl.name()) else {
             self.report(decl, "table is missing its name");
             return;
         };
 
-        if !self.is_bound(decl, &name) {
+        if !self.is_bound(decl, name) {
             debug_assert!(
                 self.diagnostics.has_errors(),
                 "`{name}` was not bound by the hoist and nothing reported why"
@@ -115,9 +115,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
         // An imported struct is held under the module that declared it,
         // whatever an `as` renamed it to here.
-        let row = match decl.struct_name_text() {
-            Some(struct_name) => match self.symbols.struct_symbol(&struct_name) {
-                Some(symbol) => symbol.to_string(),
+        let row = match self.read_ident(decl.struct_name()) {
+            Some(struct_name) => match self.symbols.struct_symbol(struct_name) {
+                Some(symbol) => symbol,
                 None => {
                     debug_assert!(
                         self.diagnostics.has_errors(),
@@ -129,12 +129,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             None => {
                 let symbol = self
                     .symbols
-                    .module()
-                    .declares(&format!("{name}_row"))
-                    .symbol();
+                    .symbol_here(self.symbols.intern(&format!("{name}_row")));
                 self.emit_struct(
                     block,
-                    &symbol,
+                    symbol,
                     decl.inline_fields(),
                     decl.visibility(),
                     self.location(decl),
@@ -143,11 +141,11 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             }
         };
 
-        let name = self.symbols.module().declares(&name).symbol();
+        let name = self.symbols.symbol_here(name);
         let mut table: Operation<'c> = yzl::table(
             self.context,
-            StringAttribute::new(self.context, &name),
-            FlatSymbolRefAttribute::new(self.context, &row),
+            StringAttribute::new(self.context, name),
+            FlatSymbolRefAttribute::new(self.context, row),
             self.location(decl),
         )
         .into();
@@ -164,8 +162,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
 
         // `convert_method` reports a missing name.
-        if let Some(name) = decl.name_text()
-            && !self.is_bound(decl, &name)
+        if let Some(name) = self.read_ident(decl.name())
+            && !self.is_bound(decl, name)
         {
             debug_assert!(
                 self.diagnostics.has_errors(),
@@ -180,7 +178,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn convert_method<'a>(&mut self, block: BlockRef<'c, 'a>, decl: &ast::FuncStmt, site: Site) {
         let location = self.location(decl);
 
-        let Some(name) = decl.name_text() else {
+        let Some(name) = self.read_ident(decl.name()) else {
             self.report(decl, "function is missing its name");
             return;
         };
@@ -193,12 +191,11 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             _ => {}
         }
 
-        let generics: Vec<String> = site
-            .generics()
-            .iter()
-            .map(|generic| generic.to_string())
-            .chain(decl.type_params().filter_map(|param| param.name_text()))
-            .collect();
+        let mut generics: Vec<&'c str> = site.generics().to_vec();
+        generics.extend(
+            decl.type_params()
+                .filter_map(|param| self.read_ident(param.name())),
+        );
 
         self.symbols.enter_type_params(generics.clone());
 
@@ -207,7 +204,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let mut param_count = 0;
         let mut has_error = false;
         for param in decl.params() {
-            let Some(name) = param.name_text() else {
+            let Some(name) = self.read_ident(param.name()) else {
                 self.report(&param, "parameter is missing its name");
                 has_error = true;
                 continue;
@@ -240,12 +237,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
         let (bound_params, bound_traits) = self.read_bounds(decl);
 
-        let external_name = decl.is_external().then(|| name.clone());
+        let external_name = decl.is_external().then_some(name);
 
         // A trait or an implementation is a symbol table of its own, so a
         // method keeps its bare name.
         let name = match site {
-            Site::AtModule => self.symbols.module().declares(&name).symbol(),
+            Site::AtModule => self.symbols.symbol_here(name),
             Site::InTrait | Site::InImpl => name,
         };
 
@@ -271,7 +268,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
 
         let mut builder = yzl::FnOperationBuilder::new(self.context, location)
-            .sym_name(StringAttribute::new(self.context, &name))
+            .sym_name(StringAttribute::new(self.context, name))
             .params(ArrayAttribute::from_strings(self.context, param_names))
             .signature(TypeAttribute::new(signature.into()))
             .body(body);
@@ -308,12 +305,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             return;
         }
 
-        let Some(name) = decl.name_text() else {
+        let Some(name) = self.read_ident(decl.name()) else {
             self.report(decl, "trait is missing its name");
             return;
         };
 
-        if !self.is_bound(decl, &name) {
+        if !self.is_bound(decl, name) {
             debug_assert!(
                 self.diagnostics.has_errors(),
                 "`{name}` was not bound by the hoist and nothing reported why"
@@ -327,10 +324,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             self.convert_method(body, &method, Site::InTrait);
         }
 
-        let name = self.symbols.module().declares(&name).symbol();
+        let name = self.symbols.symbol_here(name);
         let mut r#trait: Operation<'c> =
             yzl::TraitOperationBuilder::new(self.context, self.location(decl))
-                .sym_name(StringAttribute::new(self.context, &name))
+                .sym_name(StringAttribute::new(self.context, name))
                 .body(region)
                 .build()
                 .into();
@@ -347,28 +344,31 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             return;
         }
 
-        let Some(trait_name) = decl.trait_().and_then(|trait_ref| trait_ref.name_text()) else {
+        let Some(trait_name) = decl
+            .trait_()
+            .and_then(|trait_ref| self.read_ident(trait_ref.name()))
+        else {
             self.report(decl, "`impl` is missing its trait");
             return;
         };
 
-        let Some(target) = decl.ty_text() else {
+        let Some(target) = self.read_ident(decl.ty()) else {
             self.report(decl, "`impl` is missing its type name");
             return;
         };
 
-        let trait_name = match self.symbols.trait_symbol(&trait_name) {
-            Some(symbol) => symbol.to_string(),
+        let trait_name = match self.symbols.trait_symbol(trait_name) {
+            Some(symbol) => symbol,
             None => {
                 self.report(decl, &format!("unknown trait `{trait_name}`"));
                 trait_name
             }
         };
 
-        let target = match self.symbols.struct_symbol(&target) {
-            Some(symbol) => symbol.to_string(),
+        let target = match self.symbols.struct_symbol(target) {
+            Some(symbol) => symbol,
             None => {
-                if types::scalar(self.context, &target).is_none() {
+                if types::scalar(self.context, target).is_none() {
                     self.report(decl, &format!("unknown type `{target}`"));
                 }
 
@@ -384,8 +384,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
         block.append_operation(
             yzl::ImplOperationBuilder::new(self.context, self.location(decl))
-                .r#trait(FlatSymbolRefAttribute::new(self.context, &trait_name))
-                .target(FlatSymbolRefAttribute::new(self.context, &target))
+                .r#trait(FlatSymbolRefAttribute::new(self.context, trait_name))
+                .target(FlatSymbolRefAttribute::new(self.context, target))
                 .body(region)
                 .build()
                 .into(),
@@ -402,7 +402,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     ) {
         let location = self.location(decl);
 
-        let Some(name) = decl.name_text() else {
+        let Some(name) = self.read_ident(decl.name()) else {
             self.report(decl, "let binding is missing its name");
             return;
         };
@@ -415,8 +415,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         if self.symbols.in_body() {
             let kind = LocalKind::Let(decl.mutability());
             let value = self.convert_expr(block, locals, &expr);
-            let place = self.emit_local(block, &name, kind, value, location);
-            self.bind_local(locals, &name, place);
+            let place = self.emit_local(block, name, kind, value, location);
+            self.bind_local(locals, name, place);
             return;
         }
 
@@ -430,7 +430,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             self.diagnostics.emit(diagnostic);
         }
 
-        if !self.is_bound(decl, &name) {
+        if !self.is_bound(decl, name) {
             debug_assert!(
                 self.diagnostics.has_errors(),
                 "`{name}` was not bound by the hoist and nothing reported why"
@@ -454,9 +454,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
         body.append_operation(yzl::r#yield(self.context, &[value], location).into());
 
-        let symbol = self.symbols.module().declares(&name).symbol();
+        let symbol = self.symbols.symbol_here(name);
         let mut builder = yzl::ConstOperationBuilder::new(self.context, location)
-            .sym_name(StringAttribute::new(self.context, &symbol))
+            .sym_name(StringAttribute::new(self.context, symbol))
             .body(region);
 
         if let Some(annotation) = annotation {
@@ -476,7 +476,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         };
 
         self.symbols.bind(
-            &name,
+            name,
             Binding {
                 kind,
                 text_range: decl.syntax().text_range(),
@@ -496,7 +496,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
 
         let target = assign.target().and_then(|target| match target {
-            ast::Expr::IdentExpr(ident) => ident.name_text(),
+            ast::Expr::IdentExpr(ident) => self.read_ident(ident.name()),
             _ => None,
         });
 
@@ -510,7 +510,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             return;
         };
 
-        let Some(slot) = self.read_place(assign, &name) else {
+        let Some(slot) = self.read_place(assign, name) else {
             return;
         };
 
@@ -628,38 +628,41 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     }
 
     fn hoist_struct(&mut self, decl: &ast::StructStmt) {
-        let Some(name) = decl.name_text() else {
+        let Some(name) = self.read_ident(decl.name()) else {
             return;
         };
 
-        let fields = decl.fields().filter_map(|f| f.name_text()).collect();
+        let fields = decl
+            .fields()
+            .filter_map(|f| self.read_ident(f.name()))
+            .collect();
         self.bind_or_report(
             decl,
-            &name,
+            name,
             BindingKind::Struct { fields },
             decl.visibility(),
         );
     }
 
     fn hoist_table(&mut self, decl: &ast::TableStmt) {
-        let Some(name) = decl.name_text() else {
+        let Some(name) = self.read_ident(decl.name()) else {
             return;
         };
 
         let row = if decl.inline_fields().next().is_some() {
             Row::from(
                 decl.inline_fields()
-                    .filter_map(|field| field.name_text())
+                    .filter_map(|field| self.read_ident(field.name()))
                     .collect::<Vec<_>>(),
             )
         } else {
-            let Some(declared) = decl.struct_name_text() else {
+            let Some(declared) = self.read_ident(decl.struct_name()) else {
                 return;
             };
 
             // The struct may be imported, and an import names where it was
             // written rather than repeating it.
-            match self.symbols.kind(&declared) {
+            match self.symbols.kind(declared) {
                 Some(BindingKind::Struct { fields, .. }) => Row::from(fields.clone()),
                 _ => {
                     self.report(decl, &format!("`{declared}` is not a struct"));
@@ -668,30 +671,28 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             }
         };
 
-        self.bind_or_report(
-            decl,
-            &name,
-            BindingKind::Relation { row },
-            decl.visibility(),
-        );
+        self.bind_or_report(decl, name, BindingKind::Relation { row }, decl.visibility());
     }
 
     fn hoist_trait(&mut self, decl: &ast::TraitStmt) {
-        let Some(name) = decl.name_text() else {
+        let Some(name) = self.read_ident(decl.name()) else {
             return;
         };
 
-        let methods = decl.methods().filter_map(|m| m.name_text()).collect();
+        let methods = decl
+            .methods()
+            .filter_map(|m| self.read_ident(m.name()))
+            .collect();
         self.bind_or_report(
             decl,
-            &name,
+            name,
             BindingKind::Trait { methods },
             decl.visibility(),
         );
     }
 
     fn hoist_fn(&mut self, decl: &ast::FuncStmt) {
-        let Some(name) = decl.name_text() else {
+        let Some(name) = self.read_ident(decl.name()) else {
             return;
         };
 
@@ -708,7 +709,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
         self.bind_or_report(
             decl,
-            &name,
+            name,
             BindingKind::Func {
                 source,
                 kind,
@@ -719,27 +720,27 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     }
 
     fn hoist_let(&mut self, decl: &ast::LetStmt) {
-        let Some(name) = decl.name_text() else {
+        let Some(name) = self.read_ident(decl.name()) else {
             return;
         };
 
-        self.bind_or_report(decl, &name, BindingKind::Pending, decl.visibility());
+        self.bind_or_report(decl, name, BindingKind::Pending, decl.visibility());
     }
 
     pub(super) fn bind_imports(&mut self, root: &ast::Root) {
         for stmt in root.stmts() {
             match &stmt {
                 ast::Stmt::FromImportStmt(import) => {
-                    let Some(path) = import.path().map(|path| self.path_text(&path)) else {
+                    let Some(path) = import.path().map(|path| self.read_path(&path)) else {
                         continue;
                     };
 
                     for item in import.items() {
-                        self.bind_import(&path, &item);
+                        self.bind_import(path, &item);
                     }
                 }
                 ast::Stmt::ImportStmt(import) => {
-                    let Some(path) = import.path().map(|path| self.path_text(&path)) else {
+                    let Some(path) = import.path().map(|path| self.read_path(&path)) else {
                         continue;
                     };
 
@@ -748,24 +749,24 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                         .next()
                         .expect("a split yields at least one piece");
 
-                    let name = import.alias_text().unwrap_or(last.to_string());
+                    let name = self.read_ident(import.alias()).unwrap_or(last);
                     self.bind_or_report(
                         import,
-                        &name,
+                        name,
                         BindingKind::Module { path },
                         Visibility::Private,
                     );
                 }
                 ast::Stmt::ModStmt(decl) => {
-                    let Some(name) = decl.name_text() else {
+                    let Some(name) = self.read_ident(decl.name()) else {
                         self.report(decl, "module declaration is missing its name");
                         continue;
                     };
 
-                    let path = self.symbols.module().qualify(&name).unwrap_or(name.clone());
+                    let path = self.symbols.symbol_here(name);
                     self.bind_or_report(
                         decl,
-                        &name,
+                        name,
                         BindingKind::Module { path },
                         decl.visibility(),
                     );
@@ -784,25 +785,25 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
     }
 
-    fn bind_import(&mut self, path: &str, item: &ast::ImportItem) {
-        let Some(name) = item.name_text() else {
+    fn bind_import(&mut self, path: &'c str, item: &ast::ImportItem) {
+        let Some(name) = self.read_ident(item.name()) else {
             self.report(item, "import item is missing its name");
             return;
         };
 
-        let Some((from, exported)) = self.read_export(item, path, &name) else {
+        let Some((from, exported)) = self.read_export(item, path, name) else {
             return;
         };
 
-        let local = item.alias_text().unwrap_or(name);
+        let local = self.read_ident(item.alias()).unwrap_or(name);
 
-        if self.symbols.binding(&local).is_some() {
-            self.check_duplicate(item, exported.kind.name(), &local);
+        if self.symbols.binding(local).is_some() {
+            self.check_duplicate(item, exported.kind.name(), local);
             return;
         }
 
         self.symbols.bind(
-            &local,
+            local,
             Binding {
                 kind: BindingKind::Import { from },
                 text_range: item.syntax().text_range(),
@@ -814,8 +815,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn bind_or_report(
         &mut self,
         node: &impl AstNode,
-        name: &str,
-        kind: BindingKind,
+        name: &'c str,
+        kind: BindingKind<'c>,
         visibility: Visibility,
     ) {
         if self.symbols.binding(name).is_some() {
@@ -834,7 +835,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     }
 
     /// Binds a name to a place the body has declared.
-    fn bind_local<'a>(&mut self, locals: &mut Locals<'c, 'a>, name: &str, place: Value<'c, 'a>) {
+    fn bind_local<'a>(&mut self, locals: &mut Locals<'c, 'a>, name: &'c str, place: Value<'c, 'a>) {
         self.symbols.bind_local(name, locals.len());
         locals.push(place);
     }
@@ -842,18 +843,18 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     pub(super) fn read_export(
         &mut self,
         at: &impl AstNode,
-        path: &str,
+        path: &'c str,
         name: &str,
-    ) -> Option<(Declared, Binding)> {
+    ) -> Option<(Declared<'c>, Binding<'c>)> {
         let module = ModulePath::from_path(path);
-        if !self.symbols.contains_module(&module) {
+        if !self.symbols.contains_module(module) {
             self.report(at, &format!("`{path}` is not a module this file reads"));
             return None;
         }
 
         let Some(binding) = self
             .symbols
-            .find_in(module.declares(name))
+            .find_declared(module, name)
             .map(|(_, b)| b.clone())
         else {
             self.report(at, &format!("`{path}` does not declare `{name}`"));
@@ -872,37 +873,37 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         // to the file that wrote it.
         let (at, origin) = self
             .symbols
-            .find_in(module.declares(name))
+            .find_declared(module, name)
             .expect("an import points at a declaration that exists");
 
         Some((at, origin.clone()))
     }
 
     /// One entry per `(parameter, trait)` pair.
-    fn read_bounds(&mut self, decl: &ast::FuncStmt) -> (Vec<String>, Vec<String>) {
+    fn read_bounds(&mut self, decl: &ast::FuncStmt) -> (Vec<&'c str>, Vec<&'c str>) {
         let mut subjects = Vec::new();
         let mut traits = Vec::new();
         for bound in decl.bounds() {
-            let Some(subject) = bound.subject_text() else {
+            let Some(subject) = self.read_ident(bound.subject()) else {
                 self.report(&bound, "type bound is missing its subject");
                 continue;
             };
 
-            if !self.symbols.is_type_param(&subject) {
+            if !self.symbols.is_type_param(subject) {
                 self.report(&bound, &format!("unknown type parameter `{subject}`"));
             }
 
             for trait_ref in bound.traits() {
-                let Some(name) = trait_ref.name_text() else {
+                let Some(name) = self.read_ident(trait_ref.name()) else {
                     self.report(&trait_ref, "trait reference is missing its name");
                     continue;
                 };
 
-                if self.symbols.trait_symbol(&name).is_none() {
+                if self.symbols.trait_symbol(name).is_none() {
                     self.report(&trait_ref, &format!("unknown trait `{name}`"));
                 }
 
-                subjects.push(subject.clone());
+                subjects.push(subject);
                 traits.push(name);
             }
         }
@@ -919,13 +920,13 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             }
         };
 
-        let Some(name) = named.name_text() else {
+        let Some(name) = self.read_ident(named.name()) else {
             self.report(&named, "type is missing its name");
             return UnresolvedType::get(self.context);
         };
 
-        if self.symbols.is_type_param(&name) {
-            return ParamType::new(self.context, &name).into();
+        if self.symbols.is_type_param(name) {
+            return ParamType::new(self.context, name).into();
         }
 
         if name == "List" {
@@ -939,20 +940,21 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             return ListType::new(self.context, inner).into();
         }
 
-        if let Some(scalar) = types::scalar(self.context, &name) {
+        if let Some(scalar) = types::scalar(self.context, name) {
             return scalar;
         }
 
-        if let Some(symbol) = self.symbols.struct_symbol(&name) {
-            return StructType::new(self.context, &symbol).into();
+        if let Some(symbol) = self.symbols.struct_symbol(name) {
+            return StructType::new(self.context, symbol).into();
         }
 
         self.report(&named, &format!("unknown type `{name}`"));
         UnresolvedType::get(self.context)
     }
 
-    fn path_text(&self, path: &ast::ModulePath) -> String {
-        path.segments_text().collect::<Vec<_>>().join(".")
+    fn read_path(&self, path: &ast::ModulePath) -> &'c str {
+        self.symbols
+            .intern(&path.segments_text().collect::<Vec<_>>().join("."))
     }
 
     /// The slot of the place an assignment writes, when the name is one.
@@ -1013,7 +1015,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let mut types = Vec::new();
 
         for field in fields {
-            let (Some(name), Some(ty)) = (field.name_text(), field.ty()) else {
+            let (Some(name), Some(ty)) = (self.read_ident(field.name()), field.ty()) else {
                 self.report(&field, "struct field is incomplete");
                 continue;
             };
