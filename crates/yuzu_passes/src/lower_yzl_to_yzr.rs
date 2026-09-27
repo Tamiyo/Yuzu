@@ -94,6 +94,10 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
     fn report(&self, op: OperationRef<'c, '_>, message: &str) {
         emit_error(op.location(), message);
     }
+
+    fn report_at(&self, location: Location<'c>, message: &str) {
+        emit_error(location, message);
+    }
 }
 
 fn op_name<'c>(op: OperationRef<'c, '_>) -> String {

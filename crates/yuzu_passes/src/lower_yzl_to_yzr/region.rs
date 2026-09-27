@@ -1,3 +1,4 @@
+use melior::IrRewriter;
 use melior::ir::operation::{OperationLike, OperationResult};
 use melior::ir::{
     Block, BlockLike, BlockRef, Location, Region, RegionLike, RegionRef, Type, Value, ValueLike,
@@ -32,9 +33,16 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 
         let mut produced = Vec::new();
         if let Some(block) = source.first_block() {
-            let mut values = argument_map(block, body);
-            for op in block.operations() {
-                self.convert_expression(op, body, &mut values, &mut produced);
+            // The expressions move into the new block, whose arguments stand
+            // in for the old ones; only the yzl ops among them are rewritten.
+            let arguments: Vec<Value<'c, '_>> = body.arguments().map(Into::into).collect();
+            if arguments.len() != block.argument_count() {
+                self.report_at(location, "a region's arguments do not match its row");
+            } else {
+                IrRewriter::new(self.context)
+                    .as_rewriter_base()
+                    .merge_blocks(block, body, &arguments);
+                produced = self.lower_moved(body);
             }
         }
 

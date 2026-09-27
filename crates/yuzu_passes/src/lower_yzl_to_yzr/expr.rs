@@ -1,5 +1,6 @@
 use melior::ir::attribute::{FlatSymbolRefAttribute, StringAttribute};
 use melior::ir::operation::{OperationBuilder, OperationLike, OperationRef};
+use melior::IrRewriter;
 use melior::ir::{Attribute, BlockLike, BlockRef, Identifier, Operation, Type, Value, ValueLike};
 use rustc_hash::FxHashMap;
 use yuzu_mlir::ListType;
@@ -8,11 +9,13 @@ use yuzu_mlir::ir::block::BlockExt;
 use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
 use yuzu_mlir::ir::value::{ValueExt, ValueId};
 use yuzu_mlir::ods::{yz, yzr};
-use yuzu_mlir::ops::yzl::YzlOp;
+use yuzu_mlir::ops::yzl::{CallOp, YzlOp};
 
 use crate::lower_yzl_to_yzr::{YzlToYzr, op_name};
 
 impl<'c, 'a> YzlToYzr<'c, 'a> {
+    /// Copies one expression into `body`, for a region that cannot take the
+    /// source's ops as they are: a grouping splits them between two regions.
     pub(super) fn convert_expression<'b>(
         &mut self,
         op: OperationRef<'c, '_>,
@@ -29,58 +32,24 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                 produced.extend(operands);
             }
             Some(YzlOp::Call(call)) => {
-                let callee = call.callee().value();
                 let Some(operands) = lowered_operands(op, values) else {
                     return;
                 };
 
-                let ty = op.first_result().r#type();
-                let kind = call.callee_source();
-                if matches!(kind, Some(CalleeSource::Fn | CalleeSource::Const)) {
-                    self.report(op, &format!("`{callee}` was not expanded before lowering"));
-                    return;
+                if let Some(lowered) = self.lower_call(op, &call, &operands) {
+                    let appended = body.append_operation(lowered);
+                    values.insert(op.first_result().id(), appended.first_result());
                 }
-
-                let lowered = if call.is_agg() {
-                    self.convert_measure(op, callee, &operands, ty)
-                } else if kind == Some(CalleeSource::External) {
-                    let name = self.externals[callee];
-                    yz::extern_call(
-                        self.context,
-                        ty,
-                        &operands,
-                        StringAttribute::new(self.context, name),
-                        op.location(),
-                    )
-                    .into()
-                } else {
-                    yz::call(
-                        self.context,
-                        ty,
-                        &operands,
-                        FlatSymbolRefAttribute::new(self.context, callee),
-                        op.location(),
-                    )
-                    .into()
-                };
-
-                let appended = body.append_operation(lowered);
-                values.insert(op.first_result().id(), appended.first_result());
             }
             Some(YzlOp::List(_)) => {
                 let Some(operands) = lowered_operands(op, values) else {
                     return;
                 };
 
-                let ty = op.first_result().r#type();
-                if ListType::from_type(ty).is_none() {
-                    self.report(op, "the type of this list could not be inferred");
-                    return;
+                if let Some(lowered) = self.lower_list(op, &operands) {
+                    let appended = body.append_operation(lowered);
+                    values.insert(op.first_result().id(), appended.first_result());
                 }
-
-                let appended = body
-                    .append_operation(yz::list(self.context, ty, &operands, op.location()).into());
-                values.insert(op.first_result().id(), appended.first_result());
             }
             None => {
                 let Some(operands) = lowered_operands(op, values) else {
@@ -91,29 +60,104 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                     values.insert(op.first_result().id(), rebuilt);
                 }
             }
+            Some(_) => self.report_unlowered(op),
+        }
+    }
+
+    /// Lowers the yzl ops among expressions moved into `body`, and returns
+    /// what its `yzl.yield` yielded. A `yz` op is already what yzr wants,
+    /// so it stays where it is.
+    pub(super) fn lower_moved<'b>(&mut self, body: BlockRef<'c, 'b>) -> Vec<Value<'c, 'b>> {
+        let rewriter = IrRewriter::new(self.context);
+        let rewriter = rewriter.as_rewriter_base();
+        let mut produced = Vec::new();
+        let ops: Vec<OperationRef<'c, 'b>> = body.operations().collect();
+        for op in ops {
+            let operands: Vec<Value<'c, 'b>> = op.operands().collect();
+            let lowered = match op.as_yzl() {
+                None => continue,
+                Some(YzlOp::Yield(_)) => {
+                    produced = operands;
+                    rewriter.erase_op(op);
+                    continue;
+                }
+                Some(YzlOp::Call(call)) => self.lower_call(op, &call, &operands),
+                Some(YzlOp::List(_)) => self.lower_list(op, &operands),
+                Some(_) => {
+                    self.report_unlowered(op);
+                    None
+                }
+            };
+
+            let Some(lowered) = lowered else {
+                continue;
+            };
+
+            rewriter.set_insertion_point_before(op);
+            let inserted = rewriter.insert(lowered);
+            rewriter.replace_all_op_uses_with_operation(op, inserted);
+            rewriter.erase_op(op);
+        }
+
+        produced
+    }
+
+    fn lower_call(
+        &self,
+        op: OperationRef<'c, '_>,
+        call: &CallOp<'c, '_>,
+        operands: &[Value<'c, '_>],
+    ) -> Option<Operation<'c>> {
+        let callee = call.callee().value();
+        let ty = op.first_result().r#type();
+        let kind = call.callee_source();
+        if matches!(kind, Some(CalleeSource::Fn | CalleeSource::Const)) {
+            self.report(op, &format!("`{callee}` was not expanded before lowering"));
+            return None;
+        }
+
+        Some(if call.is_agg() {
+            self.convert_measure(op, callee, operands, ty)
+        } else if kind == Some(CalleeSource::External) {
+            let name = self.externals[callee];
+            yz::extern_call(
+                self.context,
+                ty,
+                operands,
+                StringAttribute::new(self.context, name),
+                op.location(),
+            )
+            .into()
+        } else {
+            yz::call(
+                self.context,
+                ty,
+                operands,
+                FlatSymbolRefAttribute::new(self.context, callee),
+                op.location(),
+            )
+            .into()
+        })
+    }
+
+    fn lower_list(
+        &self,
+        op: OperationRef<'c, '_>,
+        operands: &[Value<'c, '_>],
+    ) -> Option<Operation<'c>> {
+        let ty = op.first_result().r#type();
+        if ListType::from_type(ty).is_none() {
+            self.report(op, "the type of this list could not be inferred");
+            return None;
+        }
+
+        Some(yz::list(self.context, ty, operands, op.location()).into())
+    }
+
+    /// An op no expression should still hold when the region is lowered.
+    fn report_unlowered(&self, op: OperationRef<'c, '_>) {
+        match op.as_yzl() {
             Some(YzlOp::Missing(_)) => self.report(op, "this part of the query is missing"),
-            Some(
-                YzlOp::From(_)
-                | YzlOp::Where(_)
-                | YzlOp::Select(_)
-                | YzlOp::Extend(_)
-                | YzlOp::Aggregate(_)
-                | YzlOp::Limit(_)
-                | YzlOp::Join(_)
-                | YzlOp::Rename(_)
-                | YzlOp::Alias(_)
-                | YzlOp::Distinct(_)
-                | YzlOp::Drop(_)
-                | YzlOp::Set(_)
-                | YzlOp::Output(_)
-                | YzlOp::Struct(_)
-                | YzlOp::Table(_)
-                | YzlOp::Fn(_)
-                | YzlOp::Trait(_)
-                | YzlOp::Impl(_)
-                | YzlOp::Const(_)
-                | YzlOp::Return(_),
-            ) => self.report(op, &format!("`{}` is not lowered yet", op_name(op))),
             Some(YzlOp::Local(_) | YzlOp::Load(_) | YzlOp::Store(_)) => self.report(
                 op,
                 &format!(
@@ -121,6 +165,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                     op_name(op)
                 ),
             ),
+            _ => self.report(op, &format!("`{}` is not lowered yet", op_name(op))),
         }
     }
 
