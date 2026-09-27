@@ -43,7 +43,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             Some(YzlOp::Table(_)) => {}
             // `record_externals` read its name, and a call to it becomes
             // `yz.extern_call`.
-            Some(YzlOp::Fn(function)) if function.external_name().is_some() => {}
+            Some(YzlOp::Fn(function)) if function.is_external() => {}
             Some(YzlOp::Fn(_) | YzlOp::Trait(_) | YzlOp::Impl(_)) => self.report(
                 op,
                 &format!("`{}` was not expanded before lowering", op_name(op)),

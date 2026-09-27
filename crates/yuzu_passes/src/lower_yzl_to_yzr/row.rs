@@ -101,7 +101,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 pub(super) fn struct_declaration<'c>(
     context: &'c Context,
     name: &str,
-    fields: &Row<'c>,
+    fields: &[(&'c str, Type<'c>)],
     location: Location<'c>,
 ) -> Operation<'c> {
     let names: Vec<Attribute<'c>> = fields

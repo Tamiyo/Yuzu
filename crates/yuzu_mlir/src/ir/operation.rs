@@ -32,11 +32,11 @@ pub trait OperationExt<'c: 'a, 'a>: OperationLike<'c, 'a> {
     }
 
     /// A string attribute, by name.
-    fn text_attribute(&self, name: &str) -> Option<String> {
+    fn text_attribute(&self, name: &str) -> Option<&'c str> {
         let attribute = self.attribute(name).ok()?;
         StringAttribute::try_from(attribute)
             .ok()
-            .map(|string| string.value().to_string())
+            .map(|string| string.value())
     }
 }
 

@@ -13,7 +13,7 @@ use crate::lower_ast_to_yzl::symbols::ModulePath;
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 
 /// One file of the program; the entry file has no module.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct File {
     pub(crate) source_id: SourceId,
     pub(crate) module: Option<String>,
@@ -103,12 +103,27 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         module
     }
 
+    /// The program's result is its last top-level query.
+    fn convert_output<'a>(&mut self, top: BlockRef<'c, 'a>) {
+        let query = top
+            .operations()
+            .filter_map(|op| {
+                let value = op.try_first_result()?;
+                (value.r#type() == QueryType::get(self.context)).then(|| (value, op.location()))
+            })
+            .last();
+
+        if let Some((value, loc)) = query {
+            top.append_operation(yzl::output(self.context, value, loc).into());
+        }
+    }
+
     /// Names first, for every file: a reference may point forward. A file
     /// the bound library already holds is not bound again.
     pub(super) fn bind(&mut self, files: &[File]) {
         for file in files {
             self.set_file(file);
-            if self.symbols.library_binds_module() {
+            if self.symbols.is_library_module() {
                 continue;
             }
 
@@ -124,21 +139,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             Some(module) => ModulePath::from_path(self.symbols.intern(module)),
             None => ModulePath::entry(),
         });
-    }
-
-    /// The program's result is its last top-level query.
-    fn convert_output<'a>(&mut self, top: BlockRef<'c, 'a>) {
-        let query = top
-            .operations()
-            .filter_map(|op| {
-                let value = op.try_first_result()?;
-                (value.r#type() == QueryType::get(self.context)).then(|| (value, op.location()))
-            })
-            .last();
-
-        if let Some((value, loc)) = query {
-            top.append_operation(yzl::output(self.context, value, loc).into());
-        }
     }
 }
 

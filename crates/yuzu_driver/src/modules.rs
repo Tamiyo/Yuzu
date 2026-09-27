@@ -165,8 +165,8 @@ struct Loader<'a> {
 }
 
 impl Loader<'_> {
-    /// The library as a cached load left it: its sources, its files and
-    /// what each of its modules declares.
+    /// Puts a cached load of the library in place: its sources, its files
+    /// and what each of its modules declares.
     fn install(&mut self, library: &stdlib::Library) {
         self.sources.extend_from(&library.sources);
         for file in &library.files {

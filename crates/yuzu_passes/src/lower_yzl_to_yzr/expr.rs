@@ -36,7 +36,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                     return;
                 };
 
-                if let Some(lowered) = self.lower_call(op, &call, &operands) {
+                if let Some(lowered) = self.convert_call(op, &call, &operands) {
                     let appended = body.append_operation(lowered);
                     values.insert(op.first_result().id(), appended.first_result());
                 }
@@ -46,7 +46,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                     return;
                 };
 
-                if let Some(lowered) = self.lower_list(op, &operands) {
+                if let Some(lowered) = self.convert_list(op, &operands) {
                     let appended = body.append_operation(lowered);
                     values.insert(op.first_result().id(), appended.first_result());
                 }
@@ -67,7 +67,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
     /// Lowers the yzl ops among expressions moved into `body`, and returns
     /// what its `yzl.yield` yielded. A `yz` op is already what yzr wants,
     /// so it stays where it is.
-    pub(super) fn lower_moved<'b>(&mut self, body: BlockRef<'c, 'b>) -> Vec<Value<'c, 'b>> {
+    pub(super) fn convert_moved<'b>(&mut self, body: BlockRef<'c, 'b>) -> Vec<Value<'c, 'b>> {
         let rewriter = IrRewriter::new(self.context);
         let rewriter = rewriter.as_rewriter_base();
         let mut produced = Vec::new();
@@ -81,8 +81,8 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                     rewriter.erase_op(op);
                     continue;
                 }
-                Some(YzlOp::Call(call)) => self.lower_call(op, &call, &operands),
-                Some(YzlOp::List(_)) => self.lower_list(op, &operands),
+                Some(YzlOp::Call(call)) => self.convert_call(op, &call, &operands),
+                Some(YzlOp::List(_)) => self.convert_list(op, &operands),
                 Some(_) => {
                     self.report_unlowered(op);
                     None
@@ -102,7 +102,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         produced
     }
 
-    fn lower_call(
+    fn convert_call(
         &self,
         op: OperationRef<'c, '_>,
         call: &CallOp<'c, '_>,
@@ -119,7 +119,10 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         Some(if call.is_agg() {
             self.convert_measure(op, callee, operands, ty)
         } else if kind == Some(CalleeSource::External) {
-            let name = self.externals[callee];
+            let name = *self
+                .externals
+                .get(callee)
+                .expect("an external call names a top-level external fn");
             yz::extern_call(
                 self.context,
                 ty,
@@ -140,7 +143,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         })
     }
 
-    fn lower_list(
+    fn convert_list(
         &self,
         op: OperationRef<'c, '_>,
         operands: &[Value<'c, '_>],

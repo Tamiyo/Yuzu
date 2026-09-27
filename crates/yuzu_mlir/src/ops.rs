@@ -9,3 +9,10 @@
 //! module and build.rs when melior grows borrowing conversions upstream.
 
 include!(concat!(env!("OUT_DIR"), "/ops.rs"));
+
+impl yzl::FnOp<'_, '_> {
+    /// Whether the function is one the engine provides, with no body.
+    pub fn is_external(&self) -> bool {
+        self.external_name().is_some()
+    }
+}

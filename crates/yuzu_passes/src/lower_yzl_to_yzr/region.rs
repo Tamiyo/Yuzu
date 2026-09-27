@@ -42,7 +42,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                 IrRewriter::new(self.context)
                     .as_rewriter_base()
                     .merge_blocks(block, body, &arguments);
-                produced = self.lower_moved(body);
+                produced = self.convert_moved(body);
             }
         }
 

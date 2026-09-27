@@ -276,7 +276,7 @@ fn discard_declarations(context: &Context, rewriter: &RewriterBase, block: Block
     let mut declarations = Vec::new();
     for op in block.operations() {
         let discard = match op.as_yzl() {
-            Some(YzlOp::Fn(function)) => function.external_name().is_none(),
+            Some(YzlOp::Fn(function)) => !function.is_external(),
             Some(YzlOp::Trait(_) | YzlOp::Impl(_)) => true,
             Some(YzlOp::Const(binding)) => !binds_query(context, &binding),
             _ => false,

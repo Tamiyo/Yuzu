@@ -1,15 +1,17 @@
+use std::fmt;
 use std::sync::Arc;
 
-#[derive(Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, PartialEq, PartialOrd, Debug)]
 pub struct SourceId(usize);
 
+#[derive(Debug)]
 pub struct LineCol {
     pub line: usize,
     pub col: usize,
 }
 
-/// A source's text and line index are shared, so a map made from another
-/// one's sources copies no text.
+/// One source: its name, its text and where its lines start. They are
+/// shared, so a map made from another one's sources copies no text.
 #[derive(Clone)]
 struct Entry {
     name: Arc<str>,
@@ -20,6 +22,15 @@ struct Entry {
 #[derive(Clone)]
 pub struct SourceMap {
     entries: Vec<Entry>,
+}
+
+impl fmt::Debug for SourceMap {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_list()
+            .entries(self.entries.iter().map(|entry| &entry.name))
+            .finish()
+    }
 }
 
 impl Default for SourceMap {
@@ -55,9 +66,14 @@ impl SourceMap {
     }
 
     /// Adds the sources `other` holds past this map's own count, sharing
-    /// their text, so each keeps the id it has in `other`.
+    /// their text, so each keeps the id it has in `other`. `other` must hold
+    /// at least as many sources as this map.
     pub fn extend_from(&mut self, other: &SourceMap) {
         let own = self.entries.len();
+        debug_assert!(
+            own <= other.entries.len(),
+            "a map extends only from one that holds at least its own sources"
+        );
         self.entries.extend(other.entries.iter().skip(own).cloned());
     }
 

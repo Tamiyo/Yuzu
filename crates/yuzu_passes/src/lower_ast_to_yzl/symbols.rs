@@ -1,8 +1,8 @@
 //! What a name means where it is written: every declaration in the
 //! program, the scopes open inside a file, and the lookups the walk asks.
 //!
-//! A name is held as the source wrote it. Only a symbol, the name an op is
-//! built under, is interned, since that is the only name MLIR ever sees.
+//! Every name is interned in the MLIR context when it is read, so the
+//! table holds `&'c str` and does not own a name.
 
 use std::fmt;
 
@@ -312,7 +312,7 @@ type Modules<'c> = FxHashMap<ModulePath<'c>, FxHashMap<&'c str, Binding<'c>>>;
 
 /// The names the library's files declare, bound once and read by every
 /// compile that loads the library.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct BoundLibrary<'l> {
     modules: Modules<'l>,
 }
@@ -393,7 +393,7 @@ impl<'c> SymbolTable<'c> {
     }
 
     /// Whether the bound library already holds this file's names.
-    pub(super) fn library_binds_module(&self) -> bool {
+    pub(super) fn is_library_module(&self) -> bool {
         self.library
             .is_some_and(|library| library.modules.contains_key(&self.module))
     }

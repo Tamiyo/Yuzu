@@ -6,6 +6,7 @@ use melior::StringRef;
 use melior::ir::{Type, TypeLike};
 
 /// `!yzl.unresolved`, the unification variable.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct UnresolvedType;
 
 impl UnresolvedType {
@@ -21,6 +22,7 @@ impl UnresolvedType {
 }
 
 /// `!yzl.query`, a relation before its schema is known.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct QueryType;
 
 impl QueryType {
@@ -36,6 +38,7 @@ impl QueryType {
 }
 
 /// `!yzl.ref`, a place that holds the value of a local variable.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct RefType;
 
 impl RefType {

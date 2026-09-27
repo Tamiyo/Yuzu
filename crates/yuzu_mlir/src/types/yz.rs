@@ -6,6 +6,7 @@ use melior::StringRef;
 use melior::ir::{Type, TypeLike};
 
 /// `!yz.int64`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Int64Type;
 
 impl Int64Type {
@@ -21,6 +22,7 @@ impl Int64Type {
 }
 
 /// `!yz.float64`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Float64Type;
 
 impl Float64Type {
@@ -36,6 +38,7 @@ impl Float64Type {
 }
 
 /// `!yz.bool`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct BoolType;
 
 impl BoolType {
@@ -51,6 +54,7 @@ impl BoolType {
 }
 
 /// `!yz.str`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct StrType;
 
 impl StrType {

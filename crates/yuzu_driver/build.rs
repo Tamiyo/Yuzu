@@ -49,7 +49,8 @@ fn collect(directory: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
-/// `yuzu/std/math.yz` is `yuzu.std.math`, and `yuzu/std/mod.yz` is `yuzu.std`.
+/// The module path of a library file: `yuzu/std/math.yz` is
+/// `yuzu.std.math`, and `yuzu/std/mod.yz` is `yuzu.std`.
 fn module_path(relative: &Path) -> String {
     let mut segments: Vec<String> = relative
         .with_extension("")
