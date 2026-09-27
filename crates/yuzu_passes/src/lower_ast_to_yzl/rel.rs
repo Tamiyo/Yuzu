@@ -23,68 +23,110 @@ use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 type Item<'c> = (Option<&'c str>, Option<ast::Expr>, TextRange);
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
+    /// A pipeline: its source opens the relation every stage reads, and the
+    /// relation closes after the last stage.
     pub(super) fn convert_query<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
-        rel: &ast::Rel,
+        pipeline: &ast::Pipeline,
     ) -> (Value<'c, 'a>, Row<'c>) {
-        let value = self.convert_rel(block, rel);
+        let (mut value, row) = match pipeline.source() {
+            Some(from) => self.convert_from(block, &from),
+            None => {
+                let hole = self.report_and_hole(
+                    block,
+                    pipeline,
+                    "a query is missing its `from`",
+                    QueryType::get(self.context),
+                );
+                (hole, Row::new())
+            }
+        };
+
+        self.symbols.enter_relation(row);
+        for stage in pipeline.stages() {
+            value = self.convert_stage(block, value, &stage);
+        }
+
         (value, self.symbols.leave_relation())
     }
 
-    pub(super) fn convert_rel<'a>(
+    fn convert_stage<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
-        rel: &ast::Rel,
+        input: Value<'c, 'a>,
+        stage: &ast::Stage,
     ) -> Value<'c, 'a> {
-        let at = stage_range(rel);
-        match rel {
-            ast::Rel::FromExpr(from) => self.convert_from(block, from, at),
-            ast::Rel::WhereExpr(stage) => self.convert_where(block, stage, at),
-            ast::Rel::SelectExpr(stage) => self.convert_select(block, stage, at),
-            ast::Rel::ExtendExpr(stage) => self.convert_extend(block, stage, at),
-            ast::Rel::AggregateExpr(stage) => self.convert_aggregate(block, stage, at),
-            ast::Rel::LimitExpr(stage) => self.convert_limit(block, stage, at),
-            ast::Rel::RenameExpr(stage) => self.convert_rename(block, stage, at),
-            ast::Rel::AliasExpr(stage) => self.convert_alias(block, stage, at),
-            ast::Rel::JoinExpr(stage) => self.convert_join(block, stage, at),
-            ast::Rel::SetExpr(stage) => self.convert_set(block, stage, at),
-            ast::Rel::DistinctExpr(stage) => self.convert_distinct(block, stage, at),
-            ast::Rel::DropExpr(stage) => self.convert_drop(block, stage, at),
+        match stage {
+            ast::Stage::WhereExpr(r#where) => self.convert_where(block, input, r#where),
+            ast::Stage::SelectExpr(select) => self.convert_select(block, input, select),
+            ast::Stage::ExtendExpr(extend) => self.convert_extend(block, input, extend),
+            ast::Stage::AggregateExpr(agg) => self.convert_aggregate(block, input, agg),
+            ast::Stage::LimitExpr(limit) => self.convert_limit(block, input, limit),
+            ast::Stage::RenameExpr(rename) => self.convert_rename(block, input, rename),
+            ast::Stage::AliasExpr(alias) => self.convert_alias(block, input, alias),
+            ast::Stage::JoinExpr(join) => self.convert_join(block, input, join),
+            ast::Stage::SetExpr(set) => self.convert_set(block, input, set),
+            ast::Stage::DistinctExpr(distinct) => self.convert_distinct(block, input, distinct),
+            ast::Stage::DropExpr(drop) => self.convert_drop(block, input, drop),
         }
     }
 
+    /// The relation a pipeline reads, and the row it starts from. An unknown
+    /// relation starts from an empty row, so the stages after it are still
+    /// checked.
     fn convert_from<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
         from: &ast::FromExpr,
-        at: TextRange,
-    ) -> Value<'c, 'a> {
-        let loc = self.location_at(at);
+    ) -> (Value<'c, 'a>, Row<'c>) {
+        let loc = self.location(from);
         let Some(source) = self.read_ident(from.relation()) else {
-            return self.report_and_hole(
+            let hole = self.report_and_hole(
                 block,
                 from,
                 "`from` is missing its relation",
                 QueryType::get(self.context),
             );
+            return (hole, Row::new());
         };
 
-        let value = self.scan(block, from, source, loc);
-        match self.read_ident(from.alias()) {
-            Some(alias) => self.qualify(block, value, alias, loc),
-            None => value,
+        let Some((symbol, mut row)) = self.symbols.relation(source, None) else {
+            let hole = self.report_and_hole(
+                block,
+                from,
+                &format!("`{source}` is not a relation"),
+                QueryType::get(self.context),
+            );
+            return (hole, Row::new());
+        };
+
+        let mut value = block
+            .append_operation(
+                yzl::from(
+                    self.context,
+                    QueryType::get(self.context),
+                    FlatSymbolRefAttribute::new(self.context, symbol),
+                    loc,
+                )
+                .into(),
+            )
+            .first_result();
+        if let Some(alias) = self.read_ident(from.alias()) {
+            row.qualify(alias);
+            value = self.emit_alias(block, value, alias, loc);
         }
+
+        (value, row)
     }
 
     fn convert_where<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
+        input: Value<'c, 'a>,
         r#where: &ast::WhereExpr,
-        at: TextRange,
     ) -> Value<'c, 'a> {
-        let loc = self.location_at(at);
-        let input = self.convert_input(block, r#where, "`where`", r#where.input());
+        let loc = self.location(r#where);
         let region = Region::new();
         let body = self.stage_block(&region, loc);
         let predicate = match r#where.predicate() {
@@ -116,11 +158,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn convert_select<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
+        input: Value<'c, 'a>,
         select: &ast::SelectExpr,
-        at: TextRange,
     ) -> Value<'c, 'a> {
-        let loc = self.location_at(at);
-        let input = self.convert_input(block, select, "`select`", select.input());
+        let loc = self.location(select);
         let items = select
             .items()
             .map(|item| {
@@ -152,11 +193,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn convert_extend<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
+        input: Value<'c, 'a>,
         extend: &ast::ExtendExpr,
-        at: TextRange,
     ) -> Value<'c, 'a> {
-        let loc = self.location_at(at);
-        let input = self.convert_input(block, extend, "`extend`", extend.input());
+        let loc = self.location(extend);
         let items = extend
             .items()
             .map(|item| {
@@ -188,11 +228,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn convert_aggregate<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
+        input: Value<'c, 'a>,
         agg: &ast::AggregateExpr,
-        at: TextRange,
     ) -> Value<'c, 'a> {
-        let loc = self.location_at(at);
-        let input = self.convert_input(block, agg, "`aggregate`", agg.input());
+        let loc = self.location(agg);
         let mut keys = Vec::new();
         let mut key_names: Vec<&'c str> = Vec::new();
         for item in agg.group_by().into_iter().flat_map(|group| group.items()) {
@@ -246,15 +285,14 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn convert_limit<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
+        input: Value<'c, 'a>,
         limit: &ast::LimitExpr,
-        at: TextRange,
     ) -> Value<'c, 'a> {
-        let loc = self.location_at(at);
-        let input = self.convert_input(block, limit, "`limit`", limit.input());
+        let loc = self.location(limit);
         let count = match limit.count() {
             Some(count) => self.int_literal(&count),
             None => {
-                self.report_at(at, "`limit` is missing its row count");
+                self.report(limit, "`limit` is missing its row count");
                 0
             }
         };
@@ -277,11 +315,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn convert_rename<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
+        input: Value<'c, 'a>,
         rename: &ast::RenameExpr,
-        at: TextRange,
     ) -> Value<'c, 'a> {
-        let loc = self.location_at(at);
-        let input = self.convert_input(block, rename, "`rename`", rename.input());
+        let loc = self.location(rename);
         let mut from: Vec<String> = Vec::new();
         let mut to: Vec<&'c str> = Vec::new();
         let mut renames = Vec::new();
@@ -323,27 +360,26 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn convert_alias<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
+        input: Value<'c, 'a>,
         alias: &ast::AliasExpr,
-        at: TextRange,
     ) -> Value<'c, 'a> {
-        let loc = self.location_at(at);
-        let input = self.convert_input(block, alias, "`as`", alias.input());
+        let loc = self.location(alias);
         let Some(alias) = self.read_ident(alias.alias()) else {
-            self.report_at(at, "`as` is missing its alias");
+            self.report(alias, "`as` is missing its alias");
             return input;
         };
 
-        self.qualify(block, input, alias, loc)
+        self.symbols.alias(alias);
+        self.emit_alias(block, input, alias, loc)
     }
 
     fn convert_join<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
+        input: Value<'c, 'a>,
         join: &ast::JoinExpr,
-        at: TextRange,
     ) -> Value<'c, 'a> {
-        let loc = self.location_at(at);
-        let lhs = self.convert_input(block, join, "`join`", join.input());
+        let loc = self.location(join);
         let kind = match join.kind() {
             Some(ast::JoinKind::Left) => JoinKind::Left,
             Some(ast::JoinKind::Right) => JoinKind::Right,
@@ -361,8 +397,12 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
         let alias = self.read_ident(join.alias());
         let Some((rhs_symbol, rhs)) = self.symbols.relation(relation, alias) else {
-            self.report_at(at, &format!("`{relation}` is not a relation"));
-            return self.emit_hole(block, at, QueryType::get(self.context));
+            return self.report_and_hole(
+                block,
+                join,
+                &format!("`{relation}` is not a relation"),
+                QueryType::get(self.context),
+            );
         };
 
         let mut using: Vec<&'c str> = Vec::new();
@@ -391,7 +431,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let on = Region::new();
         if join.using().is_none() {
             match join.on() {
-                None => self.report_at(at, "`join` is missing its `on` or `using` clause"),
+                None => self.report(join, "`join` is missing its `on` or `using` clause"),
                 Some(clause) => match clause.condition() {
                     None => self.report(&clause, "`on` is missing its condition"),
                     Some(condition) => {
@@ -405,7 +445,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
         let mut builder = yzl::JoinOperationBuilder::new(self.context, loc)
             .result(QueryType::get(self.context))
-            .lhs(lhs)
+            .lhs(input)
             .kind(StringAttribute::new(self.context, kind.as_str()))
             .rhs(FlatSymbolRefAttribute::new(self.context, rhs_symbol))
             .on(on);
@@ -426,11 +466,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn convert_set<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
+        input: Value<'c, 'a>,
         set: &ast::SetExpr,
-        at: TextRange,
     ) -> Value<'c, 'a> {
-        let loc = self.location_at(at);
-        let input = self.convert_input(block, set, "`set`", set.input());
+        let loc = self.location(set);
         let items: Vec<ast::SetItem> = set.items().collect();
         let mut columns = Vec::new();
         for item in &items {
@@ -475,11 +514,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn convert_distinct<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
+        input: Value<'c, 'a>,
         distinct: &ast::DistinctExpr,
-        at: TextRange,
     ) -> Value<'c, 'a> {
-        let loc = self.location_at(at);
-        let input = self.convert_input(block, distinct, "`distinct`", distinct.input());
+        let loc = self.location(distinct);
         block
             .append_operation(
                 yzl::distinct(self.context, QueryType::get(self.context), input, loc).into(),
@@ -490,11 +528,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn convert_drop<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
+        input: Value<'c, 'a>,
         drop: &ast::DropExpr,
-        at: TextRange,
     ) -> Value<'c, 'a> {
-        let loc = self.location_at(at);
-        let input = self.convert_input(block, drop, "`drop`", drop.input());
+        let loc = self.location(drop);
         let mut names: Vec<String> = Vec::new();
         for column in drop.columns() {
             let Some(name) = column.clone().text() else {
@@ -535,49 +572,13 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
     }
 
-    /// An unknown relation scans an empty row, so the stages after it are
-    /// still checked.
-    fn scan<'a>(
-        &mut self,
-        block: BlockRef<'c, 'a>,
-        node: &impl AstNode,
-        source: &str,
-        loc: Location<'c>,
-    ) -> Value<'c, 'a> {
-        // The stages after this one still need a scope to resolve in, so an
-        // unknown relation opens an empty one and stands a hole.
-        let Some((symbol, row)) = self.symbols.relation(source, None) else {
-            self.symbols.enter_relation(Row::new());
-            return self.report_and_hole(
-                block,
-                node,
-                &format!("`{source}` is not a relation"),
-                QueryType::get(self.context),
-            );
-        };
-
-        self.symbols.enter_relation(row);
-        block
-            .append_operation(
-                yzl::from(
-                    self.context,
-                    QueryType::get(self.context),
-                    FlatSymbolRefAttribute::new(self.context, symbol),
-                    loc,
-                )
-                .into(),
-            )
-            .first_result()
-    }
-
-    fn qualify<'a>(
-        &mut self,
+    fn emit_alias<'a>(
+        &self,
         block: BlockRef<'c, 'a>,
         input: Value<'c, 'a>,
         alias: &'c str,
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
-        self.symbols.alias(alias);
         block
             .append_operation(
                 yzl::alias(
@@ -599,43 +600,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             .map(|_| (UnresolvedType::get(self.context), loc))
             .collect();
         region.append_block(Block::new(&arguments))
-    }
-
-    fn convert_input<'a>(
-        &mut self,
-        block: BlockRef<'c, 'a>,
-        node: &impl AstNode,
-        what: &str,
-        input: Option<ast::Expr>,
-    ) -> Value<'c, 'a> {
-        match input {
-            Some(ast::Expr::Rel(rel)) => self.convert_rel(block, &rel),
-            Some(ast::Expr::IdentExpr(ident)) => {
-                let Some(name) = self.read_ident(ident.name()) else {
-                    return self.report_and_hole(
-                        block,
-                        &ident,
-                        &format!("{what} is missing its input relation"),
-                        QueryType::get(self.context),
-                    );
-                };
-
-                let loc = self.location(&ident);
-                self.scan(block, &ident, name, loc)
-            }
-            Some(other) => self.report_and_hole(
-                block,
-                &other,
-                "expected a relation as the pipe input",
-                QueryType::get(self.context),
-            ),
-            None => self.report_and_hole(
-                block,
-                node,
-                &format!("{what} is missing its input relation"),
-                QueryType::get(self.context),
-            ),
-        }
     }
 
     fn column(
@@ -693,44 +657,6 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         body.append_operation(yzl::r#yield(self.context, &values, loc).into());
         (names, region)
     }
-}
-
-fn stage_input(rel: &ast::Rel) -> Option<ast::Expr> {
-    match rel {
-        ast::Rel::FromExpr(_) => None,
-        ast::Rel::WhereExpr(stage) => stage.input(),
-        ast::Rel::SelectExpr(stage) => stage.input(),
-        ast::Rel::ExtendExpr(stage) => stage.input(),
-        ast::Rel::AggregateExpr(stage) => stage.input(),
-        ast::Rel::LimitExpr(stage) => stage.input(),
-        ast::Rel::RenameExpr(stage) => stage.input(),
-        ast::Rel::AliasExpr(stage) => stage.input(),
-        ast::Rel::JoinExpr(stage) => stage.input(),
-        ast::Rel::SetExpr(stage) => stage.input(),
-        ast::Rel::DistinctExpr(stage) => stage.input(),
-        ast::Rel::DropExpr(stage) => stage.input(),
-    }
-}
-
-/// A stage's node covers everything piped into it, so a complaint about the
-/// stage points at the first token after its input instead.
-fn stage_range(rel: &ast::Rel) -> TextRange {
-    let node = rel.syntax();
-    let Some(input) = stage_input(rel) else {
-        return node.text_range();
-    };
-
-    // The input is the stage node's first child and `|>` is one of its own
-    // tokens, so the direct children are enough; walking every token under
-    // the node would walk the whole pipeline before it again.
-    let after = input.syntax().text_range().end();
-    let start = node
-        .children_with_tokens()
-        .filter_map(|element| element.into_token())
-        .find(|token| token.text_range().start() >= after && !token.kind().is_trivia())
-        .map_or(after, |token| token.text_range().start());
-
-    TextRange::new(start, node.text_range().end())
 }
 
 #[cfg(test)]

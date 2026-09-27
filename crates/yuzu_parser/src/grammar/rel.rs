@@ -5,50 +5,58 @@ use crate::grammar::expr::parse_expr;
 use crate::grammar::parse_ident;
 use crate::parser::{Parser, marker::CompletedMarker};
 
+/// `from t |> where … |> select …`: the source, then each stage as a sibling
+/// that holds only its own tokens.
 pub(crate) fn parse_query(p: &mut Parser) -> CompletedMarker {
-    let mut query = parse_from_expr(p);
-
+    let m = p.start();
+    parse_from_expr(p);
     while p.at(TokenKind::Pipe) {
-        let marker = p.precede(query);
-        p.bump();
-
-        query = if p.at(TokenKind::WhereKw) {
-            parse_where_clause(p);
-            p.complete(marker, SyntaxKind::WhereExpr)
-        } else if p.at(TokenKind::DistinctKw) {
-            parse_distinct_clause(p);
-            p.complete(marker, SyntaxKind::DistinctExpr)
-        } else if p.at(TokenKind::DropKw) {
-            parse_drop_clause(p);
-            p.complete(marker, SyntaxKind::DropExpr)
-        } else if p.at(TokenKind::RenameKw) {
-            parse_rename_clause(p);
-            p.complete(marker, SyntaxKind::RenameExpr)
-        } else if p.at(TokenKind::ExtendKw) {
-            parse_extend_clause(p);
-            p.complete(marker, SyntaxKind::ExtendExpr)
-        } else if p.at(TokenKind::SetKw) {
-            parse_set_clause(p);
-            p.complete(marker, SyntaxKind::SetExpr)
-        } else if p.at(TokenKind::LimitKw) {
-            parse_limit_clause(p);
-            p.complete(marker, SyntaxKind::LimitExpr)
-        } else if p.at(TokenKind::AsKw) {
-            parse_alias_clause(p);
-            p.complete(marker, SyntaxKind::AliasExpr)
-        } else if p.at(TokenKind::AggregateKw) {
-            parse_aggregate_clause(p);
-            p.complete(marker, SyntaxKind::AggregateExpr)
-        } else if at_join_clause(p) {
-            parse_join_clause(p);
-            p.complete(marker, SyntaxKind::JoinExpr)
-        } else {
-            parse_select_clause(p);
-            p.complete(marker, SyntaxKind::SelectExpr)
-        };
+        parse_stage(p);
     }
 
-    query
+    p.complete(m, SyntaxKind::Pipeline)
+}
+
+fn parse_stage(p: &mut Parser) -> CompletedMarker {
+    let m = p.start();
+    p.bump();
+
+    let kind = if p.at(TokenKind::WhereKw) {
+        parse_where_clause(p);
+        SyntaxKind::WhereExpr
+    } else if p.at(TokenKind::DistinctKw) {
+        parse_distinct_clause(p);
+        SyntaxKind::DistinctExpr
+    } else if p.at(TokenKind::DropKw) {
+        parse_drop_clause(p);
+        SyntaxKind::DropExpr
+    } else if p.at(TokenKind::RenameKw) {
+        parse_rename_clause(p);
+        SyntaxKind::RenameExpr
+    } else if p.at(TokenKind::ExtendKw) {
+        parse_extend_clause(p);
+        SyntaxKind::ExtendExpr
+    } else if p.at(TokenKind::SetKw) {
+        parse_set_clause(p);
+        SyntaxKind::SetExpr
+    } else if p.at(TokenKind::LimitKw) {
+        parse_limit_clause(p);
+        SyntaxKind::LimitExpr
+    } else if p.at(TokenKind::AsKw) {
+        parse_alias_clause(p);
+        SyntaxKind::AliasExpr
+    } else if p.at(TokenKind::AggregateKw) {
+        parse_aggregate_clause(p);
+        SyntaxKind::AggregateExpr
+    } else if at_join_clause(p) {
+        parse_join_clause(p);
+        SyntaxKind::JoinExpr
+    } else {
+        parse_select_clause(p);
+        SyntaxKind::SelectExpr
+    };
+
+    p.complete(m, kind)
 }
 
 fn parse_from_expr(p: &mut Parser) -> CompletedMarker {
@@ -361,27 +369,28 @@ mod tests {
             "from t |> select a, b",
             parse_query,
             expect![[r#"
-                SelectExpr@0..21
+                Pipeline@0..21
                   FromExpr@0..6
                     FromKw@0..4 "from"
                     Space@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
                   Space@6..7 " "
-                  Pipe@7..9 "|>"
-                  Space@9..10 " "
-                  SelectKw@10..16 "select"
-                  Space@16..17 " "
-                  SelectItem@17..18
-                    IdentExpr@17..18
-                      Ident@17..18
-                        Identifier@17..18 "a"
-                  Comma@18..19 ","
-                  Space@19..20 " "
-                  SelectItem@20..21
-                    IdentExpr@20..21
-                      Ident@20..21
-                        Identifier@20..21 "b"
+                  SelectExpr@7..21
+                    Pipe@7..9 "|>"
+                    Space@9..10 " "
+                    SelectKw@10..16 "select"
+                    Space@16..17 " "
+                    SelectItem@17..18
+                      IdentExpr@17..18
+                        Ident@17..18
+                          Identifier@17..18 "a"
+                    Comma@18..19 ","
+                    Space@19..20 " "
+                    SelectItem@20..21
+                      IdentExpr@20..21
+                        Ident@20..21
+                          Identifier@20..21 "b"
             "#]],
         );
     }
@@ -392,20 +401,21 @@ mod tests {
             "from t |> where active",
             parse_query,
             expect![[r#"
-                WhereExpr@0..22
+                Pipeline@0..22
                   FromExpr@0..6
                     FromKw@0..4 "from"
                     Space@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
                   Space@6..7 " "
-                  Pipe@7..9 "|>"
-                  Space@9..10 " "
-                  WhereKw@10..15 "where"
-                  Space@15..16 " "
-                  IdentExpr@16..22
-                    Ident@16..22
-                      Identifier@16..22 "active"
+                  WhereExpr@7..22
+                    Pipe@7..9 "|>"
+                    Space@9..10 " "
+                    WhereKw@10..15 "where"
+                    Space@15..16 " "
+                    IdentExpr@16..22
+                      Ident@16..22
+                        Identifier@16..22 "active"
             "#]],
         );
     }
@@ -416,16 +426,17 @@ mod tests {
             "from t |> distinct",
             parse_query,
             expect![[r#"
-                DistinctExpr@0..18
+                Pipeline@0..18
                   FromExpr@0..6
                     FromKw@0..4 "from"
                     Space@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
                   Space@6..7 " "
-                  Pipe@7..9 "|>"
-                  Space@9..10 " "
-                  DistinctKw@10..18 "distinct"
+                  DistinctExpr@7..18
+                    Pipe@7..9 "|>"
+                    Space@9..10 " "
+                    DistinctKw@10..18 "distinct"
             "#]],
         );
     }
@@ -436,23 +447,24 @@ mod tests {
             "from t |> drop a, b",
             parse_query,
             expect![[r#"
-                DropExpr@0..19
+                Pipeline@0..19
                   FromExpr@0..6
                     FromKw@0..4 "from"
                     Space@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
                   Space@6..7 " "
-                  Pipe@7..9 "|>"
-                  Space@9..10 " "
-                  DropKw@10..14 "drop"
-                  Space@14..15 " "
-                  Ident@15..16
-                    Identifier@15..16 "a"
-                  Comma@16..17 ","
-                  Space@17..18 " "
-                  Ident@18..19
-                    Identifier@18..19 "b"
+                  DropExpr@7..19
+                    Pipe@7..9 "|>"
+                    Space@9..10 " "
+                    DropKw@10..14 "drop"
+                    Space@14..15 " "
+                    Ident@15..16
+                      Identifier@15..16 "a"
+                    Comma@16..17 ","
+                    Space@17..18 " "
+                    Ident@18..19
+                      Identifier@18..19 "b"
             "#]],
         );
     }
@@ -463,25 +475,26 @@ mod tests {
             "from t |> rename a as b",
             parse_query,
             expect![[r#"
-                RenameExpr@0..23
+                Pipeline@0..23
                   FromExpr@0..6
                     FromKw@0..4 "from"
                     Space@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
                   Space@6..7 " "
-                  Pipe@7..9 "|>"
-                  Space@9..10 " "
-                  RenameKw@10..16 "rename"
-                  Space@16..17 " "
-                  RenameItem@17..23
-                    Ident@17..18
-                      Identifier@17..18 "a"
-                    Space@18..19 " "
-                    AsKw@19..21 "as"
-                    Space@21..22 " "
-                    Ident@22..23
-                      Identifier@22..23 "b"
+                  RenameExpr@7..23
+                    Pipe@7..9 "|>"
+                    Space@9..10 " "
+                    RenameKw@10..16 "rename"
+                    Space@16..17 " "
+                    RenameItem@17..23
+                      Ident@17..18
+                        Identifier@17..18 "a"
+                      Space@18..19 " "
+                      AsKw@19..21 "as"
+                      Space@21..22 " "
+                      Ident@22..23
+                        Identifier@22..23 "b"
             "#]],
         );
     }
@@ -492,21 +505,22 @@ mod tests {
             "from t |> extend a",
             parse_query,
             expect![[r#"
-                ExtendExpr@0..18
+                Pipeline@0..18
                   FromExpr@0..6
                     FromKw@0..4 "from"
                     Space@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
                   Space@6..7 " "
-                  Pipe@7..9 "|>"
-                  Space@9..10 " "
-                  ExtendKw@10..16 "extend"
-                  Space@16..17 " "
-                  SelectItem@17..18
-                    IdentExpr@17..18
-                      Ident@17..18
-                        Identifier@17..18 "a"
+                  ExtendExpr@7..18
+                    Pipe@7..9 "|>"
+                    Space@9..10 " "
+                    ExtendKw@10..16 "extend"
+                    Space@16..17 " "
+                    SelectItem@17..18
+                      IdentExpr@17..18
+                        Ident@17..18
+                          Identifier@17..18 "a"
             "#]],
         );
     }
@@ -538,26 +552,27 @@ mod tests {
             "from t |> set a = 1",
             parse_query,
             expect![[r#"
-            SetExpr@0..19
-              FromExpr@0..6
-                FromKw@0..4 "from"
-                Space@4..5 " "
-                Ident@5..6
-                  Identifier@5..6 "t"
-              Space@6..7 " "
-              Pipe@7..9 "|>"
-              Space@9..10 " "
-              SetKw@10..13 "set"
-              Space@13..14 " "
-              SetItem@14..19
-                Ident@14..15
-                  Identifier@14..15 "a"
-                Space@15..16 " "
-                Eq@16..17 "="
-                Space@17..18 " "
-                IntLiteral@18..19
-                  IntLit@18..19 "1"
-        "#]],
+                Pipeline@0..19
+                  FromExpr@0..6
+                    FromKw@0..4 "from"
+                    Space@4..5 " "
+                    Ident@5..6
+                      Identifier@5..6 "t"
+                  Space@6..7 " "
+                  SetExpr@7..19
+                    Pipe@7..9 "|>"
+                    Space@9..10 " "
+                    SetKw@10..13 "set"
+                    Space@13..14 " "
+                    SetItem@14..19
+                      Ident@14..15
+                        Identifier@14..15 "a"
+                      Space@15..16 " "
+                      Eq@16..17 "="
+                      Space@17..18 " "
+                      IntLiteral@18..19
+                        IntLit@18..19 "1"
+            "#]],
         );
     }
 
@@ -567,42 +582,43 @@ mod tests {
             "from t |> aggregate sum(a) as s group by b",
             parse_query,
             expect![[r#"
-                AggregateExpr@0..42
+                Pipeline@0..42
                   FromExpr@0..6
                     FromKw@0..4 "from"
                     Space@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
                   Space@6..7 " "
-                  Pipe@7..9 "|>"
-                  Space@9..10 " "
-                  AggregateKw@10..19 "aggregate"
-                  Space@19..20 " "
-                  AggregateItem@20..31
-                    CallExpr@20..26
-                      IdentExpr@20..23
-                        Ident@20..23
-                          Identifier@20..23 "sum"
-                      ArgList@23..26
-                        LeftParen@23..24 "("
-                        IdentExpr@24..25
-                          Ident@24..25
-                            Identifier@24..25 "a"
-                        RightParen@25..26 ")"
-                    Space@26..27 " "
-                    AsKw@27..29 "as"
-                    Space@29..30 " "
-                    Ident@30..31
-                      Identifier@30..31 "s"
-                  Space@31..32 " "
-                  GroupBy@32..42
-                    GroupKw@32..37 "group"
-                    Space@37..38 " "
-                    ByKw@38..40 "by"
-                    Space@40..41 " "
-                    GroupByItem@41..42
-                      Ident@41..42
-                        Identifier@41..42 "b"
+                  AggregateExpr@7..42
+                    Pipe@7..9 "|>"
+                    Space@9..10 " "
+                    AggregateKw@10..19 "aggregate"
+                    Space@19..20 " "
+                    AggregateItem@20..31
+                      CallExpr@20..26
+                        IdentExpr@20..23
+                          Ident@20..23
+                            Identifier@20..23 "sum"
+                        ArgList@23..26
+                          LeftParen@23..24 "("
+                          IdentExpr@24..25
+                            Ident@24..25
+                              Identifier@24..25 "a"
+                          RightParen@25..26 ")"
+                      Space@26..27 " "
+                      AsKw@27..29 "as"
+                      Space@29..30 " "
+                      Ident@30..31
+                        Identifier@30..31 "s"
+                    Space@31..32 " "
+                    GroupBy@32..42
+                      GroupKw@32..37 "group"
+                      Space@37..38 " "
+                      ByKw@38..40 "by"
+                      Space@40..41 " "
+                      GroupByItem@41..42
+                        Ident@41..42
+                          Identifier@41..42 "b"
             "#]],
         );
     }
@@ -613,26 +629,27 @@ mod tests {
             "from t |> aggregate count()",
             parse_query,
             expect![[r#"
-            AggregateExpr@0..27
-              FromExpr@0..6
-                FromKw@0..4 "from"
-                Space@4..5 " "
-                Ident@5..6
-                  Identifier@5..6 "t"
-              Space@6..7 " "
-              Pipe@7..9 "|>"
-              Space@9..10 " "
-              AggregateKw@10..19 "aggregate"
-              Space@19..20 " "
-              AggregateItem@20..27
-                CallExpr@20..27
-                  IdentExpr@20..25
-                    Ident@20..25
-                      Identifier@20..25 "count"
-                  ArgList@25..27
-                    LeftParen@25..26 "("
-                    RightParen@26..27 ")"
-        "#]],
+                Pipeline@0..27
+                  FromExpr@0..6
+                    FromKw@0..4 "from"
+                    Space@4..5 " "
+                    Ident@5..6
+                      Identifier@5..6 "t"
+                  Space@6..7 " "
+                  AggregateExpr@7..27
+                    Pipe@7..9 "|>"
+                    Space@9..10 " "
+                    AggregateKw@10..19 "aggregate"
+                    Space@19..20 " "
+                    AggregateItem@20..27
+                      CallExpr@20..27
+                        IdentExpr@20..25
+                          Ident@20..25
+                            Identifier@20..25 "count"
+                        ArgList@25..27
+                          LeftParen@25..26 "("
+                          RightParen@26..27 ")"
+            "#]],
         );
     }
 
@@ -642,25 +659,26 @@ mod tests {
             "from t |> limit 2 offset 1",
             parse_query,
             expect![[r#"
-            LimitExpr@0..26
-              FromExpr@0..6
-                FromKw@0..4 "from"
-                Space@4..5 " "
-                Ident@5..6
-                  Identifier@5..6 "t"
-              Space@6..7 " "
-              Pipe@7..9 "|>"
-              Space@9..10 " "
-              LimitKw@10..15 "limit"
-              Space@15..16 " "
-              IntLiteral@16..17
-                IntLit@16..17 "2"
-              Space@17..18 " "
-              OffsetKw@18..24 "offset"
-              Space@24..25 " "
-              IntLiteral@25..26
-                IntLit@25..26 "1"
-        "#]],
+                Pipeline@0..26
+                  FromExpr@0..6
+                    FromKw@0..4 "from"
+                    Space@4..5 " "
+                    Ident@5..6
+                      Identifier@5..6 "t"
+                  Space@6..7 " "
+                  LimitExpr@7..26
+                    Pipe@7..9 "|>"
+                    Space@9..10 " "
+                    LimitKw@10..15 "limit"
+                    Space@15..16 " "
+                    IntLiteral@16..17
+                      IntLit@16..17 "2"
+                    Space@17..18 " "
+                    OffsetKw@18..24 "offset"
+                    Space@24..25 " "
+                    IntLiteral@25..26
+                      IntLit@25..26 "1"
+            "#]],
         );
     }
 
@@ -670,20 +688,21 @@ mod tests {
             "from t |> as u",
             parse_query,
             expect![[r#"
-            AliasExpr@0..14
-              FromExpr@0..6
-                FromKw@0..4 "from"
-                Space@4..5 " "
-                Ident@5..6
-                  Identifier@5..6 "t"
-              Space@6..7 " "
-              Pipe@7..9 "|>"
-              Space@9..10 " "
-              AsKw@10..12 "as"
-              Space@12..13 " "
-              Ident@13..14
-                Identifier@13..14 "u"
-        "#]],
+                Pipeline@0..14
+                  FromExpr@0..6
+                    FromKw@0..4 "from"
+                    Space@4..5 " "
+                    Ident@5..6
+                      Identifier@5..6 "t"
+                  Space@6..7 " "
+                  AliasExpr@7..14
+                    Pipe@7..9 "|>"
+                    Space@9..10 " "
+                    AsKw@10..12 "as"
+                    Space@12..13 " "
+                    Ident@13..14
+                      Identifier@13..14 "u"
+            "#]],
         );
     }
 
@@ -693,42 +712,43 @@ mod tests {
             "from t |> join u as d on a == d.b",
             parse_query,
             expect![[r#"
-                JoinExpr@0..33
+                Pipeline@0..33
                   FromExpr@0..6
                     FromKw@0..4 "from"
                     Space@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
                   Space@6..7 " "
-                  Pipe@7..9 "|>"
-                  Space@9..10 " "
-                  JoinKw@10..14 "join"
-                  Space@14..15 " "
-                  Ident@15..16
-                    Identifier@15..16 "u"
-                  Space@16..17 " "
-                  AsKw@17..19 "as"
-                  Space@19..20 " "
-                  Ident@20..21
-                    Identifier@20..21 "d"
-                  Space@21..22 " "
-                  JoinOn@22..33
-                    OnKw@22..24 "on"
-                    Space@24..25 " "
-                    BinaryExpr@25..33
-                      IdentExpr@25..26
-                        Ident@25..26
-                          Identifier@25..26 "a"
-                      Space@26..27 " "
-                      EqEq@27..29 "=="
-                      Space@29..30 " "
-                      FieldAccessExpr@30..33
-                        IdentExpr@30..31
-                          Ident@30..31
-                            Identifier@30..31 "d"
-                        Dot@31..32 "."
-                        Ident@32..33
-                          Identifier@32..33 "b"
+                  JoinExpr@7..33
+                    Pipe@7..9 "|>"
+                    Space@9..10 " "
+                    JoinKw@10..14 "join"
+                    Space@14..15 " "
+                    Ident@15..16
+                      Identifier@15..16 "u"
+                    Space@16..17 " "
+                    AsKw@17..19 "as"
+                    Space@19..20 " "
+                    Ident@20..21
+                      Identifier@20..21 "d"
+                    Space@21..22 " "
+                    JoinOn@22..33
+                      OnKw@22..24 "on"
+                      Space@24..25 " "
+                      BinaryExpr@25..33
+                        IdentExpr@25..26
+                          Ident@25..26
+                            Identifier@25..26 "a"
+                        Space@26..27 " "
+                        EqEq@27..29 "=="
+                        Space@29..30 " "
+                        FieldAccessExpr@30..33
+                          IdentExpr@30..31
+                            Ident@30..31
+                              Identifier@30..31 "d"
+                          Dot@31..32 "."
+                          Ident@32..33
+                            Identifier@32..33 "b"
             "#]],
         );
     }
@@ -739,33 +759,34 @@ mod tests {
             "from t |> left join u using (a, b)",
             parse_query,
             expect![[r#"
-                JoinExpr@0..34
+                Pipeline@0..34
                   FromExpr@0..6
                     FromKw@0..4 "from"
                     Space@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
                   Space@6..7 " "
-                  Pipe@7..9 "|>"
-                  Space@9..10 " "
-                  LeftKw@10..14 "left"
-                  Space@14..15 " "
-                  JoinKw@15..19 "join"
-                  Space@19..20 " "
-                  Ident@20..21
-                    Identifier@20..21 "u"
-                  Space@21..22 " "
-                  JoinUsing@22..34
-                    UsingKw@22..27 "using"
-                    Space@27..28 " "
-                    LeftParen@28..29 "("
-                    Ident@29..30
-                      Identifier@29..30 "a"
-                    Comma@30..31 ","
-                    Space@31..32 " "
-                    Ident@32..33
-                      Identifier@32..33 "b"
-                    RightParen@33..34 ")"
+                  JoinExpr@7..34
+                    Pipe@7..9 "|>"
+                    Space@9..10 " "
+                    LeftKw@10..14 "left"
+                    Space@14..15 " "
+                    JoinKw@15..19 "join"
+                    Space@19..20 " "
+                    Ident@20..21
+                      Identifier@20..21 "u"
+                    Space@21..22 " "
+                    JoinUsing@22..34
+                      UsingKw@22..27 "using"
+                      Space@27..28 " "
+                      LeftParen@28..29 "("
+                      Ident@29..30
+                        Identifier@29..30 "a"
+                      Comma@30..31 ","
+                      Space@31..32 " "
+                      Ident@32..33
+                        Identifier@32..33 "b"
+                      RightParen@33..34 ")"
             "#]],
         );
     }
@@ -776,42 +797,43 @@ mod tests {
             "from t |> full join u d on a == d.b",
             parse_query,
             expect![[r#"
-                JoinExpr@0..35
+                Pipeline@0..35
                   FromExpr@0..6
                     FromKw@0..4 "from"
                     Space@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
                   Space@6..7 " "
-                  Pipe@7..9 "|>"
-                  Space@9..10 " "
-                  FullKw@10..14 "full"
-                  Space@14..15 " "
-                  JoinKw@15..19 "join"
-                  Space@19..20 " "
-                  Ident@20..21
-                    Identifier@20..21 "u"
-                  Space@21..22 " "
-                  Ident@22..23
-                    Identifier@22..23 "d"
-                  Space@23..24 " "
-                  JoinOn@24..35
-                    OnKw@24..26 "on"
-                    Space@26..27 " "
-                    BinaryExpr@27..35
-                      IdentExpr@27..28
-                        Ident@27..28
-                          Identifier@27..28 "a"
-                      Space@28..29 " "
-                      EqEq@29..31 "=="
-                      Space@31..32 " "
-                      FieldAccessExpr@32..35
-                        IdentExpr@32..33
-                          Ident@32..33
-                            Identifier@32..33 "d"
-                        Dot@33..34 "."
-                        Ident@34..35
-                          Identifier@34..35 "b"
+                  JoinExpr@7..35
+                    Pipe@7..9 "|>"
+                    Space@9..10 " "
+                    FullKw@10..14 "full"
+                    Space@14..15 " "
+                    JoinKw@15..19 "join"
+                    Space@19..20 " "
+                    Ident@20..21
+                      Identifier@20..21 "u"
+                    Space@21..22 " "
+                    Ident@22..23
+                      Identifier@22..23 "d"
+                    Space@23..24 " "
+                    JoinOn@24..35
+                      OnKw@24..26 "on"
+                      Space@26..27 " "
+                      BinaryExpr@27..35
+                        IdentExpr@27..28
+                          Ident@27..28
+                            Identifier@27..28 "a"
+                        Space@28..29 " "
+                        EqEq@29..31 "=="
+                        Space@31..32 " "
+                        FieldAccessExpr@32..35
+                          IdentExpr@32..33
+                            Ident@32..33
+                              Identifier@32..33 "d"
+                          Dot@33..34 "."
+                          Ident@34..35
+                            Identifier@34..35 "b"
             "#]],
         );
     }
@@ -822,14 +844,14 @@ mod tests {
             "from t |> where a |> select b",
             parse_query,
             expect![[r#"
-                SelectExpr@0..29
-                  WhereExpr@0..17
-                    FromExpr@0..6
-                      FromKw@0..4 "from"
-                      Space@4..5 " "
-                      Ident@5..6
-                        Identifier@5..6 "t"
-                    Space@6..7 " "
+                Pipeline@0..29
+                  FromExpr@0..6
+                    FromKw@0..4 "from"
+                    Space@4..5 " "
+                    Ident@5..6
+                      Identifier@5..6 "t"
+                  Space@6..7 " "
+                  WhereExpr@7..17
                     Pipe@7..9 "|>"
                     Space@9..10 " "
                     WhereKw@10..15 "where"
@@ -838,14 +860,15 @@ mod tests {
                       Ident@16..17
                         Identifier@16..17 "a"
                   Space@17..18 " "
-                  Pipe@18..20 "|>"
-                  Space@20..21 " "
-                  SelectKw@21..27 "select"
-                  Space@27..28 " "
-                  SelectItem@28..29
-                    IdentExpr@28..29
-                      Ident@28..29
-                        Identifier@28..29 "b"
+                  SelectExpr@18..29
+                    Pipe@18..20 "|>"
+                    Space@20..21 " "
+                    SelectKw@21..27 "select"
+                    Space@27..28 " "
+                    SelectItem@28..29
+                      IdentExpr@28..29
+                        Ident@28..29
+                          Identifier@28..29 "b"
             "#]],
         );
     }

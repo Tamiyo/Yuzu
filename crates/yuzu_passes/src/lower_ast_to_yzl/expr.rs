@@ -31,7 +31,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             ast::Expr::CallExpr(call) => self.convert_call(block, locals, call),
             ast::Expr::ListExpr(list) => self.convert_list(block, locals, list),
             ast::Expr::ParenExpr(paren) => self.convert_paren_expr(block, locals, paren),
-            ast::Expr::Rel(rel) => self.convert_query(block, rel).0,
+            ast::Expr::Pipeline(pipeline) => self.convert_query(block, pipeline).0,
             ast::Expr::StructExpr(literal) => self.report_and_hole(
                 block,
                 literal,

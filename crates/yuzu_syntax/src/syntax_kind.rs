@@ -125,7 +125,7 @@ pub enum SyntaxKind {
     UnaryExpr,
     ParenExpr,
 
-    Rel,
+    Pipeline,
     FromExpr,
     SelectExpr,
     SelectItem,

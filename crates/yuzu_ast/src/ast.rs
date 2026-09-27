@@ -28,7 +28,8 @@ macro_rules! ast_node {
 }
 
 macro_rules! ast_enum {
-    ($name:ident, { $($variant:ident),+ $(,)? }) => {
+    ($(#[$attr:meta])* $name:ident, { $($variant:ident),+ $(,)? }) => {
+        $(#[$attr])*
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
         pub enum $name {
             $($variant($variant)),+
@@ -635,7 +636,7 @@ ast_enum!(Expr, {
     UnaryExpr,
     ParenExpr,
     Literal,
-    Rel,
+    Pipeline,
 });
 
 ast_node!(IdentExpr);
@@ -758,20 +759,34 @@ impl ParenExpr {
     }
 }
 
-ast_enum!(Rel, {
-    SetExpr,
-    LimitExpr,
-    AliasExpr,
-    AggregateExpr,
-    FromExpr,
-    SelectExpr,
-    WhereExpr,
-    DistinctExpr,
-    DropExpr,
-    RenameExpr,
-    ExtendExpr,
-    JoinExpr,
-});
+ast_node!(Pipeline);
+impl Pipeline {
+    pub fn source(&self) -> Option<FromExpr> {
+        support::child(self.syntax())
+    }
+
+    pub fn stages(&self) -> impl Iterator<Item = Stage> + use<> {
+        support::children(self.syntax())
+    }
+}
+
+ast_enum!(
+    /// One `|> …` of a pipeline. Its node holds only its own tokens; what it
+    /// reads is the stage before it.
+    Stage, {
+        SetExpr,
+        LimitExpr,
+        AliasExpr,
+        AggregateExpr,
+        SelectExpr,
+        WhereExpr,
+        DistinctExpr,
+        DropExpr,
+        RenameExpr,
+        ExtendExpr,
+        JoinExpr,
+    }
+);
 
 ast_node!(FromExpr);
 impl FromExpr {
@@ -794,10 +809,6 @@ impl FromExpr {
 
 ast_node!(SelectExpr);
 impl SelectExpr {
-    pub fn input(&self) -> Option<Expr> {
-        support::child(self.syntax())
-    }
-
     pub fn items(&self) -> impl Iterator<Item = SelectItem> + use<> {
         support::children(self.syntax())
     }
@@ -820,28 +831,15 @@ impl SelectItem {
 
 ast_node!(WhereExpr);
 impl WhereExpr {
-    pub fn input(&self) -> Option<Expr> {
-        support::nth_child(self.syntax(), 0)
-    }
-
     pub fn predicate(&self) -> Option<Expr> {
-        support::nth_child(self.syntax(), 1)
+        support::child(self.syntax())
     }
 }
 
 ast_node!(DistinctExpr);
-impl DistinctExpr {
-    pub fn input(&self) -> Option<Expr> {
-        support::child(self.syntax())
-    }
-}
 
 ast_node!(DropExpr);
 impl DropExpr {
-    pub fn input(&self) -> Option<Expr> {
-        support::child(self.syntax())
-    }
-
     pub fn columns(&self) -> impl Iterator<Item = Ident> + use<> {
         support::children(self.syntax())
     }
@@ -853,10 +851,6 @@ impl DropExpr {
 
 ast_node!(RenameExpr);
 impl RenameExpr {
-    pub fn input(&self) -> Option<Expr> {
-        support::child(self.syntax())
-    }
-
     pub fn items(&self) -> impl Iterator<Item = RenameItem> + use<> {
         support::children(self.syntax())
     }
@@ -902,10 +896,6 @@ impl RenameItem {
 
 ast_node!(ExtendExpr);
 impl ExtendExpr {
-    pub fn input(&self) -> Option<Expr> {
-        support::child(self.syntax())
-    }
-
     pub fn items(&self) -> impl Iterator<Item = SelectItem> + use<> {
         support::children(self.syntax())
     }
@@ -933,10 +923,6 @@ impl JoinKind {
 
 ast_node!(JoinExpr);
 impl JoinExpr {
-    pub fn input(&self) -> Option<Expr> {
-        support::child(self.syntax())
-    }
-
     pub fn kind(&self) -> Option<JoinKind> {
         self.syntax()
             .children_with_tokens()
@@ -989,10 +975,6 @@ impl JoinUsing {
 
 ast_node!(SetExpr);
 impl SetExpr {
-    pub fn input(&self) -> Option<Expr> {
-        support::child(self.syntax())
-    }
-
     pub fn items(&self) -> impl Iterator<Item = SetItem> + use<> {
         support::children(self.syntax())
     }
@@ -1015,25 +997,17 @@ impl SetItem {
 
 ast_node!(LimitExpr);
 impl LimitExpr {
-    pub fn input(&self) -> Option<Expr> {
+    pub fn count(&self) -> Option<Expr> {
         support::nth_child(self.syntax(), 0)
     }
 
-    pub fn count(&self) -> Option<Expr> {
-        support::nth_child(self.syntax(), 1)
-    }
-
     pub fn offset(&self) -> Option<Expr> {
-        support::nth_child(self.syntax(), 2)
+        support::nth_child(self.syntax(), 1)
     }
 }
 
 ast_node!(AliasExpr);
 impl AliasExpr {
-    pub fn input(&self) -> Option<Expr> {
-        support::child(self.syntax())
-    }
-
     pub fn alias(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
@@ -1045,10 +1019,6 @@ impl AliasExpr {
 
 ast_node!(AggregateExpr);
 impl AggregateExpr {
-    pub fn input(&self) -> Option<Expr> {
-        support::child(self.syntax())
-    }
-
     pub fn items(&self) -> impl Iterator<Item = AggregateItem> + use<> {
         support::children(self.syntax())
     }
@@ -1353,9 +1323,27 @@ mod tests {
     }
 
     #[test]
+    fn a_pipeline_reads_its_source_and_each_stage() {
+        let pipeline = parsed("from t |> where a |> limit 5")
+            .descendants()
+            .find_map(Pipeline::cast)
+            .expect("a pipeline");
+
+        assert_eq!(
+            text(pipeline.source().and_then(|from| from.relation())).as_deref(),
+            Some("t")
+        );
+        let stages: Vec<Stage> = pipeline.stages().collect();
+        assert!(matches!(
+            stages[..],
+            [Stage::WhereExpr(_), Stage::LimitExpr(_)]
+        ));
+        assert_eq!(stages[1].syntax().text().to_string(), "|> limit 5");
+    }
+
+    #[test]
     fn aggregate_reads_items_and_group_by() {
         let stage = aggregate("from t |> aggregate sum(a) as s, count() group by b, e.c as k");
-        assert!(stage.input().is_some());
 
         let items: Vec<AggregateItem> = stage.items().collect();
         assert_eq!(items.len(), 2);
@@ -1481,10 +1469,17 @@ mod tests {
     }
 
     #[test]
-    fn a_nested_join_keeps_its_own_relation_and_kind() {
-        let outer = join("from t |> left join u on a == b |> join v as x on c == x.d");
-        assert_eq!(text(outer.relation()).as_deref(), Some("v"));
-        assert_eq!(text(outer.alias()).as_deref(), Some("x"));
-        assert_eq!(outer.kind(), None);
+    fn each_join_reads_only_its_own_relation_and_kind() {
+        let joins: Vec<JoinExpr> =
+            parsed("from t |> left join u on a == b |> join v as x on c == x.d")
+                .descendants()
+                .filter_map(JoinExpr::cast)
+                .collect();
+
+        assert_eq!(text(joins[0].relation()).as_deref(), Some("u"));
+        assert_eq!(joins[0].kind(), Some(JoinKind::Left));
+        assert_eq!(text(joins[1].relation()).as_deref(), Some("v"));
+        assert_eq!(text(joins[1].alias()).as_deref(), Some("x"));
+        assert_eq!(joins[1].kind(), None);
     }
 }

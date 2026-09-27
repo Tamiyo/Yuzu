@@ -902,21 +902,22 @@ mod tests {
             "from t |> select a",
             parse_value,
             expect![[r#"
-                SelectExpr@0..18
+                Pipeline@0..18
                   FromExpr@0..6
                     FromKw@0..4 "from"
                     Space@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
                   Space@6..7 " "
-                  Pipe@7..9 "|>"
-                  Space@9..10 " "
-                  SelectKw@10..16 "select"
-                  Space@16..17 " "
-                  SelectItem@17..18
-                    IdentExpr@17..18
-                      Ident@17..18
-                        Identifier@17..18 "a"
+                  SelectExpr@7..18
+                    Pipe@7..9 "|>"
+                    Space@9..10 " "
+                    SelectKw@10..16 "select"
+                    Space@16..17 " "
+                    SelectItem@17..18
+                      IdentExpr@17..18
+                        Ident@17..18
+                          Identifier@17..18 "a"
             "#]],
         );
     }
@@ -1187,28 +1188,29 @@ mod tests {
         check(
             "from t |> select a as v",
             expect![[r#"
-            ExprStmt@0..23
-              SelectExpr@0..23
-                FromExpr@0..6
-                  FromKw@0..4 "from"
-                  Space@4..5 " "
-                  Ident@5..6
-                    Identifier@5..6 "t"
-                Space@6..7 " "
-                Pipe@7..9 "|>"
-                Space@9..10 " "
-                SelectKw@10..16 "select"
-                Space@16..17 " "
-                SelectItem@17..23
-                  IdentExpr@17..18
-                    Ident@17..18
-                      Identifier@17..18 "a"
-                  Space@18..19 " "
-                  AsKw@19..21 "as"
-                  Space@21..22 " "
-                  Ident@22..23
-                    Identifier@22..23 "v"
-        "#]],
+                ExprStmt@0..23
+                  Pipeline@0..23
+                    FromExpr@0..6
+                      FromKw@0..4 "from"
+                      Space@4..5 " "
+                      Ident@5..6
+                        Identifier@5..6 "t"
+                    Space@6..7 " "
+                    SelectExpr@7..23
+                      Pipe@7..9 "|>"
+                      Space@9..10 " "
+                      SelectKw@10..16 "select"
+                      Space@16..17 " "
+                      SelectItem@17..23
+                        IdentExpr@17..18
+                          Ident@17..18
+                            Identifier@17..18 "a"
+                        Space@18..19 " "
+                        AsKw@19..21 "as"
+                        Space@21..22 " "
+                        Ident@22..23
+                          Identifier@22..23 "v"
+            "#]],
         );
     }
 

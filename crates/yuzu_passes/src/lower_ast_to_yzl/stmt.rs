@@ -441,8 +441,8 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let region = Region::new();
         let body = region.append_block(Block::new(&[]));
         let (value, row) = match &expr {
-            ast::Expr::Rel(rel) => {
-                let (value, row) = self.convert_query(body, rel);
+            ast::Expr::Pipeline(pipeline) => {
+                let (value, row) = self.convert_query(body, pipeline);
                 (value, Some(row))
             }
             _ => (self.convert_expr(body, &Locals::new(), &expr), None),
@@ -571,7 +571,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         };
 
         // The program's query is the entry file's.
-        let is_query = matches!(expr, ast::Expr::Rel(_));
+        let is_query = matches!(expr, ast::Expr::Pipeline(_));
         if is_query && !self.symbols.in_body() && !self.symbols.module().is_entry() {
             self.report(stmt, "a module cannot hold a query");
             return;
