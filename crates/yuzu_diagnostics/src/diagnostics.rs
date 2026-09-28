@@ -22,7 +22,7 @@ pub enum Severity {
     Remark,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Span {
     pub source_id: SourceId,
     pub range: TextRange,

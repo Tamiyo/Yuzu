@@ -10,6 +10,7 @@ use crate::file_structure;
 use crate::names::{Resolution, declaring, node_at};
 use crate::navigation::resolution_at;
 
+/// What a hover shows, and the range it is about.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HoverResult {
     /// What the hover is about, in the file hovered.
@@ -65,7 +66,7 @@ fn describe(checked: &Checked, resolution: &Resolution) -> Option<String> {
                 Mutability::Mutable => "mut ",
                 Mutability::Immutable => "",
             };
-            match written.or(ty) {
+            match written.as_deref().or(ty) {
                 Some(ty) => format!("let {mutable}{}: {ty}", resolution.name),
                 None => format!("let {mutable}{}", resolution.name),
             }

@@ -14,18 +14,21 @@ use yuzu_syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
 use crate::Checked;
 use crate::names::declaring;
 
+/// A range of text, and its highlight.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HlRange {
     pub range: TextRange,
     pub highlight: Highlight,
 }
 
+/// What a range is, and the details of it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Highlight {
     pub tag: HlTag,
     pub mods: HlMods,
 }
 
+/// What a highlighted range is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HlTag {
     Keyword,
@@ -45,16 +48,19 @@ pub enum HlTag {
     Field,
 }
 
+/// A detail of a highlight.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HlMod {
     Declaration,
     Mutable,
 }
 
+/// A set of [`HlMod`]s.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct HlMods(u32);
 
 impl HlMod {
+    /// Each modifier, in the order of its bit in [`HlMods`].
     pub const ALL: [HlMod; 2] = [HlMod::Declaration, HlMod::Mutable];
 
     fn mask(self) -> u32 {
@@ -63,10 +69,12 @@ impl HlMod {
 }
 
 impl HlMods {
+    /// Whether the set holds `m`.
     pub fn contains(self, m: HlMod) -> bool {
         self.0 & m.mask() != 0
     }
 
+    /// The modifiers in the set, in the order of [`HlMod::ALL`].
     pub fn iter(self) -> impl Iterator<Item = HlMod> {
         HlMod::ALL.into_iter().filter(move |&m| self.contains(m))
     }

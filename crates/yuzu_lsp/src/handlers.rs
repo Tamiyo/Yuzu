@@ -8,6 +8,8 @@ use lsp_types::{
     Location, MarkupContent, MarkupKind, ReferenceParams, SelectionRange, SelectionRangeParams,
     SemanticTokensParams, SemanticTokensResult,
 };
+use rustc_hash::FxHashSet;
+use text_size::TextRange;
 use yuzu_ide::FilePosition;
 
 use crate::global_state::GlobalState;
@@ -64,7 +66,8 @@ pub(crate) fn semantic_tokens_full(
     let mut highlights = state.analysis().highlight(file_id)?;
     if let Some((_, path, checked)) = state.checked_document(url) {
         let uses = checked.highlight_uses(path);
-        highlights.retain(|syntax| uses.iter().all(|used| used.range != syntax.range));
+        let used: FxHashSet<TextRange> = uses.iter().map(|used| used.range).collect();
+        highlights.retain(|syntax| !used.contains(&syntax.range));
         highlights.extend(uses);
         highlights.sort_by_key(|highlight| highlight.range.start());
     }

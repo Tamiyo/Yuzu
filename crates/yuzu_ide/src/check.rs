@@ -28,14 +28,27 @@ use crate::{hover, inlay_hints, navigation, syntax_highlighting};
 pub struct Checked {
     inner: yuzu_driver::Checked,
     resolutions: Vec<Resolution>,
+    /// Each type the index holds, by the span it belongs to.
+    types: FxHashMap<Span, String>,
 }
 
 impl Checked {
     fn new(inner: yuzu_driver::Checked) -> Self {
         let resolutions = names::resolutions(&inner);
-        Checked { inner, resolutions }
+        let types = inner
+            .index
+            .types
+            .iter()
+            .map(|typed| (typed.at, typed.ty.clone()))
+            .collect();
+        Checked {
+            inner,
+            resolutions,
+            types,
+        }
     }
 
+    /// Each diagnostic the check reported, in every file it read.
     pub fn diagnostics(&self) -> &[Diagnostic] {
         &self.inner.diagnostics
     }
@@ -47,6 +60,7 @@ impl Checked {
         path.is_absolute().then_some(path)
     }
 
+    /// A source's text, as the check read it.
     pub fn text(&self, source: SourceId) -> &str {
         self.inner.sources.text(source)
     }
@@ -75,6 +89,7 @@ impl Checked {
             .unwrap_or_default()
     }
 
+    /// What hovering at a position shows.
     pub fn hover(&self, file: &Path, offset: TextSize) -> Option<HoverResult> {
         hover::hover(self, self.source_of(file)?, offset)
     }
@@ -86,6 +101,7 @@ impl Checked {
             .unwrap_or_default()
     }
 
+    /// The type of each `let` in a file that does not write one.
     pub fn inlay_hints(&self, file: &Path) -> Vec<InlayHint> {
         self.source_of(file)
             .map(|source| inlay_hints::inlay_hints(self, source))
@@ -106,13 +122,8 @@ impl Checked {
     }
 
     /// The type inference gave the syntax at a span, when it gave one.
-    pub(crate) fn type_at(&self, at: Span) -> Option<String> {
-        self.inner
-            .index
-            .types
-            .iter()
-            .find(|typed| typed.at.source_id == at.source_id && typed.at.range == at.range)
-            .map(|typed| typed.ty.clone())
+    pub(crate) fn type_at(&self, at: Span) -> Option<&str> {
+        self.types.get(&at).map(String::as_str)
     }
 
     fn source_of(&self, file: &Path) -> Option<SourceId> {

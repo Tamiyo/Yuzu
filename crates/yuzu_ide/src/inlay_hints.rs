@@ -7,6 +7,7 @@ use yuzu_diagnostics::source_map::SourceId;
 
 use crate::Checked;
 
+/// A label an editor shows inside the text.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InlayHint {
     /// Where the hint goes: right after the name.

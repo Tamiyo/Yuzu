@@ -49,6 +49,7 @@ pub struct Typed {
     pub ty: String,
 }
 
+/// The references and types a check read from the IR.
 #[derive(Debug, Default)]
 pub struct Index {
     pub references: Vec<Reference>,

@@ -5,12 +5,14 @@
 use text_size::TextRange;
 use yuzu_syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
 
+/// A range an editor can fold, and what it holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Fold {
     pub range: TextRange,
     pub kind: FoldKind,
 }
 
+/// What a fold holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FoldKind {
     Block,
@@ -29,8 +31,10 @@ pub(crate) fn folding_ranges(root: &SyntaxNode) -> Vec<Fold> {
     fold_comments(root, &mut folds);
     fold_imports(root, &mut folds);
 
-    let text = root.text();
-    folds.retain(|fold| text.slice(fold.range).contains_char('\n'));
+    // A slice of the root's `SyntaxText` walks the file's tokens from the
+    // start, so the text is taken once and sliced as a string.
+    let text = root.text().to_string();
+    folds.retain(|fold| text[fold.range].contains('\n'));
     folds.sort_by_key(|fold| fold.range.start());
     folds
 }

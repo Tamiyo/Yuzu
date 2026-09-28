@@ -5,6 +5,7 @@ use text_size::TextRange;
 use yuzu_ast::{self as ast, AstNode};
 use yuzu_syntax::SyntaxNode;
 
+/// A declaration in an outline.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StructureNode {
     pub parent: Option<usize>,
@@ -15,6 +16,7 @@ pub struct StructureNode {
     pub detail: Option<String>,
 }
 
+/// What an outline entry declares.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StructureNodeKind {
     Module,

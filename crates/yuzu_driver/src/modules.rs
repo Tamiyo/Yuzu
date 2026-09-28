@@ -29,6 +29,7 @@ pub(crate) struct Submodule {
 }
 
 /// A module's source, and the name to show for it in a diagnostic.
+#[derive(Debug)]
 pub struct ModuleSource {
     pub name: String,
     pub source: String,
@@ -57,6 +58,7 @@ pub const MARKER: &str = "mod.yz";
 /// Modules beside the entry file. A path's segments are directories, so
 /// `yuzu.std.math` is `yuzu/std/math.yz`, or `yuzu/std/math/mod.yz` when it
 /// holds submodules of its own.
+#[derive(Debug)]
 pub struct FsResolver {
     pub base: PathBuf,
 }
@@ -92,6 +94,7 @@ impl ModuleResolver for FsResolver {
 }
 
 /// Modules held in memory, for tests and for embeddings that have no files.
+#[derive(Debug)]
 pub struct MapResolver(pub HashMap<String, String>);
 
 impl ModuleResolver for MapResolver {

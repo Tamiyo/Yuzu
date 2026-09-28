@@ -1,7 +1,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-#[derive(Clone, Copy, PartialEq, PartialOrd, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Hash, Debug)]
 pub struct SourceId(usize);
 
 #[derive(Debug)]

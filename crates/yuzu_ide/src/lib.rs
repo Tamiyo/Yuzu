@@ -29,9 +29,11 @@ pub use inlay_hints::InlayHint;
 pub use navigation::FileRange;
 pub use syntax_highlighting::{Highlight, HlMod, HlMods, HlRange, HlTag};
 
+/// A file the host holds, by the number the server gave it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct FileId(pub u32);
 
+/// An offset in a file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FilePosition {
     pub file_id: FileId,
