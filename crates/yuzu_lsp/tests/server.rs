@@ -194,7 +194,7 @@ fn an_open_file_publishes_its_parse_errors() {
     assert_eq!(params.version, Some(1));
     check_diagnostics(
         &params,
-        &expect!["1:4-1:5 expected one of mut, identifier, found ="],
+        &expect!["1:4-1:5 expected one of `mut`, identifier, found `=`"],
     );
     client.shutdown();
 }

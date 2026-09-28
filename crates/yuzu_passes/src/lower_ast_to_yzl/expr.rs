@@ -701,7 +701,7 @@ from t
              --> test.yz:5:13
               |
             5 | |> where a >
-              | 
+              |             ^
         "]]
         .assert_eq(&rendered(&lowered.sources, &lowered.diagnostics));
         assert!(

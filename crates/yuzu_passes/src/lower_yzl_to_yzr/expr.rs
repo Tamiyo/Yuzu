@@ -291,7 +291,7 @@ from t
                  --> test.yz:6:13
                   |
                 6 | |> where a >
-                  | 
+                  |             ^
 
                 error: this part of the query is missing
                  --> test.yz:6:10
