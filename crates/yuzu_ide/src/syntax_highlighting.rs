@@ -192,13 +192,13 @@ fn highlight_name(token: &SyntaxToken) -> Option<Highlight> {
         SyntaxKind::ModStmt | SyntaxKind::ImportStmt => HlTag::Module | HlMod::Declaration,
         SyntaxKind::ModulePath => HlTag::Module.into(),
         SyntaxKind::IdentExpr if is_callee(&parent) => HlTag::Function.into(),
-        SyntaxKind::FromExpr if names(&parent, &ident, ast::FromExpr::relation) => {
+        SyntaxKind::FromSource if names(&parent, &ident, ast::FromSource::relation) => {
             HlTag::Table.into()
         }
-        SyntaxKind::JoinExpr if names(&parent, &ident, ast::JoinExpr::relation) => {
+        SyntaxKind::JoinStage if names(&parent, &ident, ast::JoinStage::relation) => {
             HlTag::Table.into()
         }
-        SyntaxKind::FromExpr | SyntaxKind::JoinExpr | SyntaxKind::AliasExpr => {
+        SyntaxKind::FromSource | SyntaxKind::JoinStage | SyntaxKind::AliasStage => {
             HlTag::Local | HlMod::Declaration
         }
         SyntaxKind::RenameItem if names(&parent, &ident, ast::RenameItem::qualifier) => {
@@ -216,7 +216,7 @@ fn highlight_name(token: &SyntaxToken) -> Option<Highlight> {
         SyntaxKind::SelectItem | SyntaxKind::AggregateItem => HlTag::Field | HlMod::Declaration,
         SyntaxKind::RenameItem
         | SyntaxKind::GroupByItem
-        | SyntaxKind::DropExpr
+        | SyntaxKind::DropStage
         | SyntaxKind::SetItem
         | SyntaxKind::JoinUsing => HlTag::Field.into(),
         _ => return None,

@@ -684,7 +684,7 @@ impl ParenExpr {
 
 ast_node!(Pipeline);
 impl Pipeline {
-    pub fn source(&self) -> Option<FromExpr> {
+    pub fn source(&self) -> Option<FromSource> {
         support::child(self.syntax())
     }
 
@@ -697,22 +697,22 @@ ast_enum!(
     /// One `|> …` of a pipeline. Its node holds only its own tokens; what it
     /// reads is the stage before it.
     Stage, {
-        SetExpr,
-        LimitExpr,
-        AliasExpr,
-        AggregateExpr,
-        SelectExpr,
-        WhereExpr,
-        DistinctExpr,
-        DropExpr,
-        RenameExpr,
-        ExtendExpr,
-        JoinExpr,
+        SetStage,
+        LimitStage,
+        AliasStage,
+        AggregateStage,
+        SelectStage,
+        WhereStage,
+        DistinctStage,
+        DropStage,
+        RenameStage,
+        ExtendStage,
+        JoinStage,
     }
 );
 
-ast_node!(FromExpr);
-impl FromExpr {
+ast_node!(FromSource);
+impl FromSource {
     pub fn relation(&self) -> Option<Ident> {
         support::nth_child(self.syntax(), 0)
     }
@@ -722,8 +722,8 @@ impl FromExpr {
     }
 }
 
-ast_node!(SelectExpr);
-impl SelectExpr {
+ast_node!(SelectStage);
+impl SelectStage {
     pub fn items(&self) -> impl Iterator<Item = SelectItem> + use<> {
         support::children(self.syntax())
     }
@@ -740,24 +740,24 @@ impl SelectItem {
     }
 }
 
-ast_node!(WhereExpr);
-impl WhereExpr {
+ast_node!(WhereStage);
+impl WhereStage {
     pub fn predicate(&self) -> Option<Expr> {
         support::child(self.syntax())
     }
 }
 
-ast_node!(DistinctExpr);
+ast_node!(DistinctStage);
 
-ast_node!(DropExpr);
-impl DropExpr {
+ast_node!(DropStage);
+impl DropStage {
     pub fn columns(&self) -> impl Iterator<Item = Ident> + use<> {
         support::children(self.syntax())
     }
 }
 
-ast_node!(RenameExpr);
-impl RenameExpr {
+ast_node!(RenameStage);
+impl RenameStage {
     pub fn items(&self) -> impl Iterator<Item = RenameItem> + use<> {
         support::children(self.syntax())
     }
@@ -789,8 +789,8 @@ impl RenameItem {
     }
 }
 
-ast_node!(ExtendExpr);
-impl ExtendExpr {
+ast_node!(ExtendStage);
+impl ExtendStage {
     pub fn items(&self) -> impl Iterator<Item = SelectItem> + use<> {
         support::children(self.syntax())
     }
@@ -816,8 +816,8 @@ impl JoinKind {
     }
 }
 
-ast_node!(JoinExpr);
-impl JoinExpr {
+ast_node!(JoinStage);
+impl JoinStage {
     pub fn kind(&self) -> Option<JoinKind> {
         self.syntax()
             .children_with_tokens()
@@ -856,8 +856,8 @@ impl JoinUsing {
     }
 }
 
-ast_node!(SetExpr);
-impl SetExpr {
+ast_node!(SetStage);
+impl SetStage {
     pub fn items(&self) -> impl Iterator<Item = SetItem> + use<> {
         support::children(self.syntax())
     }
@@ -874,8 +874,8 @@ impl SetItem {
     }
 }
 
-ast_node!(LimitExpr);
-impl LimitExpr {
+ast_node!(LimitStage);
+impl LimitStage {
     pub fn count(&self) -> Option<Expr> {
         support::nth_child(self.syntax(), 0)
     }
@@ -885,15 +885,15 @@ impl LimitExpr {
     }
 }
 
-ast_node!(AliasExpr);
-impl AliasExpr {
+ast_node!(AliasStage);
+impl AliasStage {
     pub fn alias(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
 }
 
-ast_node!(AggregateExpr);
-impl AggregateExpr {
+ast_node!(AggregateStage);
+impl AggregateStage {
     pub fn items(&self) -> impl Iterator<Item = AggregateItem> + use<> {
         support::children(self.syntax())
     }
@@ -1001,7 +1001,7 @@ mod tests {
     use yuzu_lexer::lexer::{Lexer, Token};
 
     /// The outermost join stage, so a chained query yields its last stage.
-    fn join(input: &str) -> JoinExpr {
+    fn join(input: &str) -> JoinStage {
         let tokens: Vec<Token> = Lexer::new(input).collect();
         let mut diagnostics = DiagnosticsEngine::new();
         let mut sources = SourceMap::new();
@@ -1010,7 +1010,7 @@ mod tests {
         let syntax = yuzu_parser::parse(&tokens, &mut diagnostics, source_id);
         syntax
             .descendants()
-            .find_map(JoinExpr::cast)
+            .find_map(JoinStage::cast)
             .expect("input has a join stage")
     }
 
@@ -1031,7 +1031,7 @@ mod tests {
             .expect("input has a rename item")
     }
 
-    fn aggregate(input: &str) -> AggregateExpr {
+    fn aggregate(input: &str) -> AggregateStage {
         let tokens: Vec<Token> = Lexer::new(input).collect();
         let mut diagnostics = DiagnosticsEngine::new();
         let mut sources = SourceMap::new();
@@ -1040,7 +1040,7 @@ mod tests {
         let syntax = yuzu_parser::parse(&tokens, &mut diagnostics, source_id);
         syntax
             .descendants()
-            .find_map(AggregateExpr::cast)
+            .find_map(AggregateStage::cast)
             .expect("input has an aggregate stage")
     }
 
@@ -1195,7 +1195,7 @@ mod tests {
         let stages: Vec<Stage> = pipeline.stages().collect();
         assert!(matches!(
             stages[..],
-            [Stage::WhereExpr(_), Stage::LimitExpr(_)]
+            [Stage::WhereStage(_), Stage::LimitStage(_)]
         ));
         assert_eq!(stages[1].syntax().text().to_string(), "|> limit 5");
     }
@@ -1329,10 +1329,10 @@ mod tests {
 
     #[test]
     fn each_join_reads_only_its_own_relation_and_kind() {
-        let joins: Vec<JoinExpr> =
+        let joins: Vec<JoinStage> =
             parsed("from t |> left join u on a == b |> join v as x on c == x.d")
                 .descendants()
-                .filter_map(JoinExpr::cast)
+                .filter_map(JoinStage::cast)
                 .collect();
 
         assert_eq!(text(joins[0].relation()).as_deref(), Some("u"));

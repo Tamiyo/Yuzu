@@ -102,8 +102,8 @@ fn used_name(root: &SyntaxNode, range: TextRange, name: &str) -> Option<TextRang
             ast::Expr::IdentExpr(callee) => callee.name(),
             _ => None,
         },
-        SyntaxKind::FromExpr => ast::FromExpr::cast(node)?.relation(),
-        SyntaxKind::JoinExpr => ast::JoinExpr::cast(node)?.relation(),
+        SyntaxKind::FromSource => ast::FromSource::cast(node)?.relation(),
+        SyntaxKind::JoinStage => ast::JoinStage::cast(node)?.relation(),
         _ => None,
     })?;
     let token = ident.token()?;

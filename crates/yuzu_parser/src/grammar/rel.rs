@@ -9,7 +9,7 @@ use crate::parser::{Parser, marker::CompletedMarker};
 /// that holds only its own tokens.
 pub(crate) fn parse_query(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
-    parse_from_expr(p);
+    parse_from_source(p);
     while p.at(TokenKind::Pipe) {
         parse_stage(p);
     }
@@ -23,43 +23,43 @@ fn parse_stage(p: &mut Parser) -> CompletedMarker {
 
     let kind = if p.at(TokenKind::WhereKw) {
         parse_where_clause(p);
-        SyntaxKind::WhereExpr
+        SyntaxKind::WhereStage
     } else if p.at(TokenKind::DistinctKw) {
         parse_distinct_clause(p);
-        SyntaxKind::DistinctExpr
+        SyntaxKind::DistinctStage
     } else if p.at(TokenKind::DropKw) {
         parse_drop_clause(p);
-        SyntaxKind::DropExpr
+        SyntaxKind::DropStage
     } else if p.at(TokenKind::RenameKw) {
         parse_rename_clause(p);
-        SyntaxKind::RenameExpr
+        SyntaxKind::RenameStage
     } else if p.at(TokenKind::ExtendKw) {
         parse_extend_clause(p);
-        SyntaxKind::ExtendExpr
+        SyntaxKind::ExtendStage
     } else if p.at(TokenKind::SetKw) {
         parse_set_clause(p);
-        SyntaxKind::SetExpr
+        SyntaxKind::SetStage
     } else if p.at(TokenKind::LimitKw) {
         parse_limit_clause(p);
-        SyntaxKind::LimitExpr
+        SyntaxKind::LimitStage
     } else if p.at(TokenKind::AsKw) {
         parse_alias_clause(p);
-        SyntaxKind::AliasExpr
+        SyntaxKind::AliasStage
     } else if p.at(TokenKind::AggregateKw) {
         parse_aggregate_clause(p);
-        SyntaxKind::AggregateExpr
+        SyntaxKind::AggregateStage
     } else if at_join_clause(p) {
         parse_join_clause(p);
-        SyntaxKind::JoinExpr
+        SyntaxKind::JoinStage
     } else {
         parse_select_clause(p);
-        SyntaxKind::SelectExpr
+        SyntaxKind::SelectStage
     };
 
     p.complete(m, kind)
 }
 
-fn parse_from_expr(p: &mut Parser) -> CompletedMarker {
+fn parse_from_source(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
     p.expect(TokenKind::FromKw);
     parse_ident(p);
@@ -71,7 +71,7 @@ fn parse_from_expr(p: &mut Parser) -> CompletedMarker {
         parse_ident(p);
     }
 
-    p.complete(m, SyntaxKind::FromExpr)
+    p.complete(m, SyntaxKind::FromSource)
 }
 
 fn parse_select_item(p: &mut Parser) -> CompletedMarker {
@@ -292,12 +292,12 @@ mod tests {
     use crate::grammar::test_support;
 
     #[test]
-    fn parse_from_expr_directly() {
+    fn parse_from_source_directly() {
         test_support::check(
             "from employees",
-            parse_from_expr,
+            parse_from_source,
             expect![[r#"
-            FromExpr@0..14
+            FromSource@0..14
               FromKw@0..4 "from"
               Space@4..5 " "
               Ident@5..14
@@ -307,12 +307,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_from_expr_with_alias() {
+    fn parse_from_source_with_alias() {
         test_support::check(
             "from employees as e",
-            parse_from_expr,
+            parse_from_source,
             expect![[r#"
-                FromExpr@0..19
+                FromSource@0..19
                   FromKw@0..4 "from"
                   Space@4..5 " "
                   Ident@5..14
@@ -370,13 +370,13 @@ mod tests {
             parse_query,
             expect![[r#"
                 Pipeline@0..21
-                  FromExpr@0..6
+                  FromSource@0..6
                     FromKw@0..4 "from"
                     Space@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
                   Space@6..7 " "
-                  SelectExpr@7..21
+                  SelectStage@7..21
                     Pipe@7..9 "|>"
                     Space@9..10 " "
                     SelectKw@10..16 "select"
@@ -402,13 +402,13 @@ mod tests {
             parse_query,
             expect![[r#"
                 Pipeline@0..22
-                  FromExpr@0..6
+                  FromSource@0..6
                     FromKw@0..4 "from"
                     Space@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
                   Space@6..7 " "
-                  WhereExpr@7..22
+                  WhereStage@7..22
                     Pipe@7..9 "|>"
                     Space@9..10 " "
                     WhereKw@10..15 "where"
@@ -427,13 +427,13 @@ mod tests {
             parse_query,
             expect![[r#"
                 Pipeline@0..18
-                  FromExpr@0..6
+                  FromSource@0..6
                     FromKw@0..4 "from"
                     Space@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
                   Space@6..7 " "
-                  DistinctExpr@7..18
+                  DistinctStage@7..18
                     Pipe@7..9 "|>"
                     Space@9..10 " "
                     DistinctKw@10..18 "distinct"
@@ -448,13 +448,13 @@ mod tests {
             parse_query,
             expect![[r#"
                 Pipeline@0..19
-                  FromExpr@0..6
+                  FromSource@0..6
                     FromKw@0..4 "from"
                     Space@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
                   Space@6..7 " "
-                  DropExpr@7..19
+                  DropStage@7..19
                     Pipe@7..9 "|>"
                     Space@9..10 " "
                     DropKw@10..14 "drop"
@@ -476,13 +476,13 @@ mod tests {
             parse_query,
             expect![[r#"
                 Pipeline@0..23
-                  FromExpr@0..6
+                  FromSource@0..6
                     FromKw@0..4 "from"
                     Space@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
                   Space@6..7 " "
-                  RenameExpr@7..23
+                  RenameStage@7..23
                     Pipe@7..9 "|>"
                     Space@9..10 " "
                     RenameKw@10..16 "rename"
@@ -506,13 +506,13 @@ mod tests {
             parse_query,
             expect![[r#"
                 Pipeline@0..18
-                  FromExpr@0..6
+                  FromSource@0..6
                     FromKw@0..4 "from"
                     Space@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
                   Space@6..7 " "
-                  ExtendExpr@7..18
+                  ExtendStage@7..18
                     Pipe@7..9 "|>"
                     Space@9..10 " "
                     ExtendKw@10..16 "extend"
@@ -553,13 +553,13 @@ mod tests {
             parse_query,
             expect![[r#"
                 Pipeline@0..19
-                  FromExpr@0..6
+                  FromSource@0..6
                     FromKw@0..4 "from"
                     Space@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
                   Space@6..7 " "
-                  SetExpr@7..19
+                  SetStage@7..19
                     Pipe@7..9 "|>"
                     Space@9..10 " "
                     SetKw@10..13 "set"
@@ -583,13 +583,13 @@ mod tests {
             parse_query,
             expect![[r#"
                 Pipeline@0..42
-                  FromExpr@0..6
+                  FromSource@0..6
                     FromKw@0..4 "from"
                     Space@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
                   Space@6..7 " "
-                  AggregateExpr@7..42
+                  AggregateStage@7..42
                     Pipe@7..9 "|>"
                     Space@9..10 " "
                     AggregateKw@10..19 "aggregate"
@@ -630,13 +630,13 @@ mod tests {
             parse_query,
             expect![[r#"
                 Pipeline@0..27
-                  FromExpr@0..6
+                  FromSource@0..6
                     FromKw@0..4 "from"
                     Space@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
                   Space@6..7 " "
-                  AggregateExpr@7..27
+                  AggregateStage@7..27
                     Pipe@7..9 "|>"
                     Space@9..10 " "
                     AggregateKw@10..19 "aggregate"
@@ -660,13 +660,13 @@ mod tests {
             parse_query,
             expect![[r#"
                 Pipeline@0..26
-                  FromExpr@0..6
+                  FromSource@0..6
                     FromKw@0..4 "from"
                     Space@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
                   Space@6..7 " "
-                  LimitExpr@7..26
+                  LimitStage@7..26
                     Pipe@7..9 "|>"
                     Space@9..10 " "
                     LimitKw@10..15 "limit"
@@ -689,13 +689,13 @@ mod tests {
             parse_query,
             expect![[r#"
                 Pipeline@0..14
-                  FromExpr@0..6
+                  FromSource@0..6
                     FromKw@0..4 "from"
                     Space@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
                   Space@6..7 " "
-                  AliasExpr@7..14
+                  AliasStage@7..14
                     Pipe@7..9 "|>"
                     Space@9..10 " "
                     AsKw@10..12 "as"
@@ -713,13 +713,13 @@ mod tests {
             parse_query,
             expect![[r#"
                 Pipeline@0..33
-                  FromExpr@0..6
+                  FromSource@0..6
                     FromKw@0..4 "from"
                     Space@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
                   Space@6..7 " "
-                  JoinExpr@7..33
+                  JoinStage@7..33
                     Pipe@7..9 "|>"
                     Space@9..10 " "
                     JoinKw@10..14 "join"
@@ -760,13 +760,13 @@ mod tests {
             parse_query,
             expect![[r#"
                 Pipeline@0..34
-                  FromExpr@0..6
+                  FromSource@0..6
                     FromKw@0..4 "from"
                     Space@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
                   Space@6..7 " "
-                  JoinExpr@7..34
+                  JoinStage@7..34
                     Pipe@7..9 "|>"
                     Space@9..10 " "
                     LeftKw@10..14 "left"
@@ -798,13 +798,13 @@ mod tests {
             parse_query,
             expect![[r#"
                 Pipeline@0..35
-                  FromExpr@0..6
+                  FromSource@0..6
                     FromKw@0..4 "from"
                     Space@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
                   Space@6..7 " "
-                  JoinExpr@7..35
+                  JoinStage@7..35
                     Pipe@7..9 "|>"
                     Space@9..10 " "
                     FullKw@10..14 "full"
@@ -845,13 +845,13 @@ mod tests {
             parse_query,
             expect![[r#"
                 Pipeline@0..29
-                  FromExpr@0..6
+                  FromSource@0..6
                     FromKw@0..4 "from"
                     Space@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
                   Space@6..7 " "
-                  WhereExpr@7..17
+                  WhereStage@7..17
                     Pipe@7..9 "|>"
                     Space@9..10 " "
                     WhereKw@10..15 "where"
@@ -860,7 +860,7 @@ mod tests {
                       Ident@16..17
                         Identifier@16..17 "a"
                   Space@17..18 " "
-                  SelectExpr@18..29
+                  SelectStage@18..29
                     Pipe@18..20 "|>"
                     Space@20..21 " "
                     SelectKw@21..27 "select"

@@ -58,17 +58,17 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         stage: &ast::Stage,
     ) -> Value<'c, 'a> {
         match stage {
-            ast::Stage::WhereExpr(r#where) => self.convert_where(block, input, r#where),
-            ast::Stage::SelectExpr(select) => self.convert_select(block, input, select),
-            ast::Stage::ExtendExpr(extend) => self.convert_extend(block, input, extend),
-            ast::Stage::AggregateExpr(agg) => self.convert_aggregate(block, input, agg),
-            ast::Stage::LimitExpr(limit) => self.convert_limit(block, input, limit),
-            ast::Stage::RenameExpr(rename) => self.convert_rename(block, input, rename),
-            ast::Stage::AliasExpr(alias) => self.convert_alias(block, input, alias),
-            ast::Stage::JoinExpr(join) => self.convert_join(block, input, join),
-            ast::Stage::SetExpr(set) => self.convert_set(block, input, set),
-            ast::Stage::DistinctExpr(distinct) => self.convert_distinct(block, input, distinct),
-            ast::Stage::DropExpr(drop) => self.convert_drop(block, input, drop),
+            ast::Stage::WhereStage(r#where) => self.convert_where(block, input, r#where),
+            ast::Stage::SelectStage(select) => self.convert_select(block, input, select),
+            ast::Stage::ExtendStage(extend) => self.convert_extend(block, input, extend),
+            ast::Stage::AggregateStage(agg) => self.convert_aggregate(block, input, agg),
+            ast::Stage::LimitStage(limit) => self.convert_limit(block, input, limit),
+            ast::Stage::RenameStage(rename) => self.convert_rename(block, input, rename),
+            ast::Stage::AliasStage(alias) => self.convert_alias(block, input, alias),
+            ast::Stage::JoinStage(join) => self.convert_join(block, input, join),
+            ast::Stage::SetStage(set) => self.convert_set(block, input, set),
+            ast::Stage::DistinctStage(distinct) => self.convert_distinct(block, input, distinct),
+            ast::Stage::DropStage(drop) => self.convert_drop(block, input, drop),
         }
     }
 
@@ -78,7 +78,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     fn convert_from<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
-        from: &ast::FromExpr,
+        from: &ast::FromSource,
     ) -> (Value<'c, 'a>, Row<'c>) {
         let loc = self.location(from);
         let Some(source) = self.read_ident(from.relation()) else {
@@ -124,7 +124,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         input: Value<'c, 'a>,
-        r#where: &ast::WhereExpr,
+        r#where: &ast::WhereStage,
     ) -> Value<'c, 'a> {
         let loc = self.location(r#where);
         let region = Region::new();
@@ -159,7 +159,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         input: Value<'c, 'a>,
-        select: &ast::SelectExpr,
+        select: &ast::SelectStage,
     ) -> Value<'c, 'a> {
         let loc = self.location(select);
         let items = select
@@ -194,7 +194,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         input: Value<'c, 'a>,
-        extend: &ast::ExtendExpr,
+        extend: &ast::ExtendStage,
     ) -> Value<'c, 'a> {
         let loc = self.location(extend);
         let items = extend
@@ -229,7 +229,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         input: Value<'c, 'a>,
-        agg: &ast::AggregateExpr,
+        agg: &ast::AggregateStage,
     ) -> Value<'c, 'a> {
         let loc = self.location(agg);
         let mut keys = Vec::new();
@@ -286,7 +286,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         input: Value<'c, 'a>,
-        limit: &ast::LimitExpr,
+        limit: &ast::LimitStage,
     ) -> Value<'c, 'a> {
         let loc = self.location(limit);
         let count = match limit.count() {
@@ -316,7 +316,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         input: Value<'c, 'a>,
-        rename: &ast::RenameExpr,
+        rename: &ast::RenameStage,
     ) -> Value<'c, 'a> {
         let loc = self.location(rename);
         let mut from: Vec<String> = Vec::new();
@@ -361,7 +361,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         input: Value<'c, 'a>,
-        alias: &ast::AliasExpr,
+        alias: &ast::AliasStage,
     ) -> Value<'c, 'a> {
         let loc = self.location(alias);
         let Some(alias) = self.read_ident(alias.alias()) else {
@@ -377,7 +377,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         input: Value<'c, 'a>,
-        join: &ast::JoinExpr,
+        join: &ast::JoinStage,
     ) -> Value<'c, 'a> {
         let loc = self.location(join);
         let kind = match join.kind() {
@@ -467,7 +467,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         input: Value<'c, 'a>,
-        set: &ast::SetExpr,
+        set: &ast::SetStage,
     ) -> Value<'c, 'a> {
         let loc = self.location(set);
         let items: Vec<ast::SetItem> = set.items().collect();
@@ -515,7 +515,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         input: Value<'c, 'a>,
-        distinct: &ast::DistinctExpr,
+        distinct: &ast::DistinctStage,
     ) -> Value<'c, 'a> {
         let loc = self.location(distinct);
         block
@@ -529,7 +529,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         &mut self,
         block: BlockRef<'c, 'a>,
         input: Value<'c, 'a>,
-        drop: &ast::DropExpr,
+        drop: &ast::DropStage,
     ) -> Value<'c, 'a> {
         let loc = self.location(drop);
         let mut names: Vec<&'c str> = Vec::new();

@@ -231,18 +231,18 @@ mod tests {
                 Root@0..27
                   ExprStmt@0..27
                     Pipeline@0..27
-                      FromExpr@0..6
+                      FromSource@0..6
                         FromKw@0..4 "from"
                         Space@4..5 " "
                         Ident@5..6
                           Identifier@5..6 "t"
                       Newline@6..7 "\n"
-                      WhereExpr@7..15
+                      WhereStage@7..15
                         Pipe@7..9 "|>"
                         Space@9..10 " "
                         WhereKw@10..15 "where"
                       Newline@15..16 "\n"
-                      SelectExpr@16..27
+                      SelectStage@16..27
                         Pipe@16..18 "|>"
                         Space@18..19 " "
                         SelectKw@19..25 "select"

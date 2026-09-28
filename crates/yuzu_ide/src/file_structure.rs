@@ -124,7 +124,7 @@ impl StructureReader {
 
     /// A query statement is named by the relation it starts from.
     fn read_query(&mut self, expr: &ast::ExprStmt, parent: Option<usize>) {
-        let Some(from) = expr.syntax().descendants().find_map(ast::FromExpr::cast) else {
+        let Some(from) = expr.syntax().descendants().find_map(ast::FromSource::cast) else {
             return;
         };
         let Some((relation, navigation_range)) = read_name(from.relation()) else {

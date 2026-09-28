@@ -898,13 +898,13 @@ mod tests {
             parse_value,
             expect![[r#"
                 Pipeline@0..18
-                  FromExpr@0..6
+                  FromSource@0..6
                     FromKw@0..4 "from"
                     Space@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
                   Space@6..7 " "
-                  SelectExpr@7..18
+                  SelectStage@7..18
                     Pipe@7..9 "|>"
                     Space@9..10 " "
                     SelectKw@10..16 "select"
@@ -1185,13 +1185,13 @@ mod tests {
             expect![[r#"
                 ExprStmt@0..23
                   Pipeline@0..23
-                    FromExpr@0..6
+                    FromSource@0..6
                       FromKw@0..4 "from"
                       Space@4..5 " "
                       Ident@5..6
                         Identifier@5..6 "t"
                     Space@6..7 " "
-                    SelectExpr@7..23
+                    SelectStage@7..23
                       Pipe@7..9 "|>"
                       Space@9..10 " "
                       SelectKw@10..16 "select"
