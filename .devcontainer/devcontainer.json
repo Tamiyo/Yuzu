@@ -4,7 +4,14 @@
     "dockerfile": "Dockerfile"
   },
   "remoteUser": "vscode",
-  "workspaceFolder": "/workspaces/yuzu-rust",
+  "mounts": [
+    "source=yuzu-vscode-extensions,target=/home/vscode/.vscode-server/extensions,type=volume",
+    "source=yuzu-claude-config,target=/home/vscode/.claude,type=volume"
+  ],
+  "containerEnv": {
+    "CLAUDE_CONFIG_DIR": "/home/vscode/.claude"
+  },
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
   "postCreateCommand": "python3 -m venv .venv && .venv/bin/pip install --upgrade pip && .venv/bin/pip install -r python/requirements.txt maturin",
   "customizations": {
     "vscode": {

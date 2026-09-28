@@ -64,6 +64,11 @@ RUN if getent passwd ubuntu >/dev/null; then userdel -r ubuntu 2>/dev/null || tr
 
 USER ${USERNAME}
 
+# The VS Code extensions and the Claude Code config are named volumes
+# (devcontainer.json), so they stay after a rebuild. The directories are
+# made here so that each new volume belongs to the dev user, not to root.
+RUN mkdir -p /home/${USERNAME}/.vscode-server/extensions /home/${USERNAME}/.claude
+
 # Oh-my-zsh — unattended so it doesn't drop into an interactive shell.
 RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
 
