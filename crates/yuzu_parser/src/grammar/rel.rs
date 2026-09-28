@@ -297,12 +297,12 @@ mod tests {
             "from employees",
             parse_from_source,
             &expect![[r#"
-            FromSource@0..14
-              FromKw@0..4 "from"
-              Space@4..5 " "
-              Ident@5..14
-                Identifier@5..14 "employees"
-        "#]],
+                FromSource@0..14
+                  FromKw@0..4 "from"
+                  Whitespace@4..5 " "
+                  Ident@5..14
+                    Identifier@5..14 "employees"
+            "#]],
         );
     }
 
@@ -314,12 +314,12 @@ mod tests {
             &expect![[r#"
                 FromSource@0..19
                   FromKw@0..4 "from"
-                  Space@4..5 " "
+                  Whitespace@4..5 " "
                   Ident@5..14
                     Identifier@5..14 "employees"
-                  Space@14..15 " "
+                  Whitespace@14..15 " "
                   AsKw@15..17 "as"
-                  Space@17..18 " "
+                  Whitespace@17..18 " "
                   Ident@18..19
                     Identifier@18..19 "e"
             "#]],
@@ -336,9 +336,9 @@ mod tests {
                   IdentExpr@0..4
                     Ident@0..4
                       Identifier@0..4 "name"
-                  Space@4..5 " "
+                  Whitespace@4..5 " "
                   AsKw@5..7 "as"
-                  Space@7..8 " "
+                  Whitespace@7..8 " "
                   Ident@8..9
                     Identifier@8..9 "n"
             "#]],
@@ -354,9 +354,9 @@ mod tests {
                 RenameItem@0..10
                   Ident@0..3
                     Identifier@0..3 "old"
-                  Space@3..4 " "
+                  Whitespace@3..4 " "
                   AsKw@4..6 "as"
-                  Space@6..7 " "
+                  Whitespace@6..7 " "
                   Ident@7..10
                     Identifier@7..10 "new"
             "#]],
@@ -372,21 +372,21 @@ mod tests {
                 Pipeline@0..21
                   FromSource@0..6
                     FromKw@0..4 "from"
-                    Space@4..5 " "
+                    Whitespace@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
-                  Space@6..7 " "
+                  Whitespace@6..7 " "
                   SelectStage@7..21
                     Pipe@7..9 "|>"
-                    Space@9..10 " "
+                    Whitespace@9..10 " "
                     SelectKw@10..16 "select"
-                    Space@16..17 " "
+                    Whitespace@16..17 " "
                     SelectItem@17..18
                       IdentExpr@17..18
                         Ident@17..18
                           Identifier@17..18 "a"
                     Comma@18..19 ","
-                    Space@19..20 " "
+                    Whitespace@19..20 " "
                     SelectItem@20..21
                       IdentExpr@20..21
                         Ident@20..21
@@ -404,15 +404,15 @@ mod tests {
                 Pipeline@0..22
                   FromSource@0..6
                     FromKw@0..4 "from"
-                    Space@4..5 " "
+                    Whitespace@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
-                  Space@6..7 " "
+                  Whitespace@6..7 " "
                   WhereStage@7..22
                     Pipe@7..9 "|>"
-                    Space@9..10 " "
+                    Whitespace@9..10 " "
                     WhereKw@10..15 "where"
-                    Space@15..16 " "
+                    Whitespace@15..16 " "
                     IdentExpr@16..22
                       Ident@16..22
                         Identifier@16..22 "active"
@@ -429,13 +429,13 @@ mod tests {
                 Pipeline@0..18
                   FromSource@0..6
                     FromKw@0..4 "from"
-                    Space@4..5 " "
+                    Whitespace@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
-                  Space@6..7 " "
+                  Whitespace@6..7 " "
                   DistinctStage@7..18
                     Pipe@7..9 "|>"
-                    Space@9..10 " "
+                    Whitespace@9..10 " "
                     DistinctKw@10..18 "distinct"
             "#]],
         );
@@ -450,19 +450,19 @@ mod tests {
                 Pipeline@0..19
                   FromSource@0..6
                     FromKw@0..4 "from"
-                    Space@4..5 " "
+                    Whitespace@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
-                  Space@6..7 " "
+                  Whitespace@6..7 " "
                   DropStage@7..19
                     Pipe@7..9 "|>"
-                    Space@9..10 " "
+                    Whitespace@9..10 " "
                     DropKw@10..14 "drop"
-                    Space@14..15 " "
+                    Whitespace@14..15 " "
                     Ident@15..16
                       Identifier@15..16 "a"
                     Comma@16..17 ","
-                    Space@17..18 " "
+                    Whitespace@17..18 " "
                     Ident@18..19
                       Identifier@18..19 "b"
             "#]],
@@ -478,21 +478,21 @@ mod tests {
                 Pipeline@0..23
                   FromSource@0..6
                     FromKw@0..4 "from"
-                    Space@4..5 " "
+                    Whitespace@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
-                  Space@6..7 " "
+                  Whitespace@6..7 " "
                   RenameStage@7..23
                     Pipe@7..9 "|>"
-                    Space@9..10 " "
+                    Whitespace@9..10 " "
                     RenameKw@10..16 "rename"
-                    Space@16..17 " "
+                    Whitespace@16..17 " "
                     RenameItem@17..23
                       Ident@17..18
                         Identifier@17..18 "a"
-                      Space@18..19 " "
+                      Whitespace@18..19 " "
                       AsKw@19..21 "as"
-                      Space@21..22 " "
+                      Whitespace@21..22 " "
                       Ident@22..23
                         Identifier@22..23 "b"
             "#]],
@@ -508,15 +508,15 @@ mod tests {
                 Pipeline@0..18
                   FromSource@0..6
                     FromKw@0..4 "from"
-                    Space@4..5 " "
+                    Whitespace@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
-                  Space@6..7 " "
+                  Whitespace@6..7 " "
                   ExtendStage@7..18
                     Pipe@7..9 "|>"
-                    Space@9..10 " "
+                    Whitespace@9..10 " "
                     ExtendKw@10..16 "extend"
-                    Space@16..17 " "
+                    Whitespace@16..17 " "
                     SelectItem@17..18
                       IdentExpr@17..18
                         Ident@17..18
@@ -531,18 +531,18 @@ mod tests {
             "e.id as eid",
             parse_rename_item,
             &expect![[r#"
-            RenameItem@0..11
-              Ident@0..1
-                Identifier@0..1 "e"
-              Dot@1..2 "."
-              Ident@2..4
-                Identifier@2..4 "id"
-              Space@4..5 " "
-              AsKw@5..7 "as"
-              Space@7..8 " "
-              Ident@8..11
-                Identifier@8..11 "eid"
-        "#]],
+                RenameItem@0..11
+                  Ident@0..1
+                    Identifier@0..1 "e"
+                  Dot@1..2 "."
+                  Ident@2..4
+                    Identifier@2..4 "id"
+                  Whitespace@4..5 " "
+                  AsKw@5..7 "as"
+                  Whitespace@7..8 " "
+                  Ident@8..11
+                    Identifier@8..11 "eid"
+            "#]],
         );
     }
 
@@ -555,21 +555,21 @@ mod tests {
                 Pipeline@0..19
                   FromSource@0..6
                     FromKw@0..4 "from"
-                    Space@4..5 " "
+                    Whitespace@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
-                  Space@6..7 " "
+                  Whitespace@6..7 " "
                   SetStage@7..19
                     Pipe@7..9 "|>"
-                    Space@9..10 " "
+                    Whitespace@9..10 " "
                     SetKw@10..13 "set"
-                    Space@13..14 " "
+                    Whitespace@13..14 " "
                     SetItem@14..19
                       Ident@14..15
                         Identifier@14..15 "a"
-                      Space@15..16 " "
+                      Whitespace@15..16 " "
                       Eq@16..17 "="
-                      Space@17..18 " "
+                      Whitespace@17..18 " "
                       IntLiteral@18..19
                         IntLit@18..19 "1"
             "#]],
@@ -585,15 +585,15 @@ mod tests {
                 Pipeline@0..42
                   FromSource@0..6
                     FromKw@0..4 "from"
-                    Space@4..5 " "
+                    Whitespace@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
-                  Space@6..7 " "
+                  Whitespace@6..7 " "
                   AggregateStage@7..42
                     Pipe@7..9 "|>"
-                    Space@9..10 " "
+                    Whitespace@9..10 " "
                     AggregateKw@10..19 "aggregate"
-                    Space@19..20 " "
+                    Whitespace@19..20 " "
                     AggregateItem@20..31
                       CallExpr@20..26
                         IdentExpr@20..23
@@ -605,17 +605,17 @@ mod tests {
                             Ident@24..25
                               Identifier@24..25 "a"
                           RightParen@25..26 ")"
-                      Space@26..27 " "
+                      Whitespace@26..27 " "
                       AsKw@27..29 "as"
-                      Space@29..30 " "
+                      Whitespace@29..30 " "
                       Ident@30..31
                         Identifier@30..31 "s"
-                    Space@31..32 " "
+                    Whitespace@31..32 " "
                     GroupBy@32..42
                       GroupKw@32..37 "group"
-                      Space@37..38 " "
+                      Whitespace@37..38 " "
                       ByKw@38..40 "by"
-                      Space@40..41 " "
+                      Whitespace@40..41 " "
                       GroupByItem@41..42
                         Ident@41..42
                           Identifier@41..42 "b"
@@ -632,15 +632,15 @@ mod tests {
                 Pipeline@0..27
                   FromSource@0..6
                     FromKw@0..4 "from"
-                    Space@4..5 " "
+                    Whitespace@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
-                  Space@6..7 " "
+                  Whitespace@6..7 " "
                   AggregateStage@7..27
                     Pipe@7..9 "|>"
-                    Space@9..10 " "
+                    Whitespace@9..10 " "
                     AggregateKw@10..19 "aggregate"
-                    Space@19..20 " "
+                    Whitespace@19..20 " "
                     AggregateItem@20..27
                       CallExpr@20..27
                         IdentExpr@20..25
@@ -662,20 +662,20 @@ mod tests {
                 Pipeline@0..26
                   FromSource@0..6
                     FromKw@0..4 "from"
-                    Space@4..5 " "
+                    Whitespace@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
-                  Space@6..7 " "
+                  Whitespace@6..7 " "
                   LimitStage@7..26
                     Pipe@7..9 "|>"
-                    Space@9..10 " "
+                    Whitespace@9..10 " "
                     LimitKw@10..15 "limit"
-                    Space@15..16 " "
+                    Whitespace@15..16 " "
                     IntLiteral@16..17
                       IntLit@16..17 "2"
-                    Space@17..18 " "
+                    Whitespace@17..18 " "
                     OffsetKw@18..24 "offset"
-                    Space@24..25 " "
+                    Whitespace@24..25 " "
                     IntLiteral@25..26
                       IntLit@25..26 "1"
             "#]],
@@ -691,15 +691,15 @@ mod tests {
                 Pipeline@0..14
                   FromSource@0..6
                     FromKw@0..4 "from"
-                    Space@4..5 " "
+                    Whitespace@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
-                  Space@6..7 " "
+                  Whitespace@6..7 " "
                   AliasStage@7..14
                     Pipe@7..9 "|>"
-                    Space@9..10 " "
+                    Whitespace@9..10 " "
                     AsKw@10..12 "as"
-                    Space@12..13 " "
+                    Whitespace@12..13 " "
                     Ident@13..14
                       Identifier@13..14 "u"
             "#]],
@@ -715,33 +715,33 @@ mod tests {
                 Pipeline@0..33
                   FromSource@0..6
                     FromKw@0..4 "from"
-                    Space@4..5 " "
+                    Whitespace@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
-                  Space@6..7 " "
+                  Whitespace@6..7 " "
                   JoinStage@7..33
                     Pipe@7..9 "|>"
-                    Space@9..10 " "
+                    Whitespace@9..10 " "
                     JoinKw@10..14 "join"
-                    Space@14..15 " "
+                    Whitespace@14..15 " "
                     Ident@15..16
                       Identifier@15..16 "u"
-                    Space@16..17 " "
+                    Whitespace@16..17 " "
                     AsKw@17..19 "as"
-                    Space@19..20 " "
+                    Whitespace@19..20 " "
                     Ident@20..21
                       Identifier@20..21 "d"
-                    Space@21..22 " "
+                    Whitespace@21..22 " "
                     JoinOn@22..33
                       OnKw@22..24 "on"
-                      Space@24..25 " "
+                      Whitespace@24..25 " "
                       BinaryExpr@25..33
                         IdentExpr@25..26
                           Ident@25..26
                             Identifier@25..26 "a"
-                        Space@26..27 " "
+                        Whitespace@26..27 " "
                         EqEq@27..29 "=="
-                        Space@29..30 " "
+                        Whitespace@29..30 " "
                         FieldAccessExpr@30..33
                           IdentExpr@30..31
                             Ident@30..31
@@ -762,28 +762,28 @@ mod tests {
                 Pipeline@0..34
                   FromSource@0..6
                     FromKw@0..4 "from"
-                    Space@4..5 " "
+                    Whitespace@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
-                  Space@6..7 " "
+                  Whitespace@6..7 " "
                   JoinStage@7..34
                     Pipe@7..9 "|>"
-                    Space@9..10 " "
+                    Whitespace@9..10 " "
                     LeftKw@10..14 "left"
-                    Space@14..15 " "
+                    Whitespace@14..15 " "
                     JoinKw@15..19 "join"
-                    Space@19..20 " "
+                    Whitespace@19..20 " "
                     Ident@20..21
                       Identifier@20..21 "u"
-                    Space@21..22 " "
+                    Whitespace@21..22 " "
                     JoinUsing@22..34
                       UsingKw@22..27 "using"
-                      Space@27..28 " "
+                      Whitespace@27..28 " "
                       LeftParen@28..29 "("
                       Ident@29..30
                         Identifier@29..30 "a"
                       Comma@30..31 ","
-                      Space@31..32 " "
+                      Whitespace@31..32 " "
                       Ident@32..33
                         Identifier@32..33 "b"
                       RightParen@33..34 ")"
@@ -800,33 +800,33 @@ mod tests {
                 Pipeline@0..35
                   FromSource@0..6
                     FromKw@0..4 "from"
-                    Space@4..5 " "
+                    Whitespace@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
-                  Space@6..7 " "
+                  Whitespace@6..7 " "
                   JoinStage@7..35
                     Pipe@7..9 "|>"
-                    Space@9..10 " "
+                    Whitespace@9..10 " "
                     FullKw@10..14 "full"
-                    Space@14..15 " "
+                    Whitespace@14..15 " "
                     JoinKw@15..19 "join"
-                    Space@19..20 " "
+                    Whitespace@19..20 " "
                     Ident@20..21
                       Identifier@20..21 "u"
-                    Space@21..22 " "
+                    Whitespace@21..22 " "
                     Ident@22..23
                       Identifier@22..23 "d"
-                    Space@23..24 " "
+                    Whitespace@23..24 " "
                     JoinOn@24..35
                       OnKw@24..26 "on"
-                      Space@26..27 " "
+                      Whitespace@26..27 " "
                       BinaryExpr@27..35
                         IdentExpr@27..28
                           Ident@27..28
                             Identifier@27..28 "a"
-                        Space@28..29 " "
+                        Whitespace@28..29 " "
                         EqEq@29..31 "=="
-                        Space@31..32 " "
+                        Whitespace@31..32 " "
                         FieldAccessExpr@32..35
                           IdentExpr@32..33
                             Ident@32..33
@@ -847,24 +847,24 @@ mod tests {
                 Pipeline@0..29
                   FromSource@0..6
                     FromKw@0..4 "from"
-                    Space@4..5 " "
+                    Whitespace@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
-                  Space@6..7 " "
+                  Whitespace@6..7 " "
                   WhereStage@7..17
                     Pipe@7..9 "|>"
-                    Space@9..10 " "
+                    Whitespace@9..10 " "
                     WhereKw@10..15 "where"
-                    Space@15..16 " "
+                    Whitespace@15..16 " "
                     IdentExpr@16..17
                       Ident@16..17
                         Identifier@16..17 "a"
-                  Space@17..18 " "
+                  Whitespace@17..18 " "
                   SelectStage@18..29
                     Pipe@18..20 "|>"
-                    Space@20..21 " "
+                    Whitespace@20..21 " "
                     SelectKw@21..27 "select"
-                    Space@27..28 " "
+                    Whitespace@27..28 " "
                     SelectItem@28..29
                       IdentExpr@28..29
                         Ident@28..29

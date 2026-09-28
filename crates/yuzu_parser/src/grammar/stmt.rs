@@ -461,9 +461,9 @@ mod tests {
             &expect![[r#"
                 FuncStmt@0..33
                   ExternalKw@0..8 "external"
-                  Space@8..9 " "
+                  Whitespace@8..9 " "
                   DefKw@9..12 "def"
-                  Space@12..13 " "
+                  Whitespace@12..13 " "
                   Ident@13..18
                     Identifier@13..18 "upper"
                   LeftParen@18..19 "("
@@ -471,14 +471,14 @@ mod tests {
                     Ident@19..20
                       Identifier@19..20 "s"
                     Colon@20..21 ":"
-                    Space@21..22 " "
+                    Whitespace@21..22 " "
                     NamedTypeAnnotation@22..25
                       Ident@22..25
                         Identifier@22..25 "str"
                   RightParen@25..26 ")"
-                  Space@26..27 " "
+                  Whitespace@26..27 " "
                   Arrow@27..29 "->"
-                  Space@29..30 " "
+                  Whitespace@29..30 " "
                   NamedTypeAnnotation@30..33
                     Ident@30..33
                       Identifier@30..33 "str"
@@ -494,11 +494,11 @@ mod tests {
             &expect![[r#"
                 FuncStmt@0..44
                   ExternalKw@0..8 "external"
-                  Space@8..9 " "
+                  Whitespace@8..9 " "
                   AggKw@9..12 "agg"
-                  Space@12..13 " "
+                  Whitespace@12..13 " "
                   DefKw@13..16 "def"
-                  Space@16..17 " "
+                  Whitespace@16..17 " "
                   Ident@17..23
                     Identifier@17..23 "median"
                   LeftParen@23..24 "("
@@ -506,14 +506,14 @@ mod tests {
                     Ident@24..25
                       Identifier@24..25 "x"
                     Colon@25..26 ":"
-                    Space@26..27 " "
+                    Whitespace@26..27 " "
                     NamedTypeAnnotation@27..32
                       Ident@27..32
                         Identifier@27..32 "int64"
                   RightParen@32..33 ")"
-                  Space@33..34 " "
+                  Whitespace@33..34 " "
                   Arrow@34..36 "->"
-                  Space@36..37 " "
+                  Whitespace@36..37 " "
                   NamedTypeAnnotation@37..44
                     Ident@37..44
                       Identifier@37..44 "float64"
@@ -529,9 +529,9 @@ mod tests {
             &expect![[r#"
                 FuncStmt@0..51
                   AggKw@0..3 "agg"
-                  Space@3..4 " "
+                  Whitespace@3..4 " "
                   DefKw@4..7 "def"
-                  Space@7..8 " "
+                  Whitespace@7..8 " "
                   Ident@8..14
                     Identifier@8..14 "spread"
                   LeftParen@14..15 "("
@@ -539,24 +539,24 @@ mod tests {
                     Ident@15..16
                       Identifier@15..16 "x"
                     Colon@16..17 ":"
-                    Space@17..18 " "
+                    Whitespace@17..18 " "
                     NamedTypeAnnotation@18..23
                       Ident@18..23
                         Identifier@18..23 "int64"
                   RightParen@23..24 ")"
-                  Space@24..25 " "
+                  Whitespace@24..25 " "
                   Arrow@25..27 "->"
-                  Space@27..28 " "
+                  Whitespace@27..28 " "
                   NamedTypeAnnotation@28..33
                     Ident@28..33
                       Identifier@28..33 "int64"
-                  Space@33..34 " "
+                  Whitespace@33..34 " "
                   BlockStmt@34..51
                     LeftCurly@34..35 "{"
-                    Space@35..36 " "
+                    Whitespace@35..36 " "
                     ReturnStmt@36..49
                       ReturnKw@36..42 "return"
-                      Space@42..43 " "
+                      Whitespace@42..43 " "
                       CallExpr@43..49
                         IdentExpr@43..46
                           Ident@43..46
@@ -567,7 +567,7 @@ mod tests {
                             Ident@47..48
                               Identifier@47..48 "x"
                           RightParen@48..49 ")"
-                    Space@49..50 " "
+                    Whitespace@49..50 " "
                     RightCurly@50..51 "}"
             "#]],
         );
@@ -581,12 +581,12 @@ mod tests {
             &expect![[r#"
                 LetStmt@0..11
                   LetKw@0..3 "let"
-                  Space@3..4 " "
+                  Whitespace@3..4 " "
                   Error@4..7
                     AggKw@4..7 "agg"
-                  Space@7..8 " "
+                  Whitespace@7..8 " "
                   Eq@8..9 "="
-                  Space@9..10 " "
+                  Whitespace@9..10 " "
                   IntLiteral@10..11
                     IntLit@10..11 "1"
             "#]],
@@ -601,14 +601,14 @@ mod tests {
             &expect![[r#"
                 BlockStmt@0..12
                   LeftCurly@0..1 "{"
-                  Space@1..2 " "
+                  Whitespace@1..2 " "
                   ReturnStmt@2..10
                     ReturnKw@2..8 "return"
-                    Space@8..9 " "
+                    Whitespace@8..9 " "
                     IdentExpr@9..10
                       Ident@9..10
                         Identifier@9..10 "x"
-                  Space@10..11 " "
+                  Whitespace@10..11 " "
                   RightCurly@11..12 "}"
             "#]],
         );
@@ -622,7 +622,7 @@ mod tests {
             &expect![[r#"
                 FuncStmt@0..33
                   DefKw@0..3 "def"
-                  Space@3..4 " "
+                  Whitespace@3..4 " "
                   Ident@4..5
                     Identifier@4..5 "f"
                   LeftParen@5..6 "("
@@ -630,28 +630,28 @@ mod tests {
                     Ident@6..7
                       Identifier@6..7 "x"
                     Colon@7..8 ":"
-                    Space@8..9 " "
+                    Whitespace@8..9 " "
                     NamedTypeAnnotation@9..12
                       Ident@9..12
                         Identifier@9..12 "int"
                   RightParen@12..13 ")"
-                  Space@13..14 " "
+                  Whitespace@13..14 " "
                   Arrow@14..16 "->"
-                  Space@16..17 " "
+                  Whitespace@16..17 " "
                   NamedTypeAnnotation@17..20
                     Ident@17..20
                       Identifier@17..20 "int"
-                  Space@20..21 " "
+                  Whitespace@20..21 " "
                   BlockStmt@21..33
                     LeftCurly@21..22 "{"
-                    Space@22..23 " "
+                    Whitespace@22..23 " "
                     ReturnStmt@23..31
                       ReturnKw@23..29 "return"
-                      Space@29..30 " "
+                      Whitespace@29..30 " "
                       IdentExpr@30..31
                         Ident@30..31
                           Identifier@30..31 "x"
-                    Space@31..32 " "
+                    Whitespace@31..32 " "
                     RightCurly@32..33 "}"
             "#]],
         );
@@ -665,15 +665,15 @@ mod tests {
             &expect![[r#"
                 ImplStmt@0..42
                   ImplKw@0..4 "impl"
-                  Space@4..5 " "
+                  Whitespace@4..5 " "
                   Ident@5..10
                     Identifier@5..10 "Point"
-                  Space@10..11 " "
+                  Whitespace@10..11 " "
                   LeftCurly@11..12 "{"
-                  Space@12..13 " "
+                  Whitespace@12..13 " "
                   FuncStmt@13..40
                     DefKw@13..16 "def"
-                    Space@16..17 " "
+                    Whitespace@16..17 " "
                     Ident@17..18
                       Identifier@17..18 "x"
                     LeftParen@18..19 "("
@@ -681,19 +681,19 @@ mod tests {
                       Ident@19..23
                         Identifier@19..23 "self"
                     RightParen@23..24 ")"
-                    Space@24..25 " "
+                    Whitespace@24..25 " "
                     BlockStmt@25..40
                       LeftCurly@25..26 "{"
-                      Space@26..27 " "
+                      Whitespace@26..27 " "
                       ReturnStmt@27..38
                         ReturnKw@27..33 "return"
-                        Space@33..34 " "
+                        Whitespace@33..34 " "
                         IdentExpr@34..38
                           Ident@34..38
                             Identifier@34..38 "self"
-                      Space@38..39 " "
+                      Whitespace@38..39 " "
                       RightCurly@39..40 "}"
-                  Space@40..41 " "
+                  Whitespace@40..41 " "
                   RightCurly@41..42 "}"
             "#]],
         );
@@ -707,15 +707,15 @@ mod tests {
             &expect![[r#"
                 TraitStmt@0..36
                   TraitKw@0..5 "trait"
-                  Space@5..6 " "
+                  Whitespace@5..6 " "
                   Ident@6..10
                     Identifier@6..10 "Show"
-                  Space@10..11 " "
+                  Whitespace@10..11 " "
                   LeftCurly@11..12 "{"
-                  Space@12..13 " "
+                  Whitespace@12..13 " "
                   FuncStmt@13..34
                     DefKw@13..16 "def"
-                    Space@16..17 " "
+                    Whitespace@16..17 " "
                     Ident@17..21
                       Identifier@17..21 "show"
                     LeftParen@21..22 "("
@@ -723,13 +723,13 @@ mod tests {
                       Ident@22..26
                         Identifier@22..26 "self"
                     RightParen@26..27 ")"
-                    Space@27..28 " "
+                    Whitespace@27..28 " "
                     Arrow@28..30 "->"
-                    Space@30..31 " "
+                    Whitespace@30..31 " "
                     NamedTypeAnnotation@31..34
                       Ident@31..34
                         Identifier@31..34 "str"
-                  Space@34..35 " "
+                  Whitespace@34..35 " "
                   RightCurly@35..36 "}"
             "#]],
         );
@@ -743,7 +743,7 @@ mod tests {
             &expect![[r#"
                 FuncStmt@0..21
                   DefKw@0..3 "def"
-                  Space@3..4 " "
+                  Whitespace@3..4 " "
                   Ident@4..8
                     Identifier@4..8 "show"
                   LeftParen@8..9 "("
@@ -751,9 +751,9 @@ mod tests {
                     Ident@9..13
                       Identifier@9..13 "self"
                   RightParen@13..14 ")"
-                  Space@14..15 " "
+                  Whitespace@14..15 " "
                   Arrow@15..17 "->"
-                  Space@17..18 " "
+                  Whitespace@17..18 " "
                   NamedTypeAnnotation@18..21
                     Ident@18..21
                       Identifier@18..21 "str"
@@ -769,19 +769,19 @@ mod tests {
             &expect![[r#"
                 LetStmt@0..18
                   LetKw@0..3 "let"
-                  Space@3..4 " "
+                  Whitespace@3..4 " "
                   MutKw@4..7 "mut"
-                  Space@7..8 " "
+                  Whitespace@7..8 " "
                   Ident@8..9
                     Identifier@8..9 "x"
                   Colon@9..10 ":"
-                  Space@10..11 " "
+                  Whitespace@10..11 " "
                   NamedTypeAnnotation@11..14
                     Ident@11..14
                       Identifier@11..14 "int"
-                  Space@14..15 " "
+                  Whitespace@14..15 " "
                   Eq@15..16 "="
-                  Space@16..17 " "
+                  Whitespace@16..17 " "
                   IntLiteral@17..18
                     IntLit@17..18 "1"
             "#]],
@@ -794,13 +794,13 @@ mod tests {
             "return x",
             parse_return_stmt,
             &expect![[r#"
-            ReturnStmt@0..8
-              ReturnKw@0..6 "return"
-              Space@6..7 " "
-              IdentExpr@7..8
-                Ident@7..8
-                  Identifier@7..8 "x"
-        "#]],
+                ReturnStmt@0..8
+                  ReturnKw@0..6 "return"
+                  Whitespace@6..7 " "
+                  IdentExpr@7..8
+                    Ident@7..8
+                      Identifier@7..8 "x"
+            "#]],
         );
     }
 
@@ -812,21 +812,21 @@ mod tests {
             &expect![[r#"
                 StructStmt@0..19
                   StructKw@0..6 "struct"
-                  Space@6..7 " "
+                  Whitespace@6..7 " "
                   Ident@7..8
                     Identifier@7..8 "P"
-                  Space@8..9 " "
+                  Whitespace@8..9 " "
                   LeftCurly@9..10 "{"
-                  Space@10..11 " "
+                  Whitespace@10..11 " "
                   StructField@11..17
                     Ident@11..12
                       Identifier@11..12 "x"
                     Colon@12..13 ":"
-                    Space@13..14 " "
+                    Whitespace@13..14 " "
                     NamedTypeAnnotation@14..17
                       Ident@14..17
                         Identifier@14..17 "int"
-                  Space@17..18 " "
+                  Whitespace@17..18 " "
                   RightCurly@18..19 "}"
             "#]],
         );
@@ -840,12 +840,12 @@ mod tests {
             &expect![[r#"
                 TableStmt@0..13
                   TableKw@0..5 "table"
-                  Space@5..6 " "
+                  Whitespace@5..6 " "
                   Ident@6..7
                     Identifier@6..7 "T"
-                  Space@7..8 " "
+                  Whitespace@7..8 " "
                   Eq@8..9 "="
-                  Space@9..10 " "
+                  Whitespace@9..10 " "
                   Ident@10..13
                     Identifier@10..13 "Row"
             "#]],
@@ -882,9 +882,9 @@ mod tests {
                 BinaryExpr@0..5
                   IntLiteral@0..1
                     IntLit@0..1 "1"
-                  Space@1..2 " "
+                  Whitespace@1..2 " "
                   Plus@2..3 "+"
-                  Space@3..4 " "
+                  Whitespace@3..4 " "
                   IntLiteral@4..5
                     IntLit@4..5 "2"
             "#]],
@@ -900,15 +900,15 @@ mod tests {
                 Pipeline@0..18
                   FromSource@0..6
                     FromKw@0..4 "from"
-                    Space@4..5 " "
+                    Whitespace@4..5 " "
                     Ident@5..6
                       Identifier@5..6 "t"
-                  Space@6..7 " "
+                  Whitespace@6..7 " "
                   SelectStage@7..18
                     Pipe@7..9 "|>"
-                    Space@9..10 " "
+                    Whitespace@9..10 " "
                     SelectKw@10..16 "select"
-                    Space@16..17 " "
+                    Whitespace@16..17 " "
                     SelectItem@17..18
                       IdentExpr@17..18
                         Ident@17..18
@@ -923,15 +923,15 @@ mod tests {
             "x: int",
             parse_param,
             &expect![[r#"
-            FuncParam@0..6
-              Ident@0..1
-                Identifier@0..1 "x"
-              Colon@1..2 ":"
-              Space@2..3 " "
-              NamedTypeAnnotation@3..6
-                Ident@3..6
-                  Identifier@3..6 "int"
-        "#]],
+                FuncParam@0..6
+                  Ident@0..1
+                    Identifier@0..1 "x"
+                  Colon@1..2 ":"
+                  Whitespace@2..3 " "
+                  NamedTypeAnnotation@3..6
+                    Ident@3..6
+                      Identifier@3..6 "int"
+            "#]],
         );
     }
 
@@ -971,13 +971,13 @@ mod tests {
                   Ident@0..1
                     Identifier@0..1 "T"
                   Colon@1..2 ":"
-                  Space@2..3 " "
+                  Whitespace@2..3 " "
                   TraitRef@3..6
                     Ident@3..6
                       Identifier@3..6 "Add"
-                  Space@6..7 " "
+                  Whitespace@6..7 " "
                   Plus@7..8 "+"
-                  Space@8..9 " "
+                  Whitespace@8..9 " "
                   TraitRef@9..11
                     Ident@9..11
                       Identifier@9..11 "Eq"
@@ -1007,35 +1007,35 @@ mod tests {
             &expect![[r#"
                 StructStmt@0..35
                   PubKw@0..3 "pub"
-                  Space@3..4 " "
+                  Whitespace@3..4 " "
                   StructKw@4..10 "struct"
-                  Space@10..11 " "
+                  Whitespace@10..11 " "
                   Ident@11..12
                     Identifier@11..12 "P"
-                  Space@12..13 " "
+                  Whitespace@12..13 " "
                   LeftCurly@13..14 "{"
-                  Space@14..15 " "
+                  Whitespace@14..15 " "
                   StructField@15..25
                     PubKw@15..18 "pub"
-                    Space@18..19 " "
+                    Whitespace@18..19 " "
                     Ident@19..20
                       Identifier@19..20 "x"
                     Colon@20..21 ":"
-                    Space@21..22 " "
+                    Whitespace@21..22 " "
                     NamedTypeAnnotation@22..25
                       Ident@22..25
                         Identifier@22..25 "int"
                   Comma@25..26 ","
-                  Space@26..27 " "
+                  Whitespace@26..27 " "
                   StructField@27..33
                     Ident@27..28
                       Identifier@27..28 "y"
                     Colon@28..29 ":"
-                    Space@29..30 " "
+                    Whitespace@29..30 " "
                     NamedTypeAnnotation@30..33
                       Ident@30..33
                         Identifier@30..33 "int"
-                  Space@33..34 " "
+                  Whitespace@33..34 " "
                   RightCurly@34..35 "}"
             "#]],
         );
@@ -1053,9 +1053,9 @@ mod tests {
                   LeftParen@3..4 "("
                   ModKw@4..7 "mod"
                   RightParen@7..8 ")"
-                  Space@8..9 " "
+                  Whitespace@8..9 " "
                   DefKw@9..12 "def"
-                  Space@12..13 " "
+                  Whitespace@12..13 " "
                   Ident@13..14
                     Identifier@13..14 "f"
                   LeftParen@14..15 "("
@@ -1063,28 +1063,28 @@ mod tests {
                     Ident@15..16
                       Identifier@15..16 "x"
                     Colon@16..17 ":"
-                    Space@17..18 " "
+                    Whitespace@17..18 " "
                     NamedTypeAnnotation@18..21
                       Ident@18..21
                         Identifier@18..21 "int"
                   RightParen@21..22 ")"
-                  Space@22..23 " "
+                  Whitespace@22..23 " "
                   Arrow@23..25 "->"
-                  Space@25..26 " "
+                  Whitespace@25..26 " "
                   NamedTypeAnnotation@26..29
                     Ident@26..29
                       Identifier@26..29 "int"
-                  Space@29..30 " "
+                  Whitespace@29..30 " "
                   BlockStmt@30..42
                     LeftCurly@30..31 "{"
-                    Space@31..32 " "
+                    Whitespace@31..32 " "
                     ReturnStmt@32..40
                       ReturnKw@32..38 "return"
-                      Space@38..39 " "
+                      Whitespace@38..39 " "
                       IdentExpr@39..40
                         Ident@39..40
                           Identifier@39..40 "x"
-                    Space@40..41 " "
+                    Whitespace@40..41 " "
                     RightCurly@41..42 "}"
             "#]],
         );
@@ -1097,24 +1097,24 @@ mod tests {
         check(
             "mod internal",
             &expect![[r#"
-            ModStmt@0..12
-              ModKw@0..3 "mod"
-              Space@3..4 " "
-              Ident@4..12
-                Identifier@4..12 "internal"
-        "#]],
+                ModStmt@0..12
+                  ModKw@0..3 "mod"
+                  Whitespace@3..4 " "
+                  Ident@4..12
+                    Identifier@4..12 "internal"
+            "#]],
         );
         check(
             "pub mod math",
             &expect![[r#"
-            ModStmt@0..12
-              PubKw@0..3 "pub"
-              Space@3..4 " "
-              ModKw@4..7 "mod"
-              Space@7..8 " "
-              Ident@8..12
-                Identifier@8..12 "math"
-        "#]],
+                ModStmt@0..12
+                  PubKw@0..3 "pub"
+                  Whitespace@3..4 " "
+                  ModKw@4..7 "mod"
+                  Whitespace@7..8 " "
+                  Ident@8..12
+                    Identifier@8..12 "math"
+            "#]],
         );
     }
 
@@ -1123,24 +1123,24 @@ mod tests {
         check(
             "import yuzu.std.math as m",
             &expect![[r#"
-            ImportStmt@0..25
-              ImportKw@0..6 "import"
-              Space@6..7 " "
-              ModulePath@7..20
-                Ident@7..11
-                  Identifier@7..11 "yuzu"
-                Dot@11..12 "."
-                Ident@12..15
-                  Identifier@12..15 "std"
-                Dot@15..16 "."
-                Ident@16..20
-                  Identifier@16..20 "math"
-              Space@20..21 " "
-              AsKw@21..23 "as"
-              Space@23..24 " "
-              Ident@24..25
-                Identifier@24..25 "m"
-        "#]],
+                ImportStmt@0..25
+                  ImportKw@0..6 "import"
+                  Whitespace@6..7 " "
+                  ModulePath@7..20
+                    Ident@7..11
+                      Identifier@7..11 "yuzu"
+                    Dot@11..12 "."
+                    Ident@12..15
+                      Identifier@12..15 "std"
+                    Dot@15..16 "."
+                    Ident@16..20
+                      Identifier@16..20 "math"
+                  Whitespace@20..21 " "
+                  AsKw@21..23 "as"
+                  Whitespace@23..24 " "
+                  Ident@24..25
+                    Identifier@24..25 "m"
+            "#]],
         );
     }
 
@@ -1149,29 +1149,29 @@ mod tests {
         check(
             "from helpers import spread, avg3 as mean",
             &expect![[r#"
-            FromImportStmt@0..40
-              FromKw@0..4 "from"
-              Space@4..5 " "
-              ModulePath@5..12
-                Ident@5..12
-                  Identifier@5..12 "helpers"
-              Space@12..13 " "
-              ImportKw@13..19 "import"
-              Space@19..20 " "
-              ImportItem@20..26
-                Ident@20..26
-                  Identifier@20..26 "spread"
-              Comma@26..27 ","
-              Space@27..28 " "
-              ImportItem@28..40
-                Ident@28..32
-                  Identifier@28..32 "avg3"
-                Space@32..33 " "
-                AsKw@33..35 "as"
-                Space@35..36 " "
-                Ident@36..40
-                  Identifier@36..40 "mean"
-        "#]],
+                FromImportStmt@0..40
+                  FromKw@0..4 "from"
+                  Whitespace@4..5 " "
+                  ModulePath@5..12
+                    Ident@5..12
+                      Identifier@5..12 "helpers"
+                  Whitespace@12..13 " "
+                  ImportKw@13..19 "import"
+                  Whitespace@19..20 " "
+                  ImportItem@20..26
+                    Ident@20..26
+                      Identifier@20..26 "spread"
+                  Comma@26..27 ","
+                  Whitespace@27..28 " "
+                  ImportItem@28..40
+                    Ident@28..32
+                      Identifier@28..32 "avg3"
+                    Whitespace@32..33 " "
+                    AsKw@33..35 "as"
+                    Whitespace@35..36 " "
+                    Ident@36..40
+                      Identifier@36..40 "mean"
+            "#]],
         );
     }
 
@@ -1187,22 +1187,22 @@ mod tests {
                   Pipeline@0..23
                     FromSource@0..6
                       FromKw@0..4 "from"
-                      Space@4..5 " "
+                      Whitespace@4..5 " "
                       Ident@5..6
                         Identifier@5..6 "t"
-                    Space@6..7 " "
+                    Whitespace@6..7 " "
                     SelectStage@7..23
                       Pipe@7..9 "|>"
-                      Space@9..10 " "
+                      Whitespace@9..10 " "
                       SelectKw@10..16 "select"
-                      Space@16..17 " "
+                      Whitespace@16..17 " "
                       SelectItem@17..23
                         IdentExpr@17..18
                           Ident@17..18
                             Identifier@17..18 "a"
-                        Space@18..19 " "
+                        Whitespace@18..19 " "
                         AsKw@19..21 "as"
-                        Space@21..22 " "
+                        Whitespace@21..22 " "
                         Ident@22..23
                           Identifier@22..23 "v"
             "#]],
@@ -1215,15 +1215,15 @@ mod tests {
             "x: int",
             parse_struct_field_decl,
             &expect![[r#"
-            StructField@0..6
-              Ident@0..1
-                Identifier@0..1 "x"
-              Colon@1..2 ":"
-              Space@2..3 " "
-              NamedTypeAnnotation@3..6
-                Ident@3..6
-                  Identifier@3..6 "int"
-        "#]],
+                StructField@0..6
+                  Ident@0..1
+                    Identifier@0..1 "x"
+                  Colon@1..2 ":"
+                  Whitespace@2..3 " "
+                  NamedTypeAnnotation@3..6
+                    Ident@3..6
+                      Identifier@3..6 "int"
+            "#]],
         );
     }
 
@@ -1234,12 +1234,12 @@ mod tests {
             &expect![[r#"
                 LetStmt@0..9
                   LetKw@0..3 "let"
-                  Space@3..4 " "
+                  Whitespace@3..4 " "
                   Ident@4..5
                     Identifier@4..5 "x"
-                  Space@5..6 " "
+                  Whitespace@5..6 " "
                   Eq@6..7 "="
-                  Space@7..8 " "
+                  Whitespace@7..8 " "
                   IntLiteral@8..9
                     IntLit@8..9 "1"
             "#]],
@@ -1253,19 +1253,19 @@ mod tests {
             &expect![[r#"
                 LetStmt@0..18
                   LetKw@0..3 "let"
-                  Space@3..4 " "
+                  Whitespace@3..4 " "
                   MutKw@4..7 "mut"
-                  Space@7..8 " "
+                  Whitespace@7..8 " "
                   Ident@8..9
                     Identifier@8..9 "x"
                   Colon@9..10 ":"
-                  Space@10..11 " "
+                  Whitespace@10..11 " "
                   NamedTypeAnnotation@11..14
                     Ident@11..14
                       Identifier@11..14 "int"
-                  Space@14..15 " "
+                  Whitespace@14..15 " "
                   Eq@15..16 "="
-                  Space@16..17 " "
+                  Whitespace@16..17 " "
                   IntLiteral@17..18
                     IntLit@17..18 "1"
             "#]],
@@ -1277,13 +1277,13 @@ mod tests {
         check(
             "return x",
             &expect![[r#"
-            ReturnStmt@0..8
-              ReturnKw@0..6 "return"
-              Space@6..7 " "
-              IdentExpr@7..8
-                Ident@7..8
-                  Identifier@7..8 "x"
-        "#]],
+                ReturnStmt@0..8
+                  ReturnKw@0..6 "return"
+                  Whitespace@6..7 " "
+                  IdentExpr@7..8
+                    Ident@7..8
+                      Identifier@7..8 "x"
+            "#]],
         );
     }
 
@@ -1296,9 +1296,9 @@ mod tests {
                   IdentExpr@0..1
                     Ident@0..1
                       Identifier@0..1 "x"
-                  Space@1..2 " "
+                  Whitespace@1..2 " "
                   Eq@2..3 "="
-                  Space@3..4 " "
+                  Whitespace@3..4 " "
                   IntLiteral@4..5
                     IntLit@4..5 "5"
             "#]],
@@ -1312,7 +1312,7 @@ mod tests {
             &expect![[r#"
                 FuncStmt@0..43
                   DefKw@0..3 "def"
-                  Space@3..4 " "
+                  Whitespace@3..4 " "
                   Ident@4..7
                     Identifier@4..7 "add"
                   LeftParen@7..8 "("
@@ -1320,38 +1320,38 @@ mod tests {
                     Ident@8..9
                       Identifier@8..9 "x"
                     Colon@9..10 ":"
-                    Space@10..11 " "
+                    Whitespace@10..11 " "
                     NamedTypeAnnotation@11..14
                       Ident@11..14
                         Identifier@11..14 "int"
                   Comma@14..15 ","
-                  Space@15..16 " "
+                  Whitespace@15..16 " "
                   FuncParam@16..22
                     Ident@16..17
                       Identifier@16..17 "y"
                     Colon@17..18 ":"
-                    Space@18..19 " "
+                    Whitespace@18..19 " "
                     NamedTypeAnnotation@19..22
                       Ident@19..22
                         Identifier@19..22 "int"
                   RightParen@22..23 ")"
-                  Space@23..24 " "
+                  Whitespace@23..24 " "
                   Arrow@24..26 "->"
-                  Space@26..27 " "
+                  Whitespace@26..27 " "
                   NamedTypeAnnotation@27..30
                     Ident@27..30
                       Identifier@27..30 "int"
-                  Space@30..31 " "
+                  Whitespace@30..31 " "
                   BlockStmt@31..43
                     LeftCurly@31..32 "{"
-                    Space@32..33 " "
+                    Whitespace@32..33 " "
                     ReturnStmt@33..41
                       ReturnKw@33..39 "return"
-                      Space@39..40 " "
+                      Whitespace@39..40 " "
                       IdentExpr@40..41
                         Ident@40..41
                           Identifier@40..41 "x"
-                    Space@41..42 " "
+                    Whitespace@41..42 " "
                     RightCurly@42..43 "}"
             "#]],
         );
@@ -1364,7 +1364,7 @@ mod tests {
             &expect![[r#"
                 FuncStmt@0..45
                   DefKw@0..3 "def"
-                  Space@3..4 " "
+                  Whitespace@3..4 " "
                   Ident@4..6
                     Identifier@4..6 "id"
                   LeftSquare@6..7 "["
@@ -1377,39 +1377,39 @@ mod tests {
                     Ident@10..11
                       Identifier@10..11 "x"
                     Colon@11..12 ":"
-                    Space@12..13 " "
+                    Whitespace@12..13 " "
                     NamedTypeAnnotation@13..14
                       Ident@13..14
                         Identifier@13..14 "T"
                   RightParen@14..15 ")"
-                  Space@15..16 " "
+                  Whitespace@15..16 " "
                   Arrow@16..18 "->"
-                  Space@18..19 " "
+                  Whitespace@18..19 " "
                   NamedTypeAnnotation@19..20
                     Ident@19..20
                       Identifier@19..20 "T"
-                  Space@20..21 " "
+                  Whitespace@20..21 " "
                   WhereKw@21..26 "where"
-                  Space@26..27 " "
+                  Whitespace@26..27 " "
                   TypeBound@27..32
                     Ident@27..28
                       Identifier@27..28 "T"
                     Colon@28..29 ":"
-                    Space@29..30 " "
+                    Whitespace@29..30 " "
                     TraitRef@30..32
                       Ident@30..32
                         Identifier@30..32 "Eq"
-                  Space@32..33 " "
+                  Whitespace@32..33 " "
                   BlockStmt@33..45
                     LeftCurly@33..34 "{"
-                    Space@34..35 " "
+                    Whitespace@34..35 " "
                     ReturnStmt@35..43
                       ReturnKw@35..41 "return"
-                      Space@41..42 " "
+                      Whitespace@41..42 " "
                       IdentExpr@42..43
                         Ident@42..43
                           Identifier@42..43 "x"
-                    Space@43..44 " "
+                    Whitespace@43..44 " "
                     RightCurly@44..45 "}"
             "#]],
         );
@@ -1422,31 +1422,31 @@ mod tests {
             &expect![[r#"
                 StructStmt@0..31
                   StructKw@0..6 "struct"
-                  Space@6..7 " "
+                  Whitespace@6..7 " "
                   Ident@7..12
                     Identifier@7..12 "Point"
-                  Space@12..13 " "
+                  Whitespace@12..13 " "
                   LeftCurly@13..14 "{"
-                  Space@14..15 " "
+                  Whitespace@14..15 " "
                   StructField@15..21
                     Ident@15..16
                       Identifier@15..16 "x"
                     Colon@16..17 ":"
-                    Space@17..18 " "
+                    Whitespace@17..18 " "
                     NamedTypeAnnotation@18..21
                       Ident@18..21
                         Identifier@18..21 "int"
                   Comma@21..22 ","
-                  Space@22..23 " "
+                  Whitespace@22..23 " "
                   StructField@23..29
                     Ident@23..24
                       Identifier@23..24 "y"
                     Colon@24..25 ":"
-                    Space@25..26 " "
+                    Whitespace@25..26 " "
                     NamedTypeAnnotation@26..29
                       Ident@26..29
                         Identifier@26..29 "int"
-                  Space@29..30 " "
+                  Whitespace@29..30 " "
                   RightCurly@30..31 "}"
             "#]],
         );
@@ -1459,23 +1459,23 @@ mod tests {
             &expect![[r#"
                 TableStmt@0..20
                   TableKw@0..5 "table"
-                  Space@5..6 " "
+                  Whitespace@5..6 " "
                   Ident@6..7
                     Identifier@6..7 "T"
-                  Space@7..8 " "
+                  Whitespace@7..8 " "
                   Eq@8..9 "="
-                  Space@9..10 " "
+                  Whitespace@9..10 " "
                   LeftCurly@10..11 "{"
-                  Space@11..12 " "
+                  Whitespace@11..12 " "
                   StructField@12..18
                     Ident@12..13
                       Identifier@12..13 "x"
                     Colon@13..14 ":"
-                    Space@14..15 " "
+                    Whitespace@14..15 " "
                     NamedTypeAnnotation@15..18
                       Ident@15..18
                         Identifier@15..18 "int"
-                  Space@18..19 " "
+                  Whitespace@18..19 " "
                   RightCurly@19..20 "}"
             "#]],
         );
@@ -1488,12 +1488,12 @@ mod tests {
             &expect![[r#"
                 TableStmt@0..13
                   TableKw@0..5 "table"
-                  Space@5..6 " "
+                  Whitespace@5..6 " "
                   Ident@6..7
                     Identifier@6..7 "T"
-                  Space@7..8 " "
+                  Whitespace@7..8 " "
                   Eq@8..9 "="
-                  Space@9..10 " "
+                  Whitespace@9..10 " "
                   Ident@10..13
                     Identifier@10..13 "Row"
             "#]],
@@ -1507,21 +1507,21 @@ mod tests {
             &expect![[r#"
                 ImplStmt@0..54
                   ImplKw@0..4 "impl"
-                  Space@4..5 " "
+                  Whitespace@4..5 " "
                   TraitRef@5..9
                     Ident@5..9
                       Identifier@5..9 "Show"
-                  Space@9..10 " "
+                  Whitespace@9..10 " "
                   ForKw@10..13 "for"
-                  Space@13..14 " "
+                  Whitespace@13..14 " "
                   Ident@14..19
                     Identifier@14..19 "Point"
-                  Space@19..20 " "
+                  Whitespace@19..20 " "
                   LeftCurly@20..21 "{"
-                  Space@21..22 " "
+                  Whitespace@21..22 " "
                   FuncStmt@22..52
                     DefKw@22..25 "def"
-                    Space@25..26 " "
+                    Whitespace@25..26 " "
                     Ident@26..30
                       Identifier@26..30 "show"
                     LeftParen@30..31 "("
@@ -1529,19 +1529,19 @@ mod tests {
                       Ident@31..35
                         Identifier@31..35 "self"
                     RightParen@35..36 ")"
-                    Space@36..37 " "
+                    Whitespace@36..37 " "
                     BlockStmt@37..52
                       LeftCurly@37..38 "{"
-                      Space@38..39 " "
+                      Whitespace@38..39 " "
                       ReturnStmt@39..50
                         ReturnKw@39..45 "return"
-                        Space@45..46 " "
+                        Whitespace@45..46 " "
                         IdentExpr@46..50
                           Ident@46..50
                             Identifier@46..50 "self"
-                      Space@50..51 " "
+                      Whitespace@50..51 " "
                       RightCurly@51..52 "}"
-                  Space@52..53 " "
+                  Whitespace@52..53 " "
                   RightCurly@53..54 "}"
             "#]],
         );
@@ -1554,15 +1554,15 @@ mod tests {
             &expect![[r#"
                 TraitStmt@0..36
                   TraitKw@0..5 "trait"
-                  Space@5..6 " "
+                  Whitespace@5..6 " "
                   Ident@6..10
                     Identifier@6..10 "Show"
-                  Space@10..11 " "
+                  Whitespace@10..11 " "
                   LeftCurly@11..12 "{"
-                  Space@12..13 " "
+                  Whitespace@12..13 " "
                   FuncStmt@13..34
                     DefKw@13..16 "def"
-                    Space@16..17 " "
+                    Whitespace@16..17 " "
                     Ident@17..21
                       Identifier@17..21 "show"
                     LeftParen@21..22 "("
@@ -1570,13 +1570,13 @@ mod tests {
                       Ident@22..26
                         Identifier@22..26 "self"
                     RightParen@26..27 ")"
-                    Space@27..28 " "
+                    Whitespace@27..28 " "
                     Arrow@28..30 "->"
-                    Space@30..31 " "
+                    Whitespace@30..31 " "
                     NamedTypeAnnotation@31..34
                       Ident@31..34
                         Identifier@31..34 "str"
-                  Space@34..35 " "
+                  Whitespace@34..35 " "
                   RightCurly@35..36 "}"
             "#]],
         );

@@ -200,7 +200,7 @@ fn highlight_name(token: &SyntaxToken) -> Option<Highlight> {
         SyntaxKind::GroupByItem if is_named_by(&parent, &ident, ast::GroupByItem::qualifier) => {
             HlTag::Local.into()
         }
-        SyntaxKind::RenameItem if is_named_by(&parent, &ident, ast::RenameItem::to) => {
+        SyntaxKind::RenameItem if is_named_by(&parent, &ident, ast::RenameItem::alias) => {
             HlTag::Field | HlMod::Declaration
         }
         SyntaxKind::GroupByItem if is_named_by(&parent, &ident, ast::GroupByItem::alias) => {

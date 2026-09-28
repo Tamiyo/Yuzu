@@ -5,11 +5,11 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+yuzu_lexer = { path = "../yuzu_lexer" }
 yuzu_syntax = { path = "../yuzu_syntax" }
 
 [dev-dependencies]
 yuzu_diagnostics = { path = "../yuzu_diagnostics" }
-yuzu_lexer = { path = "../yuzu_lexer" }
 yuzu_parser = { path = "../yuzu_parser" }
 
 [lints]

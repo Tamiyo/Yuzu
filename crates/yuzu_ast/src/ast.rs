@@ -388,20 +388,6 @@ impl StructField {
         support::child(self.syntax())
     }
 
-    pub fn mutability(&self) -> Mutability {
-        let is_mut = self
-            .syntax()
-            .children_with_tokens()
-            .filter_map(SyntaxElement::into_token)
-            .any(|token| token.kind() == SyntaxKind::MutKw);
-
-        if is_mut {
-            Mutability::Mutable
-        } else {
-            Mutability::Immutable
-        }
-    }
-
     #[must_use]
     pub fn ty(&self) -> Option<TypeAnnotation> {
         support::child(self.syntax())
@@ -480,11 +466,6 @@ impl FuncStmt {
 
     pub fn params(&self) -> impl Iterator<Item = FuncParam> + use<> {
         support::children(self.syntax())
-    }
-
-    #[must_use]
-    pub fn param_count(&self) -> usize {
-        self.params().count()
     }
 
     #[must_use]
@@ -838,13 +819,15 @@ impl RenameItem {
             .flatten()
     }
 
+    /// The column renamed.
     #[must_use]
-    pub fn from(&self) -> Option<Ident> {
+    pub fn column(&self) -> Option<Ident> {
         support::nth_child(self.syntax(), usize::from(self.is_qualified()))
     }
 
+    /// The column's new name.
     #[must_use]
-    pub fn to(&self) -> Option<Ident> {
+    pub fn alias(&self) -> Option<Ident> {
         support::nth_child(self.syntax(), usize::from(self.is_qualified()) + 1)
     }
 
@@ -872,7 +855,7 @@ pub enum JoinKind {
 }
 
 impl JoinKind {
-    fn from_kind(kind: SyntaxKind) -> Option<Self> {
+    fn from_token(kind: SyntaxKind) -> Option<Self> {
         Some(match kind {
             SyntaxKind::InnerKw => JoinKind::Inner,
             SyntaxKind::LeftKw => JoinKind::Left,
@@ -885,11 +868,14 @@ impl JoinKind {
 
 ast_node!(JoinStage);
 impl JoinStage {
-    pub fn kind(&self) -> Option<JoinKind> {
+    /// The join's kind: inner unless a keyword says otherwise.
+    #[must_use]
+    pub fn kind(&self) -> JoinKind {
         self.syntax()
             .children_with_tokens()
             .filter_map(SyntaxElement::into_token)
-            .find_map(|token| JoinKind::from_kind(token.kind()))
+            .find_map(|token| JoinKind::from_token(token.kind()))
+            .unwrap_or(JoinKind::Inner)
     }
 
     #[must_use]
@@ -1054,30 +1040,57 @@ impl BoolLiteral {
 
 ast_node!(IntLiteral);
 impl IntLiteral {
+    /// The literal's value, when a `u64` holds it. `0x` and `0b` give the
+    /// base, and `_` separates digits.
     #[must_use]
     pub fn value(&self) -> Option<u64> {
-        self.0.first_token()?.text().parse().ok()
+        let token = self.0.first_token()?;
+        let text = token.text();
+        let (digits, radix) = match text.get(..2) {
+            Some("0x" | "0X") => (&text[2..], 16),
+            Some("0b" | "0B") => (&text[2..], 2),
+            _ => (text, 10),
+        };
+        digits
+            .chars()
+            .filter(|&c| c != '_')
+            .try_fold(0_u64, |value, c| {
+                value
+                    .checked_mul(u64::from(radix))?
+                    .checked_add(u64::from(c.to_digit(radix)?))
+            })
     }
 }
 
 ast_node!(FloatLiteral);
 impl FloatLiteral {
+    /// The literal's value. `_` separates digits.
     #[must_use]
     pub fn value(&self) -> Option<f64> {
-        self.0.first_token()?.text().parse().ok()
+        let token = self.0.first_token()?;
+        let text = token.text();
+        if text.contains('_') {
+            text.replace('_', "").parse().ok()
+        } else {
+            text.parse().ok()
+        }
     }
 }
 
 ast_node!(StringLiteral);
 impl StringLiteral {
+    /// The literal's text, with its escapes replaced; a raw string's text as
+    /// written. A new `String` for each call.
     #[must_use]
     pub fn value(&self) -> Option<String> {
-        let text = self.0.first_token()?.text().to_string();
-        let unquoted = text
-            .strip_prefix('"')
-            .and_then(|inner| inner.strip_suffix('"'))
-            .unwrap_or(text.as_str());
-        Some(unquoted.to_string())
+        let token = self.0.first_token()?;
+        let text = token.text();
+        if token.kind() == SyntaxKind::RawStringLit {
+            let inner = text.strip_prefix("r\"")?.strip_suffix('"')?;
+            return Some(inner.to_owned());
+        }
+        let inner = text.strip_prefix('"')?.strip_suffix('"')?;
+        Some(yuzu_lexer::escape::unescape(inner))
     }
 }
 
@@ -1085,20 +1098,23 @@ impl StringLiteral {
 mod tests {
     use super::*;
     use yuzu_diagnostics::{diagnostics::engine::DiagnosticsEngine, source_map::SourceMap};
-    use yuzu_lexer::lexer::{Lexer, Token};
+
+    fn parsed(input: &str) -> SyntaxNode {
+        let mut diagnostics = DiagnosticsEngine::new();
+        let source_id = SourceMap::new().add("test".to_owned(), input.to_owned());
+        yuzu_parser::parse_text(input, &mut diagnostics, source_id)
+    }
+
+    fn first<N: AstNode>(input: &str) -> N {
+        parsed(input)
+            .descendants()
+            .find_map(N::cast)
+            .expect("the input holds the node")
+    }
 
     /// The outermost join stage, so a chained query yields its last stage.
     fn join(input: &str) -> JoinStage {
-        let tokens: Vec<Token> = Lexer::new(input).collect();
-        let mut diagnostics = DiagnosticsEngine::new();
-        let mut sources = SourceMap::new();
-        let source_id = sources.add("test".to_string(), input.to_string());
-
-        let syntax = yuzu_parser::parse(&tokens, &mut diagnostics, source_id);
-        syntax
-            .descendants()
-            .find_map(JoinStage::cast)
-            .expect("input has a join stage")
+        first(input)
     }
 
     fn text(ident: Option<Ident>) -> Option<String> {
@@ -1106,37 +1122,11 @@ mod tests {
     }
 
     fn rename(input: &str) -> RenameItem {
-        let tokens: Vec<Token> = Lexer::new(input).collect();
-        let mut diagnostics = DiagnosticsEngine::new();
-        let mut sources = SourceMap::new();
-        let source_id = sources.add("test".to_string(), input.to_string());
-
-        let syntax = yuzu_parser::parse(&tokens, &mut diagnostics, source_id);
-        syntax
-            .descendants()
-            .find_map(RenameItem::cast)
-            .expect("input has a rename item")
+        first(input)
     }
 
     fn aggregate(input: &str) -> AggregateStage {
-        let tokens: Vec<Token> = Lexer::new(input).collect();
-        let mut diagnostics = DiagnosticsEngine::new();
-        let mut sources = SourceMap::new();
-        let source_id = sources.add("test".to_string(), input.to_string());
-
-        let syntax = yuzu_parser::parse(&tokens, &mut diagnostics, source_id);
-        syntax
-            .descendants()
-            .find_map(AggregateStage::cast)
-            .expect("input has an aggregate stage")
-    }
-
-    fn parsed(input: &str) -> SyntaxNode {
-        let tokens: Vec<Token> = Lexer::new(input).collect();
-        let mut diagnostics = DiagnosticsEngine::new();
-        let mut sources = SourceMap::new();
-        let source_id = sources.add("test".to_string(), input.to_string());
-        yuzu_parser::parse(&tokens, &mut diagnostics, source_id)
+        first(input)
     }
 
     /// Private unless `pub` says otherwise, and a field answers for itself
@@ -1317,25 +1307,11 @@ mod tests {
 
     #[test]
     fn func_stmt_reads_the_agg_marker() {
-        let tokens: Vec<Token> =
-            Lexer::new("agg def agg_of(x: int64) -> int64 { return sum(x) }").collect();
-        let mut diagnostics = DiagnosticsEngine::new();
-        let mut sources = SourceMap::new();
-        let source_id = sources.add("test".to_string(), "x".to_string());
-        let syntax = yuzu_parser::parse(&tokens, &mut diagnostics, source_id);
-        let func = syntax
-            .descendants()
-            .find_map(FuncStmt::cast)
-            .expect("input has a function");
+        let func: FuncStmt = first("agg def agg_of(x: int64) -> int64 { return sum(x) }");
         assert!(func.is_agg());
         assert_eq!(text(func.name()).as_deref(), Some("agg_of"));
 
-        let tokens: Vec<Token> = Lexer::new("def plain(x: int64) -> int64 { return x }").collect();
-        let syntax = yuzu_parser::parse(&tokens, &mut diagnostics, source_id);
-        let func = syntax
-            .descendants()
-            .find_map(FuncStmt::cast)
-            .expect("input has a function");
+        let func: FuncStmt = first("def plain(x: int64) -> int64 { return x }");
         assert!(!func.is_agg());
     }
 
@@ -1343,16 +1319,16 @@ mod tests {
     fn rename_item_reads_a_qualifier() {
         let item = rename("from t |> rename e.id as eid");
         assert_eq!(text(item.qualifier()).as_deref(), Some("e"));
-        assert_eq!(text(item.from()).as_deref(), Some("id"));
-        assert_eq!(text(item.to()).as_deref(), Some("eid"));
+        assert_eq!(text(item.column()).as_deref(), Some("id"));
+        assert_eq!(text(item.alias()).as_deref(), Some("eid"));
     }
 
     #[test]
     fn rename_item_without_a_qualifier() {
         let item = rename("from t |> rename id as eid");
         assert_eq!(text(item.qualifier()), None);
-        assert_eq!(text(item.from()).as_deref(), Some("id"));
-        assert_eq!(text(item.to()).as_deref(), Some("eid"));
+        assert_eq!(text(item.column()).as_deref(), Some("id"));
+        assert_eq!(text(item.alias()).as_deref(), Some("eid"));
     }
 
     #[test]
@@ -1360,7 +1336,7 @@ mod tests {
         let join = join("from t |> join u as d on a == d.b");
         assert_eq!(text(join.relation()).as_deref(), Some("u"));
         assert_eq!(text(join.alias()).as_deref(), Some("d"));
-        assert_eq!(join.kind(), None);
+        assert_eq!(join.kind(), JoinKind::Inner);
         assert!(join.on().is_some());
         assert!(join.using().is_none());
     }
@@ -1378,19 +1354,19 @@ mod tests {
     fn join_reads_its_kind() {
         assert_eq!(
             join("from t |> left join u on a == b").kind(),
-            Some(JoinKind::Left)
+            JoinKind::Left
         );
         assert_eq!(
             join("from t |> right join u on a == b").kind(),
-            Some(JoinKind::Right)
+            JoinKind::Right
         );
         assert_eq!(
             join("from t |> full join u on a == b").kind(),
-            Some(JoinKind::Full)
+            JoinKind::Full
         );
         assert_eq!(
             join("from t |> inner join u on a == b").kind(),
-            Some(JoinKind::Inner)
+            JoinKind::Inner
         );
     }
 
@@ -1423,9 +1399,9 @@ mod tests {
                 .collect();
 
         assert_eq!(text(joins[0].relation()).as_deref(), Some("u"));
-        assert_eq!(joins[0].kind(), Some(JoinKind::Left));
+        assert_eq!(joins[0].kind(), JoinKind::Left);
         assert_eq!(text(joins[1].relation()).as_deref(), Some("v"));
         assert_eq!(text(joins[1].alias()).as_deref(), Some("x"));
-        assert_eq!(joins[1].kind(), None);
+        assert_eq!(joins[1].kind(), JoinKind::Inner);
     }
 }

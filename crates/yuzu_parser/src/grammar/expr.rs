@@ -350,14 +350,14 @@ mod tests {
             "x: 1",
             parse_struct_field_init,
             &expect![[r#"
-            StructFieldInit@0..4
-              Ident@0..1
-                Identifier@0..1 "x"
-              Colon@1..2 ":"
-              Space@2..3 " "
-              IntLiteral@3..4
-                IntLit@3..4 "1"
-        "#]],
+                StructFieldInit@0..4
+                  Ident@0..1
+                    Identifier@0..1 "x"
+                  Colon@1..2 ":"
+                  Whitespace@2..3 " "
+                  IntLiteral@3..4
+                    IntLit@3..4 "1"
+            "#]],
         );
     }
 
@@ -370,26 +370,26 @@ mod tests {
                 StructExpr@0..20
                   Ident@0..5
                     Identifier@0..5 "Point"
-                  Space@5..6 " "
+                  Whitespace@5..6 " "
                   LeftCurly@6..7 "{"
-                  Space@7..8 " "
+                  Whitespace@7..8 " "
                   StructFieldInit@8..12
                     Ident@8..9
                       Identifier@8..9 "x"
                     Colon@9..10 ":"
-                    Space@10..11 " "
+                    Whitespace@10..11 " "
                     IntLiteral@11..12
                       IntLit@11..12 "1"
                   Comma@12..13 ","
-                  Space@13..14 " "
+                  Whitespace@13..14 " "
                   StructFieldInit@14..18
                     Ident@14..15
                       Identifier@14..15 "y"
                     Colon@15..16 ":"
-                    Space@16..17 " "
+                    Whitespace@16..17 " "
                     IntLiteral@17..18
                       IntLit@17..18 "2"
-                  Space@18..19 " "
+                  Whitespace@18..19 " "
                   RightCurly@19..20 "}"
             "#]],
         );
@@ -401,20 +401,20 @@ mod tests {
             "[1, 2, 3]",
             parse_list_expr,
             &expect![[r#"
-            ListExpr@0..9
-              LeftSquare@0..1 "["
-              IntLiteral@1..2
-                IntLit@1..2 "1"
-              Comma@2..3 ","
-              Space@3..4 " "
-              IntLiteral@4..5
-                IntLit@4..5 "2"
-              Comma@5..6 ","
-              Space@6..7 " "
-              IntLiteral@7..8
-                IntLit@7..8 "3"
-              RightSquare@8..9 "]"
-        "#]],
+                ListExpr@0..9
+                  LeftSquare@0..1 "["
+                  IntLiteral@1..2
+                    IntLit@1..2 "1"
+                  Comma@2..3 ","
+                  Whitespace@3..4 " "
+                  IntLiteral@4..5
+                    IntLit@4..5 "2"
+                  Comma@5..6 ","
+                  Whitespace@6..7 " "
+                  IntLiteral@7..8
+                    IntLit@7..8 "3"
+                  RightSquare@8..9 "]"
+            "#]],
         );
     }
 
@@ -429,9 +429,9 @@ mod tests {
                   BinaryExpr@1..6
                     IntLiteral@1..2
                       IntLit@1..2 "1"
-                    Space@2..3 " "
+                    Whitespace@2..3 " "
                     Plus@3..4 "+"
-                    Space@4..5 " "
+                    Whitespace@4..5 " "
                     IntLiteral@5..6
                       IntLit@5..6 "2"
                   RightParen@6..7 ")"
@@ -459,16 +459,16 @@ mod tests {
             "(1, 2)",
             parse_arg_list,
             &expect![[r#"
-            ArgList@0..6
-              LeftParen@0..1 "("
-              IntLiteral@1..2
-                IntLit@1..2 "1"
-              Comma@2..3 ","
-              Space@3..4 " "
-              IntLiteral@4..5
-                IntLit@4..5 "2"
-              RightParen@5..6 ")"
-        "#]],
+                ArgList@0..6
+                  LeftParen@0..1 "("
+                  IntLiteral@1..2
+                    IntLit@1..2 "1"
+                  Comma@2..3 ","
+                  Whitespace@3..4 " "
+                  IntLiteral@4..5
+                    IntLit@4..5 "2"
+                  RightParen@5..6 ")"
+            "#]],
         );
     }
 
@@ -491,9 +491,9 @@ mod tests {
                 BinaryExpr@0..5
                   IntLiteral@0..1
                     IntLit@0..1 "1"
-                  Space@1..2 " "
+                  Whitespace@1..2 " "
                   Plus@2..3 "+"
-                  Space@3..4 " "
+                  Whitespace@3..4 " "
                   IntLiteral@4..5
                     IntLit@4..5 "2"
             "#]],
@@ -508,15 +508,15 @@ mod tests {
                 BinaryExpr@0..9
                   IntLiteral@0..1
                     IntLit@0..1 "1"
-                  Space@1..2 " "
+                  Whitespace@1..2 " "
                   Plus@2..3 "+"
-                  Space@3..4 " "
+                  Whitespace@3..4 " "
                   BinaryExpr@4..9
                     IntLiteral@4..5
                       IntLit@4..5 "2"
-                    Space@5..6 " "
+                    Whitespace@5..6 " "
                     Star@6..7 "*"
-                    Space@7..8 " "
+                    Whitespace@7..8 " "
                     IntLiteral@8..9
                       IntLit@8..9 "3"
             "#]],
@@ -528,27 +528,27 @@ mod tests {
         check(
             "1 + 2 % 3 * 4",
             &expect![[r#"
-            BinaryExpr@0..13
-              IntLiteral@0..1
-                IntLit@0..1 "1"
-              Space@1..2 " "
-              Plus@2..3 "+"
-              Space@3..4 " "
-              BinaryExpr@4..13
-                BinaryExpr@4..9
-                  IntLiteral@4..5
-                    IntLit@4..5 "2"
-                  Space@5..6 " "
-                  Percent@6..7 "%"
-                  Space@7..8 " "
-                  IntLiteral@8..9
-                    IntLit@8..9 "3"
-                Space@9..10 " "
-                Star@10..11 "*"
-                Space@11..12 " "
-                IntLiteral@12..13
-                  IntLit@12..13 "4"
-        "#]],
+                BinaryExpr@0..13
+                  IntLiteral@0..1
+                    IntLit@0..1 "1"
+                  Whitespace@1..2 " "
+                  Plus@2..3 "+"
+                  Whitespace@3..4 " "
+                  BinaryExpr@4..13
+                    BinaryExpr@4..9
+                      IntLiteral@4..5
+                        IntLit@4..5 "2"
+                      Whitespace@5..6 " "
+                      Percent@6..7 "%"
+                      Whitespace@7..8 " "
+                      IntLiteral@8..9
+                        IntLit@8..9 "3"
+                    Whitespace@9..10 " "
+                    Star@10..11 "*"
+                    Whitespace@11..12 " "
+                    IntLiteral@12..13
+                      IntLit@12..13 "4"
+            "#]],
         );
     }
 
@@ -560,15 +560,15 @@ mod tests {
                 BinaryExpr@0..11
                   IntLiteral@0..1
                     IntLit@0..1 "2"
-                  Space@1..2 " "
+                  Whitespace@1..2 " "
                   StarStar@2..4 "**"
-                  Space@4..5 " "
+                  Whitespace@4..5 " "
                   BinaryExpr@5..11
                     IntLiteral@5..6
                       IntLit@5..6 "3"
-                    Space@6..7 " "
+                    Whitespace@6..7 " "
                     StarStar@7..9 "**"
-                    Space@9..10 " "
+                    Whitespace@9..10 " "
                     IntLiteral@10..11
                       IntLit@10..11 "4"
             "#]],
@@ -585,9 +585,9 @@ mod tests {
                   BinaryExpr@1..7
                     IntLiteral@1..2
                       IntLit@1..2 "2"
-                    Space@2..3 " "
+                    Whitespace@2..3 " "
                     StarStar@3..5 "**"
-                    Space@5..6 " "
+                    Whitespace@5..6 " "
                     IntLiteral@6..7
                       IntLit@6..7 "2"
             "#]],
@@ -605,15 +605,15 @@ mod tests {
                     BinaryExpr@1..6
                       IntLiteral@1..2
                         IntLit@1..2 "1"
-                      Space@2..3 " "
+                      Whitespace@2..3 " "
                       Plus@3..4 "+"
-                      Space@4..5 " "
+                      Whitespace@4..5 " "
                       IntLiteral@5..6
                         IntLit@5..6 "2"
                     RightParen@6..7 ")"
-                  Space@7..8 " "
+                  Whitespace@7..8 " "
                   Star@8..9 "*"
-                  Space@9..10 " "
+                  Whitespace@9..10 " "
                   IntLiteral@10..11
                     IntLit@10..11 "3"
             "#]],
@@ -651,17 +651,17 @@ mod tests {
                 StructExpr@0..10
                   Ident@0..1
                     Identifier@0..1 "P"
-                  Space@1..2 " "
+                  Whitespace@1..2 " "
                   LeftCurly@2..3 "{"
-                  Space@3..4 " "
+                  Whitespace@3..4 " "
                   StructFieldInit@4..8
                     Ident@4..5
                       Identifier@4..5 "x"
                     Colon@5..6 ":"
-                    Space@6..7 " "
+                    Whitespace@6..7 " "
                     IntLiteral@7..8
                       IntLit@7..8 "1"
-                  Space@8..9 " "
+                  Whitespace@8..9 " "
                   RightCurly@9..10 "}"
             "#]],
         );
@@ -676,11 +676,11 @@ mod tests {
                   IdentExpr@0..1
                     Ident@0..1
                       Identifier@0..1 "a"
-                  Space@1..2 " "
+                  Whitespace@1..2 " "
                   NotKw@2..5 "not"
-                  Space@5..6 " "
+                  Whitespace@5..6 " "
                   InKw@6..8 "in"
-                  Space@8..9 " "
+                  Whitespace@8..9 " "
                   IdentExpr@9..10
                     Ident@9..10
                       Identifier@9..10 "b"
@@ -693,20 +693,20 @@ mod tests {
         check(
             "[1, 2, 3]",
             &expect![[r#"
-            ListExpr@0..9
-              LeftSquare@0..1 "["
-              IntLiteral@1..2
-                IntLit@1..2 "1"
-              Comma@2..3 ","
-              Space@3..4 " "
-              IntLiteral@4..5
-                IntLit@4..5 "2"
-              Comma@5..6 ","
-              Space@6..7 " "
-              IntLiteral@7..8
-                IntLit@7..8 "3"
-              RightSquare@8..9 "]"
-        "#]],
+                ListExpr@0..9
+                  LeftSquare@0..1 "["
+                  IntLiteral@1..2
+                    IntLit@1..2 "1"
+                  Comma@2..3 ","
+                  Whitespace@3..4 " "
+                  IntLiteral@4..5
+                    IntLit@4..5 "2"
+                  Comma@5..6 ","
+                  Whitespace@6..7 " "
+                  IntLiteral@7..8
+                    IntLit@7..8 "3"
+                  RightSquare@8..9 "]"
+            "#]],
         );
     }
 }

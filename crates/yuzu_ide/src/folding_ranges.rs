@@ -91,7 +91,7 @@ fn fold_comments(root: &SyntaxNode, folds: &mut Vec<Fold>) {
                 newlines = 0;
             }
             SyntaxKind::Newline => newlines += 1,
-            SyntaxKind::Space => {}
+            SyntaxKind::Whitespace => {}
             _ => {
                 if let Some(range) = run.take() {
                     folds.push(Fold {

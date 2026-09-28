@@ -124,7 +124,7 @@ impl<'c> AstToYzl<'c, '_> {
 
     /// `None`, after a report, when `int64` cannot hold the literal.
     fn int64_value(&mut self, int: &ast::IntLiteral) -> Option<i64> {
-        let value = i64::try_from(int.value().unwrap_or_default()).ok();
+        let value = int.value().and_then(|value| i64::try_from(value).ok());
         if value.is_none() {
             self.report(int, "integer literal is out of range for `int64`");
         }

@@ -321,8 +321,10 @@ impl<'c> AstToYzl<'c, '_> {
         let mut to: Vec<&'c str> = Vec::new();
         let mut renames = Vec::new();
         for item in rename.items() {
-            let (Some(old), Some(new)) = (self.read_ident(item.from()), self.read_ident(item.to()))
-            else {
+            let (Some(old), Some(new)) = (
+                self.read_ident(item.column()),
+                self.read_ident(item.alias()),
+            ) else {
                 self.report(&item, "rename item is missing a column name");
                 continue;
             };
@@ -379,10 +381,10 @@ impl<'c> AstToYzl<'c, '_> {
     ) -> Value<'c, 'a> {
         let loc = self.location(join);
         let kind = match join.kind() {
-            Some(ast::JoinKind::Left) => JoinKind::Left,
-            Some(ast::JoinKind::Right) => JoinKind::Right,
-            Some(ast::JoinKind::Full) => JoinKind::Full,
-            Some(ast::JoinKind::Inner) | None => JoinKind::Inner,
+            ast::JoinKind::Inner => JoinKind::Inner,
+            ast::JoinKind::Left => JoinKind::Left,
+            ast::JoinKind::Right => JoinKind::Right,
+            ast::JoinKind::Full => JoinKind::Full,
         };
         let Some(relation) = self.read_ident(join.relation()) else {
             return self.parser_hole(

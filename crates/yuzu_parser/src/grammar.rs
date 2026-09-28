@@ -199,29 +199,29 @@ mod tests {
                 Root@0..29
                   LetStmt@0..7
                     LetKw@0..3 "let"
-                    Space@3..4 " "
+                    Whitespace@3..4 " "
                     Eq@4..5 "="
-                    Space@5..6 " "
+                    Whitespace@5..6 " "
                     IntLiteral@6..7
                       IntLit@6..7 "1"
                   Newline@7..8 "\n"
                   StructStmt@8..29
                     StructKw@8..14 "struct"
-                    Space@14..15 " "
+                    Whitespace@14..15 " "
                     Ident@15..16
                       Identifier@15..16 "P"
-                    Space@16..17 " "
+                    Whitespace@16..17 " "
                     LeftCurly@17..18 "{"
-                    Space@18..19 " "
+                    Whitespace@18..19 " "
                     StructField@19..27
                       Ident@19..20
                         Identifier@19..20 "x"
                       Colon@20..21 ":"
-                      Space@21..22 " "
+                      Whitespace@21..22 " "
                       NamedTypeAnnotation@22..27
                         Ident@22..27
                           Identifier@22..27 "int64"
-                    Space@27..28 " "
+                    Whitespace@27..28 " "
                     RightCurly@28..29 "}"
                 4..5 expected one of mut, identifier, found ="#]],
         );
@@ -237,20 +237,20 @@ mod tests {
                     Pipeline@0..27
                       FromSource@0..6
                         FromKw@0..4 "from"
-                        Space@4..5 " "
+                        Whitespace@4..5 " "
                         Ident@5..6
                           Identifier@5..6 "t"
                       Newline@6..7 "\n"
                       WhereStage@7..15
                         Pipe@7..9 "|>"
-                        Space@9..10 " "
+                        Whitespace@9..10 " "
                         WhereKw@10..15 "where"
                       Newline@15..16 "\n"
                       SelectStage@16..27
                         Pipe@16..18 "|>"
-                        Space@18..19 " "
+                        Whitespace@18..19 " "
                         SelectKw@19..25 "select"
-                        Space@25..26 " "
+                        Whitespace@25..26 " "
                         SelectItem@26..27
                           IdentExpr@26..27
                             Ident@26..27
@@ -264,21 +264,21 @@ mod tests {
         test_support::check_recovery(
             "f(a, )",
             &expect![[r#"
-            Root@0..6
-              ExprStmt@0..6
-                CallExpr@0..6
-                  IdentExpr@0..1
-                    Ident@0..1
-                      Identifier@0..1 "f"
-                  ArgList@1..6
-                    LeftParen@1..2 "("
-                    IdentExpr@2..3
-                      Ident@2..3
-                        Identifier@2..3 "a"
-                    Comma@3..4 ","
-                    Space@4..5 " "
-                    RightParen@5..6 ")"
-            5..6 expected expression, found `)`"#]],
+                Root@0..6
+                  ExprStmt@0..6
+                    CallExpr@0..6
+                      IdentExpr@0..1
+                        Ident@0..1
+                          Identifier@0..1 "f"
+                      ArgList@1..6
+                        LeftParen@1..2 "("
+                        IdentExpr@2..3
+                          Ident@2..3
+                            Identifier@2..3 "a"
+                        Comma@3..4 ","
+                        Whitespace@4..5 " "
+                        RightParen@5..6 ")"
+                5..6 expected expression, found `)`"#]],
         );
     }
 
@@ -287,20 +287,20 @@ mod tests {
         test_support::check_recovery(
             "[1, , 2]",
             &expect![[r#"
-            Root@0..8
-              ExprStmt@0..8
-                ListExpr@0..8
-                  LeftSquare@0..1 "["
-                  IntLiteral@1..2
-                    IntLit@1..2 "1"
-                  Comma@2..3 ","
-                  Space@3..4 " "
-                  Comma@4..5 ","
-                  Space@5..6 " "
-                  IntLiteral@6..7
-                    IntLit@6..7 "2"
-                  RightSquare@7..8 "]"
-            4..5 expected expression, found `,`"#]],
+                Root@0..8
+                  ExprStmt@0..8
+                    ListExpr@0..8
+                      LeftSquare@0..1 "["
+                      IntLiteral@1..2
+                        IntLit@1..2 "1"
+                      Comma@2..3 ","
+                      Whitespace@3..4 " "
+                      Comma@4..5 ","
+                      Whitespace@5..6 " "
+                      IntLiteral@6..7
+                        IntLit@6..7 "2"
+                      RightSquare@7..8 "]"
+                4..5 expected expression, found `,`"#]],
         );
     }
 
@@ -309,22 +309,22 @@ mod tests {
         test_support::check_recovery(
             ")\nlet x = 1",
             &expect![[r#"
-            Root@0..11
-              ExprStmt@0..0
-              Error@0..1
-                RightParen@0..1 ")"
-              Newline@1..2 "\n"
-              LetStmt@2..11
-                LetKw@2..5 "let"
-                Space@5..6 " "
-                Ident@6..7
-                  Identifier@6..7 "x"
-                Space@7..8 " "
-                Eq@8..9 "="
-                Space@9..10 " "
-                IntLiteral@10..11
-                  IntLit@10..11 "1"
-            0..1 expected expression, found `)`"#]],
+                Root@0..11
+                  ExprStmt@0..0
+                  Error@0..1
+                    RightParen@0..1 ")"
+                  Newline@1..2 "\n"
+                  LetStmt@2..11
+                    LetKw@2..5 "let"
+                    Whitespace@5..6 " "
+                    Ident@6..7
+                      Identifier@6..7 "x"
+                    Whitespace@7..8 " "
+                    Eq@8..9 "="
+                    Whitespace@9..10 " "
+                    IntLiteral@10..11
+                      IntLit@10..11 "1"
+                0..1 expected expression, found `)`"#]],
         );
     }
 
@@ -333,35 +333,35 @@ mod tests {
         test_support::check_recovery(
             "def f() { ) }\nlet x = 1",
             &expect![[r#"
-            Root@0..23
-              FuncStmt@0..13
-                DefKw@0..3 "def"
-                Space@3..4 " "
-                Ident@4..5
-                  Identifier@4..5 "f"
-                LeftParen@5..6 "("
-                RightParen@6..7 ")"
-                Space@7..8 " "
-                BlockStmt@8..13
-                  LeftCurly@8..9 "{"
-                  Space@9..10 " "
-                  ExprStmt@10..10
-                  Error@10..11
-                    RightParen@10..11 ")"
-                  Space@11..12 " "
-                  RightCurly@12..13 "}"
-              Newline@13..14 "\n"
-              LetStmt@14..23
-                LetKw@14..17 "let"
-                Space@17..18 " "
-                Ident@18..19
-                  Identifier@18..19 "x"
-                Space@19..20 " "
-                Eq@20..21 "="
-                Space@21..22 " "
-                IntLiteral@22..23
-                  IntLit@22..23 "1"
-            10..11 expected expression, found `)`"#]],
+                Root@0..23
+                  FuncStmt@0..13
+                    DefKw@0..3 "def"
+                    Whitespace@3..4 " "
+                    Ident@4..5
+                      Identifier@4..5 "f"
+                    LeftParen@5..6 "("
+                    RightParen@6..7 ")"
+                    Whitespace@7..8 " "
+                    BlockStmt@8..13
+                      LeftCurly@8..9 "{"
+                      Whitespace@9..10 " "
+                      ExprStmt@10..10
+                      Error@10..11
+                        RightParen@10..11 ")"
+                      Whitespace@11..12 " "
+                      RightCurly@12..13 "}"
+                  Newline@13..14 "\n"
+                  LetStmt@14..23
+                    LetKw@14..17 "let"
+                    Whitespace@17..18 " "
+                    Ident@18..19
+                      Identifier@18..19 "x"
+                    Whitespace@19..20 " "
+                    Eq@20..21 "="
+                    Whitespace@21..22 " "
+                    IntLiteral@22..23
+                      IntLit@22..23 "1"
+                10..11 expected expression, found `)`"#]],
         );
     }
 
@@ -373,18 +373,18 @@ mod tests {
                 Root@0..19
                   StructStmt@0..19
                     StructKw@0..6 "struct"
-                    Space@6..7 " "
+                    Whitespace@6..7 " "
                     LeftCurly@7..8 "{"
-                    Space@8..9 " "
+                    Whitespace@8..9 " "
                     StructField@9..17
                       Ident@9..10
                         Identifier@9..10 "x"
                       Colon@10..11 ":"
-                      Space@11..12 " "
+                      Whitespace@11..12 " "
                       NamedTypeAnnotation@12..17
                         Ident@12..17
                           Identifier@12..17 "int64"
-                    Space@17..18 " "
+                    Whitespace@17..18 " "
                     RightCurly@18..19 "}"
                 7..8 expected identifier, found {"#]],
         );
@@ -395,34 +395,34 @@ mod tests {
         test_support::check_recovery(
             "def f(x: int64 { return x }",
             &expect![[r#"
-            Root@0..27
-              FuncStmt@0..27
-                DefKw@0..3 "def"
-                Space@3..4 " "
-                Ident@4..5
-                  Identifier@4..5 "f"
-                LeftParen@5..6 "("
-                FuncParam@6..14
-                  Ident@6..7
-                    Identifier@6..7 "x"
-                  Colon@7..8 ":"
-                  Space@8..9 " "
-                  NamedTypeAnnotation@9..14
-                    Ident@9..14
-                      Identifier@9..14 "int64"
-                Space@14..15 " "
-                BlockStmt@15..27
-                  LeftCurly@15..16 "{"
-                  Space@16..17 " "
-                  ReturnStmt@17..25
-                    ReturnKw@17..23 "return"
-                    Space@23..24 " "
-                    IdentExpr@24..25
-                      Ident@24..25
-                        Identifier@24..25 "x"
-                  Space@25..26 " "
-                  RightCurly@26..27 "}"
-            15..16 expected one of [, ,, ), found {"#]],
+                Root@0..27
+                  FuncStmt@0..27
+                    DefKw@0..3 "def"
+                    Whitespace@3..4 " "
+                    Ident@4..5
+                      Identifier@4..5 "f"
+                    LeftParen@5..6 "("
+                    FuncParam@6..14
+                      Ident@6..7
+                        Identifier@6..7 "x"
+                      Colon@7..8 ":"
+                      Whitespace@8..9 " "
+                      NamedTypeAnnotation@9..14
+                        Ident@9..14
+                          Identifier@9..14 "int64"
+                    Whitespace@14..15 " "
+                    BlockStmt@15..27
+                      LeftCurly@15..16 "{"
+                      Whitespace@16..17 " "
+                      ReturnStmt@17..25
+                        ReturnKw@17..23 "return"
+                        Whitespace@23..24 " "
+                        IdentExpr@24..25
+                          Ident@24..25
+                            Identifier@24..25 "x"
+                      Whitespace@25..26 " "
+                      RightCurly@26..27 "}"
+                15..16 expected one of [, ,, ), found {"#]],
         );
     }
 
@@ -434,12 +434,12 @@ mod tests {
                 Root@0..11
                   LetStmt@0..11
                     LetKw@0..3 "let"
-                    Space@3..4 " "
+                    Whitespace@3..4 " "
                     Error@4..7
                       DefKw@4..7 "def"
-                    Space@7..8 " "
+                    Whitespace@7..8 " "
                     Eq@8..9 "="
-                    Space@9..10 " "
+                    Whitespace@9..10 " "
                     IntLiteral@10..11
                       IntLit@10..11 "1"
                 4..7 expected one of mut, identifier, found def"#]],
@@ -457,21 +457,21 @@ mod tests {
                   Newline@3..4 "\n"
                   FuncStmt@4..24
                     DefKw@4..7 "def"
-                    Space@7..8 " "
+                    Whitespace@7..8 " "
                     Ident@8..9
                       Identifier@8..9 "f"
                     LeftParen@9..10 "("
                     RightParen@10..11 ")"
-                    Space@11..12 " "
+                    Whitespace@11..12 " "
                     BlockStmt@12..24
                       LeftCurly@12..13 "{"
-                      Space@13..14 " "
+                      Whitespace@13..14 " "
                       ReturnStmt@14..22
                         ReturnKw@14..20 "return"
-                        Space@20..21 " "
+                        Whitespace@20..21 " "
                         IntLiteral@21..22
                           IntLit@21..22 "1"
-                      Space@22..23 " "
+                      Whitespace@22..23 " "
                       RightCurly@23..24 "}"
                 4..7 expected one of mut, identifier, found def"#]],
         );

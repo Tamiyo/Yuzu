@@ -27,8 +27,8 @@ impl<'a> Iterator for Lexer<'a> {
 
         let range = {
             let StdRange { start, end } = self.inner.span();
-            let start = TextSize::try_from(start).unwrap();
-            let end = TextSize::try_from(end).unwrap();
+            let start = TextSize::try_from(start).expect("a source is shorter than 4 GiB");
+            let end = TextSize::try_from(end).expect("a source is shorter than 4 GiB");
 
             TextRange::new(start, end)
         };
@@ -64,53 +64,11 @@ mod tests {
 
     #[test]
     fn keywords_win_over_identifiers() {
-        let keywords = [
-            ("agg", TokenKind::AggKw),
-            ("aggregate", TokenKind::AggregateKw),
-            ("external", TokenKind::ExternalKw),
-            ("and", TokenKind::AndKw),
-            ("as", TokenKind::AsKw),
-            ("by", TokenKind::ByKw),
-            ("def", TokenKind::DefKw),
-            ("distinct", TokenKind::DistinctKw),
-            ("drop", TokenKind::DropKw),
-            ("extend", TokenKind::ExtendKw),
-            ("for", TokenKind::ForKw),
-            ("from", TokenKind::FromKw),
-            ("full", TokenKind::FullKw),
-            ("group", TokenKind::GroupKw),
-            ("impl", TokenKind::ImplKw),
-            ("import", TokenKind::ImportKw),
-            ("in", TokenKind::InKw),
-            ("inner", TokenKind::InnerKw),
-            ("join", TokenKind::JoinKw),
-            ("left", TokenKind::LeftKw),
-            ("let", TokenKind::LetKw),
-            ("limit", TokenKind::LimitKw),
-            ("mod", TokenKind::ModKw),
-            ("mut", TokenKind::MutKw),
-            ("not", TokenKind::NotKw),
-            ("offset", TokenKind::OffsetKw),
-            ("on", TokenKind::OnKw),
-            ("or", TokenKind::OrKw),
-            ("pub", TokenKind::PubKw),
-            ("rename", TokenKind::RenameKw),
-            ("return", TokenKind::ReturnKw),
-            ("right", TokenKind::RightKw),
-            ("select", TokenKind::SelectKw),
-            ("set", TokenKind::SetKw),
-            ("struct", TokenKind::StructKw),
-            ("table", TokenKind::TableKw),
-            ("trait", TokenKind::TraitKw),
-            ("using", TokenKind::UsingKw),
-            ("where", TokenKind::WhereKw),
-            ("true", TokenKind::BoolLit),
-            ("false", TokenKind::BoolLit),
-        ];
-
-        for (text, kind) in keywords {
-            assert_eq!(one(text), kind, "{text:?} should lex as its keyword");
+        for &kind in TokenKind::ALL.iter().filter(|kind| kind.is_keyword()) {
+            assert_eq!(one(&kind.to_string()), kind);
         }
+        assert_eq!(one("true"), TokenKind::BoolLit);
+        assert_eq!(one("false"), TokenKind::BoolLit);
     }
 
     #[test]
@@ -161,12 +119,28 @@ mod tests {
     }
 
     #[test]
+    fn a_run_of_spaces_and_tabs_is_one_token() {
+        assert_eq!(
+            kinds("a \t  b\r\nc\rd"),
+            [
+                TokenKind::Identifier,
+                TokenKind::Whitespace,
+                TokenKind::Identifier,
+                TokenKind::Newline,
+                TokenKind::Identifier,
+                TokenKind::Newline,
+                TokenKind::Identifier,
+            ],
+        );
+    }
+
+    #[test]
     fn trivia_and_unknown() {
         assert_eq!(
             kinds("a // c\nb"),
             [
                 TokenKind::Identifier,
-                TokenKind::Space,
+                TokenKind::Whitespace,
                 TokenKind::Comment,
                 TokenKind::Newline,
                 TokenKind::Identifier,

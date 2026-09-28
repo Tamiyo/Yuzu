@@ -1,9 +1,23 @@
 use logos::Logos;
 
-#[derive(Logos, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[repr(u16)]
-#[logos(utf8 = true)]
-pub enum TokenKind {
+/// Declares the token kinds, and [`TokenKind::ALL`] in the same order.
+macro_rules! token_kinds {
+    ($($(#[$attr:meta])* $kind:ident,)*) => {
+        #[derive(Logos, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        #[repr(u16)]
+        #[logos(utf8 = true)]
+        pub enum TokenKind {
+            $($(#[$attr])* $kind,)*
+        }
+
+        impl TokenKind {
+            /// Every token kind, in declaration order.
+            pub const ALL: &[TokenKind] = &[$(TokenKind::$kind,)*];
+        }
+    };
+}
+
+token_kinds! {
     #[token("+", priority = 1)]
     Plus,
 
@@ -227,22 +241,106 @@ pub enum TokenKind {
     #[regex(r#"//.*"#, priority = 1, allow_greedy = true)]
     Comment,
 
-    #[regex(r#"\r?\n"#, priority = 1)]
+    #[regex(r"\r\n|\n|\r", priority = 1)]
     Newline,
 
-    #[regex(r#" "#, priority = 1)]
-    Space,
+    #[regex(r"[ \t]+", priority = 1)]
+    Whitespace,
 
     // Not a lexable token. Created when the lexer does not recognize a token.
     Error,
 }
 
 impl TokenKind {
+    /// Whether the kind is a keyword: a word the grammar reserves.
+    #[must_use]
+    pub fn is_keyword(self) -> bool {
+        match self {
+            TokenKind::AggKw
+            | TokenKind::AggregateKw
+            | TokenKind::AndKw
+            | TokenKind::AsKw
+            | TokenKind::ByKw
+            | TokenKind::DefKw
+            | TokenKind::DistinctKw
+            | TokenKind::DropKw
+            | TokenKind::ExtendKw
+            | TokenKind::ExternalKw
+            | TokenKind::ForKw
+            | TokenKind::FromKw
+            | TokenKind::FullKw
+            | TokenKind::GroupKw
+            | TokenKind::ImplKw
+            | TokenKind::ImportKw
+            | TokenKind::InKw
+            | TokenKind::InnerKw
+            | TokenKind::JoinKw
+            | TokenKind::LeftKw
+            | TokenKind::LetKw
+            | TokenKind::LimitKw
+            | TokenKind::ModKw
+            | TokenKind::MutKw
+            | TokenKind::NotKw
+            | TokenKind::OffsetKw
+            | TokenKind::OnKw
+            | TokenKind::OrKw
+            | TokenKind::PubKw
+            | TokenKind::RenameKw
+            | TokenKind::ReturnKw
+            | TokenKind::RightKw
+            | TokenKind::SelectKw
+            | TokenKind::SetKw
+            | TokenKind::StructKw
+            | TokenKind::TableKw
+            | TokenKind::TraitKw
+            | TokenKind::UsingKw
+            | TokenKind::WhereKw => true,
+            TokenKind::Plus
+            | TokenKind::Minus
+            | TokenKind::Star
+            | TokenKind::StarStar
+            | TokenKind::Slash
+            | TokenKind::Percent
+            | TokenKind::Eq
+            | TokenKind::EqEq
+            | TokenKind::Neq
+            | TokenKind::Lt
+            | TokenKind::Lte
+            | TokenKind::Gt
+            | TokenKind::Gte
+            | TokenKind::Shl
+            | TokenKind::Shr
+            | TokenKind::Arrow
+            | TokenKind::Pipe
+            | TokenKind::Dot
+            | TokenKind::LeftParen
+            | TokenKind::RightParen
+            | TokenKind::LeftCurly
+            | TokenKind::RightCurly
+            | TokenKind::LeftSquare
+            | TokenKind::RightSquare
+            | TokenKind::Comma
+            | TokenKind::Colon
+            | TokenKind::Identifier
+            | TokenKind::BoolLit
+            | TokenKind::IntLit
+            | TokenKind::FloatLit
+            | TokenKind::HexLit
+            | TokenKind::BinaryLit
+            | TokenKind::StringLit
+            | TokenKind::RawStringLit
+            | TokenKind::Comment
+            | TokenKind::Newline
+            | TokenKind::Whitespace
+            | TokenKind::Error => false,
+        }
+    }
+
     #[must_use]
     pub fn is_trivia(self) -> bool {
         matches!(
             self,
-            TokenKind::Comment | TokenKind::Space | TokenKind::Newline
+            TokenKind::Comment | TokenKind::Whitespace | TokenKind::Newline
         )
     }
 }
@@ -325,7 +423,7 @@ impl std::fmt::Display for TokenKind {
             TokenKind::RawStringLit => "raw string literal",
             TokenKind::Comment => "comment",
             TokenKind::Newline => "newline",
-            TokenKind::Space => "whitespace",
+            TokenKind::Whitespace => "whitespace",
             TokenKind::Error => "invalid token",
         };
         f.write_str(text)
@@ -336,90 +434,32 @@ impl std::fmt::Display for TokenKind {
 mod tests {
     use super::*;
 
+    /// A keyword or a symbol lexes back from its display to itself.
     #[test]
-    fn display_renders_every_variant() {
-        let cases = [
-            (TokenKind::Plus, "+"),
-            (TokenKind::Minus, "-"),
-            (TokenKind::Star, "*"),
-            (TokenKind::StarStar, "**"),
-            (TokenKind::Slash, "/"),
-            (TokenKind::Percent, "%"),
-            (TokenKind::Eq, "="),
-            (TokenKind::EqEq, "=="),
-            (TokenKind::Neq, "!="),
-            (TokenKind::Lt, "<"),
-            (TokenKind::Lte, "<="),
-            (TokenKind::Gt, ">"),
-            (TokenKind::Gte, ">="),
-            (TokenKind::Shl, "<<"),
-            (TokenKind::Shr, ">>"),
-            (TokenKind::Arrow, "->"),
-            (TokenKind::Pipe, "|>"),
-            (TokenKind::Dot, "."),
-            (TokenKind::LeftParen, "("),
-            (TokenKind::RightParen, ")"),
-            (TokenKind::LeftCurly, "{"),
-            (TokenKind::RightCurly, "}"),
-            (TokenKind::LeftSquare, "["),
-            (TokenKind::RightSquare, "]"),
-            (TokenKind::Comma, ","),
-            (TokenKind::Colon, ":"),
-            (TokenKind::AggKw, "agg"),
-            (TokenKind::AggregateKw, "aggregate"),
-            (TokenKind::AndKw, "and"),
-            (TokenKind::AsKw, "as"),
-            (TokenKind::ByKw, "by"),
-            (TokenKind::DefKw, "def"),
-            (TokenKind::DistinctKw, "distinct"),
-            (TokenKind::DropKw, "drop"),
-            (TokenKind::ExtendKw, "extend"),
-            (TokenKind::ExternalKw, "external"),
-            (TokenKind::ForKw, "for"),
-            (TokenKind::FromKw, "from"),
-            (TokenKind::FullKw, "full"),
-            (TokenKind::GroupKw, "group"),
-            (TokenKind::ImplKw, "impl"),
-            (TokenKind::ImportKw, "import"),
-            (TokenKind::InKw, "in"),
-            (TokenKind::InnerKw, "inner"),
-            (TokenKind::JoinKw, "join"),
-            (TokenKind::LeftKw, "left"),
-            (TokenKind::LetKw, "let"),
-            (TokenKind::LimitKw, "limit"),
-            (TokenKind::ModKw, "mod"),
-            (TokenKind::MutKw, "mut"),
-            (TokenKind::NotKw, "not"),
-            (TokenKind::OffsetKw, "offset"),
-            (TokenKind::OnKw, "on"),
-            (TokenKind::OrKw, "or"),
-            (TokenKind::PubKw, "pub"),
-            (TokenKind::RenameKw, "rename"),
-            (TokenKind::ReturnKw, "return"),
-            (TokenKind::RightKw, "right"),
-            (TokenKind::SelectKw, "select"),
-            (TokenKind::SetKw, "set"),
-            (TokenKind::StructKw, "struct"),
-            (TokenKind::TableKw, "table"),
-            (TokenKind::TraitKw, "trait"),
-            (TokenKind::UsingKw, "using"),
-            (TokenKind::WhereKw, "where"),
-            (TokenKind::Identifier, "identifier"),
-            (TokenKind::BoolLit, "boolean literal"),
-            (TokenKind::IntLit, "integer literal"),
-            (TokenKind::FloatLit, "float literal"),
-            (TokenKind::HexLit, "hex literal"),
-            (TokenKind::BinaryLit, "binary literal"),
-            (TokenKind::StringLit, "string literal"),
-            (TokenKind::RawStringLit, "raw string literal"),
-            (TokenKind::Comment, "comment"),
-            (TokenKind::Newline, "newline"),
-            (TokenKind::Space, "whitespace"),
-            (TokenKind::Error, "invalid token"),
-        ];
-
-        for (kind, expected) in cases {
-            assert_eq!(kind.to_string(), expected, "{kind:?}");
+    fn each_spelled_kind_lexes_back_from_its_display() {
+        for &kind in TokenKind::ALL {
+            let spelled = !matches!(
+                kind,
+                TokenKind::Identifier
+                    | TokenKind::BoolLit
+                    | TokenKind::IntLit
+                    | TokenKind::FloatLit
+                    | TokenKind::HexLit
+                    | TokenKind::BinaryLit
+                    | TokenKind::StringLit
+                    | TokenKind::RawStringLit
+                    | TokenKind::Comment
+                    | TokenKind::Newline
+                    | TokenKind::Whitespace
+                    | TokenKind::Error
+            );
+            if spelled {
+                let text = kind.to_string();
+                let lexed: Vec<TokenKind> = crate::lexer::Lexer::new(&text)
+                    .map(|token| token.kind)
+                    .collect();
+                assert_eq!(lexed, [kind], "{text:?}");
+            }
         }
     }
 }

@@ -137,7 +137,7 @@ roles! {
     RawStringLit => HandWritten,
     Comment => HandWritten,
     Newline => HandWritten,
-    Space => HandWritten,
+    Whitespace => HandWritten,
     Error => HandWritten,
 }
 
