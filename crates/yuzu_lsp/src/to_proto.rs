@@ -109,7 +109,7 @@ pub(crate) fn diagnostic<'f>(
 
     let diagnostic = lsp_types::Diagnostic {
         range: range(line_index, primary.span.range),
-        severity: Some(severity(&diagnostic.severity)),
+        severity: Some(severity(diagnostic.severity)),
         code: (!diagnostic.code.is_empty())
             .then(|| NumberOrString::String(diagnostic.code.clone())),
         source: Some("yuzu".to_owned()),
@@ -120,7 +120,7 @@ pub(crate) fn diagnostic<'f>(
     Some((url, diagnostic))
 }
 
-fn severity(severity: &Severity) -> DiagnosticSeverity {
+fn severity(severity: Severity) -> DiagnosticSeverity {
     match severity {
         Severity::Error => DiagnosticSeverity::ERROR,
         Severity::Warning => DiagnosticSeverity::WARNING,
