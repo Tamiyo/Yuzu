@@ -7,8 +7,11 @@
 
 mod capabilities;
 mod checker;
+mod diagnostics;
+mod documents;
 mod error;
 mod from_proto;
+mod global_state;
 mod handlers;
 mod line_index;
 mod main_loop;

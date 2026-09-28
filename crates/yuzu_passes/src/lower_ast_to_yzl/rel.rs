@@ -532,13 +532,13 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         drop: &ast::DropExpr,
     ) -> Value<'c, 'a> {
         let loc = self.location(drop);
-        let mut names: Vec<String> = Vec::new();
+        let mut names: Vec<&'c str> = Vec::new();
         for column in drop.columns() {
-            let Some(name) = column.clone().text() else {
+            let Some(name) = self.read_ident(Some(column.clone())) else {
                 continue;
             };
 
-            if let Some(index) = self.column(&column, "column", Reference::unqualified(&name)) {
+            if let Some(index) = self.column(&column, "column", Reference::unqualified(name)) {
                 self.symbols.remove(index);
             }
 

@@ -1,5 +1,5 @@
 use yuzu_diagnostics::{diagnostics::engine::DiagnosticsEngine, source_map::SourceId};
-use yuzu_lexer::lexer::Token;
+use yuzu_lexer::lexer::{Lexer, Token};
 use yuzu_syntax::SyntaxNode;
 
 use crate::{parser::Parser, token_sink::TokenSink, token_source::TokenSource};
@@ -8,6 +8,16 @@ mod grammar;
 mod parser;
 mod token_sink;
 mod token_source;
+
+/// Lexes and parses a whole text.
+pub fn parse_text(
+    text: &str,
+    diagnostics: &mut DiagnosticsEngine,
+    source_id: SourceId,
+) -> SyntaxNode {
+    let tokens: Vec<Token> = Lexer::new(text).collect();
+    parse(&tokens, diagnostics, source_id)
+}
 
 pub fn parse(
     tokens: &[Token],

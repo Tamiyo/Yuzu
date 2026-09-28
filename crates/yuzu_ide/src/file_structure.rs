@@ -3,7 +3,7 @@
 
 use text_size::TextRange;
 use yuzu_ast::{self as ast, AstNode};
-use yuzu_syntax::{SyntaxKind, SyntaxNode};
+use yuzu_syntax::SyntaxNode;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StructureNode {
@@ -29,18 +29,18 @@ pub enum StructureNodeKind {
 }
 
 pub(crate) fn file_structure(root: &ast::Root) -> Vec<StructureNode> {
-    let mut structure = Structure { nodes: Vec::new() };
+    let mut structure = StructureReader { nodes: Vec::new() };
     for stmt in root.stmts() {
         structure.read_stmt(&stmt, None);
     }
     structure.nodes
 }
 
-struct Structure {
+struct StructureReader {
     nodes: Vec<StructureNode>,
 }
 
-impl Structure {
+impl StructureReader {
     fn read_stmt(&mut self, stmt: &ast::Stmt, parent: Option<usize>) {
         match stmt {
             ast::Stmt::FuncStmt(func) => self.read_func(func, parent),
@@ -170,30 +170,36 @@ impl Structure {
     }
 }
 
-/// A name and its range. Parse recovery can leave an `Ident` node that
-/// holds an error token instead of an identifier, and that is no name.
+/// A name and its range.
 fn read_name(ident: Option<ast::Ident>) -> Option<(String, TextRange)> {
     let token = ident?.token()?;
-    (token.kind() == SyntaxKind::Identifier).then(|| (token.text().to_owned(), token.text_range()))
+    Some((token.text().to_owned(), token.text_range()))
 }
 
 /// The text from the parameters to the body: `(n: int64) -> int64`.
 fn signature(func: &ast::FuncStmt) -> Option<String> {
+    let header = header(func);
+    let parameters = header.find('(')?;
+    Some(header[parameters..].to_owned())
+}
+
+/// A function's text up to its body, on one line:
+/// `pub agg def spread(x: int64) -> int64`.
+pub(crate) fn header(func: &ast::FuncStmt) -> String {
     let syntax = func.syntax();
-    let start = syntax
-        .children_with_tokens()
-        .find(|element| element.kind() == SyntaxKind::LeftParen)?
-        .text_range()
-        .start();
+    let start = syntax.text_range().start();
     let end = func.body().map_or(syntax.text_range().end(), |body| {
         body.syntax().text_range().start()
     });
-    let range = TextRange::new(start, end.max(start)) - syntax.text_range().start();
-    let text = syntax.text().to_string();
-    Some(compact(&text[range]))
+    compact(
+        &syntax
+            .text()
+            .slice(TextRange::new(start, end) - start)
+            .to_string(),
+    )
 }
 
-fn compact(text: &str) -> String {
+pub(crate) fn compact(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 

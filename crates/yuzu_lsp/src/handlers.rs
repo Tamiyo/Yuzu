@@ -10,7 +10,7 @@ use lsp_types::{
 };
 use yuzu_ide::FilePosition;
 
-use crate::main_loop::GlobalState;
+use crate::global_state::GlobalState;
 use crate::{from_proto, to_proto};
 
 pub(crate) fn document_symbol(

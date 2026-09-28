@@ -8,7 +8,6 @@ rustc-hash = "2"
 melior = { version = "0.27.6", features = ["ods-dialects"] }
 text-size = "1.1.1"
 yuzu_ast = { path = "../yuzu_ast" }
-yuzu_lexer = { path = "../yuzu_lexer" }
 yuzu_parser = { path = "../yuzu_parser" }
 yuzu_diagnostics = { path = "../yuzu_diagnostics" }
 yuzu_mlir = { path = "../yuzu_mlir" }

@@ -13,7 +13,6 @@ use yuzu_diagnostics::source_map::{SourceId, SourceMap};
 use yuzu_mlir::ir::location::LocationExt;
 use yuzu_mlir::ir::operation::OperationExt;
 use yuzu_mlir::ods::yzl;
-use yuzu_syntax::SyntaxKind;
 use yuzu_types::FunctionRegistry;
 
 use crate::lower_ast_to_yzl::symbols::SymbolTable;
@@ -227,12 +226,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         (at.line, at.col)
     }
 
-    /// A name the source wrote, interned for the rest of the pass. Parse
-    /// recovery can leave an `Ident` holding an error token, which is no
-    /// name.
+    /// A name the source wrote, interned for the rest of the pass.
     fn read_ident(&self, ident: Option<ast::Ident>) -> Option<&'c str> {
         let token = ident?.token()?;
-        (token.kind() == SyntaxKind::Identifier).then(|| self.symbols.intern(token.text()))
+        Some(self.symbols.intern(token.text()))
     }
 
     fn name(&self) -> &str {

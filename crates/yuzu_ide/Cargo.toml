@@ -11,7 +11,6 @@ text-size = "1.1.1"
 yuzu_ast = { path = "../yuzu_ast" }
 yuzu_diagnostics = { path = "../yuzu_diagnostics" }
 yuzu_driver = { path = "../yuzu_driver" }
-yuzu_lexer = { path = "../yuzu_lexer" }
 yuzu_parser = { path = "../yuzu_parser" }
 yuzu_syntax = { path = "../yuzu_syntax" }
 

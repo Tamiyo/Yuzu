@@ -6,7 +6,6 @@ use yuzu_diagnostics::diagnostics::Span;
 use yuzu_diagnostics::source_map::SourceId;
 
 use crate::Checked;
-use crate::names::Trees;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InlayHint {
@@ -16,7 +15,9 @@ pub struct InlayHint {
 }
 
 pub(crate) fn inlay_hints(checked: &Checked, source: SourceId) -> Vec<InlayHint> {
-    let root = Trees::new(checked).get(source);
+    let Some(root) = checked.syntax(source) else {
+        return Vec::new();
+    };
     root.descendants()
         .filter_map(ast::LetStmt::cast)
         .filter(|binding| binding.type_annotation().is_none())

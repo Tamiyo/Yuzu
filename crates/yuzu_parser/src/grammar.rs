@@ -79,16 +79,21 @@ const NAME_FOLLOWERS: [TokenKind; 6] = [
     TokenKind::Comma,
 ];
 
-pub(crate) fn parse_ident(p: &mut Parser) -> CompletedMarker {
-    let m = p.start();
+/// An `Ident` holds exactly its identifier, so a token that is no name is
+/// reported and left outside it, and the node is not built.
+pub(crate) fn parse_ident(p: &mut Parser) -> Option<CompletedMarker> {
     if p.at(TokenKind::Identifier) {
+        let m = p.start();
         p.bump();
-    } else if at_misused_name(p) {
+        return Some(p.complete(m, SyntaxKind::Ident));
+    }
+
+    if at_misused_name(p) {
         p.error_and_bump();
     } else {
         p.error(&NAME_RECOVERY_SET);
     }
-    p.complete(m, SyntaxKind::Ident)
+    None
 }
 
 /// A keyword or literal where a name goes, followed by what follows a name.
@@ -191,7 +196,6 @@ mod tests {
                   LetStmt@0..7
                     LetKw@0..3 "let"
                     Space@3..4 " "
-                    Ident@4..4
                     Eq@4..5 "="
                     Space@5..6 " "
                     IntLiteral@6..7
@@ -362,24 +366,23 @@ mod tests {
         test_support::check_recovery(
             "struct { x: int64 }",
             expect![[r#"
-            Root@0..19
-              StructStmt@0..19
-                StructKw@0..6 "struct"
-                Space@6..7 " "
-                Ident@7..7
-                LeftCurly@7..8 "{"
-                Space@8..9 " "
-                StructField@9..17
-                  Ident@9..10
-                    Identifier@9..10 "x"
-                  Colon@10..11 ":"
-                  Space@11..12 " "
-                  NamedTypeAnnotation@12..17
-                    Ident@12..17
-                      Identifier@12..17 "int64"
-                Space@17..18 " "
-                RightCurly@18..19 "}"
-            7..8 expected identifier, found {"#]],
+                Root@0..19
+                  StructStmt@0..19
+                    StructKw@0..6 "struct"
+                    Space@6..7 " "
+                    LeftCurly@7..8 "{"
+                    Space@8..9 " "
+                    StructField@9..17
+                      Ident@9..10
+                        Identifier@9..10 "x"
+                      Colon@10..11 ":"
+                      Space@11..12 " "
+                      NamedTypeAnnotation@12..17
+                        Ident@12..17
+                          Identifier@12..17 "int64"
+                    Space@17..18 " "
+                    RightCurly@18..19 "}"
+                7..8 expected identifier, found {"#]],
         );
     }
 
@@ -428,9 +431,8 @@ mod tests {
                   LetStmt@0..11
                     LetKw@0..3 "let"
                     Space@3..4 " "
-                    Ident@4..7
-                      Error@4..7
-                        DefKw@4..7 "def"
+                    Error@4..7
+                      DefKw@4..7 "def"
                     Space@7..8 " "
                     Eq@8..9 "="
                     Space@9..10 " "
@@ -445,30 +447,29 @@ mod tests {
         test_support::check_recovery(
             "let\ndef f() { return 1 }",
             expect![[r#"
-            Root@0..24
-              LetStmt@0..4
-                LetKw@0..3 "let"
-                Newline@3..4 "\n"
-                Ident@4..4
-              FuncStmt@4..24
-                DefKw@4..7 "def"
-                Space@7..8 " "
-                Ident@8..9
-                  Identifier@8..9 "f"
-                LeftParen@9..10 "("
-                RightParen@10..11 ")"
-                Space@11..12 " "
-                BlockStmt@12..24
-                  LeftCurly@12..13 "{"
-                  Space@13..14 " "
-                  ReturnStmt@14..22
-                    ReturnKw@14..20 "return"
-                    Space@20..21 " "
-                    IntLiteral@21..22
-                      IntLit@21..22 "1"
-                  Space@22..23 " "
-                  RightCurly@23..24 "}"
-            4..7 expected one of mut, identifier, found def"#]],
+                Root@0..24
+                  LetStmt@0..3
+                    LetKw@0..3 "let"
+                  Newline@3..4 "\n"
+                  FuncStmt@4..24
+                    DefKw@4..7 "def"
+                    Space@7..8 " "
+                    Ident@8..9
+                      Identifier@8..9 "f"
+                    LeftParen@9..10 "("
+                    RightParen@10..11 ")"
+                    Space@11..12 " "
+                    BlockStmt@12..24
+                      LeftCurly@12..13 "{"
+                      Space@13..14 " "
+                      ReturnStmt@14..22
+                        ReturnKw@14..20 "return"
+                        Space@20..21 " "
+                        IntLiteral@21..22
+                          IntLit@21..22 "1"
+                      Space@22..23 " "
+                      RightCurly@23..24 "}"
+                4..7 expected one of mut, identifier, found def"#]],
         );
     }
 }

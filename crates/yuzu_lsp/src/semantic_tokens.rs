@@ -115,3 +115,46 @@ impl SemanticTokensBuilder {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use expect_test::expect;
+    use lsp_types::{Position, Range};
+
+    use super::SemanticTokensBuilder;
+
+    fn on_line(line: u32, start: u32, end: u32) -> Range {
+        Range::new(Position::new(line, start), Position::new(line, end))
+    }
+
+    #[test]
+    fn a_token_is_sent_relative_to_the_one_before() {
+        let mut builder = SemanticTokensBuilder::default();
+        builder.push(on_line(0, 4, 7), 1, 0);
+        builder.push(on_line(0, 10, 12), 2, 1);
+        builder.push(on_line(2, 1, 3), 3, 0);
+        builder.push(on_line(2, 8, 9), 4, 2);
+
+        let rendered: Vec<String> = builder
+            .build()
+            .data
+            .iter()
+            .map(|token| {
+                format!(
+                    "+{} +{} len {} type {} mods {}",
+                    token.delta_line,
+                    token.delta_start,
+                    token.length,
+                    token.token_type,
+                    token.token_modifiers_bitset
+                )
+            })
+            .collect();
+        expect![[r#"
+            +0 +4 len 3 type 1 mods 0
+            +0 +6 len 2 type 2 mods 1
+            +2 +1 len 2 type 3 mods 0
+            +0 +7 len 1 type 4 mods 2"#]]
+        .assert_eq(&rendered.join("\n"));
+    }
+}

@@ -582,9 +582,8 @@ mod tests {
                 LetStmt@0..11
                   LetKw@0..3 "let"
                   Space@3..4 " "
-                  Ident@4..7
-                    Error@4..7
-                      AggKw@4..7 "agg"
+                  Error@4..7
+                    AggKw@4..7 "agg"
                   Space@7..8 " "
                   Eq@8..9 "="
                   Space@9..10 " "

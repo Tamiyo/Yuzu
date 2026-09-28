@@ -8,12 +8,10 @@ use std::sync::OnceLock;
 
 use melior::Context;
 
-use yuzu_ast::{AstNode, ast};
 use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
 use yuzu_diagnostics::source_map::SourceMap;
-use yuzu_lexer::lexer::{Lexer, Token};
 use yuzu_passes::{BoundLibrary, File};
-use yuzu_syntax::{GreenNode, SyntaxNode};
+use yuzu_syntax::GreenNode;
 
 use crate::modules::{self, Loaded, MapResolver, ModuleSource, Submodule};
 
@@ -66,6 +64,7 @@ pub(crate) fn resolve(path: &str, engine: Engine) -> Option<ModuleSource> {
         return Some(ModuleSource {
             name: format!("<{ENGINE_MODULE}>"),
             source: format!("pub let ENGINE = \"{}\"\n", engine.name()),
+            syntax: None,
         });
     }
 
@@ -75,6 +74,7 @@ pub(crate) fn resolve(path: &str, engine: Engine) -> Option<ModuleSource> {
         .map(|module| ModuleSource {
             name: module.name.to_string(),
             source: module.source.to_string(),
+            syntax: trees().get(path).cloned(),
         })
 }
 
@@ -111,8 +111,12 @@ impl Library {
         let Loaded {
             files,
             mut submodules,
+            ..
         } = modules::load_program(
-            entry,
+            modules::EntryFile {
+                source: entry,
+                syntax: None,
+            },
             &mut sources,
             &mut diagnostics,
             &MapResolver(HashMap::new()),
@@ -167,13 +171,8 @@ fn bind_library(engine: Engine) -> BoundLibrary<'static> {
     bound
 }
 
-/// A library file's syntax tree. Each file is parsed once for the process;
-/// every compile after the first starts from the same tree.
-pub(crate) fn syntax(path: &str) -> Option<ast::Root> {
-    let green = trees().get(path)?.clone();
-    ast::Root::cast(SyntaxNode::new_root(green))
-}
-
+/// Each library file's tree, parsed once for the process; every compile
+/// after the first starts from the same trees.
 fn trees() -> &'static HashMap<&'static str, GreenNode> {
     static TREES: OnceLock<HashMap<&'static str, GreenNode>> = OnceLock::new();
     TREES.get_or_init(|| {
@@ -183,8 +182,7 @@ fn trees() -> &'static HashMap<&'static str, GreenNode> {
                 let mut sources = SourceMap::new();
                 let source_id = sources.add(module.name.to_string(), module.source.to_string());
                 let mut diagnostics = DiagnosticsEngine::new();
-                let tokens: Vec<Token> = Lexer::new(module.source).collect();
-                let syntax = yuzu_parser::parse(&tokens, &mut diagnostics, source_id);
+                let syntax = yuzu_parser::parse_text(module.source, &mut diagnostics, source_id);
                 assert!(
                     diagnostics.diagnostics().is_empty(),
                     "the library file `{}` has syntax errors",
@@ -205,13 +203,13 @@ mod tests {
     use yuzu_diagnostics::source_map::SourceMap;
     use yuzu_passes::Lowering;
 
-    use super::{Engine, MODULES, syntax};
+    use super::{Engine, MODULES, trees};
     use crate::modules::{self, MapResolver};
 
     #[test]
     fn each_library_file_parses() {
         for module in MODULES {
-            assert!(syntax(module.path).is_some(), "{}", module.name);
+            assert!(trees().contains_key(module.path), "{}", module.name);
         }
     }
 

@@ -6,7 +6,7 @@ use text_size::{TextRange, TextSize};
 use yuzu_diagnostics::source_map::SourceId;
 
 use crate::Checked;
-use crate::names::{Name, Resolution, Trees, resolutions};
+use crate::names::{Name, Resolution};
 
 /// A range in a file on disk.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -20,8 +20,7 @@ pub(crate) fn goto_definition(
     source: SourceId,
     offset: TextSize,
 ) -> Option<FileRange> {
-    let resolutions = resolutions(checked, &mut Trees::new(checked));
-    let resolution = resolution_at(&resolutions, source, offset)?;
+    let resolution = resolution_at(checked.resolutions(), source, offset)?;
     file_range(checked, resolution.declared)
 }
 
@@ -63,13 +62,13 @@ pub(crate) fn resolution_at(
 }
 
 fn names(checked: &Checked, source: SourceId, offset: TextSize) -> Vec<Name> {
-    let resolutions = resolutions(checked, &mut Trees::new(checked));
-    let Some(at) = resolution_at(&resolutions, source, offset) else {
+    let resolutions = checked.resolutions();
+    let Some(at) = resolution_at(resolutions, source, offset) else {
         return Vec::new();
     };
 
     let mut names = vec![at.declared];
-    for resolution in &resolutions {
+    for resolution in resolutions {
         if resolution.declared == at.declared && !names.contains(&resolution.used) {
             names.push(resolution.used);
         }
@@ -87,6 +86,8 @@ fn file_range(checked: &Checked, name: Name) -> Option<FileRange> {
 #[cfg(test)]
 mod tests {
     use expect_test::{Expect, expect};
+
+    use text_size::TextRange;
 
     use crate::test_support::{checked, cursor, render};
 
@@ -207,6 +208,38 @@ from t |> select double(a) + cap + two() as v
             expect![[r#"
                 main.yz:y 100..101
                 main.yz:y 121..122"#]],
+        );
+    }
+
+    #[test]
+    fn a_parameter_named_like_its_function_goes_to_the_parameter() {
+        let (text, offset) = cursor("def f(f: int64) -> int64 {\n    return $0f\n}\n");
+        let (_tree, main, checked) = checked(&[], &text);
+        let target = checked
+            .goto_definition(&main, offset)
+            .map(|target| target.range);
+        assert_eq!(target, Some(TextRange::new(6.into(), 7.into())));
+    }
+
+    #[test]
+    fn highlight_stays_in_the_file() {
+        let (text, offset) = cursor(&PROGRAM.replacen("+ cap", "+ $0cap", 1));
+        let (_tree, main, checked) = checked(&[HELPERS], &text);
+        let rendered: Vec<&str> = checked
+            .highlight(&main, offset)
+            .iter()
+            .map(|&range| &text[range])
+            .collect();
+        assert_eq!(rendered, ["cap", "cap"]);
+    }
+
+    #[test]
+    fn references_reach_the_declaration_in_another_file() {
+        check_references(
+            &PROGRAM.replacen("+ two()", "+ t$0wo()", 1),
+            expect![[r#"
+                helpers.yz:two 8..11
+                main.yz:two 160..163"#]],
         );
     }
 }

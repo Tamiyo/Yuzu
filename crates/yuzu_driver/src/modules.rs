@@ -15,8 +15,8 @@ use yuzu_diagnostics::diagnostics::Span;
 use yuzu_diagnostics::diagnostics::builder::DiagnosticBuilder;
 use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
 use yuzu_diagnostics::source_map::{SourceId, SourceMap};
-use yuzu_lexer::lexer::{Lexer, Token};
 use yuzu_passes::{File, Lowering};
+use yuzu_syntax::{GreenNode, SyntaxNode};
 
 use crate::stdlib::{self, Engine};
 
@@ -32,6 +32,9 @@ pub(crate) struct Submodule {
 pub struct ModuleSource {
     pub name: String,
     pub source: String,
+    /// A tree the resolver parsed from `source` before, without errors, so
+    /// the loader does not parse it again. With `None` the loader parses.
+    pub syntax: Option<GreenNode>,
 }
 
 /// Where a module's source comes from. `None` means the resolver has no
@@ -83,6 +86,7 @@ impl ModuleResolver for FsResolver {
         Some(ModuleSource {
             name: file.display().to_string(),
             source,
+            syntax: None,
         })
     }
 }
@@ -95,6 +99,7 @@ impl ModuleResolver for MapResolver {
         self.0.get(path).map(|source| ModuleSource {
             name: format!("{path}.yz"),
             source: source.clone(),
+            syntax: None,
         })
     }
 }
@@ -116,7 +121,10 @@ pub fn load(
     // ids only in a map that holds nothing but this program's entry.
     let library = (sources.len() == 1).then(|| stdlib::Library::for_thread(engine));
     let Loaded { files, .. } = load_program(
-        entry,
+        EntryFile {
+            source: entry,
+            syntax: None,
+        },
         sources,
         diagnostics,
         resolver,
@@ -127,9 +135,18 @@ pub fn load(
     (!has_errors(diagnostics)).then_some(files)
 }
 
+/// The file a program starts from, and its tree when a caller parsed its
+/// text before without errors.
+pub(crate) struct EntryFile {
+    pub(crate) source: SourceId,
+    pub(crate) syntax: Option<GreenNode>,
+}
+
 /// What loading gave.
 pub(crate) struct Loaded {
     pub(crate) files: Vec<File>,
+    /// Each source's tree, by the source's id.
+    pub(crate) trees: Vec<(SourceId, GreenNode)>,
     /// The submodules each module declares, by the module's path.
     pub(crate) submodules: HashMap<String, Vec<Submodule>>,
 }
@@ -145,7 +162,7 @@ pub(crate) struct Loaded {
 /// Every file that could be read comes back, even when loading reported:
 /// a file with a syntax error still lowers, with a hole where the error is.
 pub(crate) fn load_program(
-    entry: SourceId,
+    entry: EntryFile,
     sources: &mut SourceMap,
     diagnostics: &mut DiagnosticsEngine,
     resolver: &dyn ModuleResolver,
@@ -162,9 +179,14 @@ pub(crate) fn load_program(
         submodules: HashMap::new(),
         loading: Vec::new(),
         files: Vec::new(),
+        trees: Vec::new(),
     };
 
-    let root = loader.parse(entry);
+    let EntryFile {
+        source: entry,
+        syntax,
+    } = entry;
+    let root = loader.read_syntax(entry, syntax);
     loader.submodules.insert(String::new(), submodules(&root));
     match library {
         Some(library) => loader.install(library),
@@ -190,6 +212,7 @@ pub(crate) fn load_program(
     Loaded {
         files: loader.files,
         submodules: loader.submodules,
+        trees: loader.trees,
     }
 }
 
@@ -206,6 +229,8 @@ struct Loader<'a> {
     /// of them turns out to import something already on it.
     loading: Vec<String>,
     files: Vec<File>,
+    /// Each source's tree, as the files hold it.
+    trees: Vec<(SourceId, GreenNode)>,
 }
 
 impl Loader<'_> {
@@ -315,12 +340,12 @@ impl Loader<'_> {
             return;
         }
 
-        let (module, built_in) = if !stdlib::reserves(path) {
-            (self.resolver.resolve(path), false)
-        } else if let Some(copy) = self.resolver.resolve_library(path) {
-            (Some(copy), false)
+        let module = if stdlib::reserves(path) {
+            self.resolver
+                .resolve_library(path)
+                .or_else(|| stdlib::resolve(path, self.engine))
         } else {
-            (stdlib::resolve(path, self.engine), true)
+            self.resolver.resolve(path)
         };
 
         let Some(module) = module else {
@@ -329,10 +354,7 @@ impl Loader<'_> {
         };
 
         let source_id = self.sources.add(module.name, module.source);
-        let root = match built_in.then(|| stdlib::syntax(path)).flatten() {
-            Some(root) => root,
-            None => self.parse(source_id),
-        };
+        let root = self.read_syntax(source_id, module.syntax);
         self.submodules.insert(path.to_string(), submodules(&root));
         self.loading.push(path.to_string());
         self.follow_imports(source_id, &root, path);
@@ -355,7 +377,7 @@ impl Loader<'_> {
                 _ => continue,
             };
 
-            let Some(path) = path.map(|path| dotted(&path)) else {
+            let Some(path) = path.map(|path| path.to_dotted()) else {
                 continue;
             };
 
@@ -363,10 +385,24 @@ impl Loader<'_> {
         }
     }
 
-    fn parse(&mut self, source_id: SourceId) -> ast::Root {
-        let tokens: Vec<Token> = Lexer::new(self.sources.text(source_id)).collect();
-        let syntax = yuzu_parser::parse(&tokens, self.diagnostics, source_id);
-        ast::Root::cast(syntax).expect("a parse always yields a root")
+    /// A source's tree: the one a resolver parsed before, or a parse of the
+    /// text now, whose errors go to the diagnostics.
+    fn read_syntax(&mut self, source_id: SourceId, syntax: Option<GreenNode>) -> ast::Root {
+        let tree = match syntax {
+            Some(green) => {
+                debug_assert_eq!(
+                    usize::from(green.text_len()),
+                    self.sources.text(source_id).len(),
+                    "a tree given for a source was parsed from its text"
+                );
+                SyntaxNode::new_root(green)
+            }
+            None => {
+                yuzu_parser::parse_text(self.sources.text(source_id), self.diagnostics, source_id)
+            }
+        };
+        self.trees.push((source_id, tree.green().into_owned()));
+        ast::Root::cast(tree).expect("a parse always yields a root")
     }
 
     fn report(&mut self, at: &impl AstNode, source_id: SourceId, message: &str) {
@@ -384,7 +420,7 @@ fn submodules(root: &ast::Root) -> Vec<Submodule> {
     root.stmts()
         .filter_map(|stmt| match stmt {
             ast::Stmt::ModStmt(decl) => Some(Submodule {
-                name: decl.name()?.text()?,
+                name: decl.name()?.token()?.text().to_owned(),
                 public: decl.visibility() == yuzu_ast::Visibility::Public,
             }),
             _ => None,
@@ -399,19 +435,53 @@ enum Reach {
     Private,
 }
 
-/// A path as the program wrote it, for resolving and for reporting.
-fn dotted(path: &ast::ModulePath) -> String {
-    path.segments()
-        .filter_map(|segment| segment.text())
-        .collect::<Vec<_>>()
-        .join(".")
-}
-
 fn has_errors(diagnostics: &DiagnosticsEngine) -> bool {
     diagnostics
         .diagnostics()
         .iter()
         .any(|diagnostic| diagnostic.severity == yuzu_diagnostics::diagnostics::Severity::Error)
+}
+
+/// Where a file sits in its program: the start of one, or a module of one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Location {
+    /// A file in a directory without a module marker: a program's start.
+    Entry { base: PathBuf },
+    /// A file in a directory tree of module markers, and the path that
+    /// names it from the top of that tree.
+    Module { base: PathBuf, path: String },
+}
+
+/// Where a file sits, read from the module markers around it: up through
+/// the directories that hold one, the first that does not is where the
+/// program's module paths start. The reverse of [`FsResolver::candidates`].
+pub fn locate(file: &Path) -> Location {
+    let directory = file.parent().unwrap_or(Path::new(""));
+    let is_marker = file.file_name().is_some_and(|name| name == MARKER);
+    if !is_marker && !directory.join(MARKER).is_file() {
+        return Location::Entry {
+            base: directory.to_path_buf(),
+        };
+    }
+
+    let mut segments = Vec::new();
+    if !is_marker && let Some(stem) = file.file_stem() {
+        segments.push(stem.to_string_lossy().into_owned());
+    }
+    let mut base = directory;
+    while base.join(MARKER).is_file() {
+        let Some(name) = base.file_name() else {
+            break;
+        };
+        segments.push(name.to_string_lossy().into_owned());
+        base = base.parent().unwrap_or(Path::new(""));
+    }
+    segments.reverse();
+
+    Location::Module {
+        base: base.to_path_buf(),
+        path: segments.join("."),
+    }
 }
 
 /// The directory a file's modules are resolved against.
@@ -616,6 +686,43 @@ mod tests {
         assert_eq!(
             loaded("import nowhere\n", &[]),
             Err(vec!["cannot find module `nowhere`".to_string()])
+        );
+    }
+
+    #[test]
+    fn a_file_is_located_by_the_markers_around_it() {
+        let root = std::env::temp_dir().join(format!("yuzu-locate-{}", std::process::id()));
+        for file in [
+            "main.yz",
+            "app/mod.yz",
+            "app/util.yz",
+            "app/sub/mod.yz",
+            "app/sub/deep.yz",
+        ] {
+            let file = root.join(file);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, "").unwrap();
+        }
+
+        let located: Vec<String> = ["main.yz", "app/util.yz", "app/mod.yz", "app/sub/deep.yz"]
+            .iter()
+            .map(|file| match locate(&root.join(file)) {
+                Location::Entry { base } => format!("{file}: entry at {}", base == root),
+                Location::Module { base, path } => {
+                    format!("{file}: module {path} at {}", base == root)
+                }
+            })
+            .collect();
+        std::fs::remove_dir_all(&root).unwrap();
+
+        assert_eq!(
+            located,
+            [
+                "main.yz: entry at true",
+                "app/util.yz: module app.util at true",
+                "app/mod.yz: module app at true",
+                "app/sub/deep.yz: module app.sub.deep at true",
+            ]
         );
     }
 }

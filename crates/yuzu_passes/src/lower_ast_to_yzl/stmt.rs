@@ -957,8 +957,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
     }
 
     fn read_path(&self, path: &ast::ModulePath) -> &'c str {
-        self.symbols
-            .intern(&path.segments_text().collect::<Vec<_>>().join("."))
+        self.symbols.intern(&path.to_dotted())
     }
 
     /// The slot of the place an assignment writes, when the name is one.

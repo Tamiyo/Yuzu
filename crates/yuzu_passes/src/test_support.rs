@@ -7,7 +7,6 @@ use yuzu_ast::ast;
 use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
 use yuzu_diagnostics::diagnostics::printer::DiagnosticPrinter;
 use yuzu_diagnostics::source_map::{SourceId, SourceMap};
-use yuzu_lexer::lexer::{Lexer, Token};
 
 use crate::{File, Lowering};
 
@@ -29,8 +28,7 @@ pub(crate) fn parsed(
     source_id: SourceId,
     diagnostics: &mut DiagnosticsEngine,
 ) -> ast::Root {
-    let tokens: Vec<Token> = Lexer::new(sources.text(source_id)).collect();
-    let syntax = yuzu_parser::parse(&tokens, diagnostics, source_id);
+    let syntax = yuzu_parser::parse_text(sources.text(source_id), diagnostics, source_id);
     ast::Root::cast(syntax).expect("a parse always yields a root")
 }
 

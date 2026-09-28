@@ -247,3 +247,129 @@ pub(crate) fn semantic_tokens(
     }
     builder.build()
 }
+
+#[cfg(test)]
+mod tests {
+    use expect_test::expect;
+    use lsp_types::Url;
+    use text_size::TextRange;
+    use yuzu_diagnostics::diagnostics::Span;
+    use yuzu_diagnostics::diagnostics::builder::DiagnosticBuilder;
+    use yuzu_diagnostics::source_map::SourceMap;
+    use yuzu_ide::{Fold, FoldKind, StructureNode, StructureNodeKind};
+
+    use crate::capabilities::Folding;
+    use crate::line_index::{LineIndex, PositionEncoding};
+
+    fn range(start: u32, end: u32) -> TextRange {
+        TextRange::new(start.into(), end.into())
+    }
+
+    #[test]
+    fn a_symbol_nests_under_its_parent() {
+        let text = "struct P {\n    x: int64,\n}\ndef f() {}\n";
+        let node = |parent, label: &str, range, kind| StructureNode {
+            parent,
+            label: label.to_owned(),
+            navigation_range: range,
+            node_range: range,
+            kind,
+            detail: None,
+        };
+        let nodes = vec![
+            node(None, "P", range(0, 27), StructureNodeKind::Struct),
+            node(Some(0), "x", range(15, 23), StructureNodeKind::Field),
+            node(None, "f", range(28, 38), StructureNodeKind::Function),
+        ];
+        let line_index = LineIndex::new(text, PositionEncoding::Utf8);
+        let rendered: Vec<String> = super::document_symbols(&line_index, nodes)
+            .iter()
+            .map(|symbol| {
+                let children: Vec<&str> = symbol
+                    .children
+                    .iter()
+                    .flatten()
+                    .map(|child| child.name.as_str())
+                    .collect();
+                format!("{} [{}]", symbol.name, children.join(", "))
+            })
+            .collect();
+        expect![[r#"
+            P [x]
+            f []"#]]
+        .assert_eq(&rendered.join("\n"));
+    }
+
+    #[test]
+    fn a_whole_line_fold_keeps_code_after_its_close() {
+        let text = "def f() {\n    return 1\n} let x = 1\ndef g() {\n    return 2\n}\n";
+        let line_index = LineIndex::new(text, PositionEncoding::Utf8);
+        let fold = |start, end| Fold {
+            range: range(start, end),
+            kind: FoldKind::Block,
+        };
+        let rendered: Vec<String> = [fold(8, 24), fold(43, 59)]
+            .into_iter()
+            .map(|fold| super::folding_range(text, &line_index, Folding::Lines, fold))
+            .map(|folded| format!("{}..{}", folded.start_line, folded.end_line))
+            .collect();
+        expect![[r#"
+            0..1
+            3..5"#]]
+        .assert_eq(&rendered.join("\n"));
+    }
+
+    #[test]
+    fn a_diagnostic_keeps_its_notes_and_the_labels_a_client_can_open() {
+        let mut sources = SourceMap::new();
+        let main = sources.add("main.yz".to_owned(), "let x: str = 1\n".to_owned());
+        let library = sources.add("<library>".to_owned(), String::new());
+        let diagnostic = DiagnosticBuilder::error(
+            Span {
+                source_id: main,
+                range: range(13, 14),
+            },
+            "expected `str`, found `int64`",
+        )
+        .label(
+            Span {
+                source_id: main,
+                range: range(7, 10),
+            },
+            "the annotation",
+        )
+        .label(
+            Span {
+                source_id: library,
+                range: range(0, 0),
+            },
+            "declared here",
+        )
+        .note("a literal is an `int64`")
+        .build();
+
+        let url = Url::parse("file:///main.yz").unwrap();
+        let line_index = LineIndex::new(sources.text(main), PositionEncoding::Utf8);
+        let (at, converted) = super::diagnostic(&diagnostic, |id| {
+            (id == main).then_some((&url, &line_index))
+        })
+        .expect("the primary label is in a file");
+        assert_eq!(*at, url);
+        let related: Vec<String> = converted
+            .related_information
+            .iter()
+            .flatten()
+            .map(|related| format!("{:?} {}", related.location.range, related.message))
+            .collect();
+        expect![[r#"
+            Range { start: Position { line: 0, character: 13 }, end: Position { line: 0, character: 14 } }
+            expected `str`, found `int64`
+            note: a literal is an `int64`
+            Range { start: Position { line: 0, character: 7 }, end: Position { line: 0, character: 10 } } the annotation"#]].assert_eq(&format!(
+            "{:?}\n{}\n{}",
+            converted.range,
+            converted.message,
+            related.join("\n")
+        ));
+    }
+}

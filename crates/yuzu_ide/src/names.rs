@@ -1,15 +1,14 @@
 //! The references in a check's index, narrowed from the syntax each side
-//! was lowered from to the name inside it. A use gives the name it spells;
-//! the declaration it names is then searched for that name, so a use of a
-//! parameter finds the parameter and not the function around it.
+//! was lowered from to the name inside it. The index says what the name is
+//! and what kind of declaration it names, so a use of a parameter finds the
+//! parameter and not the function around it.
 
 use text_size::TextRange;
 use yuzu_ast::{self as ast, AstNode};
 use yuzu_diagnostics::diagnostics::Span;
 use yuzu_diagnostics::source_map::SourceId;
-use yuzu_syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
-
-use crate::Checked;
+use yuzu_driver::index::TargetKind;
+use yuzu_syntax::{SyntaxKind, SyntaxNode};
 
 /// A name's place in one of a check's sources.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -28,44 +27,34 @@ pub(crate) struct Resolution {
     pub(crate) declaration: Span,
 }
 
-/// The syntax tree of each source a check read, parsed once.
-pub(crate) struct Trees<'k> {
-    checked: &'k Checked,
-    trees: Vec<(SourceId, SyntaxNode)>,
-}
-
-impl<'k> Trees<'k> {
-    pub(crate) fn new(checked: &'k Checked) -> Self {
-        Trees {
-            checked,
-            trees: Vec::new(),
-        }
-    }
-
-    pub(crate) fn get(&mut self, source: SourceId) -> SyntaxNode {
-        if let Some((_, tree)) = self.trees.iter().find(|(id, _)| *id == source) {
-            return tree.clone();
-        }
-        let (tree, _) = crate::parse(self.checked.text(source));
-        self.trees.push((source, tree.clone()));
-        tree
-    }
-}
-
-pub(crate) fn resolutions(checked: &Checked, trees: &mut Trees<'_>) -> Vec<Resolution> {
+/// The tree a check lowered a source from.
+pub(crate) fn tree(checked: &yuzu_driver::Checked, source: SourceId) -> Option<SyntaxNode> {
     checked
-        .index()
+        .syntax
+        .iter()
+        .find(|(id, _)| *id == source)
+        .map(|(_, green)| SyntaxNode::new_root(green.clone()))
+}
+
+pub(crate) fn resolutions(checked: &yuzu_driver::Checked) -> Vec<Resolution> {
+    checked
+        .index
         .references
         .iter()
         .filter_map(|reference| {
-            let (name, used) = used_name(&trees.get(reference.at.source_id), reference.at.range)?;
+            let used = used_name(
+                &tree(checked, reference.at.source_id)?,
+                reference.at.range,
+                &reference.name,
+            )?;
             let declared = declared_name(
-                &trees.get(reference.target.source_id),
+                &tree(checked, reference.target.source_id)?,
                 reference.target.range,
-                &name,
+                &reference.name,
+                reference.kind,
             )?;
             Some(Resolution {
-                name,
+                name: reference.name.clone(),
                 used: Name {
                     source: reference.at.source_id,
                     range: used,
@@ -78,6 +67,11 @@ pub(crate) fn resolutions(checked: &Checked, trees: &mut Trees<'_>) -> Vec<Resol
             })
         })
         .collect()
+}
+
+/// The node that declares the name at `name`: the node around its `Ident`.
+pub(crate) fn declaring(root: &SyntaxNode, name: TextRange) -> Option<SyntaxNode> {
+    root.covering_element(name).parent()?.parent()
 }
 
 /// The node an op was lowered from: the outermost whose range is the op's.
@@ -99,9 +93,9 @@ fn nodes_at(root: &SyntaxNode, range: TextRange) -> impl Iterator<Item = SyntaxN
         .take_while(move |node| node.text_range() == range)
 }
 
-/// The name a use spells: a name read, a callee, or the relation of a
+/// Where a use spells `name`: a name read, a callee, or the relation of a
 /// `from` or a `join`.
-fn used_name(root: &SyntaxNode, range: TextRange) -> Option<(String, TextRange)> {
+fn used_name(root: &SyntaxNode, range: TextRange, name: &str) -> Option<TextRange> {
     let ident = nodes_at(root, range).find_map(|node| match node.kind() {
         SyntaxKind::IdentExpr => ast::IdentExpr::cast(node)?.name(),
         SyntaxKind::CallExpr => match ast::CallExpr::cast(node)?.callee()? {
@@ -112,38 +106,26 @@ fn used_name(root: &SyntaxNode, range: TextRange) -> Option<(String, TextRange)>
         SyntaxKind::JoinExpr => ast::JoinExpr::cast(node)?.relation(),
         _ => None,
     })?;
-    let token = identifier(ident)?;
-    Some((token.text().to_owned(), token.text_range()))
+    let token = ident.token()?;
+    (token.text() == name).then(|| token.text_range())
 }
 
-/// Where a declaration spells `name`: its own name, or one of its
-/// parameters.
-fn declared_name(root: &SyntaxNode, range: TextRange, name: &str) -> Option<TextRange> {
-    node_at(root, range)?
-        .descendants()
-        .filter(|node| {
-            node.kind() == SyntaxKind::Ident
-                && node.parent().is_some_and(|parent| declares(parent.kind()))
-        })
-        .filter_map(|node| identifier(ast::Ident::cast(node)?))
-        .find(|token| token.text() == name)
-        .map(|token| token.text_range())
-}
-
-fn declares(kind: SyntaxKind) -> bool {
-    matches!(
-        kind,
-        SyntaxKind::FuncStmt
-            | SyntaxKind::FuncParam
-            | SyntaxKind::LetStmt
-            | SyntaxKind::TableStmt
-            | SyntaxKind::StructStmt
-            | SyntaxKind::TraitStmt
-    )
-}
-
-fn identifier(ident: ast::Ident) -> Option<SyntaxToken> {
-    ident
-        .token()
-        .filter(|token| token.kind() == SyntaxKind::Identifier)
+/// Where a declaration spells `name`. A local or a symbol is named by the
+/// declaration's own `Ident`; a parameter by one of the function's.
+fn declared_name(
+    root: &SyntaxNode,
+    range: TextRange,
+    name: &str,
+    kind: TargetKind,
+) -> Option<TextRange> {
+    let declaration = node_at(root, range)?;
+    let ident = match kind {
+        TargetKind::Local | TargetKind::Symbol => declaration.children().find_map(ast::Ident::cast),
+        TargetKind::Parameter => ast::FuncStmt::cast(declaration)?
+            .params()
+            .filter_map(|param| param.name())
+            .find(|ident| ident.token().is_some_and(|token| token.text() == name)),
+    }?;
+    let token = ident.token()?;
+    (token.text() == name).then(|| token.text_range())
 }

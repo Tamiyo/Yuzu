@@ -189,14 +189,10 @@ impl Root {
 
 ast_node!(Ident);
 impl Ident {
-    /// The identifier's token. Its text can be read without a copy while
-    /// the caller holds the token.
+    /// The identifier, the node's only token. Its text is read without a
+    /// copy while the caller holds the token.
     pub fn token(&self) -> Option<SyntaxToken> {
         self.0.first_token()
-    }
-
-    pub fn text(&self) -> Option<String> {
-        Some(self.token()?.text().to_string())
     }
 }
 
@@ -211,9 +207,6 @@ impl NamedTypeAnnotation {
         support::child(self.syntax())
     }
 
-    pub fn name_text(&self) -> Option<String> {
-        self.name().and_then(|ident| ident.text())
-    }
     pub fn args(&self) -> impl Iterator<Item = TypeAnnotation> + use<> {
         support::children(self.syntax())
     }
@@ -241,20 +234,12 @@ impl TypeParam {
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
-
-    pub fn name_text(&self) -> Option<String> {
-        self.name().and_then(|ident| ident.text())
-    }
 }
 
 ast_node!(TypeBound);
 impl TypeBound {
     pub fn subject(&self) -> Option<Ident> {
         support::child(self.syntax())
-    }
-
-    pub fn subject_text(&self) -> Option<String> {
-        self.subject().and_then(|ident| ident.text())
     }
 
     pub fn traits(&self) -> impl Iterator<Item = TraitRef> + use<> {
@@ -266,10 +251,6 @@ ast_node!(TraitRef);
 impl TraitRef {
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
-    }
-
-    pub fn name_text(&self) -> Option<String> {
-        self.name().and_then(|ident| ident.text())
     }
 }
 
@@ -291,14 +272,22 @@ ast_enum!(Stmt, {
 
 ast_node!(ModulePath);
 impl ModulePath {
+    /// The path as one string, `yuzu.std.math`: a new `String` for each call.
+    pub fn to_dotted(&self) -> String {
+        let mut dotted = String::new();
+        for segment in self.segments().filter_map(|segment| segment.token()) {
+            if !dotted.is_empty() {
+                dotted.push('.');
+            }
+            dotted.push_str(segment.text());
+        }
+        dotted
+    }
+
     /// The segments, outermost first. One segment names a module directly;
     /// more name the path through the modules holding it.
     pub fn segments(&self) -> impl Iterator<Item = Ident> + use<> {
         support::children(self.syntax())
-    }
-
-    pub fn segments_text(&self) -> impl Iterator<Item = String> + use<> {
-        self.segments().filter_map(|ident| ident.text())
     }
 }
 
@@ -314,10 +303,6 @@ impl ModStmt {
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
-
-    pub fn name_text(&self) -> Option<String> {
-        self.name().and_then(|ident| ident.text())
-    }
 }
 
 ast_node!(ImportStmt);
@@ -329,10 +314,6 @@ impl ImportStmt {
     /// The name this file calls the module, when `as` gave it one.
     pub fn alias(&self) -> Option<Ident> {
         support::child(self.syntax())
-    }
-
-    pub fn alias_text(&self) -> Option<String> {
-        self.alias().and_then(|ident| ident.text())
     }
 }
 
@@ -353,17 +334,9 @@ impl ImportItem {
         support::child(self.syntax())
     }
 
-    pub fn name_text(&self) -> Option<String> {
-        self.name().and_then(|ident| ident.text())
-    }
-
     /// The name this file calls the import, when `as` gave it one.
     pub fn alias(&self) -> Option<Ident> {
         support::children(self.syntax()).nth(1)
-    }
-
-    pub fn alias_text(&self) -> Option<String> {
-        self.alias().and_then(|ident| ident.text())
     }
 }
 
@@ -380,10 +353,6 @@ impl StructStmt {
         support::child(self.syntax())
     }
 
-    pub fn name_text(&self) -> Option<String> {
-        self.name().and_then(|name| name.text())
-    }
-
     pub fn fields(&self) -> impl Iterator<Item = StructField> + use<> {
         support::children(self.syntax())
     }
@@ -397,10 +366,6 @@ impl StructField {
 
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
-    }
-
-    pub fn name_text(&self) -> Option<String> {
-        self.name().and_then(|name| name.text())
     }
 
     pub fn mutability(&self) -> Mutability {
@@ -432,10 +397,6 @@ impl TraitStmt {
         support::child(self.syntax())
     }
 
-    pub fn name_text(&self) -> Option<String> {
-        self.name().and_then(|name| name.text())
-    }
-
     pub fn methods(&self) -> impl Iterator<Item = FuncStmt> + use<> {
         support::children(self.syntax())
     }
@@ -449,10 +410,6 @@ impl ImplStmt {
 
     pub fn ty(&self) -> Option<Ident> {
         support::child(self.syntax())
-    }
-
-    pub fn ty_text(&self) -> Option<String> {
-        self.ty().and_then(|ident| ident.text())
     }
 
     pub fn methods(&self) -> impl Iterator<Item = FuncStmt> + use<> {
@@ -488,10 +445,6 @@ impl FuncStmt {
         support::child(self.syntax())
     }
 
-    pub fn name_text(&self) -> Option<String> {
-        self.name().and_then(|name| name.text())
-    }
-
     pub fn type_params(&self) -> impl Iterator<Item = TypeParam> + use<> {
         support::children(self.syntax())
     }
@@ -523,10 +476,6 @@ impl FuncParam {
         support::child(self.syntax())
     }
 
-    pub fn name_text(&self) -> Option<String> {
-        self.name().and_then(|ident| ident.text())
-    }
-
     pub fn ty(&self) -> Option<TypeAnnotation> {
         support::child(self.syntax())
     }
@@ -542,16 +491,8 @@ impl TableStmt {
         support::nth_child(self.syntax(), 0)
     }
 
-    pub fn name_text(&self) -> Option<String> {
-        self.name().and_then(|name| name.text())
-    }
-
     pub fn struct_name(&self) -> Option<Ident> {
         support::nth_child(self.syntax(), 1)
-    }
-
-    pub fn struct_name_text(&self) -> Option<String> {
-        self.struct_name().and_then(|ident| ident.text())
     }
 
     pub fn inline_fields(&self) -> impl Iterator<Item = StructField> + use<> {
@@ -574,10 +515,6 @@ impl LetStmt {
 
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
-    }
-
-    pub fn name_text(&self) -> Option<String> {
-        self.name().and_then(|name| name.text())
     }
 
     pub fn mutability(&self) -> Mutability {
@@ -646,10 +583,6 @@ impl IdentExpr {
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
-
-    pub fn name_text(&self) -> Option<String> {
-        self.name().and_then(|ident| ident.text())
-    }
 }
 
 ast_node!(CallExpr);
@@ -679,20 +612,12 @@ impl FieldAccessExpr {
     pub fn field(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
-
-    pub fn field_text(&self) -> Option<String> {
-        self.field().and_then(|ident| ident.text())
-    }
 }
 
 ast_node!(StructExpr);
 impl StructExpr {
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
-    }
-
-    pub fn name_text(&self) -> Option<String> {
-        self.name().and_then(|ident| ident.text())
     }
 
     pub fn fields(&self) -> impl Iterator<Item = StructFieldInit> + use<> {
@@ -704,10 +629,6 @@ ast_node!(StructFieldInit);
 impl StructFieldInit {
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
-    }
-
-    pub fn name_text(&self) -> Option<String> {
-        self.name().and_then(|ident| ident.text())
     }
 
     pub fn value(&self) -> Option<Expr> {
@@ -796,16 +717,8 @@ impl FromExpr {
         support::nth_child(self.syntax(), 0)
     }
 
-    pub fn relation_text(&self) -> Option<String> {
-        self.relation().and_then(|ident| ident.text())
-    }
-
     pub fn alias(&self) -> Option<Ident> {
         support::nth_child(self.syntax(), 1)
-    }
-
-    pub fn alias_text(&self) -> Option<String> {
-        self.alias().and_then(|ident| ident.text())
     }
 }
 
@@ -825,10 +738,6 @@ impl SelectItem {
     pub fn alias(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
-
-    pub fn alias_text(&self) -> Option<String> {
-        self.alias().and_then(|ident| ident.text())
-    }
 }
 
 ast_node!(WhereExpr);
@@ -844,10 +753,6 @@ ast_node!(DropExpr);
 impl DropExpr {
     pub fn columns(&self) -> impl Iterator<Item = Ident> + use<> {
         support::children(self.syntax())
-    }
-
-    pub fn columns_text(&self) -> impl Iterator<Item = String> + use<> {
-        self.columns().filter_map(|ident| ident.text())
     }
 }
 
@@ -868,24 +773,12 @@ impl RenameItem {
             .flatten()
     }
 
-    pub fn qualifier_text(&self) -> Option<String> {
-        self.qualifier().and_then(|ident| ident.text())
-    }
-
     pub fn from(&self) -> Option<Ident> {
         support::nth_child(self.syntax(), self.is_qualified() as usize)
     }
 
-    pub fn from_text(&self) -> Option<String> {
-        self.from().and_then(|ident| ident.text())
-    }
-
     pub fn to(&self) -> Option<Ident> {
         support::nth_child(self.syntax(), self.is_qualified() as usize + 1)
-    }
-
-    pub fn to_text(&self) -> Option<String> {
-        self.to().and_then(|ident| ident.text())
     }
 
     fn is_qualified(&self) -> bool {
@@ -936,16 +829,8 @@ impl JoinExpr {
         support::nth_child(self.syntax(), 0)
     }
 
-    pub fn relation_text(&self) -> Option<String> {
-        self.relation().and_then(|ident| ident.text())
-    }
-
     pub fn alias(&self) -> Option<Ident> {
         support::nth_child(self.syntax(), 1)
-    }
-
-    pub fn alias_text(&self) -> Option<String> {
-        self.alias().and_then(|ident| ident.text())
     }
 
     pub fn on(&self) -> Option<JoinOn> {
@@ -969,10 +854,6 @@ impl JoinUsing {
     pub fn columns(&self) -> impl Iterator<Item = Ident> + use<> {
         support::children(self.syntax())
     }
-
-    pub fn columns_text(&self) -> impl Iterator<Item = String> + use<> {
-        self.columns().filter_map(|ident| ident.text())
-    }
 }
 
 ast_node!(SetExpr);
@@ -986,10 +867,6 @@ ast_node!(SetItem);
 impl SetItem {
     pub fn column(&self) -> Option<Ident> {
         support::child(self.syntax())
-    }
-
-    pub fn column_text(&self) -> Option<String> {
-        self.column().and_then(|ident| ident.text())
     }
 
     pub fn value(&self) -> Option<Expr> {
@@ -1013,10 +890,6 @@ impl AliasExpr {
     pub fn alias(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
-
-    pub fn alias_text(&self) -> Option<String> {
-        self.alias().and_then(|ident| ident.text())
-    }
 }
 
 ast_node!(AggregateExpr);
@@ -1039,10 +912,6 @@ impl AggregateItem {
     pub fn alias(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
-
-    pub fn alias_text(&self) -> Option<String> {
-        self.alias().and_then(|ident| ident.text())
-    }
 }
 
 ast_node!(GroupBy);
@@ -1060,26 +929,14 @@ impl GroupByItem {
             .flatten()
     }
 
-    pub fn qualifier_text(&self) -> Option<String> {
-        self.qualifier().and_then(|ident| ident.text())
-    }
-
     pub fn column(&self) -> Option<Ident> {
         support::nth_child(self.syntax(), self.is_qualified() as usize)
-    }
-
-    pub fn column_text(&self) -> Option<String> {
-        self.column().and_then(|ident| ident.text())
     }
 
     pub fn alias(&self) -> Option<Ident> {
         self.is_aliased()
             .then(|| support::nth_child(self.syntax(), self.is_qualified() as usize + 1))
             .flatten()
-    }
-
-    pub fn alias_text(&self) -> Option<String> {
-        self.alias().and_then(|ident| ident.text())
     }
 
     fn is_qualified(&self) -> bool {
@@ -1158,7 +1015,7 @@ mod tests {
     }
 
     fn text(ident: Option<Ident>) -> Option<String> {
-        ident.and_then(|ident| ident.text())
+        Some(ident?.token()?.text().to_owned())
     }
 
     fn rename(input: &str) -> RenameItem {
@@ -1238,7 +1095,7 @@ mod tests {
             .path()
             .expect("a path")
             .segments()
-            .filter_map(|s| s.text())
+            .filter_map(|s| text(Some(s)))
             .collect();
         assert_eq!(segments, ["yuzu", "std", "math"]);
         assert_eq!(text(import.alias()).as_deref(), Some("m"));
@@ -1255,7 +1112,7 @@ mod tests {
             .path()
             .expect("a path")
             .segments()
-            .filter_map(|s| s.text())
+            .filter_map(|s| text(Some(s)))
             .collect();
         assert_eq!(segments, ["helpers"]);
 
@@ -1457,7 +1314,7 @@ mod tests {
             .using()
             .expect("a using clause")
             .columns()
-            .filter_map(|column| column.text())
+            .filter_map(|column| text(Some(column)))
             .collect();
         assert_eq!(columns, ["a", "b"]);
         assert!(join.on().is_none());

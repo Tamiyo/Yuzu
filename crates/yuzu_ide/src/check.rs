@@ -3,40 +3,52 @@
 //! into the compiler.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use rustc_hash::FxHashMap;
 use text_size::{TextRange, TextSize};
 use yuzu_diagnostics::diagnostics::{Diagnostic, Span};
 use yuzu_diagnostics::source_map::SourceId;
 use yuzu_driver::index::Index;
-use yuzu_driver::modules::{FsResolver, MARKER, ModuleResolver, ModuleSource};
+use yuzu_driver::modules::{FsResolver, Location, ModuleResolver, ModuleSource, locate};
 use yuzu_driver::{Focus, stdlib};
+use yuzu_syntax::{GreenNode, SyntaxNode};
 
 use crate::HlRange;
+use crate::analysis::ParsedFile;
 use crate::hover::HoverResult;
 use crate::inlay_hints::InlayHint;
+use crate::names::{self, Resolution};
 use crate::navigation::FileRange;
 use crate::{hover, inlay_hints, navigation, syntax_highlighting};
 
-/// What checking a file's program found.
+/// What checking a file's program found. Its names are resolved once, when
+/// the check is made on the checker thread, so a request only looks them up.
 #[derive(Debug)]
-pub struct Checked(yuzu_driver::Checked);
+pub struct Checked {
+    inner: yuzu_driver::Checked,
+    resolutions: Vec<Resolution>,
+}
 
 impl Checked {
+    fn new(inner: yuzu_driver::Checked) -> Self {
+        let resolutions = names::resolutions(&inner);
+        Checked { inner, resolutions }
+    }
+
     pub fn diagnostics(&self) -> &[Diagnostic] {
-        &self.0.diagnostics
+        &self.inner.diagnostics
     }
 
     /// The file a source was read from. `None` for a library module built
     /// into the compiler, and for the entry a module's check makes up.
     pub fn path(&self, source: SourceId) -> Option<&Path> {
-        let path = Path::new(self.0.sources.name(source));
+        let path = Path::new(self.inner.sources.name(source));
         path.is_absolute().then_some(path)
     }
 
     pub fn text(&self, source: SourceId) -> &str {
-        self.0.sources.text(source)
+        self.inner.sources.text(source)
     }
 
     /// The text of a file as this check read it.
@@ -81,12 +93,21 @@ impl Checked {
     }
 
     pub(crate) fn index(&self) -> &Index {
-        &self.0.index
+        &self.inner.index
+    }
+
+    pub(crate) fn resolutions(&self) -> &[Resolution] {
+        &self.resolutions
+    }
+
+    /// The tree a source was lowered from.
+    pub(crate) fn syntax(&self, source: SourceId) -> Option<SyntaxNode> {
+        names::tree(&self.inner, source)
     }
 
     /// The type inference gave the syntax at a span, when it gave one.
     pub(crate) fn type_at(&self, at: Span) -> Option<String> {
-        self.0
+        self.inner
             .index
             .types
             .iter()
@@ -95,61 +116,67 @@ impl Checked {
     }
 
     fn source_of(&self, file: &Path) -> Option<SourceId> {
-        self.0.sources.id(&file.to_string_lossy())
+        self.inner.sources.id(&file.to_string_lossy())
     }
 }
 
-/// Where a file sits in its program.
-enum Location {
-    /// A file in a directory without a module marker: a program's start.
-    Entry { base: PathBuf },
-    /// A file in a directory tree of module markers, and the path that
-    /// names it from the top of that tree.
-    Module { base: PathBuf, path: String },
-}
-
-/// `documents` holds each open file's path and text.
-pub(crate) fn check(file: &Path, text: &str, documents: &FxHashMap<PathBuf, Arc<str>>) -> Checked {
-    let overlay = Overlay::new(file, documents);
+/// `documents` holds each open file by its path.
+pub(crate) fn check(
+    file: &Path,
+    parsed: &ParsedFile,
+    documents: &FxHashMap<PathBuf, Arc<ParsedFile>>,
+    disk: &DiskCache,
+) -> Checked {
+    let overlay = Overlay::new(file, documents, disk);
     let name = file.to_string_lossy();
     let focus = match &overlay.location {
         Location::Entry { .. } => Focus::Entry {
             name: &name,
-            source: text,
+            source: parsed.text(),
+            syntax: parsed.clean_tree(),
         },
         Location::Module { path, .. } => Focus::Module(path),
     };
-    Checked(yuzu_driver::check(focus, &overlay))
+    Checked::new(yuzu_driver::check(focus, &overlay))
 }
 
-/// Up through the directories that hold a module marker: the first one that
-/// does not is where the program's module paths start.
-fn locate(file: &Path) -> Location {
-    let directory = file.parent().unwrap_or(Path::new(""));
-    let is_marker = file.file_name().is_some_and(|name| name == MARKER);
-    if !is_marker && !directory.join(MARKER).is_file() {
-        return Location::Entry {
-            base: directory.to_path_buf(),
-        };
-    }
+/// Files read from disk, each parsed once for each text it has had. The
+/// host lives on the main thread and checks run on the checker's, so the
+/// cache is behind a lock.
+#[derive(Debug, Default)]
+pub(crate) struct DiskCache {
+    files: Mutex<FxHashMap<PathBuf, CachedFile>>,
+}
 
-    let mut segments = Vec::new();
-    if !is_marker && let Some(stem) = file.file_stem() {
-        segments.push(stem.to_string_lossy().into_owned());
-    }
-    let mut base = directory;
-    while base.join(MARKER).is_file() {
-        let Some(name) = base.file_name() else {
-            break;
-        };
-        segments.push(name.to_string_lossy().into_owned());
-        base = base.parent().unwrap_or(Path::new(""));
-    }
-    segments.reverse();
+#[derive(Debug)]
+struct CachedFile {
+    text: String,
+    syntax: Option<GreenNode>,
+}
 
-    Location::Module {
-        base: base.to_path_buf(),
-        path: segments.join("."),
+impl DiskCache {
+    /// A file's text, and its tree when that text parses without errors.
+    fn read(&self, path: &Path) -> Option<(String, Option<GreenNode>)> {
+        let text = std::fs::read_to_string(path).ok()?;
+        // A panic while the lock is held leaves each entry whole, so a
+        // poisoned cache still holds only sound entries.
+        let mut files = self.files.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(cached) = files.get(path)
+            && cached.text == text
+        {
+            return Some((text, cached.syntax.clone()));
+        }
+
+        let (tree, errors) = crate::analysis::parse(&text);
+        let syntax = errors.is_empty().then(|| tree.green().into_owned());
+        files.insert(
+            path.to_path_buf(),
+            CachedFile {
+                text: text.clone(),
+                syntax: syntax.clone(),
+            },
+        );
+        Some((text, syntax))
     }
 }
 
@@ -157,15 +184,20 @@ fn locate(file: &Path) -> Location {
 struct Overlay<'d> {
     location: Location,
     files: FsResolver,
-    documents: &'d FxHashMap<PathBuf, Arc<str>>,
+    documents: &'d FxHashMap<PathBuf, Arc<ParsedFile>>,
+    disk: &'d DiskCache,
     /// Open library files, by module path.
-    library: FxHashMap<String, (&'d Path, &'d Arc<str>)>,
+    library: FxHashMap<String, (&'d Path, &'d ParsedFile)>,
     /// Where the library's files are, when the file checked is one of them.
     library_files: Option<FsResolver>,
 }
 
 impl<'d> Overlay<'d> {
-    fn new(file: &Path, documents: &'d FxHashMap<PathBuf, Arc<str>>) -> Self {
+    fn new(
+        file: &Path,
+        documents: &'d FxHashMap<PathBuf, Arc<ParsedFile>>,
+        disk: &'d DiskCache,
+    ) -> Self {
         let location = locate(file);
         let base = match &location {
             Location::Entry { base } | Location::Module { base, .. } => base.clone(),
@@ -179,9 +211,9 @@ impl<'d> Overlay<'d> {
 
         let library = documents
             .iter()
-            .filter_map(|(path, text)| match locate(path) {
+            .filter_map(|(path, parsed)| match locate(path) {
                 Location::Module { path: module, .. } if stdlib::reserves(&module) => {
-                    Some((module, (path.as_path(), text)))
+                    Some((module, (path.as_path(), parsed.as_ref())))
                 }
                 Location::Module { .. } | Location::Entry { .. } => None,
             })
@@ -191,6 +223,7 @@ impl<'d> Overlay<'d> {
             location,
             files: FsResolver { base },
             documents,
+            disk,
             library,
             library_files,
         }
@@ -199,13 +232,14 @@ impl<'d> Overlay<'d> {
     /// The first candidate an open document or a file on disk holds.
     fn read(&self, candidates: [PathBuf; 2]) -> Option<ModuleSource> {
         candidates.into_iter().find_map(|file| {
-            let source = match self.documents.get(&file) {
-                Some(text) => text.to_string(),
-                None => std::fs::read_to_string(&file).ok()?,
+            let (source, syntax) = match self.documents.get(&file) {
+                Some(parsed) => (parsed.text().to_owned(), parsed.clean_tree().cloned()),
+                None => self.disk.read(&file)?,
             };
             Some(ModuleSource {
                 name: file.to_string_lossy().into_owned(),
                 source,
+                syntax,
             })
         })
     }
@@ -217,10 +251,11 @@ impl ModuleResolver for Overlay<'_> {
     }
 
     fn resolve_library(&self, path: &str) -> Option<ModuleSource> {
-        if let Some((file, text)) = self.library.get(path) {
+        if let Some((file, parsed)) = self.library.get(path) {
             return Some(ModuleSource {
                 name: file.to_string_lossy().into_owned(),
-                source: text.to_string(),
+                source: parsed.text().to_owned(),
+                syntax: parsed.clean_tree().cloned(),
             });
         }
         self.read(self.library_files.as_ref()?.candidates(path))
@@ -324,5 +359,31 @@ mod tests {
             0,
             expect!["datafusion.yz 74..77 unknown type `i64`"],
         );
+    }
+
+    #[test]
+    fn a_file_on_disk_is_parsed_again_only_when_its_text_changes() {
+        let tree = Tree::new(&[("helpers.yz", "pub def two() -> int64 { return 2 }\n")]);
+        let helpers = tree.0.join("helpers.yz");
+        let cache = super::DiskCache::default();
+
+        let (_, first) = cache.read(&helpers).unwrap();
+        let (_, again) = cache.read(&helpers).unwrap();
+        let (first, again) = (first.unwrap(), again.unwrap());
+        assert!(
+            std::ptr::eq(&*first, &*again),
+            "an unchanged file keeps its tree"
+        );
+
+        std::fs::write(&helpers, "pub def three() -> int64 { return 3 }\n").unwrap();
+        let (_, changed) = cache.read(&helpers).unwrap();
+        assert!(
+            !std::ptr::eq(&*first, &*changed.unwrap()),
+            "a changed file is parsed again"
+        );
+
+        std::fs::write(&helpers, "pub def = 1\n").unwrap();
+        let (_, broken) = cache.read(&helpers).unwrap();
+        assert!(broken.is_none(), "a tree with errors is not handed on");
     }
 }

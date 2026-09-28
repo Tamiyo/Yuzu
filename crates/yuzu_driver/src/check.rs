@@ -4,7 +4,8 @@
 
 use yuzu_diagnostics::diagnostics::Diagnostic;
 use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
-use yuzu_diagnostics::source_map::SourceMap;
+use yuzu_diagnostics::source_map::{SourceId, SourceMap};
+use yuzu_syntax::GreenNode;
 
 use crate::index::{Index, IndexReader};
 use crate::modules::{self, ModuleResolver};
@@ -14,8 +15,13 @@ use crate::{CompileOptions, in_thread_context, lower_and_check};
 /// The file a check asks about.
 #[derive(Clone, Copy, Debug)]
 pub enum Focus<'a> {
-    /// A file that is no module: the program starts there.
-    Entry { name: &'a str, source: &'a str },
+    /// A file that is no module: the program starts there. `syntax` is a
+    /// tree parsed from `source` before, without errors, when there is one.
+    Entry {
+        name: &'a str,
+        source: &'a str,
+        syntax: Option<&'a GreenNode>,
+    },
     /// A module, by its path. It is loaded whether or not anything imports
     /// it, and each of its declarations is lowered, even one nothing uses.
     Module(&'a str),
@@ -29,6 +35,8 @@ pub struct Checked {
     pub sources: SourceMap,
     pub diagnostics: Vec<Diagnostic>,
     pub index: Index,
+    /// The tree each source was lowered from, by the source's id.
+    pub syntax: Vec<(SourceId, GreenNode)>,
 }
 
 /// Checks the program `focus` belongs to, for the DataFusion engine.
@@ -36,16 +44,23 @@ pub struct Checked {
 /// The library is read from its files rather than from the cache a compile
 /// uses, so a copy the resolver holds of a library module is the one read.
 pub fn check(focus: Focus<'_>, resolver: &dyn ModuleResolver) -> Checked {
-    let (name, source, module) = match focus {
-        Focus::Entry { name, source } => (name, source, None),
-        Focus::Module(path) => ("<check>", "", Some(path)),
+    let (name, source, syntax, module) = match focus {
+        Focus::Entry {
+            name,
+            source,
+            syntax,
+        } => (name, source, syntax.cloned(), None),
+        Focus::Module(path) => ("<check>", "", None, Some(path)),
     };
 
     let mut sources = SourceMap::new();
     let mut diagnostics = DiagnosticsEngine::new();
     let entry = sources.add(name.to_owned(), source.to_owned());
-    let modules::Loaded { files, .. } = modules::load_program(
-        entry,
+    let modules::Loaded { files, trees, .. } = modules::load_program(
+        modules::EntryFile {
+            source: entry,
+            syntax,
+        },
         &mut sources,
         &mut diagnostics,
         resolver,
@@ -72,6 +87,7 @@ pub fn check(focus: Focus<'_>, resolver: &dyn ModuleResolver) -> Checked {
         sources,
         diagnostics: diagnostics.into_diagnostics(),
         index,
+        syntax: trees,
     }
 }
 
@@ -98,6 +114,7 @@ mod tests {
             (path == self.path).then(|| ModuleSource {
                 name: format!("{path}.yz"),
                 source: self.source.to_owned(),
+                syntax: None,
             })
         }
     }
@@ -119,6 +136,7 @@ mod tests {
             Focus::Entry {
                 name: "main.yz",
                 source: "def f(x: i64) -> int64 { return 1 }\n",
+                syntax: None,
             },
             &resolver,
         );
@@ -172,6 +190,7 @@ mod tests {
             Focus::Entry {
                 name: "main.yz",
                 source,
+                syntax: None,
             },
             &resolver,
         );

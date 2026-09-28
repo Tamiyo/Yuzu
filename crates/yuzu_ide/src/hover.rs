@@ -6,7 +6,8 @@ use yuzu_diagnostics::source_map::SourceId;
 use yuzu_syntax::SyntaxKind;
 
 use crate::Checked;
-use crate::names::{Resolution, Trees, node_at, resolutions};
+use crate::file_structure;
+use crate::names::{Resolution, declaring, node_at};
 use crate::navigation::resolution_at;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -18,9 +19,7 @@ pub struct HoverResult {
 }
 
 pub(crate) fn hover(checked: &Checked, source: SourceId, offset: TextSize) -> Option<HoverResult> {
-    let mut trees = Trees::new(checked);
-    let resolutions = resolutions(checked, &mut trees);
-    if let Some(resolution) = resolution_at(&resolutions, source, offset) {
+    if let Some(resolution) = resolution_at(checked.resolutions(), source, offset) {
         let range = if resolution.used.source == source
             && resolution.used.range.contains_inclusive(offset)
         {
@@ -28,7 +27,7 @@ pub(crate) fn hover(checked: &Checked, source: SourceId, offset: TextSize) -> Op
         } else {
             resolution.declared.range
         };
-        let text = describe(checked, &mut trees, resolution)?;
+        let text = describe(checked, resolution)?;
         return Some(HoverResult {
             range,
             markup: code(&text),
@@ -49,12 +48,9 @@ pub(crate) fn hover(checked: &Checked, source: SourceId, offset: TextSize) -> Op
 
 /// A declaration as a reader would write it: a function's signature, a
 /// parameter or a `let` with its type, or a table or struct in full.
-fn describe(checked: &Checked, trees: &mut Trees<'_>, resolution: &Resolution) -> Option<String> {
-    let root = trees.get(resolution.declared.source);
-    let declared = root
-        .covering_element(resolution.declared.range)
-        .parent()?
-        .parent()?;
+fn describe(checked: &Checked, resolution: &Resolution) -> Option<String> {
+    let root = checked.syntax(resolution.declared.source)?;
+    let declared = declaring(&root, resolution.declared.range)?;
     let declaration = node_at(&root, resolution.declaration.range)?;
     let ty = checked.type_at(resolution.declaration);
 
@@ -74,23 +70,10 @@ fn describe(checked: &Checked, trees: &mut Trees<'_>, resolution: &Resolution) -
                 None => format!("let {mutable}{}", resolution.name),
             }
         }
-        SyntaxKind::FuncStmt => {
-            let function = ast::FuncStmt::cast(declaration)?;
-            let end = function
-                .body()
-                .map_or(function.syntax().text_range().end(), |body| {
-                    body.syntax().text_range().start()
-                });
-            let start = function.syntax().text_range().start();
-            function
-                .syntax()
-                .text()
-                .slice(TextRange::new(start, end) - start)
-                .to_string()
-        }
+        SyntaxKind::FuncStmt => file_structure::header(&ast::FuncStmt::cast(declaration)?),
         _ => declaration.text().to_string(),
     };
-    Some(text.split_whitespace().collect::<Vec<_>>().join(" "))
+    Some(file_structure::compact(&text))
 }
 
 fn code(text: &str) -> String {
@@ -111,7 +94,8 @@ mod tests {
         expected.assert_debug_eq(&rendered);
     }
 
-    const PROGRAM: &str = r#"let cap = 10
+    const PROGRAM: &str = r#"table t = { a: int64 }
+let cap = 10
 def double(x: int64) -> int64 {
     let mut y = x * 2
     return y
@@ -164,6 +148,18 @@ from t |> select double(1) + cap as v
                 "2 ```yuzu\nint64\n```",
             )
         "#]],
+        );
+    }
+
+    #[test]
+    fn a_declaration_shows_itself() {
+        check(
+            &PROGRAM.replacen("let cap", "let c$0ap", 1),
+            expect![[r#"
+                Some(
+                    "cap ```yuzu\nlet cap: int64\n```",
+                )
+            "#]],
         );
     }
 }

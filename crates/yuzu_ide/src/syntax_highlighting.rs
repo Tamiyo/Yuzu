@@ -12,7 +12,7 @@ use yuzu_diagnostics::source_map::SourceId;
 use yuzu_syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
 
 use crate::Checked;
-use crate::names::{Trees, resolutions};
+use crate::names::declaring;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HlRange {
@@ -114,17 +114,13 @@ pub(crate) fn highlight(root: &SyntaxNode) -> Vec<HlRange> {
 
 /// Each use a check resolved in a source, highlighted as its declaration.
 pub(crate) fn highlight_uses(checked: &Checked, source: SourceId) -> Vec<HlRange> {
-    let mut trees = Trees::new(checked);
-    let resolutions = resolutions(checked, &mut trees);
-    resolutions
+    checked
+        .resolutions()
         .iter()
         .filter(|resolution| resolution.used.source == source)
         .filter_map(|resolution| {
-            let root = trees.get(resolution.declared.source);
-            let declaring = root
-                .covering_element(resolution.declared.range)
-                .parent()?
-                .parent()?;
+            let root = checked.syntax(resolution.declared.source)?;
+            let declaring = declaring(&root, resolution.declared.range)?;
             let highlight = match declaring.kind() {
                 SyntaxKind::FuncParam => HlTag::Parameter.into(),
                 SyntaxKind::LetStmt => match ast::LetStmt::cast(declaring)?.mutability() {
@@ -398,6 +394,7 @@ from employees e
             cap Local
             k Local Mutable
             t Table
-            f Function"#]].assert_eq(&rendered.join("\n"));
+            f Function"#]]
+        .assert_eq(&rendered.join("\n"));
     }
 }

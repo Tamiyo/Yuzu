@@ -125,7 +125,6 @@ pub(crate) mod test_support {
     use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
     use yuzu_diagnostics::diagnostics::printer::DiagnosticPrinter;
     use yuzu_diagnostics::source_map::SourceMap;
-    use yuzu_lexer::lexer::{Lexer, Token};
 
     use crate::to_json;
 
@@ -140,19 +139,17 @@ pub(crate) mod test_support {
         let mut diagnostics = DiagnosticsEngine::new();
         let prelude = include_str!("../../yuzu_passes/tests/prelude.yz");
         let prelude_id = sources.add("<prelude>".to_string(), prelude.to_string());
-        let tokens: Vec<Token> = Lexer::new(prelude).collect();
-        let prelude_root =
-            ast::Root::cast(yuzu_parser::parse(&tokens, &mut diagnostics, prelude_id))
-                .expect("a source has a root");
-        let mut prelude = yuzu_passes::File::new(
+        let prelude_root = ast::Root::cast(yuzu_parser::parse_text(
+            prelude,
+            &mut diagnostics,
             prelude_id,
-            Some(yuzu_passes::PRELUDE.to_string()),
-            prelude_root,
-        );
+        ))
+        .expect("a source has a root");
+        let mut prelude =
+            yuzu_passes::File::new(prelude_id, Some(yuzu_passes::PRELUDE.to_string()), prelude_root);
         prelude.set_lowering(yuzu_passes::Lowering::OnDemand);
         let source_id = sources.add("test.yz".to_string(), source.to_string());
-        let tokens: Vec<Token> = Lexer::new(source).collect();
-        let syntax = yuzu_parser::parse(&tokens, &mut diagnostics, source_id);
+        let syntax = yuzu_parser::parse_text(source, &mut diagnostics, source_id);
         let root = ast::Root::cast(syntax).expect("a source has a root");
         let mut module = yuzu_passes::lower_ast_to_yzl(
             &context,
