@@ -1,7 +1,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct SourceId(usize);
 
 #[derive(Debug)]
@@ -46,11 +46,14 @@ impl SourceMap {
         }
     }
 
-    pub fn add(&mut self, name: String, text: String) -> SourceId {
+    /// Adds a source, and returns its id. A text already held as an
+    /// `Arc<str>` is shared, not copied.
+    pub fn add(&mut self, name: impl Into<Arc<str>>, text: impl Into<Arc<str>>) -> SourceId {
+        let text: Arc<str> = text.into();
         let line_starts = index_lines(&text).into();
         self.entries.push(Entry {
             name: name.into(),
-            text: text.into(),
+            text,
             line_starts,
         });
         SourceId(self.entries.len())

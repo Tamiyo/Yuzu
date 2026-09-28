@@ -29,10 +29,15 @@ impl<'a> DiagnosticPrinter<'a> {
         }
         let _ = writeln!(out, ": {}", diagnostic.message);
 
-        let gutter = match primary_label(diagnostic) {
-            Some(primary) => self.print_snippet(&mut out, diagnostic, primary),
-            None => 1,
-        };
+        let lines = self.snippet_lines(diagnostic);
+        let gutter = lines
+            .iter()
+            .map(|&(_, line)| line.to_string().len())
+            .max()
+            .unwrap_or(1);
+        for (source, line) in lines {
+            self.print_snippet(&mut out, diagnostic, source, line, gutter);
+        }
 
         for note in &diagnostic.notes {
             let _ = writeln!(out, "{:gutter$} = note: {note}", "");
@@ -41,56 +46,29 @@ impl<'a> DiagnosticPrinter<'a> {
         out
     }
 
-    fn print_snippet(&self, out: &mut String, diagnostic: &Diagnostic, primary: &Label) -> usize {
-        let source = primary.span.source_id;
-        let position = self.line_col(primary);
-        let gutter = position.line.to_string().len();
-        let line = position.line;
-
-        let _ = writeln!(
-            out,
-            " --> {}:{}:{}",
-            self.sources.name(source),
-            position.line,
-            position.col
-        );
-
-        let line_text = self.sources.line_text(source, line);
-        let _ = writeln!(out, "{:gutter$} |", "");
-        let _ = writeln!(out, "{line} | {line_text}");
-
-        let mut underline = vec![b' '; line_text.len()];
-        let mut trailing = "";
-        for label in self.labels_on(diagnostic, source, line) {
-            let mark = match label.style {
-                LabelStyle::Primary => b'^',
-                LabelStyle::Secondary => b'-',
-            };
-            let column = self.column_of(label);
-            for offset in 0..span_len(label) {
-                match underline.get_mut(column + offset) {
-                    Some(slot) if *slot != b'^' => *slot = mark,
-                    _ => {}
-                }
-            }
-            if matches!(label.style, LabelStyle::Primary) && trailing.is_empty() {
-                trailing = &label.message;
+    /// Each line a label is on: the primary label's first, then the rest in
+    /// source order.
+    fn snippet_lines(&self, diagnostic: &Diagnostic) -> Vec<(SourceId, usize)> {
+        let mut lines: Vec<(SourceId, usize)> = Vec::new();
+        let primary = primary_label(diagnostic);
+        let mut rest: Vec<(SourceId, usize)> = diagnostic
+            .labels
+            .iter()
+            .map(|label| (label.span.source_id, self.line_col(label).line))
+            .collect();
+        rest.sort_unstable();
+        if let Some(primary) = primary {
+            lines.push((primary.span.source_id, self.line_col(primary).line));
+        }
+        for line in rest {
+            if !lines.contains(&line) {
+                lines.push(line);
             }
         }
-        while underline.last() == Some(&b' ') {
-            underline.pop();
-        }
-        let _ = write!(out, "{:gutter$} | {}", "", ascii(underline));
-        if !trailing.is_empty() {
-            let _ = write!(out, " {trailing}");
-        }
-        out.push('\n');
-
-        self.print_stacked_labels(out, diagnostic, source, line, gutter);
-        gutter
+        lines
     }
 
-    fn print_stacked_labels(
+    fn print_snippet(
         &self,
         out: &mut String,
         diagnostic: &Diagnostic,
@@ -98,9 +76,64 @@ impl<'a> DiagnosticPrinter<'a> {
         line: usize,
         gutter: usize,
     ) {
-        let mut stacked: Vec<&Label> = self
-            .labels_on(diagnostic, source, line)
-            .into_iter()
+        let labels = self.labels_on(diagnostic, source, line);
+        let line_text = self.sources.line_text(source, line);
+        let first = labels
+            .iter()
+            .find(|label| matches!(label.style, LabelStyle::Primary))
+            .or_else(|| labels.first())
+            .expect("a snippet's line holds a label");
+        let column = line_text
+            .get(..self.byte_column(first))
+            .map_or(1, |before| before.chars().count() + 1);
+
+        let _ = writeln!(out, " --> {}:{line}:{column}", self.sources.name(source));
+        let _ = writeln!(out, "{:gutter$} |", "");
+        let _ = writeln!(out, "{line:>gutter$} | {}", shown(line_text));
+
+        let mut underline = vec![' '; width(line_text)];
+        let mut trailing = "";
+        for label in &labels {
+            let mark = match label.style {
+                LabelStyle::Primary => '^',
+                LabelStyle::Secondary => '-',
+            };
+            let (start, len) = self.cells(line_text, label);
+            for slot in underline.iter_mut().skip(start).take(len) {
+                if *slot != '^' {
+                    *slot = mark;
+                }
+            }
+            if underline.len() < start + len {
+                underline.resize(start + len, mark);
+            }
+            if matches!(label.style, LabelStyle::Primary) && trailing.is_empty() {
+                trailing = &label.message;
+            }
+        }
+        while underline.last() == Some(&' ') {
+            underline.pop();
+        }
+        let underline: String = underline.into_iter().collect();
+        let _ = write!(out, "{:gutter$} | {underline}", "");
+        if !trailing.is_empty() {
+            let _ = write!(out, " {trailing}");
+        }
+        out.push('\n');
+
+        self.print_stacked_labels(out, &labels, line_text, gutter);
+    }
+
+    fn print_stacked_labels(
+        &self,
+        out: &mut String,
+        labels: &[&Label],
+        line_text: &str,
+        gutter: usize,
+    ) {
+        let mut stacked: Vec<&Label> = labels
+            .iter()
+            .copied()
             .filter(|label| {
                 matches!(label.style, LabelStyle::Secondary) && !label.message.is_empty()
             })
@@ -110,27 +143,27 @@ impl<'a> DiagnosticPrinter<'a> {
             return;
         }
 
-        let columns: Vec<usize> = stacked.iter().map(|label| self.column_of(label)).collect();
+        let cells: Vec<(usize, usize)> = stacked
+            .iter()
+            .map(|label| self.cells(line_text, label))
+            .collect();
 
-        let mut connectors = vec![b' '; columns[columns.len() - 1] + 1];
-        for &column in &columns {
-            connectors[column] = b'|';
+        let mut connectors = vec![' '; cells[cells.len() - 1].0 + 1];
+        for &(column, _) in &cells {
+            connectors[column] = '|';
         }
-        let _ = writeln!(out, "{:gutter$} | {}", "", ascii(connectors));
+        let connectors: String = connectors.into_iter().collect();
+        let _ = writeln!(out, "{:gutter$} | {connectors}", "");
 
         for k in (0..stacked.len()).rev() {
-            let mut row = vec![b' '; columns[k]];
-            for &column in &columns[..k] {
-                row[column] = b'|';
+            let (column, len) = cells[k];
+            let mut row = vec![' '; column];
+            for &(before, _) in &cells[..k] {
+                row[before] = '|';
             }
-            row.resize(columns[k] + span_len(stacked[k]), b'-');
-            let _ = writeln!(
-                out,
-                "{:gutter$} | {} {}",
-                "",
-                ascii(row),
-                stacked[k].message
-            );
+            row.resize(column + len, '-');
+            let row: String = row.into_iter().collect();
+            let _ = writeln!(out, "{:gutter$} | {row} {}", "", stacked[k].message);
         }
     }
 
@@ -152,9 +185,30 @@ impl<'a> DiagnosticPrinter<'a> {
         self.sources.line_col(label.span.source_id, offset)
     }
 
-    fn column_of(&self, label: &Label) -> usize {
+    /// Where a label starts in its line, in bytes.
+    fn byte_column(&self, label: &Label) -> usize {
         self.line_col(label).col - 1
     }
+
+    /// Where a label starts on the printed line and how many cells it
+    /// covers there, at least one.
+    fn cells(&self, line_text: &str, label: &Label) -> (usize, usize) {
+        let start = self.byte_column(label).min(line_text.len());
+        let end = (start + span_len(label)).min(line_text.len());
+        let before = line_text.get(..start).map_or(start, width);
+        let under = line_text.get(start..end).map_or(1, width).max(1);
+        (before, under)
+    }
+}
+
+/// How many cells a text takes when printed: a tab takes four.
+fn width(text: &str) -> usize {
+    text.chars().map(|c| if c == '\t' { 4 } else { 1 }).sum()
+}
+
+/// A line as printed, each tab as four spaces so the marks under it line up.
+fn shown(line_text: &str) -> String {
+    line_text.replace('\t', "    ")
 }
 
 fn primary_label(diagnostic: &Diagnostic) -> Option<&Label> {
@@ -169,10 +223,6 @@ fn span_len(label: &Label) -> usize {
     let start = u32::from(label.span.range.start()) as usize;
     let end = u32::from(label.span.range.end()) as usize;
     end.saturating_sub(start).max(1)
-}
-
-fn ascii(bytes: Vec<u8>) -> String {
-    String::from_utf8(bytes).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -278,6 +328,46 @@ mod tests {
                   | |     |
                   | |     - this is an `int`
                   | --- this is a `float`
+            "]],
+        );
+    }
+
+    #[test]
+    fn marks_line_up_after_a_tab_and_a_wide_character() {
+        check(
+            "\tlet é = x\n",
+            |id| DiagnosticBuilder::error(span(id, 10..11), "unknown name").build(),
+            &expect![[r"
+                error: unknown name
+                 --> test.yuzu:1:10
+                  |
+                1 |     let é = x
+                  |             ^
+            "]],
+        );
+    }
+
+    #[test]
+    fn a_label_on_another_line_gets_its_own_snippet() {
+        check(
+            "let x = 1\nlet x = 2\n",
+            |id| {
+                DiagnosticBuilder::error(span(id, 14..15), "`x` is declared twice")
+                    .label(span(id, 4..5), "first declared here")
+                    .build()
+            },
+            &expect![[r"
+                error: `x` is declared twice
+                 --> test.yuzu:2:5
+                  |
+                2 | let x = 2
+                  |     ^
+                 --> test.yuzu:1:5
+                  |
+                1 | let x = 1
+                  |     -
+                  |     |
+                  |     - first declared here
             "]],
         );
     }

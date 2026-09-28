@@ -15,7 +15,7 @@ pub struct Diagnostic {
     pub notes: Vec<String>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Severity {
     Error,
     Warning,
@@ -35,7 +35,7 @@ pub struct Label {
     pub message: String,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum LabelStyle {
     Primary,
     Secondary,
