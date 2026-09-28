@@ -10,7 +10,7 @@ use yuzu_mlir::ir::value::{ValueExt, ValueId};
 use yuzu_mlir::ods::yzr;
 use yuzu_mlir::ops::yzl::YzlOp;
 
-use crate::lower_yzl_to_yzr::{Row, Yielded, YzlToYzr};
+use crate::lower_yzl_to_yzr::{Row, Yielded, YzlToYzr, report_at};
 
 /// An aggregation over the input row and, when an item is more than a bare
 /// measure, a projection over the keys and measures.
@@ -29,7 +29,7 @@ impl<'c> YzlToYzr<'c, '_> {
         yielded: Yielded<'_>,
     ) -> (Region<'c>, Vec<Type<'c>>) {
         let region = Region::new();
-        let body = self.row_block(&region, row, location);
+        let body = row_block(&region, row, location);
 
         let mut produced = Vec::new();
         if let Some(block) = source.first_block() {
@@ -42,7 +42,7 @@ impl<'c> YzlToYzr<'c, '_> {
                     .merge_blocks(block, body, &arguments);
                 produced = self.convert_moved(body);
             } else {
-                self.report_at(location, "a region's arguments do not match its row");
+                report_at(location, "a region's arguments do not match its row");
             }
         }
 
@@ -53,7 +53,7 @@ impl<'c> YzlToYzr<'c, '_> {
             }
         };
 
-        let types = results.iter().map(|value| value.r#type()).collect();
+        let types = results.iter().map(ValueLike::r#type).collect();
         body.append_operation(yzr::r#yield(self.context, &results, location).into());
 
         (region, types)
@@ -82,19 +82,19 @@ impl<'c> YzlToYzr<'c, '_> {
             .filter(|op| matches!(op.as_yzl(), Some(YzlOp::Call(call)) if call.is_agg()))
             .collect();
         let feeds_a_measure = rests_on(
-            measures.iter().flat_map(|op| op.operands()),
+            measures.iter().flat_map(OperationLike::operands),
             &FxHashSet::default(),
         );
 
         let region = Region::new();
-        let body = self.row_block(&region, row, location);
+        let body = row_block(&region, row, location);
         let mut row_values = argument_map(block, body);
 
         // Two items naming the same measure share one column: a target that
         // names columns after measures will not take the same one twice.
         let mut columns: FxHashMap<ValueId, usize> = FxHashMap::default();
         let mut distinct: FxHashMap<(&'c str, Vec<ValueId>), usize> = FxHashMap::default();
-        let mut measured: Vec<Value<'c, '_>> = Vec::new();
+        let mut measure_values: Vec<Value<'c, '_>> = Vec::new();
         let mut discard = Vec::new();
         for op in block.operations() {
             let call = match op.as_yzl() {
@@ -113,7 +113,7 @@ impl<'c> YzlToYzr<'c, '_> {
 
             let arguments: Option<Vec<ValueId>> = op
                 .operands()
-                .map(|operand| row_values.get(&operand.id()).map(|value| value.id()))
+                .map(|operand| row_values.get(&operand.id()).map(ValueExt::id))
                 .collect();
             let (Some(arguments), Some(result)) = (arguments, op.try_first_result()) else {
                 continue;
@@ -128,16 +128,16 @@ impl<'c> YzlToYzr<'c, '_> {
                     continue;
                 };
 
-                measured.push(value);
-                distinct.insert((name, arguments), measured.len() - 1);
-                measured.len() - 1
+                measure_values.push(value);
+                distinct.insert((name, arguments), measure_values.len() - 1);
+                measure_values.len() - 1
             };
 
             columns.insert(result.id(), column);
         }
 
-        let measure_types: Vec<Type<'c>> = measured.iter().map(|value| value.r#type()).collect();
-        body.append_operation(yzr::r#yield(self.context, &measured, location).into());
+        let measure_types: Vec<Type<'c>> = measure_values.iter().map(ValueLike::r#type).collect();
+        body.append_operation(yzr::r#yield(self.context, &measure_values, location).into());
 
         let items =
             self.convert_grouped_items(block, row, keys, &columns, &measure_types, location);
@@ -179,7 +179,7 @@ impl<'c> YzlToYzr<'c, '_> {
         grouped.extend(measures.iter().map(|&ty| ("", ty)));
 
         let region = Region::new();
-        let body = self.row_block(&region, &grouped, location);
+        let body = row_block(&region, &grouped, location);
         let mut values = FxHashMap::default();
         for (position, &index) in keys.iter().enumerate() {
             let column = block
@@ -219,20 +219,9 @@ impl<'c> YzlToYzr<'c, '_> {
             }
         }
 
-        let types = results.iter().map(|value| value.r#type()).collect();
+        let types = results.iter().map(ValueLike::r#type).collect();
         body.append_operation(yzr::r#yield(self.context, &results, location).into());
         Some((region, types))
-    }
-
-    pub(super) fn row_block<'r>(
-        &self,
-        region: &'r Region<'c>,
-        row: &Row<'c>,
-        location: Location<'c>,
-    ) -> BlockRef<'c, 'r> {
-        let arguments: Vec<(Type<'c>, Location<'c>)> =
-            row.iter().map(|(_, column)| (*column, location)).collect();
-        region.append_block(Block::new(&arguments))
     }
 
     fn substituted_row<'b>(
@@ -263,7 +252,7 @@ impl<'c> YzlToYzr<'c, '_> {
         location: Location<'c>,
     ) -> Region<'c> {
         let region = Region::new();
-        let body = self.row_block(&region, row, location);
+        let body = row_block(&region, row, location);
         let yielded: Vec<Value<'c, '_>> = columns
             .iter()
             .map(|&index| {
@@ -314,6 +303,17 @@ fn rests_on<'c: 'a, 'a>(
     }
 
     reached
+}
+
+/// A block with one argument for each column of the row.
+pub(super) fn row_block<'c, 'r>(
+    region: &'r Region<'c>,
+    row: &Row<'c>,
+    location: Location<'c>,
+) -> BlockRef<'c, 'r> {
+    let arguments: Vec<(Type<'c>, Location<'c>)> =
+        row.iter().map(|(_, column)| (*column, location)).collect();
+    region.append_block(Block::new(&arguments))
 }
 
 #[cfg(test)]

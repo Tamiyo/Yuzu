@@ -47,10 +47,9 @@ impl Func {
     pub fn symbol(self) -> &'static str {
         match self {
             Func::Add => "+",
-            Func::Subtract => "-",
+            Func::Subtract | Func::Negate => "-",
             Func::Multiply => "*",
             Func::Divide => "/",
-            Func::Negate => "-",
             Func::Equal => "==",
             Func::NotEqual => "!=",
             Func::Less => "<",

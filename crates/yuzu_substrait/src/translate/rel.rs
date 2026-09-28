@@ -22,13 +22,14 @@ use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
 use yuzu_mlir::ir::value::{ValueExt, ValueId};
 use yuzu_mlir::ops::yzr::YzrOp;
 
-use crate::proto::{emit_common, literal, nullable, selection};
-use crate::translate::Translator;
-use crate::translate::expr::Region;
+use crate::proto::{emit_common, field_index, literal, nullable, selection};
+use crate::translate::expr::{Region, expression_of, yielded};
 use crate::translate::functions;
 use crate::translate::types::{emit_type, type_code};
+use crate::translate::{Translator, report};
 
 /// What a projection keeps of its input's columns.
+#[derive(Clone, Copy)]
 enum Projection {
     /// `select`: the row becomes what the region computed.
     Replace,
@@ -59,7 +60,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
                 let dense = grouping.keys();
                 let keys: Vec<i32> = (0..dense.len())
                     .filter_map(|index| dense.element(index).ok())
-                    .map(|key| key as i32)
+                    .map(|key| i32::try_from(key).expect("a grouping key is a field index"))
                     .collect();
                 self.translate_aggregate(op, &keys)?
             }
@@ -68,11 +69,11 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
                 self.translate_join(op, kind)?
             }
             YzrOp::Union(_) | YzrOp::Intersect(_) | YzrOp::Except(_) => {
-                self.report(op, "set operations are not lowered yet");
+                report(op, "set operations are not lowered yet");
                 return None;
             }
             YzrOp::Output(_) | YzrOp::Agg(_) | YzrOp::Count(_) | YzrOp::Yield(_) => {
-                self.report(op, "this is not a relation");
+                report(op, "this is not a relation");
                 return None;
             }
         };
@@ -89,7 +90,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         let mut fields = Vec::with_capacity(types.len());
         for ty in types {
             let Some(field) = emit_type(self.context, ty) else {
-                self.report(op, "this column has no Substrait type");
+                report(op, "this column has no Substrait type");
                 return None;
             };
 
@@ -116,8 +117,8 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
     fn translate_filter(&mut self, op: OperationRef<'c, 'a>) -> Option<RelType> {
         let (input, _) = self.translate_input(op)?;
         let region = self.translate_region(op)?;
-        let Some(condition) = self.yielded(op, &region)?.into_iter().next() else {
-            self.report(op, "`where` has no predicate to filter on");
+        let Some(condition) = yielded(op, &region)?.into_iter().next() else {
+            report(op, "`where` has no predicate to filter on");
             return None;
         };
 
@@ -134,18 +135,15 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
     fn translate_project(&mut self, op: OperationRef<'c, 'a>, kind: Projection) -> Option<RelType> {
         let (input, width) = self.translate_input(op)?;
         let region = self.translate_region(op)?;
-        let expressions = self.yielded(op, &region)?;
+        let expressions = yielded(op, &region)?;
         let computed = width..width + expressions.len();
         let output_mapping = match kind {
-            Projection::Replace => computed.map(|index| index as i32).collect(),
-            Projection::Append => (0..width)
-                .chain(computed)
-                .map(|index| index as i32)
-                .collect(),
+            Projection::Replace => computed.map(field_index).collect(),
+            Projection::Append => (0..width).chain(computed).map(field_index).collect(),
         };
 
         Some(RelType::Project(Box::new(ProjectRel {
-            common: emit_common(output_mapping),
+            common: Some(emit_common(output_mapping)),
             input: Some(Box::new(input)),
             expressions,
             ..Default::default()
@@ -183,7 +181,9 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
             input: Some(Box::new(input)),
             grouping_expressions: keys.iter().map(|&key| selection(key)).collect(),
             groupings: vec![Grouping {
-                expression_references: (0..keys.len() as u32).collect(),
+                expression_references: (0..u32::try_from(keys.len())
+                    .expect("a grouping has fewer than 2^32 keys"))
+                    .collect(),
                 ..Default::default()
             }],
             measures,
@@ -206,12 +206,12 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
                 ),
                 Some(YzrOp::Count(_)) => (functions::of_aggregate("count"), Vec::new()),
                 _ => {
-                    self.report(op, "a grouping yields measures, and this is not one");
+                    report(op, "a grouping yields measures, and this is not one");
                     return None;
                 }
             };
 
-            measures.push(self.translate_measure(op, func, &arguments, &region.values)?);
+            measures.push(self.translate_measure(op, &func, &arguments, &region.values)?);
         }
 
         Some(measures)
@@ -220,7 +220,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
     fn translate_measure(
         &mut self,
         op: OperationRef<'c, '_>,
-        func: functions::Aggregate,
+        func: &functions::Aggregate,
         arguments: &[Value<'c, '_>],
         values: &FxHashMap<ValueId, Expression>,
     ) -> Option<Measure> {
@@ -228,18 +228,18 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         let mut emitted = Vec::new();
         for &argument in arguments {
             let Some(code) = type_code(self.context, argument.r#type()) else {
-                self.report(op, "this measure's argument has no Substrait type");
+                report(op, "this measure's argument has no Substrait type");
                 return None;
             };
 
             signature.push(code);
             emitted.push(FunctionArgument {
-                arg_type: Some(ArgType::Value(self.expression_of(op, argument, values)?)),
+                arg_type: Some(ArgType::Value(expression_of(op, argument, values)?)),
             });
         }
 
         let Some(output) = emit_type(self.context, op.first_result().r#type()) else {
-            self.report(op, "this measure has no Substrait type");
+            report(op, "this measure has no Substrait type");
             return None;
         };
 
@@ -263,8 +263,8 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         let left = self.translate_rel(op.operand(0).ok()?)?;
         let right = self.translate_rel(op.operand(1).ok()?)?;
         let region = self.translate_region(op)?;
-        let Some(expression) = self.yielded(op, &region)?.into_iter().next() else {
-            self.report(op, "a join needs a condition to match its rows on");
+        let Some(expression) = yielded(op, &region)?.into_iter().next() else {
+            report(op, "a join needs a condition to match its rows on");
             return None;
         };
 

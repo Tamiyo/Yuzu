@@ -62,9 +62,9 @@ pub struct Chain {
 
 impl Chain {
     #[must_use]
-    pub fn new(registries: Vec<Box<dyn FunctionRegistry>>) -> Self {
+    pub fn new(registries: &[Box<dyn FunctionRegistry>]) -> Self {
         let mut entries: Vec<FunctionRegistryEntry> = Vec::new();
-        for registry in &registries {
+        for registry in registries {
             for &entry in registry.entries() {
                 if !entries.iter().any(|seen| seen.name == entry.name) {
                     entries.push(entry);
@@ -82,7 +82,7 @@ impl FunctionRegistry for Chain {
 }
 
 #[must_use]
-pub fn chain(registries: Vec<Box<dyn FunctionRegistry>>) -> Chain {
+pub fn chain(registries: &[Box<dyn FunctionRegistry>]) -> Chain {
     Chain::new(registries)
 }
 
@@ -115,7 +115,7 @@ mod tests {
 
     #[test]
     fn chain_keeps_the_first_entry_for_a_name() {
-        let chained = chain(vec![Box::new(Aliases), Box::new(Builtins)]);
+        let chained = chain(&[Box::new(Aliases), Box::new(Builtins)]);
         let count = chained
             .entries()
             .iter()
@@ -126,14 +126,14 @@ mod tests {
 
     #[test]
     fn chain_adds_new_names() {
-        let chained = chain(vec![Box::new(Aliases), Box::new(Builtins)]);
+        let chained = chain(&[Box::new(Aliases), Box::new(Builtins)]);
         assert!(chained.entries().iter().any(|entry| entry.name == "tally"));
         assert!(chained.entries().iter().any(|entry| entry.name == "in"));
     }
 
     #[test]
     fn resolve_finds_the_first_entry_for_a_function() {
-        let chained = chain(vec![Box::new(Aliases), Box::new(Builtins)]);
+        let chained = chain(&[Box::new(Aliases), Box::new(Builtins)]);
         let count = chained
             .resolve(BuiltinFunc::Aggregate(AggFunc::Count))
             .expect("count is registered");

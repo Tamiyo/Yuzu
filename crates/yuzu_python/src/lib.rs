@@ -34,6 +34,10 @@ impl CompileOptions {
         debug_substrait = false,
         target = None,
     ))]
+    #[expect(
+        clippy::similar_names,
+        reason = "`debug_yzl` and `debug_yzr` name the two IR dumps"
+    )]
     fn new(
         debug_yzl: bool,
         debug_yzr: bool,

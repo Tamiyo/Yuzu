@@ -113,12 +113,12 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
     fn width(&self, value: Value<'c, 'a>) -> Option<usize> {
         Some(self.row(value.r#type())?.0.len())
     }
+}
 
-    /// Substrait has no way to say this. Reported against the operation, so
-    /// the location it carries is the source the reader wrote.
-    fn report(&self, op: OperationRef<'c, '_>, message: &str) {
-        emit_error(op.location(), message);
-    }
+/// Substrait has no way to say this. Reported against the operation, so the
+/// location it carries is the source the reader wrote.
+fn report(op: OperationRef<'_, '_>, message: &str) {
+    emit_error(op.location(), message);
 }
 
 #[cfg(test)]
@@ -217,6 +217,7 @@ mod tests {
     /// Every stage the pipeline can produce, in one plan: the scan, the
     /// filter, the projection that appends, the grouping and the fetch.
     #[test]
+    #[expect(clippy::too_many_lines, reason = "the expected plan is long")]
     fn translates_the_canonical_pipeline() {
         check(
             &format!(

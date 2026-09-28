@@ -15,8 +15,9 @@ use yuzu_mlir::ops::yzl::{
 };
 use yuzu_mlir::types::BoolType;
 
+use crate::lower_yzl_to_yzr::region::row_block;
 use crate::lower_yzl_to_yzr::row::struct_declaration;
-use crate::lower_yzl_to_yzr::{Row, Yielded, YzlToYzr, op_name, struct_fields};
+use crate::lower_yzl_to_yzr::{Row, Yielded, YzlToYzr, op_name, report, struct_fields};
 use crate::operators::Operator;
 
 impl<'c, 'a> YzlToYzr<'c, 'a> {
@@ -41,9 +42,6 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             Some(YzlOp::Set(stage)) => self.convert_set(op, symbols, stage),
             Some(YzlOp::Rename(stage)) => self.convert_rename(op, symbols, stage),
             Some(YzlOp::Output(_)) => self.convert_output(op),
-            // `yzr.table` carries the row as its type, so the declaration is
-            // not needed.
-            Some(YzlOp::Table(_)) => {}
             // `record_externals` read its name, and a call to it becomes
             // `yz.extern_call`.
             Some(YzlOp::Fn(function)) if function.is_external() => {}
@@ -52,19 +50,29 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             {
                 self.convert_implementation(op, symbols, function);
             }
-            Some(YzlOp::Fn(_) | YzlOp::Trait(_) | YzlOp::Impl(_)) => self.report(
+            Some(YzlOp::Fn(_) | YzlOp::Trait(_) | YzlOp::Impl(_)) => report(
                 op,
                 &format!("`{}` was not expanded before lowering", op_name(op)),
             ),
-            Some(YzlOp::Local(_) | YzlOp::Load(_) | YzlOp::Store(_)) => self.report(
+            Some(YzlOp::Local(_) | YzlOp::Load(_) | YzlOp::Store(_)) => report(
                 op,
                 &format!(
                     "`{}` was not promoted to a value before lowering",
                     op_name(op)
                 ),
             ),
-            Some(YzlOp::Missing(_)) => self.report(op, "this part of the query is missing"),
-            Some(YzlOp::Call(_) | YzlOp::List(_) | YzlOp::Yield(_) | YzlOp::Return(_)) | None => {}
+            Some(YzlOp::Missing(_)) => report(op, "this part of the query is missing"),
+            // `yzr.table` carries the row as its type, so a table's declaration
+            // is not needed. Calls, lists and terminators are lowered with the
+            // region that holds them.
+            Some(
+                YzlOp::Table(_)
+                | YzlOp::Call(_)
+                | YzlOp::List(_)
+                | YzlOp::Yield(_)
+                | YzlOp::Return(_),
+            )
+            | None => {}
         }
     }
 
@@ -102,7 +110,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
     ) {
         let location = op.location();
         let Ok(signature) = FunctionType::try_from(function.signature().value()) else {
-            self.report(op, "an operator's implementation has no function type");
+            report(op, "an operator's implementation has no function type");
             return;
         };
 
@@ -159,7 +167,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         binding: ConstOp<'c, '_>,
     ) {
         let Some(block) = binding.body().first_block() else {
-            self.report(op, "`let` has no body to bind");
+            report(op, "`let` has no body to bind");
             return;
         };
 
@@ -176,7 +184,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             Some(rows) => {
                 self.bindings.insert(binding.sym_name().value(), rows);
             }
-            None => self.report(op, "only a query can be bound by `let`"),
+            None => report(op, "only a query can be bound by `let`"),
         }
     }
 
@@ -270,7 +278,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         }
 
         let ty = self.row_type(&grouped, symbols, op.location());
-        let indices: Vec<i64> = keys.iter().map(|&index| index as i64).collect();
+        let indices: Vec<i64> = keys.iter().map(|&index| column_index(index)).collect();
         let aggregated = self
             .insert(
                 yzr::aggregate(
@@ -373,7 +381,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             return;
         };
 
-        let keys: Vec<i64> = (0..row.len() as i64).collect();
+        let keys: Vec<i64> = (0..row.len()).map(column_index).collect();
         let region = self.column_region(&row, &[], op.location());
         let ty = self.row_type(&row, symbols, op.location());
         let grouped = self.insert(
@@ -402,7 +410,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         };
 
         let dropped: Vec<&str> = stage.columns().strings().collect();
-        let Some(kept) = self.kept_columns(op, &dropped, &row) else {
+        let Some(kept) = kept_columns(op, &dropped, &row) else {
             return;
         };
 
@@ -455,9 +463,9 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             .flat_map(|columns| columns.indices());
         for (index, name) in columns.zip(stage.to().strings()) {
             if let Some(column) = row.get_mut(index) {
-                column.0 = name
+                column.0 = name;
             } else {
-                self.report(op, &format!("column {index} is not in the row"));
+                report(op, &format!("column {index} is not in the row"));
                 return;
             }
         }
@@ -501,7 +509,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
     ) -> Region<'c> {
         let location = op.location();
         let region = Region::new();
-        let body = self.row_block(&region, row, location);
+        let body = row_block(&region, row, location);
 
         let mut condition: Option<Value<'c, '_>> = None;
         for column in columns {
@@ -513,7 +521,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                 .position(|(name, _)| name == column)
                 .map(|index| index + left_width);
             let (Some(left), Some(right)) = (left, right) else {
-                self.report(op, &format!("`{column}` is not present in both relations"));
+                report(op, &format!("`{column}` is not present in both relations"));
                 continue;
             };
 
@@ -555,37 +563,37 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 
         region
     }
+}
 
-    /// Resolution removes the first column each name matches, so dropping
-    /// one name twice drops two columns, and this has to agree exactly.
-    fn kept_columns(
-        &self,
-        op: OperationRef<'c, '_>,
-        columns: &[&str],
-        row: &Row<'c>,
-    ) -> Option<Vec<usize>> {
-        let mut dropped: Vec<usize> = Vec::new();
-        for column in columns {
-            let found = row
-                .iter()
-                .enumerate()
-                .find(|(index, (name, _))| name == column && !dropped.contains(index))
-                .map(|(index, _)| index);
+/// A column's position as an index array attribute holds it.
+fn column_index(index: usize) -> i64 {
+    i64::try_from(index).expect("a row has fewer than 2^63 columns")
+}
 
-            if let Some(index) = found {
-                dropped.push(index)
-            } else {
-                self.report(op, &format!("`{column}` is not in the row"));
-                return None;
-            }
+/// Resolution removes the first column each name matches, so dropping
+/// one name twice drops two columns, and this has to agree exactly.
+fn kept_columns(op: OperationRef<'_, '_>, columns: &[&str], row: &Row<'_>) -> Option<Vec<usize>> {
+    let mut dropped: Vec<usize> = Vec::new();
+    for column in columns {
+        let found = row
+            .iter()
+            .enumerate()
+            .find(|(index, (name, _))| name == column && !dropped.contains(index))
+            .map(|(index, _)| index);
+
+        if let Some(index) = found {
+            dropped.push(index);
+        } else {
+            report(op, &format!("`{column}` is not in the row"));
+            return None;
         }
-
-        Some(
-            (0..row.len())
-                .filter(|index| !dropped.contains(index))
-                .collect(),
-        )
     }
+
+    Some(
+        (0..row.len())
+            .filter(|index| !dropped.contains(index))
+            .collect(),
+    )
 }
 
 #[cfg(test)]

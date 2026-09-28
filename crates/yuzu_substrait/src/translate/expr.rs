@@ -18,10 +18,10 @@ use yuzu_mlir::ops::yzr::YzrOp;
 use yuzu_types::Func;
 
 use crate::extensions::{EXTERNAL_URN, function_target};
-use crate::proto::{literal, selection};
-use crate::translate::Translator;
+use crate::proto::{field_index, literal, selection};
 use crate::translate::functions;
 use crate::translate::types::{emit_type, type_code};
+use crate::translate::{Translator, report};
 
 /// A translated region: what each of its values became, and the values its
 /// `yzr.yield` named. The yields stay as values because what they mean is
@@ -43,7 +43,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         let mut values: FxHashMap<ValueId, Expression> = block
             .arguments()
             .enumerate()
-            .map(|(index, argument)| (argument.id(), selection(index as i32)))
+            .map(|(index, argument)| (argument.id(), selection(field_index(index))))
             .collect();
 
         let mut yielded = Vec::new();
@@ -96,23 +96,23 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
             YzOp::Call(call) => {
                 let callee = call.callee().value();
                 let Some(func) = functions::of_builtin(callee) else {
-                    self.report(op, &format!("`{callee}` has no Substrait mapping yet"));
+                    report(op, &format!("`{callee}` has no Substrait mapping yet"));
                     return None;
                 };
 
                 match func {
-                    Func::In => self.translate_membership(op, values),
+                    Func::In => translate_membership(op, values),
                     func => self.translate_call(op, func, values),
                 }
             }
             YzOp::ExternCall(call) => {
-                let callee = call.callee().value().to_string();
+                let callee = call.callee().value();
                 self.translate_function(op, EXTERNAL_URN, callee, values)
             }
             // `legalize_operators` puts the library's implementation in its
             // place, and reports when there is none.
             YzOp::Rem(_) | YzOp::Pow(_) | YzOp::Shl(_) | YzOp::Shr(_) => {
-                self.report(
+                report(
                     op,
                     "an operator reached the translation without an implementation",
                 );
@@ -120,37 +120,10 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
             }
             // Declarations and terminators are not values.
             YzOp::Struct(_) | YzOp::Func(_) | YzOp::Return(_) | YzOp::List(_) => {
-                self.report(op, "this is not an expression");
+                report(op, "this is not an expression");
                 None
             }
         }
-    }
-
-    /// `x in [a, b]` is a `SingularOrList`, not a call: Substrait spells
-    /// membership as a value and its options, and the list only holds them.
-    fn translate_membership(
-        &mut self,
-        op: OperationRef<'c, '_>,
-        values: &FxHashMap<ValueId, Expression>,
-    ) -> Option<Expression> {
-        let value = self.expression_of(op, op.operand(0).ok()?, values)?;
-        let list = op.operand(1).ok()?;
-        let Some(producer) = Self::producer(list) else {
-            self.report(op, "`in` takes a list of values on its right");
-            return None;
-        };
-
-        let options = producer
-            .operands()
-            .map(|option| self.expression_of(op, option, values))
-            .collect::<Option<Vec<_>>>()?;
-
-        Some(Expression {
-            rex_type: Some(RexType::SingularOrList(Box::new(SingularOrList {
-                value: Some(Box::new(value)),
-                options,
-            }))),
-        })
     }
 
     fn translate_call(
@@ -161,14 +134,14 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
     ) -> Option<Expression> {
         let Some((urn, base)) = function_target(func) else {
             let symbol = func.symbol();
-            self.report(
+            report(
                 op,
                 &format!("`{symbol}` is not supported by the datafusion target"),
             );
             return None;
         };
 
-        self.translate_function(op, urn, base.to_string(), values)
+        self.translate_function(op, urn, base, values)
     }
 
     /// A call, with the signature Substrait names its overload by: the
@@ -177,25 +150,25 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         &mut self,
         op: OperationRef<'c, '_>,
         urn: &'static str,
-        base: String,
+        base: &str,
         values: &FxHashMap<ValueId, Expression>,
     ) -> Option<Expression> {
         let mut signature = Vec::new();
         let mut arguments = Vec::new();
         for operand in op.operands() {
             let Some(code) = type_code(self.context, operand.r#type()) else {
-                self.report(op, "this argument has no Substrait type");
+                report(op, "this argument has no Substrait type");
                 return None;
             };
 
             signature.push(code);
             arguments.push(FunctionArgument {
-                arg_type: Some(ArgType::Value(self.expression_of(op, operand, values)?)),
+                arg_type: Some(ArgType::Value(expression_of(op, operand, values)?)),
             });
         }
 
         let Some(output) = emit_type(self.context, op.first_result().r#type()) else {
-            self.report(op, "this expression has no Substrait type");
+            report(op, "this expression has no Substrait type");
             return None;
         };
 
@@ -211,33 +184,57 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
             })),
         })
     }
+}
 
-    /// The expressions a region yielded, for a stage that wants values.
-    pub(crate) fn yielded(
-        &self,
-        op: OperationRef<'c, '_>,
-        region: &Region<'c, 'a>,
-    ) -> Option<Vec<Expression>> {
-        region
-            .yielded
-            .iter()
-            .map(|&value| self.expression_of(op, value, &region.values))
-            .collect()
+/// What a value became, which the operation producing it recorded before
+/// this one was reached.
+pub(crate) fn expression_of(
+    op: OperationRef<'_, '_>,
+    value: Value<'_, '_>,
+    values: &FxHashMap<ValueId, Expression>,
+) -> Option<Expression> {
+    if let Some(expression) = values.get(&value.id()) {
+        Some(expression.clone())
+    } else {
+        report(op, "this expression has no Substrait equivalent");
+        None
     }
+}
 
-    /// What a value became, which the operation producing it recorded before
-    /// this one was reached.
-    pub(crate) fn expression_of(
-        &self,
-        op: OperationRef<'c, '_>,
-        value: Value<'c, '_>,
-        values: &FxHashMap<ValueId, Expression>,
-    ) -> Option<Expression> {
-        if let Some(expression) = values.get(&value.id()) {
-            Some(expression.clone())
-        } else {
-            self.report(op, "this expression has no Substrait equivalent");
-            None
-        }
-    }
+/// `x in [a, b]` is a `SingularOrList`, not a call: Substrait spells
+/// membership as a value and its options, and the list only holds them.
+fn translate_membership(
+    op: OperationRef<'_, '_>,
+    values: &FxHashMap<ValueId, Expression>,
+) -> Option<Expression> {
+    let value = expression_of(op, op.operand(0).ok()?, values)?;
+    let list = op.operand(1).ok()?;
+    let Some(producer) = Translator::producer(list) else {
+        report(op, "`in` takes a list of values on its right");
+        return None;
+    };
+
+    let options = producer
+        .operands()
+        .map(|option| expression_of(op, option, values))
+        .collect::<Option<Vec<_>>>()?;
+
+    Some(Expression {
+        rex_type: Some(RexType::SingularOrList(Box::new(SingularOrList {
+            value: Some(Box::new(value)),
+            options,
+        }))),
+    })
+}
+
+/// The expressions a region yielded, for a stage that wants values.
+pub(crate) fn yielded(
+    op: OperationRef<'_, '_>,
+    region: &Region<'_, '_>,
+) -> Option<Vec<Expression>> {
+    region
+        .yielded
+        .iter()
+        .map(|&value| expression_of(op, value, &region.values))
+        .collect()
 }

@@ -7,6 +7,10 @@ use yuzu_driver::{CompileOptions, compile};
 
 #[derive(Parser)]
 #[command(name = "yuzu", version, about = "Compile a Yuzu source file")]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each bool is a command-line flag"
+)]
 struct Cli {
     #[arg(help = "The source file to compile")]
     file: PathBuf,

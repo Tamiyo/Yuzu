@@ -891,7 +891,7 @@ impl<'c> AstToYzl<'c, '_> {
 
                 // A bound names the trait's symbol, the one its `impl`s are
                 // recorded under: in a module the two are not spelled alike.
-                let trait_ = if let Some(symbol) = self.symbols.trait_symbol(name) {
+                let bound_trait = if let Some(symbol) = self.symbols.trait_symbol(name) {
                     symbol
                 } else {
                     self.report(&trait_ref, &format!("unknown trait `{name}`"));
@@ -899,7 +899,7 @@ impl<'c> AstToYzl<'c, '_> {
                 };
 
                 subjects.push(subject);
-                traits.push(trait_);
+                traits.push(bound_trait);
             }
         }
 

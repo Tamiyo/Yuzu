@@ -32,6 +32,10 @@ pub(crate) const STMT_RECOVERY_SET: [TokenKind; 11] = [
 pub(crate) const EXPECT_RECOVERY_SET: [TokenKind; 2] =
     [TokenKind::LeftCurly, TokenKind::RightCurly];
 
+#[expect(
+    clippy::redundant_closure_for_method_calls,
+    reason = "`Parser::at_end` does not satisfy the closure bound for every lifetime"
+)]
 pub(crate) fn parse_root(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
     parse_stmts(p, |p| p.at_end());

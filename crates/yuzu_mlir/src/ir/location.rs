@@ -27,13 +27,18 @@ impl<'c> LocationExt<'c> for Location<'c> {
         unsafe {
             Location::from_raw(yuzu_mlir_sys::yzuFileLineColRangeGet(
                 file.to_raw(),
-                start_line as u32,
-                start_column as u32,
-                end_line as u32,
-                end_column as u32,
+                position(start_line),
+                position(start_column),
+                position(end_line),
+                position(end_column),
             ))
         }
     }
+}
+
+/// A line or a column as MLIR stores it.
+fn position(value: usize) -> u32 {
+    u32::try_from(value).expect("a line or a column fits in 32 bits")
 }
 
 #[cfg(test)]

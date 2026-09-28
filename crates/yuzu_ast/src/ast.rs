@@ -138,8 +138,8 @@ pub enum BinOp {
 }
 
 impl BinOp {
-    fn from_token(token: SyntaxToken) -> Option<Self> {
-        Some(match token.kind() {
+    fn from_kind(kind: SyntaxKind) -> Option<Self> {
+        Some(match kind {
             SyntaxKind::Plus => BinOp::Add,
             SyntaxKind::Minus => BinOp::Sub,
             SyntaxKind::Star => BinOp::Mul,
@@ -171,8 +171,8 @@ pub enum UnaryOp {
 }
 
 impl UnaryOp {
-    fn from_token(token: SyntaxToken) -> Option<Self> {
-        Some(match token.kind() {
+    fn from_kind(kind: SyntaxKind) -> Option<Self> {
+        Some(match kind {
             SyntaxKind::Plus => UnaryOp::Pos,
             SyntaxKind::Minus => UnaryOp::Neg,
             SyntaxKind::NotKw => UnaryOp::Not,
@@ -708,7 +708,7 @@ impl BinaryExpr {
         self.syntax()
             .children_with_tokens()
             .filter_map(SyntaxElement::into_token)
-            .find_map(BinOp::from_token)
+            .find_map(|token| BinOp::from_kind(token.kind()))
     }
 
     #[must_use]
@@ -723,7 +723,7 @@ impl UnaryExpr {
         self.syntax()
             .children_with_tokens()
             .filter_map(SyntaxElement::into_token)
-            .find_map(UnaryOp::from_token)
+            .find_map(|token| UnaryOp::from_kind(token.kind()))
     }
 
     #[must_use]
@@ -872,8 +872,8 @@ pub enum JoinKind {
 }
 
 impl JoinKind {
-    fn from_token(token: SyntaxToken) -> Option<Self> {
-        Some(match token.kind() {
+    fn from_kind(kind: SyntaxKind) -> Option<Self> {
+        Some(match kind {
             SyntaxKind::InnerKw => JoinKind::Inner,
             SyntaxKind::LeftKw => JoinKind::Left,
             SyntaxKind::RightKw => JoinKind::Right,
@@ -889,7 +889,7 @@ impl JoinStage {
         self.syntax()
             .children_with_tokens()
             .filter_map(SyntaxElement::into_token)
-            .find_map(JoinKind::from_token)
+            .find_map(|token| JoinKind::from_kind(token.kind()))
     }
 
     #[must_use]

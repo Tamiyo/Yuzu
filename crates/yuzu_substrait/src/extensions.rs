@@ -53,15 +53,14 @@ pub(crate) struct Extensions {
 impl Extensions {
     /// Intern a `(urn, name)` function; returns its function anchor.
     pub(crate) fn register(&mut self, urn: &'static str, name: String) -> u32 {
-        let urn_anchor =
-            if let Some(index) = self.urns.iter().position(|&candidate| candidate == urn) {
-                index as u32 + 1
-            } else {
-                self.urns.push(urn);
-                self.urns.len() as u32
-            };
-        self.functions.push((urn_anchor, name));
-        self.functions.len() as u32
+        let index = if let Some(index) = self.urns.iter().position(|&candidate| candidate == urn) {
+            index
+        } else {
+            self.urns.push(urn);
+            self.urns.len() - 1
+        };
+        self.functions.push((anchor(index), name));
+        anchor(self.functions.len() - 1)
     }
 
     pub(crate) fn urns(&self) -> Vec<SimpleExtensionUrn> {
@@ -69,7 +68,7 @@ impl Extensions {
             .iter()
             .enumerate()
             .map(|(index, &urn)| SimpleExtensionUrn {
-                extension_urn_anchor: index as u32 + 1,
+                extension_urn_anchor: anchor(index),
                 urn: urn.to_string(),
             })
             .collect()
@@ -82,10 +81,16 @@ impl Extensions {
             .map(|(index, (urn_anchor, name))| SimpleExtensionDeclaration {
                 mapping_type: Some(MappingType::ExtensionFunction(ExtensionFunction {
                     extension_urn_reference: *urn_anchor,
-                    function_anchor: index as u32 + 1,
+                    function_anchor: anchor(index),
                     name: name.clone(),
                 })),
             })
             .collect()
     }
+}
+
+/// The anchor of the extension at `index`: anchors count from 1, since 0
+/// means none.
+fn anchor(index: usize) -> u32 {
+    u32::try_from(index + 1).expect("a plan declares fewer than 2^32 extensions")
 }

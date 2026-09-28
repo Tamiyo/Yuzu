@@ -11,7 +11,7 @@ use yuzu_mlir::ir::value::{ValueExt, ValueId};
 use yuzu_mlir::ods::{yz, yzr};
 use yuzu_mlir::ops::yzl::{CallOp, YzlOp};
 
-use crate::lower_yzl_to_yzr::{YzlToYzr, op_name};
+use crate::lower_yzl_to_yzr::{YzlToYzr, op_name, report};
 
 impl<'c> YzlToYzr<'c, '_> {
     /// Copies one expression into `body`, for a region that cannot take the
@@ -56,11 +56,11 @@ impl<'c> YzlToYzr<'c, '_> {
                     return;
                 };
 
-                if let Some(rebuilt) = self.rebuild(op, &operands, body) {
+                if let Some(rebuilt) = rebuild(op, &operands, body) {
                     values.insert(op.first_result().id(), rebuilt);
                 }
             }
-            Some(_) => self.report_unlowered(op),
+            Some(_) => report_unlowered(op),
         }
     }
 
@@ -84,7 +84,7 @@ impl<'c> YzlToYzr<'c, '_> {
                 Some(YzlOp::Call(call)) => self.convert_call(op, call, &operands),
                 Some(YzlOp::List(_)) => self.convert_list(op, &operands),
                 Some(_) => {
-                    self.report_unlowered(op);
+                    report_unlowered(op);
                     None
                 }
             };
@@ -112,7 +112,7 @@ impl<'c> YzlToYzr<'c, '_> {
         let ty = op.first_result().r#type();
         let kind = call.callee_source();
         if matches!(kind, Some(CalleeSource::Fn | CalleeSource::Const)) {
-            self.report(op, &format!("`{callee}` was not expanded before lowering"));
+            report(op, &format!("`{callee}` was not expanded before lowering"));
             return None;
         }
 
@@ -153,26 +153,11 @@ impl<'c> YzlToYzr<'c, '_> {
     ) -> Option<Operation<'c>> {
         let ty = op.first_result().r#type();
         if ListType::from_type(ty).is_none() {
-            self.report(op, "the type of this list could not be inferred");
+            report(op, "the type of this list could not be inferred");
             return None;
         }
 
         Some(yz::list(self.context, ty, operands, op.location()).into())
-    }
-
-    /// An op no expression should still hold when the region is lowered.
-    fn report_unlowered(&self, op: OperationRef<'c, '_>) {
-        match op.as_yzl() {
-            Some(YzlOp::Missing(_)) => self.report(op, "this part of the query is missing"),
-            Some(YzlOp::Local(_) | YzlOp::Load(_) | YzlOp::Store(_)) => self.report(
-                op,
-                &format!(
-                    "`{}` was not promoted to a value before lowering",
-                    op_name(op)
-                ),
-            ),
-            _ => self.report(op, &format!("`{}` is not lowered yet", op_name(op))),
-        }
     }
 
     pub(super) fn record_externals(&mut self, block: BlockRef<'c, '_>) {
@@ -184,34 +169,6 @@ impl<'c> YzlToYzr<'c, '_> {
                     .insert(function.sym_name().value(), name.value());
             }
         }
-    }
-
-    fn rebuild<'b>(
-        &mut self,
-        op: OperationRef<'c, '_>,
-        operands: &[Value<'c, 'b>],
-        body: BlockRef<'c, 'b>,
-    ) -> Option<Value<'c, 'b>> {
-        let name = op.name();
-        let ty = op.try_first_result()?.r#type();
-        let attributes: Vec<(Identifier<'c>, Attribute<'c>)> = (0..op.attribute_count())
-            .map(|index| {
-                op.attribute_at(index)
-                    .expect("the attribute index is in range")
-            })
-            .collect();
-
-        let rebuilt = OperationBuilder::new(
-            name.as_string_ref().as_str().expect("op names are utf-8"),
-            op.location(),
-        )
-        .add_operands(operands)
-        .add_results(&[ty])
-        .add_attributes(&attributes)
-        .build()
-        .expect("a stamped yz op rebuilds");
-
-        Some(body.append_operation(rebuilt).first_result())
     }
 
     /// A measure: `count` takes no value, every other aggregate does.
@@ -236,6 +193,33 @@ impl<'c> YzlToYzr<'c, '_> {
     }
 }
 
+fn rebuild<'c, 'b>(
+    op: OperationRef<'c, '_>,
+    operands: &[Value<'c, 'b>],
+    body: BlockRef<'c, 'b>,
+) -> Option<Value<'c, 'b>> {
+    let name = op.name();
+    let ty = op.try_first_result()?.r#type();
+    let attributes: Vec<(Identifier<'c>, Attribute<'c>)> = (0..op.attribute_count())
+        .map(|index| {
+            op.attribute_at(index)
+                .expect("the attribute index is in range")
+        })
+        .collect();
+
+    let rebuilt = OperationBuilder::new(
+        name.as_string_ref().as_str().expect("op names are utf-8"),
+        op.location(),
+    )
+    .add_operands(operands)
+    .add_results(&[ty])
+    .add_attributes(&attributes)
+    .build()
+    .expect("a stamped yz op rebuilds");
+
+    Some(body.append_operation(rebuilt).first_result())
+}
+
 /// The region is rebuilt from the top and is `IsolatedFromAbove`, so an
 /// operand with nothing standing for it means its producer failed and has
 /// already reported.
@@ -246,6 +230,21 @@ fn lowered_operands<'c, 'b>(
     op.operands()
         .map(|operand| values.get(&operand.id()).copied())
         .collect()
+}
+
+/// An op no expression should still hold when the region is lowered.
+fn report_unlowered(op: OperationRef<'_, '_>) {
+    match op.as_yzl() {
+        Some(YzlOp::Missing(_)) => report(op, "this part of the query is missing"),
+        Some(YzlOp::Local(_) | YzlOp::Load(_) | YzlOp::Store(_)) => report(
+            op,
+            &format!(
+                "`{}` was not promoted to a value before lowering",
+                op_name(op)
+            ),
+        ),
+        _ => report(op, &format!("`{}` is not lowered yet", op_name(op))),
+    }
 }
 
 #[cfg(test)]

@@ -71,6 +71,7 @@ type Row<'c> = Vec<(&'c str, Type<'c>)>;
 
 /// What a region yields: what its body computed, or the whole row with
 /// those values substituted in.
+#[derive(Clone, Copy)]
 enum Yielded<'k> {
     Body,
     Substituted(&'k [usize]),
@@ -112,14 +113,14 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
     fn intern(&self, name: &str) -> &'c str {
         StringAttribute::new(self.context, name).value()
     }
+}
 
-    fn report(&self, op: OperationRef<'c, '_>, message: &str) {
-        emit_error(op.location(), message);
-    }
+fn report(op: OperationRef<'_, '_>, message: &str) {
+    emit_error(op.location(), message);
+}
 
-    fn report_at(&self, location: Location<'c>, message: &str) {
-        emit_error(location, message);
-    }
+fn report_at(location: Location<'_>, message: &str) {
+    emit_error(location, message);
 }
 
 fn op_name(op: OperationRef<'_, '_>) -> String {

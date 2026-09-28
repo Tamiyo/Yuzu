@@ -163,8 +163,8 @@ fn span_of(sources: &SourceMap, position: Option<&Position>) -> Option<Span> {
     Some(Span {
         source_id,
         range: TextRange::new(
-            TextSize::new(start as u32),
-            TextSize::new(end.max(start) as u32),
+            TextSize::try_from(start).expect("a source is shorter than 4 GiB"),
+            TextSize::try_from(end.max(start)).expect("a source is shorter than 4 GiB"),
         ),
     })
 }

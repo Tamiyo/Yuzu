@@ -29,7 +29,7 @@ impl<'a> DiagnosticPrinter<'a> {
         }
         let _ = writeln!(out, ": {}", diagnostic.message);
 
-        let gutter = match self.primary_label(diagnostic) {
+        let gutter = match primary_label(diagnostic) {
             Some(primary) => self.print_snippet(&mut out, diagnostic, primary),
             None => 1,
         };
@@ -39,14 +39,6 @@ impl<'a> DiagnosticPrinter<'a> {
         }
 
         out
-    }
-
-    fn primary_label<'d>(&self, diagnostic: &'d Diagnostic) -> Option<&'d Label> {
-        diagnostic
-            .labels
-            .iter()
-            .find(|label| matches!(label.style, LabelStyle::Primary))
-            .or_else(|| diagnostic.labels.first())
     }
 
     fn print_snippet(&self, out: &mut String, diagnostic: &Diagnostic, primary: &Label) -> usize {
@@ -75,7 +67,7 @@ impl<'a> DiagnosticPrinter<'a> {
                 LabelStyle::Secondary => b'-',
             };
             let column = self.column_of(label);
-            for offset in 0..self.span_len(label) {
+            for offset in 0..span_len(label) {
                 match underline.get_mut(column + offset) {
                     Some(slot) if *slot != b'^' => *slot = mark,
                     _ => {}
@@ -131,7 +123,7 @@ impl<'a> DiagnosticPrinter<'a> {
             for &column in &columns[..k] {
                 row[column] = b'|';
             }
-            row.resize(columns[k] + self.span_len(stacked[k]), b'-');
+            row.resize(columns[k] + span_len(stacked[k]), b'-');
             let _ = writeln!(
                 out,
                 "{:gutter$} | {} {}",
@@ -163,12 +155,20 @@ impl<'a> DiagnosticPrinter<'a> {
     fn column_of(&self, label: &Label) -> usize {
         self.line_col(label).col - 1
     }
+}
 
-    fn span_len(&self, label: &Label) -> usize {
-        let start = u32::from(label.span.range.start()) as usize;
-        let end = u32::from(label.span.range.end()) as usize;
-        end.saturating_sub(start).max(1)
-    }
+fn primary_label(diagnostic: &Diagnostic) -> Option<&Label> {
+    diagnostic
+        .labels
+        .iter()
+        .find(|label| matches!(label.style, LabelStyle::Primary))
+        .or_else(|| diagnostic.labels.first())
+}
+
+fn span_len(label: &Label) -> usize {
+    let start = u32::from(label.span.range.start()) as usize;
+    let end = u32::from(label.span.range.end()) as usize;
+    end.saturating_sub(start).max(1)
 }
 
 fn ascii(bytes: Vec<u8>) -> String {

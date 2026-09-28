@@ -246,34 +246,7 @@ fn parse_dialect(llvm: &Path, cpp: &Path, dialect: &Dialect) -> Vec<Op> {
             })
             .collect();
 
-        // The variadic accessor reads every operand from its start index on,
-        // which is only right when nothing follows it.
-        if let Some(index) = args
-            .iter()
-            .position(|arg| matches!(arg, Arg::Operand { variadic: true, .. }))
-        {
-            assert!(
-                args[index + 1..]
-                    .iter()
-                    .all(|arg| !matches!(arg, Arg::Operand { .. })),
-                "`{full_name}` has an operand after its variadic: the generated index scheme cannot represent it"
-            );
-        }
-
-        let mut accessors = std::collections::BTreeSet::from(["of", "operation"]);
-        for name in args
-            .iter()
-            .map(|arg| match arg {
-                Arg::Operand { name, .. } | Arg::Attr { name, .. } => name.as_str(),
-            })
-            .chain(regions.iter().map(String::as_str))
-            .chain(results.iter().map(String::as_str))
-        {
-            assert!(
-                accessors.insert(name),
-                "`{full_name}` argument `{name}` collides with another accessor"
-            );
-        }
+        check_accessors(&full_name, &args, &regions, &results);
 
         ops.push(Op {
             full_name,
@@ -290,6 +263,39 @@ fn parse_dialect(llvm: &Path, cpp: &Path, dialect: &Dialect) -> Vec<Op> {
         dialect.tblgen_prefix
     );
     ops
+}
+
+/// Rejects an op whose accessors the generated index scheme cannot give,
+/// or whose accessor names collide.
+fn check_accessors(full_name: &str, args: &[Arg], regions: &[String], results: &[String]) {
+    // The variadic accessor reads every operand from its start index on,
+    // which is only right when nothing follows it.
+    if let Some(index) = args
+        .iter()
+        .position(|arg| matches!(arg, Arg::Operand { variadic: true, .. }))
+    {
+        assert!(
+            args[index + 1..]
+                .iter()
+                .all(|arg| !matches!(arg, Arg::Operand { .. })),
+            "`{full_name}` has an operand after its variadic: the generated index scheme cannot represent it"
+        );
+    }
+
+    let mut accessors = std::collections::BTreeSet::from(["of", "operation"]);
+    for name in args
+        .iter()
+        .map(|arg| match arg {
+            Arg::Operand { name, .. } | Arg::Attr { name, .. } => name.as_str(),
+        })
+        .chain(regions.iter().map(String::as_str))
+        .chain(results.iter().map(String::as_str))
+    {
+        assert!(
+            accessors.insert(name),
+            "`{full_name}` argument `{name}` collides with another accessor"
+        );
+    }
 }
 
 fn superclasses(record: &Json) -> impl Iterator<Item = &str> {
@@ -466,6 +472,48 @@ fn write_imports(out: &mut String, ops: &[Op]) {
 }
 
 fn generate_struct(out: &mut String, op: &Op) {
+    write_struct_head(out, op);
+
+    let mut operand_index = 0;
+    for arg in &op.args {
+        match arg {
+            Arg::Operand {
+                name,
+                variadic: false,
+            } => {
+                write_operand(out, op, name, operand_index);
+                operand_index += 1;
+            }
+            Arg::Operand {
+                name,
+                variadic: true,
+            } => write_variadic_operand(out, name, operand_index),
+            Arg::Attr {
+                name,
+                storage: Storage::Unit,
+                ..
+            } => write_unit_attribute(out, name),
+            Arg::Attr {
+                name,
+                storage,
+                optional,
+            } => write_attribute(out, op, name, *storage, *optional),
+        }
+    }
+
+    for (index, region) in op.regions.iter().enumerate() {
+        write_region(out, op, index, region);
+    }
+
+    for (index, result) in op.results.iter().enumerate() {
+        write_result(out, op, index, result);
+    }
+
+    writeln!(out, "    }}").unwrap();
+}
+
+/// The struct, and the start of its impl with the accessors every op has.
+fn write_struct_head(out: &mut String, op: &Op) {
     let name = format!("{}Op", op.variant);
     writeln!(out, "\n    /// A borrowed `{}` operation.", op.full_name).unwrap();
     writeln!(out, "    #[derive(Clone, Copy, Debug)]").unwrap();
@@ -501,185 +549,166 @@ fn generate_struct(out: &mut String, op: &Op) {
     .unwrap();
     writeln!(out, "            self.operation").unwrap();
     writeln!(out, "        }}").unwrap();
+}
 
-    let mut operand_index = 0;
-    for arg in &op.args {
-        match arg {
-            Arg::Operand {
-                name: arg_name,
-                variadic: false,
-            } => {
-                writeln!(out, "\n        /// The `{arg_name}` operand.").unwrap();
-                writeln!(out, "        ///\n        /// # Panics\n        ///\n        /// Panics if the op does not verify: a verified op always has it.").unwrap();
-                writeln!(out, "        #[must_use]").unwrap();
-                writeln!(out, "        pub fn {arg_name}(&self) -> Value<'c, 'a> {{").unwrap();
-                writeln!(
-                    out,
-                    "            self.operation.operand({operand_index}).expect(\"`{}` has a `{arg_name}` operand\")",
-                    op.full_name
-                )
-                .unwrap();
-                writeln!(out, "        }}").unwrap();
-                operand_index += 1;
-            }
-            Arg::Operand {
-                name: arg_name,
-                variadic: true,
-            } => {
-                writeln!(out, "\n        /// The `{arg_name}` operands.").unwrap();
-                writeln!(
-                    out,
-                    "        pub fn {arg_name}(&self) -> impl Iterator<Item = Value<'c, 'a>> {{"
-                )
-                .unwrap();
-                if operand_index == 0 {
-                    writeln!(out, "            self.operation.operands()").unwrap();
-                } else {
-                    writeln!(
-                        out,
-                        "            self.operation.operands().skip({operand_index})"
-                    )
-                    .unwrap();
-                }
-                writeln!(out, "        }}").unwrap();
-            }
-            Arg::Attr {
-                name: arg_name,
-                storage: Storage::Unit,
-                ..
-            } => {
-                let raw = arg_name.trim_start_matches("r#");
-                writeln!(
-                    out,
-                    "\n        /// Whether the `{raw}` unit attribute is present."
-                )
-                .unwrap();
-                writeln!(out, "        #[must_use]").unwrap();
-                writeln!(out, "        pub fn {arg_name}(&self) -> bool {{").unwrap();
-                writeln!(
-                    out,
-                    "            self.operation.attribute(\"{raw}\").is_ok()"
-                )
-                .unwrap();
-                writeln!(out, "        }}").unwrap();
-            }
-            Arg::Attr {
-                name: arg_name,
-                storage,
-                optional,
-            } => {
-                let raw = arg_name.trim_start_matches("r#");
-                if TYPED_ACCESSORS.contains(&(op.full_name.as_str(), raw)) {
-                    continue;
-                }
+fn write_operand(out: &mut String, op: &Op, arg_name: &str, operand_index: usize) {
+    writeln!(out, "\n        /// The `{arg_name}` operand.").unwrap();
+    writeln!(out, "        ///\n        /// # Panics\n        ///\n        /// Panics if the op does not verify: a verified op always has it.").unwrap();
+    writeln!(out, "        #[must_use]").unwrap();
+    writeln!(out, "        pub fn {arg_name}(&self) -> Value<'c, 'a> {{").unwrap();
+    writeln!(
+        out,
+        "            self.operation.operand({operand_index}).expect(\"`{}` has a `{arg_name}` operand\")",
+        op.full_name
+    )
+    .unwrap();
+    writeln!(out, "        }}").unwrap();
+}
 
-                let wrapper = storage.wrapper();
-                let note = match storage {
-                    Storage::Other => " Raw: melior has no wrapper for its storage type.",
-                    _ => "",
-                };
-                writeln!(out, "\n        /// The `{raw}` attribute.{note}").unwrap();
-                // Only an optional attribute kept raw is read without `expect`.
-                if !(*optional && storage.is_raw()) {
-                    writeln!(out, "        ///\n        /// # Panics\n        ///\n        /// Panics if the op does not verify: a verified op always has it.").unwrap();
-                }
-                if *optional {
-                    writeln!(out, "        #[must_use]").unwrap();
-                    writeln!(
-                        out,
-                        "        pub fn {arg_name}(&self) -> Option<{wrapper}<'c>> {{"
-                    )
-                    .unwrap();
-                    writeln!(
-                        out,
-                        "            let attribute = self.operation.attribute(\"{raw}\").ok()?;"
-                    )
-                    .unwrap();
-                    if storage.is_raw() {
-                        writeln!(out, "            Some(attribute)").unwrap();
-                    } else {
-                        writeln!(
-                            out,
-                            "            Some(attribute.try_into().expect(\"`{raw}` on `{}` is {}\"))",
-                            op.full_name,
-                            article(wrapper)
-                        )
-                        .unwrap();
-                    }
-                    writeln!(out, "        }}").unwrap();
-                } else if storage.is_raw() {
-                    writeln!(out, "        #[must_use]").unwrap();
-                    writeln!(out, "        pub fn {arg_name}(&self) -> {wrapper}<'c> {{").unwrap();
-                    writeln!(out, "            self.operation").unwrap();
-                    writeln!(out, "                .attribute(\"{raw}\")").unwrap();
-                    writeln!(
-                        out,
-                        "                .expect(\"`{}` has a `{raw}` attribute\")",
-                        op.full_name
-                    )
-                    .unwrap();
-                    writeln!(out, "        }}").unwrap();
-                } else {
-                    writeln!(out, "        #[must_use]").unwrap();
-                    writeln!(out, "        pub fn {arg_name}(&self) -> {wrapper}<'c> {{").unwrap();
-                    writeln!(out, "            let attribute = self.operation").unwrap();
-                    writeln!(out, "                .attribute(\"{raw}\")").unwrap();
-                    writeln!(
-                        out,
-                        "                .expect(\"`{}` has a `{raw}` attribute\");",
-                        op.full_name
-                    )
-                    .unwrap();
-                    writeln!(
-                        out,
-                        "            attribute.try_into().expect(\"`{raw}` on `{}` is {}\")",
-                        op.full_name,
-                        article(wrapper)
-                    )
-                    .unwrap();
-                    writeln!(out, "        }}").unwrap();
-                }
-            }
+fn write_variadic_operand(out: &mut String, arg_name: &str, operand_index: usize) {
+    writeln!(out, "\n        /// The `{arg_name}` operands.").unwrap();
+    writeln!(
+        out,
+        "        pub fn {arg_name}(&self) -> impl Iterator<Item = Value<'c, 'a>> {{"
+    )
+    .unwrap();
+    if operand_index == 0 {
+        writeln!(out, "            self.operation.operands()").unwrap();
+    } else {
+        writeln!(
+            out,
+            "            self.operation.operands().skip({operand_index})"
+        )
+        .unwrap();
+    }
+    writeln!(out, "        }}").unwrap();
+}
+
+fn write_unit_attribute(out: &mut String, arg_name: &str) {
+    let raw = arg_name.trim_start_matches("r#");
+    writeln!(
+        out,
+        "\n        /// Whether the `{raw}` unit attribute is present."
+    )
+    .unwrap();
+    writeln!(out, "        #[must_use]").unwrap();
+    writeln!(out, "        pub fn {arg_name}(&self) -> bool {{").unwrap();
+    writeln!(
+        out,
+        "            self.operation.attribute(\"{raw}\").is_ok()"
+    )
+    .unwrap();
+    writeln!(out, "        }}").unwrap();
+}
+
+fn write_attribute(out: &mut String, op: &Op, arg_name: &str, storage: Storage, optional: bool) {
+    let raw = arg_name.trim_start_matches("r#");
+    if TYPED_ACCESSORS.contains(&(op.full_name.as_str(), raw)) {
+        return;
+    }
+
+    let wrapper = storage.wrapper();
+    let note = match storage {
+        Storage::Other => " Raw: melior has no wrapper for its storage type.",
+        _ => "",
+    };
+    writeln!(out, "\n        /// The `{raw}` attribute.{note}").unwrap();
+    // Only an optional attribute kept raw is read without `expect`.
+    if !(optional && storage.is_raw()) {
+        writeln!(out, "        ///\n        /// # Panics\n        ///\n        /// Panics if the op does not verify: a verified op always has it.").unwrap();
+    }
+    if optional {
+        writeln!(out, "        #[must_use]").unwrap();
+        writeln!(
+            out,
+            "        pub fn {arg_name}(&self) -> Option<{wrapper}<'c>> {{"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "            let attribute = self.operation.attribute(\"{raw}\").ok()?;"
+        )
+        .unwrap();
+        if storage.is_raw() {
+            writeln!(out, "            Some(attribute)").unwrap();
+        } else {
+            writeln!(
+                out,
+                "            Some(attribute.try_into().expect(\"`{raw}` on `{}` is {}\"))",
+                op.full_name,
+                article(wrapper)
+            )
+            .unwrap();
         }
-    }
-
-    for (index, region) in op.regions.iter().enumerate() {
-        writeln!(out, "\n        /// The `{region}` region.").unwrap();
-        writeln!(out, "        ///\n        /// # Panics\n        ///\n        /// Panics if the op does not verify: a verified op always has it.").unwrap();
+        writeln!(out, "        }}").unwrap();
+    } else if storage.is_raw() {
         writeln!(out, "        #[must_use]").unwrap();
+        writeln!(out, "        pub fn {arg_name}(&self) -> {wrapper}<'c> {{").unwrap();
+        writeln!(out, "            self.operation").unwrap();
+        writeln!(out, "                .attribute(\"{raw}\")").unwrap();
         writeln!(
             out,
-            "        pub fn {region}(&self) -> RegionRef<'c, 'a> {{"
-        )
-        .unwrap();
-        writeln!(
-            out,
-            "            self.operation.region({index}).expect(\"`{}` has a `{region}` region\")",
+            "                .expect(\"`{}` has a `{raw}` attribute\")",
             op.full_name
         )
         .unwrap();
         writeln!(out, "        }}").unwrap();
-    }
-
-    for (index, result) in op.results.iter().enumerate() {
-        writeln!(out, "\n        /// The `{result}` result.").unwrap();
-        writeln!(out, "        ///\n        /// # Panics\n        ///\n        /// Panics if the op does not verify: a verified op always has it.").unwrap();
+    } else {
         writeln!(out, "        #[must_use]").unwrap();
+        writeln!(out, "        pub fn {arg_name}(&self) -> {wrapper}<'c> {{").unwrap();
+        writeln!(out, "            let attribute = self.operation").unwrap();
+        writeln!(out, "                .attribute(\"{raw}\")").unwrap();
         writeln!(
             out,
-            "        pub fn {result}(&self) -> OperationResult<'c, 'a> {{"
+            "                .expect(\"`{}` has a `{raw}` attribute\");",
+            op.full_name
         )
         .unwrap();
         writeln!(
             out,
-            "            self.operation.result({index}).expect(\"`{}` has a `{result}` result\")",
-            op.full_name
+            "            attribute.try_into().expect(\"`{raw}` on `{}` is {}\")",
+            op.full_name,
+            article(wrapper)
         )
         .unwrap();
         writeln!(out, "        }}").unwrap();
     }
+}
 
-    writeln!(out, "    }}").unwrap();
+fn write_region(out: &mut String, op: &Op, index: usize, region: &str) {
+    writeln!(out, "\n        /// The `{region}` region.").unwrap();
+    writeln!(out, "        ///\n        /// # Panics\n        ///\n        /// Panics if the op does not verify: a verified op always has it.").unwrap();
+    writeln!(out, "        #[must_use]").unwrap();
+    writeln!(
+        out,
+        "        pub fn {region}(&self) -> RegionRef<'c, 'a> {{"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "            self.operation.region({index}).expect(\"`{}` has a `{region}` region\")",
+        op.full_name
+    )
+    .unwrap();
+    writeln!(out, "        }}").unwrap();
+}
+
+fn write_result(out: &mut String, op: &Op, index: usize, result: &str) {
+    writeln!(out, "\n        /// The `{result}` result.").unwrap();
+    writeln!(out, "        ///\n        /// # Panics\n        ///\n        /// Panics if the op does not verify: a verified op always has it.").unwrap();
+    writeln!(out, "        #[must_use]").unwrap();
+    writeln!(
+        out,
+        "        pub fn {result}(&self) -> OperationResult<'c, 'a> {{"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "            self.operation.result({index}).expect(\"`{}` has a `{result}` result\")",
+        op.full_name
+    )
+    .unwrap();
+    writeln!(out, "        }}").unwrap();
 }
 
 fn article(wrapper: &str) -> String {

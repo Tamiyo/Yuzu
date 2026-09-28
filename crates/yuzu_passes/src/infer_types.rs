@@ -222,7 +222,7 @@ impl<'c> TypeInferrer<'c, '_> {
 
     fn mismatch(&mut self, op: OperationRef<'c, '_>, expected: Term<'c>, found: Term<'c>) {
         let (expected, found) = (self.display(expected), self.display(found));
-        self.report(op, &format!("expected `{expected}`, found `{found}`"));
+        report(op, &format!("expected `{expected}`, found `{found}`"));
     }
 
     /// Names the stage in the complaint, rather than reporting a bare
@@ -239,7 +239,7 @@ impl<'c> TypeInferrer<'c, '_> {
                     self.display(Term::Concrete(expected)),
                     self.display(Term::Concrete(found)),
                 );
-                self.report(
+                report(
                     op,
                     &format!("expected the {what} to be `{expected}`, found `{found}`"),
                 );
@@ -274,6 +274,10 @@ impl<'c> TypeInferrer<'c, '_> {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm for each yzl op the inference types"
+    )]
     fn infer_op(&mut self, op: OperationRef<'c, '_>) {
         let declared = self.declared;
         match op.as_yzl() {
@@ -299,12 +303,12 @@ impl<'c> TypeInferrer<'c, '_> {
                         let bindings = self.instantiate(op, callee, signature);
                         for (argument, parameter) in op.operands().zip(&signature.params) {
                             let term = self.term_of(argument);
-                            let expected = self.substitute(*parameter, &bindings);
+                            let expected = substitute(*parameter, &bindings);
                             self.unify(op, term, expected);
                         }
 
                         let term = self.term_of(op.first_result());
-                        let expected = self.substitute(signature.result, &bindings);
+                        let expected = substitute(signature.result, &bindings);
                         self.unify(op, term, expected);
                     }
                 }
@@ -527,16 +531,6 @@ impl<'c> TypeInferrer<'c, '_> {
         bindings
     }
 
-    fn substitute(&self, ty: Type<'c>, bindings: &FxHashMap<&'c str, TypeVar>) -> Term<'c> {
-        if let Some(param) = ParamType::from_type(ty)
-            && let Some(&var) = bindings.get(param.name())
-        {
-            return Term::Var(var);
-        }
-
-        Term::Concrete(ty)
-    }
-
     fn check_pending_bounds(&mut self) {
         for bound in mem::take(&mut self.pending) {
             let Some(resolved) = self.resolve(Term::Var(bound.var)) else {
@@ -703,10 +697,20 @@ impl<'c> TypeInferrer<'c, '_> {
             );
         }
     }
+}
 
-    fn report(&self, op: OperationRef<'c, '_>, message: &str) {
-        emit_error(op.location(), message);
+fn substitute<'c>(ty: Type<'c>, bindings: &FxHashMap<&'c str, TypeVar>) -> Term<'c> {
+    if let Some(param) = ParamType::from_type(ty)
+        && let Some(&var) = bindings.get(param.name())
+    {
+        return Term::Var(var);
     }
+
+    Term::Concrete(ty)
+}
+
+fn report(op: OperationRef<'_, '_>, message: &str) {
+    emit_error(op.location(), message);
 }
 
 fn is_error(term: Term<'_>) -> bool {

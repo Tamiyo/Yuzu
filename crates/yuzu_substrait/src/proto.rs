@@ -20,6 +20,11 @@ pub(crate) fn nullable() -> i32 {
 }
 
 /// A column of the row, by position.
+/// A column's position in a row, as Substrait counts fields.
+pub(crate) fn field_index(index: usize) -> i32 {
+    i32::try_from(index).expect("a row has fewer than 2^31 columns")
+}
+
 pub(crate) fn selection(index: i32) -> Expression {
     Expression {
         rex_type: Some(RexType::Selection(Box::new(FieldReference {
@@ -47,9 +52,9 @@ pub(crate) fn literal(value: LiteralType) -> Expression {
 
 /// The columns a projection keeps, by position over its input's columns
 /// followed by its own expressions.
-pub(crate) fn emit_common(output_mapping: Vec<i32>) -> Option<RelCommon> {
-    Some(RelCommon {
+pub(crate) fn emit_common(output_mapping: Vec<i32>) -> RelCommon {
+    RelCommon {
         emit_kind: Some(EmitKind::Emit(Emit { output_mapping })),
         ..Default::default()
-    })
+    }
 }

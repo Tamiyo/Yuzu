@@ -61,6 +61,10 @@ impl<'t, 'input> Parser<'t, 'input> {
         CompletedMarker::new(marker.pos)
     }
 
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "a completed marker is used up when a node is wrapped around it"
+    )]
     pub(crate) fn precede(&mut self, completed_marker: CompletedMarker) -> Marker {
         let marker = self.start();
 

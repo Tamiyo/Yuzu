@@ -210,9 +210,8 @@ impl BindingKind<'_> {
             BindingKind::Relation { .. } => "relation",
             BindingKind::Func { .. } => "function",
             BindingKind::Trait { .. } => "trait",
-            BindingKind::Let => "binding",
+            BindingKind::Let | BindingKind::Pending => "binding",
             BindingKind::Module { .. } => "module",
-            BindingKind::Pending => "binding",
             BindingKind::Import { .. } => {
                 unreachable!("a lookup follows an import before anything asks its name")
             }
@@ -238,7 +237,7 @@ pub(super) enum FunctionKind {
     Aggregate,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct Callable<'c> {
     pub(super) symbol: &'c str,
     pub(super) source: CalleeSource,
@@ -629,21 +628,7 @@ impl<'c> SymbolTable<'c> {
             });
         }
 
-        self.builtin(name, registry)
-    }
-
-    fn builtin(&self, name: &str, registry: &dyn FunctionRegistry) -> Option<Callable<'c>> {
-        let entry = registry.entries().iter().find(|entry| entry.name == name)?;
-        Some(Callable {
-            symbol: entry.name,
-            source: CalleeSource::Builtin,
-            kind: match entry.func {
-                yuzu_types::BuiltinFunc::Scalar(_) => FunctionKind::Scalar,
-                yuzu_types::BuiltinFunc::Aggregate(_) => FunctionKind::Aggregate,
-            },
-            min_args: entry.min_args,
-            max_args: entry.max_args,
-        })
+        builtin(name, registry)
     }
 
     // --- scopes ---
@@ -826,6 +811,20 @@ impl<'c> SymbolTable<'c> {
     pub(super) fn concat(&mut self, rhs: Row<'c>) {
         self.row_mut().append(rhs);
     }
+}
+
+fn builtin<'c>(name: &str, registry: &dyn FunctionRegistry) -> Option<Callable<'c>> {
+    let entry = registry.entries().iter().find(|entry| entry.name == name)?;
+    Some(Callable {
+        symbol: entry.name,
+        source: CalleeSource::Builtin,
+        kind: match entry.func {
+            yuzu_types::BuiltinFunc::Scalar(_) => FunctionKind::Scalar,
+            yuzu_types::BuiltinFunc::Aggregate(_) => FunctionKind::Aggregate,
+        },
+        min_args: entry.min_args,
+        max_args: entry.max_args,
+    })
 }
 
 #[cfg(test)]

@@ -37,7 +37,7 @@ impl From<ParseError> for Diagnostic {
 
                 let expected_description = expected
                     .iter()
-                    .map(|e| e.to_string())
+                    .map(ToString::to_string)
                     .collect::<Vec<_>>()
                     .join(", ");
 
