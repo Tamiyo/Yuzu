@@ -10,8 +10,8 @@
 use melior::Context;
 use melior::ir::operation::{OperationLike, OperationRef, OperationResult};
 use melior::ir::{Location, Module, Type, Value, ValueLike};
-use rustc_hash::FxHashMap;
-use substrait::proto::{Plan, PlanRel, Rel, RelRoot, plan_rel};
+use rustc_hash::{FxHashMap, FxHashSet};
+use substrait::proto::{PlanRel, Rel, RelRoot, plan_rel};
 use substrait::version;
 use yuzu_mlir::StructType;
 use yuzu_mlir::SymbolTable;
@@ -23,7 +23,9 @@ use yuzu_mlir::ir::value::ValueId;
 use yuzu_mlir::ops::yz::YzOp;
 use yuzu_mlir::ops::yzr::YzrOp;
 
+use crate::Plan;
 use crate::extensions::Extensions;
+use yuzu_mlir::ir::value::ValueExt;
 
 mod expr;
 mod functions;
@@ -32,6 +34,11 @@ mod types;
 
 /// Translates the module's query. `None` once it has reported why it could
 /// not, so run this inside `yuzu_mlir::diagnostics::capture`.
+///
+/// # Panics
+///
+/// Panics if the module does not verify: the stages it reads are taken as
+/// their verifiers promise.
 #[must_use]
 pub fn translate<'c>(context: &'c Context, module: &Module<'c>) -> Option<Plan> {
     let symbols = SymbolTable::new(module);
@@ -45,10 +52,13 @@ pub fn translate<'c>(context: &'c Context, module: &Module<'c>) -> Option<Plan> 
         return None;
     };
 
-    let query = output.try_first_operand()?;
+    let query = output
+        .try_first_operand()
+        .expect("a verified yzr.output has its query");
     let mut translator = Translator {
         context,
         symbols: &symbols,
+        shared: shared_relations(module),
         translated: FxHashMap::default(),
         extensions: Extensions::default(),
     };
@@ -66,7 +76,7 @@ pub fn translate<'c>(context: &'c Context, module: &Module<'c>) -> Option<Plan> 
         .map(std::string::ToString::to_string)
         .collect();
 
-    Some(Plan {
+    Some(Plan(substrait::proto::Plan {
         version: Some(version::version_with_producer("yuzu")),
         extension_urns: translator.extensions.urns(),
         extensions: translator.extensions.declarations(),
@@ -77,14 +87,31 @@ pub fn translate<'c>(context: &'c Context, module: &Module<'c>) -> Option<Plan> 
             })),
         }],
         ..Default::default()
-    })
+    }))
+}
+
+/// The relational values more than one stage reads. Substrait nests, so
+/// each of those is written out at every use; any other relation moves into
+/// the one stage that reads it.
+fn shared_relations(module: &Module<'_>) -> FxHashSet<ValueId> {
+    let mut reads: FxHashMap<ValueId, usize> = FxHashMap::default();
+    for op in module.body().operations() {
+        for operand in op.operands() {
+            *reads.entry(operand.id()).or_default() += 1;
+        }
+    }
+    reads
+        .into_iter()
+        .filter_map(|(value, count)| (count > 1).then_some(value))
+        .collect()
 }
 
 struct Translator<'c, 'a, 's> {
     context: &'c Context,
     symbols: &'s SymbolTable<'c, 'a>,
-    /// What each relational value already translated to, so a relation two
-    /// stages read is walked once.
+    /// The relations more than one stage reads.
+    shared: FxHashSet<ValueId>,
+    /// What each shared relation translated to, so it is walked once.
     translated: FxHashMap<ValueId, Rel>,
     extensions: Extensions,
 }
@@ -110,8 +137,15 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         ))
     }
 
+    /// How many columns a relation's row has.
     fn width(&self, value: Value<'c, 'a>) -> Option<usize> {
-        Some(self.row(value.r#type())?.0.len())
+        let declaration = self
+            .symbols
+            .lookup(StructType::from_type(value.r#type())?.name())?;
+        let YzOp::Struct(item) = declaration.as_yz()? else {
+            return None;
+        };
+        Some(item.names().len())
     }
 }
 
@@ -129,8 +163,6 @@ pub(crate) mod test_support {
     use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
     use yuzu_diagnostics::diagnostics::printer::DiagnosticPrinter;
     use yuzu_diagnostics::source_map::SourceMap;
-
-    use crate::to_json;
 
     pub(crate) const TABLE: &str = "struct Row { a: int64, b: int64 }\ntable t = Row\n";
 
@@ -188,10 +220,10 @@ pub(crate) mod test_support {
         let reported: Vec<String> = diagnostics
             .diagnostics()
             .iter()
-            .map(|diagnostic| printer.print(diagnostic))
+            .map(|diagnostic| printer.render(diagnostic))
             .collect();
 
-        (plan.map(|plan| to_json(&plan)), reported.join("\n"))
+        (plan.map(|plan| plan.to_json()), reported.join("\n"))
     }
 
     pub(crate) fn check(source: &str, expected: &Expect) {

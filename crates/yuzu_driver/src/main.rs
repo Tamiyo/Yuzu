@@ -2,7 +2,9 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
+use yuzu_diagnostics::diagnostics::printer::DiagnosticPrinter;
 use yuzu_driver::modules::{FsResolver, base_of};
+use yuzu_driver::stdlib::Engine;
 use yuzu_driver::{CompileOptions, compile};
 
 #[derive(Parser)]
@@ -27,18 +29,17 @@ struct Cli {
     #[arg(long, help = "Dump all of the above")]
     debug: bool,
 
-    #[arg(long, help = "The engine to compile for, e.g. datafusion")]
-    target: Option<String>,
+    #[arg(long, default_value_t, help = "The engine to compile for")]
+    target: Engine,
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
     let options = CompileOptions {
-        debug_yzl: cli.debug_yzl || cli.debug,
-        debug_yzr: cli.debug_yzr || cli.debug,
-        debug_substrait: cli.debug_substrait || cli.debug,
-        target: cli.target,
+        engine: cli.target,
+        dump_yzl: cli.debug_yzl || cli.debug,
+        dump_yzr: cli.debug_yzr || cli.debug,
     };
 
     let source = match std::fs::read_to_string(&cli.file) {
@@ -49,14 +50,38 @@ fn main() -> ExitCode {
         }
     };
 
-    // A module is resolved beside the file that imported it.
+    // Every module path is resolved from the entry file's directory.
     let resolver = FsResolver {
         base: base_of(&cli.file),
     };
-    compile(
+    let compilation = compile(
         &cli.file.display().to_string(),
         &source,
         &options,
         &resolver,
-    )
+    );
+
+    if let Some(yzl) = &compilation.yzl {
+        println!("=== yzl ===");
+        print!("{yzl}");
+    }
+    if let Some(yzr) = &compilation.yzr {
+        println!("=== yzr ===");
+        print!("{yzr}");
+    }
+    let printer = DiagnosticPrinter::new(&compilation.sources);
+    for diagnostic in &compilation.diagnostics {
+        eprintln!("{}", printer.render(diagnostic));
+    }
+
+    match &compilation.plan {
+        Some(plan) => {
+            if cli.debug_substrait || cli.debug {
+                println!("=== substrait ===");
+                println!("{}", plan.to_json());
+            }
+            ExitCode::SUCCESS
+        }
+        None => ExitCode::FAILURE,
+    }
 }

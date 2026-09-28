@@ -1,3 +1,6 @@
+use std::collections::hash_map::Entry;
+
+use rustc_hash::FxHashMap;
 use substrait::proto::extensions::{
     SimpleExtensionDeclaration, SimpleExtensionUrn,
     simple_extension_declaration::{ExtensionFunction, MappingType},
@@ -59,19 +62,25 @@ pub(crate) const COUNT: (&str, &str) = (AGGREGATE_GENERIC_URN, "count");
 pub(crate) struct Extensions {
     urns: Vec<&'static str>,
     functions: Vec<(u32, String)>,
+    /// Each function's anchor, by where it is declared and its name.
+    anchors: FxHashMap<(&'static str, String), u32>,
 }
 
 impl Extensions {
     /// Intern a `(urn, name)` function; returns its function anchor.
     pub(crate) fn register(&mut self, urn: &'static str, name: String) -> u32 {
+        let entry = match self.anchors.entry((urn, name)) {
+            Entry::Occupied(declared) => return *declared.get(),
+            Entry::Vacant(entry) => entry,
+        };
         let index = if let Some(index) = self.urns.iter().position(|&candidate| candidate == urn) {
             index
         } else {
             self.urns.push(urn);
             self.urns.len() - 1
         };
-        self.functions.push((anchor(index), name));
-        anchor(self.functions.len() - 1)
+        self.functions.push((anchor(index), entry.key().1.clone()));
+        *entry.insert(anchor(self.functions.len() - 1))
     }
 
     pub(crate) fn urns(&self) -> Vec<SimpleExtensionUrn> {
@@ -104,4 +113,23 @@ impl Extensions {
 /// means none.
 fn anchor(index: usize) -> u32 {
     u32::try_from(index + 1).expect("a plan declares fewer than 2^32 extensions")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Extensions, function_target};
+    use crate::extensions::Func;
+
+    #[test]
+    fn a_function_used_twice_is_declared_once() {
+        let mut extensions = Extensions::default();
+        let (urn, base) = function_target(Func::Add);
+        let first = extensions.register(urn, format!("{base}:i64_i64"));
+        let again = extensions.register(urn, format!("{base}:i64_i64"));
+        let other = extensions.register(urn, format!("{base}:fp64_fp64"));
+        assert_eq!(first, again);
+        assert_ne!(first, other);
+        assert_eq!(extensions.declarations().len(), 2);
+        assert_eq!(extensions.urns().len(), 1);
+    }
 }

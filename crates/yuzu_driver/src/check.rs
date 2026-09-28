@@ -7,10 +7,10 @@ use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
 use yuzu_diagnostics::source_map::{SourceId, SourceMap};
 use yuzu_syntax::GreenNode;
 
+use crate::compile::{in_thread_context, lower_and_check};
 use crate::index::{Index, IndexReader};
 use crate::modules::{self, ModuleResolver};
 use crate::stdlib::Engine;
-use crate::{CompileOptions, in_thread_context, lower_and_check};
 
 /// The file a check asks about.
 #[derive(Clone, Copy, Debug)]
@@ -77,7 +77,7 @@ pub fn check(focus: Focus<'_>, resolver: &dyn ModuleResolver) -> Checked {
             &files,
             &mut diagnostics,
             None,
-            &CompileOptions::default(),
+            None,
             Some(&mut reader),
         );
     });
@@ -98,7 +98,7 @@ mod tests {
     use yuzu_diagnostics::diagnostics::printer::DiagnosticPrinter;
 
     use super::{Checked, Focus, check};
-    use crate::modules::{MapResolver, ModuleResolver, ModuleSource};
+    use crate::modules::{MapResolver, ModuleResolver, ModuleSource, Unreadable};
 
     struct LibraryCopy {
         path: &'static str,
@@ -106,16 +106,16 @@ mod tests {
     }
 
     impl ModuleResolver for LibraryCopy {
-        fn resolve(&self, _path: &str) -> Option<ModuleSource> {
-            None
+        fn resolve(&self, _path: &str) -> Result<Option<ModuleSource>, Unreadable> {
+            Ok(None)
         }
 
-        fn resolve_library(&self, path: &str) -> Option<ModuleSource> {
-            (path == self.path).then(|| ModuleSource {
+        fn resolve_library(&self, path: &str) -> Result<Option<ModuleSource>, Unreadable> {
+            Ok((path == self.path).then(|| ModuleSource {
                 name: format!("{path}.yz"),
-                source: self.source.to_owned(),
+                source: self.source.into(),
                 syntax: None,
-            })
+            }))
         }
     }
 
@@ -124,7 +124,7 @@ mod tests {
         checked
             .diagnostics
             .iter()
-            .map(|diagnostic| printer.print(diagnostic))
+            .map(|diagnostic| printer.render(diagnostic))
             .collect::<Vec<_>>()
             .join("\n")
     }

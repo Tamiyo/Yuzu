@@ -37,3 +37,13 @@ def test_an_engine_the_compiler_does_not_know_is_reported():
         assert "`postgres` is not a supported engine" in str(failure)
     else:
         raise AssertionError("postgres compiled")
+
+
+def test_a_compile_error_is_a_value_error_with_the_diagnostics():
+    try:
+        yuzu.compile("let x: i64 = 1\n")
+    except yuzu.CompileError as failure:
+        assert isinstance(failure, ValueError)
+        assert "unknown type `i64`" in str(failure)
+    else:
+        raise AssertionError("i64 compiled")

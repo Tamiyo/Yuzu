@@ -6,7 +6,7 @@ use melior::ir::operation::{OperationLike, OperationRef};
 use melior::ir::{RegionLike, Value, ValueLike};
 use rustc_hash::FxHashMap;
 use substrait::proto::{
-    Expression, FunctionArgument,
+    Expression, FunctionArgument, Type,
     expression::{RexType, ScalarFunction, SingularOrList, literal::LiteralType},
     function_argument::ArgType,
 };
@@ -26,6 +26,8 @@ use crate::translate::{Translator, report};
 /// `yzr.yield` named. The yields stay as values because what they mean is
 /// the stage's business — a grouping yields measures, not expressions.
 pub(crate) struct Region<'c, 'a> {
+    /// The stage the region belongs to.
+    pub(crate) op: OperationRef<'c, 'a>,
     pub(crate) values: FxHashMap<ValueId, Expression>,
     pub(crate) yielded: Vec<Value<'c, 'a>>,
 }
@@ -34,6 +36,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
     pub(crate) fn translate_region(&mut self, op: OperationRef<'c, 'a>) -> Option<Region<'c, 'a>> {
         let Some(block) = op.regions().next().and_then(|region| region.first_block()) else {
             return Some(Region {
+                op,
                 values: FxHashMap::default(),
                 yielded: Vec::new(),
             });
@@ -60,7 +63,11 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
             }
         }
 
-        Some(Region { values, yielded })
+        Some(Region {
+            op,
+            values,
+            yielded,
+        })
     }
 
     fn translate_value(
@@ -68,7 +75,11 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         op: OperationRef<'c, '_>,
         values: &FxHashMap<ValueId, Expression>,
     ) -> Option<Expression> {
-        match op.as_yz()? {
+        let Some(value) = op.as_yz() else {
+            report(op, "this has no Substrait equivalent");
+            return None;
+        };
+        match value {
             YzOp::ConstantInt(constant) => {
                 Some(literal(LiteralType::I64(constant.value().value())))
             }
@@ -138,28 +149,9 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         base: &str,
         values: &FxHashMap<ValueId, Expression>,
     ) -> Option<Expression> {
-        let mut signature = Vec::new();
-        let mut arguments = Vec::new();
-        for operand in op.operands() {
-            let Some(code) = type_code(self.context, operand.r#type()) else {
-                report(op, "this argument has no Substrait type");
-                return None;
-            };
-
-            signature.push(code);
-            arguments.push(FunctionArgument {
-                arg_type: Some(ArgType::Value(expression_of(op, operand, values)?)),
-            });
-        }
-
-        let Some(output) = emit_type(self.context, op.first_result().r#type()) else {
-            report(op, "this expression has no Substrait type");
-            return None;
-        };
-
-        let anchor = self
-            .extensions
-            .register(urn, format!("{base}:{}", signature.join("_")));
+        let operands: Vec<Value<'c, '_>> = op.operands().collect();
+        let (anchor, arguments, output) =
+            self.translate_arguments(op, urn, base, &operands, values)?;
         Some(Expression {
             rex_type: Some(RexType::ScalarFunction(ScalarFunction {
                 function_reference: anchor,
@@ -168,6 +160,44 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
                 ..Default::default()
             })),
         })
+    }
+}
+
+impl<'c> Translator<'c, '_, '_> {
+    /// A function's arguments, the anchor it is declared under, and its
+    /// result type. Substrait names an overload by its argument type codes,
+    /// joined.
+    pub(crate) fn translate_arguments(
+        &mut self,
+        op: OperationRef<'c, '_>,
+        urn: &'static str,
+        base: &str,
+        arguments: &[Value<'c, '_>],
+        values: &FxHashMap<ValueId, Expression>,
+    ) -> Option<(u32, Vec<FunctionArgument>, Type)> {
+        let mut signature = Vec::with_capacity(arguments.len());
+        let mut emitted = Vec::with_capacity(arguments.len());
+        for &argument in arguments {
+            let Some(code) = type_code(self.context, argument.r#type()) else {
+                report(op, "this argument has no Substrait type");
+                return None;
+            };
+
+            signature.push(code);
+            emitted.push(FunctionArgument {
+                arg_type: Some(ArgType::Value(expression_of(op, argument, values)?)),
+            });
+        }
+
+        let Some(output) = emit_type(self.context, op.first_result().r#type()) else {
+            report(op, "this has no Substrait type");
+            return None;
+        };
+
+        let anchor = self
+            .extensions
+            .register(urn, format!("{base}:{}", signature.join("_")));
+        Some((anchor, emitted, output))
     }
 }
 
@@ -192,9 +222,12 @@ fn translate_membership(
     op: OperationRef<'_, '_>,
     values: &FxHashMap<ValueId, Expression>,
 ) -> Option<Expression> {
-    let value = expression_of(op, op.operand(0).ok()?, values)?;
-    let list = op.operand(1).ok()?;
-    let Some(producer) = Translator::producer(list) else {
+    let value = op.operand(0).expect("a verified `yz.in` has its value");
+    let value = expression_of(op, value, values)?;
+    let list = op.operand(1).expect("a verified `yz.in` has its list");
+    let producer = Translator::producer(list)
+        .filter(|producer| matches!(producer.as_yz(), Some(YzOp::List(_))));
+    let Some(producer) = producer else {
         report(op, "`in` takes a list of values on its right");
         return None;
     };

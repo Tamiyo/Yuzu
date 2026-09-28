@@ -204,7 +204,7 @@ mod tests {
         let rendered: Vec<String> = diagnostics
             .diagnostics()
             .iter()
-            .map(|diagnostic| printer.print(diagnostic))
+            .map(|diagnostic| printer.render(diagnostic))
             .collect();
         expect![[r"
         error: unknown relation `t`
@@ -248,7 +248,7 @@ mod tests {
         let rendered: Vec<String> = diagnostics
             .diagnostics()
             .iter()
-            .map(|diagnostic| printer.print(diagnostic))
+            .map(|diagnostic| printer.render(diagnostic))
             .collect();
         expect![[r"
             error: unknown relation `t`

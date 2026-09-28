@@ -4,18 +4,26 @@ mod extensions;
 mod proto;
 mod translate;
 
-pub use substrait::proto::Plan;
 pub use translate::translate;
 
-pub fn to_protobuf(plan: &Plan) -> Vec<u8> {
-    plan.encode_to_vec()
-}
+/// A Substrait plan: what the compiler hands an engine.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Plan(substrait::proto::Plan);
 
-/// A plan as pretty-printed JSON.
-///
-/// # Panics
-///
-/// Panics if the plan does not serialize, which a plan always does.
-pub fn to_json(plan: &Plan) -> String {
-    serde_json::to_string_pretty(plan).expect("a plan always serializes")
+impl Plan {
+    /// The plan in Substrait's protobuf encoding.
+    #[must_use]
+    pub fn to_protobuf(&self) -> Vec<u8> {
+        self.0.encode_to_vec()
+    }
+
+    /// The plan as pretty-printed JSON.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the plan does not serialize, which a plan always does.
+    #[must_use]
+    pub fn to_json(&self) -> String {
+        serde_json::to_string_pretty(&self.0).expect("a plan always serializes")
+    }
 }

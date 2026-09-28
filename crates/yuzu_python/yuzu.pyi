@@ -4,24 +4,25 @@
 import builtins
 import typing
 __all__ = [
+    "CompileError",
     "CompileOptions",
     "compile",
 ]
 
+class CompileError(builtins.ValueError):
+    r"""
+    A program that did not compile. The message holds its diagnostics.
+    """
+    ...
+
 @typing.final
 class CompileOptions:
     @property
-    def debug_yzl(self) -> builtins.bool: ...
-    @property
-    def debug_yzr(self) -> builtins.bool: ...
-    @property
-    def debug_substrait(self) -> builtins.bool: ...
-    @property
     def target(self) -> typing.Optional[builtins.str]:
         r"""
-        The engine to compile for; DataFusion when it is `None`.
+        The engine to compile for; `datafusion` when it is `None`.
         """
-    def __new__(cls, debug_yzl: builtins.bool = False, debug_yzr: builtins.bool = False, debug_substrait: builtins.bool = False, target: typing.Optional[builtins.str] = None) -> CompileOptions: ...
+    def __new__(cls, target: typing.Optional[builtins.str] = None) -> CompileOptions: ...
 
 def compile(source: builtins.str, options: typing.Optional[CompileOptions] = None) -> bytes:
     r"""

@@ -63,7 +63,7 @@ pub(crate) fn rendered(sources: &SourceMap, diagnostics: &DiagnosticsEngine) -> 
     diagnostics
         .diagnostics()
         .iter()
-        .map(|diagnostic| printer.print(diagnostic))
+        .map(|diagnostic| printer.render(diagnostic))
         .collect::<Vec<_>>()
         .join("\n")
 }

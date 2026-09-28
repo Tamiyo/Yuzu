@@ -3,8 +3,10 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fmt;
 use std::rc::Rc;
-use std::sync::OnceLock;
+use std::str::FromStr;
+use std::sync::{Arc, OnceLock};
 
 use melior::Context;
 
@@ -32,32 +34,55 @@ const ROOT: &str = "yuzu";
 const ENGINE_MODULE: &str = "yuzu.engine";
 
 /// The engine a program is compiled for.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum Engine {
+    #[default]
     DataFusion,
 }
 
-impl Engine {
-    #[must_use]
-    pub fn from_name(name: &str) -> Option<Self> {
-        match name {
-            "datafusion" => Some(Engine::DataFusion),
-            _ => None,
-        }
-    }
-
-    #[must_use]
-    pub fn name(self) -> &'static str {
-        match self {
+impl fmt::Display for Engine {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
             Engine::DataFusion => "datafusion",
+        })
+    }
+}
+
+impl FromStr for Engine {
+    type Err = UnknownEngine;
+
+    fn from_str(name: &str) -> Result<Self, UnknownEngine> {
+        match name {
+            "datafusion" => Ok(Engine::DataFusion),
+            _ => Err(UnknownEngine {
+                name: name.to_owned(),
+            }),
         }
     }
 }
+
+/// A name that is no engine's.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnknownEngine {
+    name: String,
+}
+
+impl fmt::Display for UnknownEngine {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "`{}` is not a supported engine; the supported engine is `datafusion`",
+            self.name
+        )
+    }
+}
+
+impl std::error::Error for UnknownEngine {}
 
 /// Whether a path belongs to the library. A program's own module cannot
 /// take such a path, so it cannot stand in for a library module.
 #[must_use]
-pub fn reserves(path: &str) -> bool {
+pub fn is_library_path(path: &str) -> bool {
     path.split('.').next() == Some(ROOT)
 }
 
@@ -66,7 +91,7 @@ pub(crate) fn resolve(path: &str, engine: Engine) -> Option<ModuleSource> {
     if path == ENGINE_MODULE {
         return Some(ModuleSource {
             name: format!("<{ENGINE_MODULE}>"),
-            source: format!("pub let ENGINE = \"{}\"\n", engine.name()),
+            source: format!("pub let ENGINE = \"{engine}\"\n").into(),
             syntax: None,
         });
     }
@@ -76,7 +101,7 @@ pub(crate) fn resolve(path: &str, engine: Engine) -> Option<ModuleSource> {
         .find(|module| module.path == path)
         .map(|module| ModuleSource {
             name: module.name.to_string(),
-            source: module.source.to_string(),
+            source: Arc::clone(&texts()[path]),
             syntax: trees().get(path).cloned(),
         })
 }
@@ -130,9 +155,10 @@ impl Library {
         );
         assert!(
             diagnostics.diagnostics().is_empty(),
-            "the library loads without diagnostics"
+            "the library loads without diagnostics: {:#?}",
+            diagnostics.diagnostics()
         );
-        submodules.remove("");
+        submodules.remove(modules::ENTRY);
         let files: Vec<File> = files
             .into_iter()
             .filter(|file| file.module().is_some())
@@ -164,9 +190,21 @@ fn bind_library(engine: Engine) -> BoundLibrary<'static> {
     let bound = yuzu_passes::bind_library(context, &sources, &files, &mut diagnostics);
     assert!(
         diagnostics.diagnostics().is_empty(),
-        "the library binds without diagnostics"
+        "the library binds without diagnostics: {:#?}",
+        diagnostics.diagnostics()
     );
     bound
+}
+
+/// Each library file's text, shared by every source made from it.
+fn texts() -> &'static HashMap<&'static str, Arc<str>> {
+    static TEXTS: OnceLock<HashMap<&'static str, Arc<str>>> = OnceLock::new();
+    TEXTS.get_or_init(|| {
+        MODULES
+            .iter()
+            .map(|module| (module.path, Arc::from(module.source)))
+            .collect()
+    })
 }
 
 /// Each library file's tree, parsed once for the process; every compile

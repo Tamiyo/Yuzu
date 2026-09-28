@@ -60,7 +60,7 @@ pub(crate) struct IndexReader<'s> {
     sources: &'s SourceMap,
     index: Index,
     /// Each local's declaration, and the value it first stores.
-    initializers: Vec<(Span, Span)>,
+    initializers: FxHashMap<Span, Span>,
 }
 
 impl<'s> IndexReader<'s> {
@@ -68,7 +68,7 @@ impl<'s> IndexReader<'s> {
         IndexReader {
             sources,
             index: Index::default(),
-            initializers: Vec::new(),
+            initializers: FxHashMap::default(),
         }
     }
 
@@ -99,20 +99,22 @@ impl<'s> IndexReader<'s> {
             self.read_types(context, op);
         }
 
-        for (declaration, initializer) in std::mem::take(&mut self.initializers) {
-            let ty = self
-                .index
-                .types
-                .iter()
-                .find(|typed| same(typed.at, initializer))
-                .map(|typed| typed.ty.clone());
-            if let Some(ty) = ty {
-                self.index.types.push(Typed {
+        let types: FxHashMap<Span, &str> = self
+            .index
+            .types
+            .iter()
+            .map(|typed| (typed.at, typed.ty.as_str()))
+            .collect();
+        let initialized: Vec<Typed> = std::mem::take(&mut self.initializers)
+            .into_iter()
+            .filter_map(|(declaration, initializer)| {
+                Some(Typed {
                     at: declaration,
-                    ty,
-                });
-            }
-        }
+                    ty: types.get(&initializer)?.to_string(),
+                })
+            })
+            .collect();
+        self.index.types.extend(initialized);
     }
 
     fn read_references(&mut self, op: OperationRef<'_, '_>, declarations: &FxHashMap<&str, Span>) {
@@ -160,13 +162,7 @@ impl<'s> IndexReader<'s> {
         else {
             return;
         };
-        if !self
-            .initializers
-            .iter()
-            .any(|(seen, _)| same(*seen, declaration))
-        {
-            self.initializers.push((declaration, initializer));
-        }
+        self.initializers.entry(declaration).or_insert(initializer);
     }
 
     fn read_types(&mut self, context: &Context, op: OperationRef<'_, '_>) {
@@ -239,10 +235,6 @@ fn is_shown(context: &Context, ty: Type<'_>) -> bool {
 fn last_yield<'c>(op: OperationRef<'c, '_>) -> Option<Type<'c>> {
     let terminator = op.regions().next()?.first_block()?.last_operation()?;
     terminator.try_first_operand().map(|value| value.r#type())
-}
-
-fn same(a: Span, b: Span) -> bool {
-    a.source_id == b.source_id && a.range == b.range
 }
 
 #[cfg(test)]

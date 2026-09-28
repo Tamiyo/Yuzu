@@ -31,7 +31,7 @@ impl DiagnosticBuilder {
         Self {
             diagnostic: Diagnostic {
                 severity,
-                code: String::new(),
+                code: None,
                 message: message.into(),
                 labels: Vec::new(),
                 notes: Vec::new(),
@@ -43,7 +43,7 @@ impl DiagnosticBuilder {
         Self {
             diagnostic: Diagnostic {
                 severity,
-                code: String::new(),
+                code: None,
                 message,
                 labels: vec![Label {
                     style: LabelStyle::Primary,
@@ -56,7 +56,7 @@ impl DiagnosticBuilder {
     }
 
     pub fn code(mut self, code: impl Into<String>) -> Self {
-        self.diagnostic.code = code.into();
+        self.diagnostic.code = Some(code.into());
         self
     }
 
@@ -69,7 +69,7 @@ impl DiagnosticBuilder {
         self
     }
 
-    pub fn label(mut self, span: Span, message: impl Into<String>) -> Self {
+    pub fn secondary_label(mut self, span: Span, message: impl Into<String>) -> Self {
         self.diagnostic.labels.push(Label {
             style: LabelStyle::Secondary,
             span,
@@ -116,7 +116,7 @@ mod tests {
 
         assert_eq!(diagnostic.severity, Severity::Error);
         assert_eq!(diagnostic.message, "boom");
-        assert!(diagnostic.code.is_empty());
+        assert!(diagnostic.code.is_none());
         assert!(diagnostic.notes.is_empty());
         assert_eq!(diagnostic.labels.len(), 1);
         assert!(matches!(diagnostic.labels[0].style, LabelStyle::Primary));
@@ -145,12 +145,12 @@ mod tests {
         let diagnostic = DiagnosticBuilder::error(dummy_span(), "msg")
             .code("E0001")
             .primary_label(dummy_span(), "here")
-            .label(dummy_span(), "context")
+            .secondary_label(dummy_span(), "context")
             .note("first note")
             .note("second note")
             .build();
 
-        assert_eq!(diagnostic.code, "E0001");
+        assert_eq!(diagnostic.code.as_deref(), Some("E0001"));
         assert_eq!(diagnostic.notes, ["first note", "second note"]);
         assert_eq!(diagnostic.labels.len(), 3);
         assert!(matches!(diagnostic.labels[1].style, LabelStyle::Primary));

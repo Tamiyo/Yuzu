@@ -110,8 +110,7 @@ pub(crate) fn diagnostic<'f>(
     let diagnostic = lsp_types::Diagnostic {
         range: range(line_index, primary.span.range),
         severity: Some(severity(diagnostic.severity)),
-        code: (!diagnostic.code.is_empty())
-            .then(|| NumberOrString::String(diagnostic.code.clone())),
+        code: diagnostic.code.clone().map(NumberOrString::String),
         source: Some("yuzu".to_owned()),
         message,
         related_information: (!related.is_empty()).then_some(related),
@@ -349,14 +348,14 @@ mod tests {
             },
             "expected `str`, found `int64`",
         )
-        .label(
+        .secondary_label(
             Span {
                 source_id: main,
                 range: range(7, 10),
             },
             "the annotation",
         )
-        .label(
+        .secondary_label(
             Span {
                 source_id: library,
                 range: range(0, 0),

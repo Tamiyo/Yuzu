@@ -14,8 +14,18 @@ impl<'a> DiagnosticPrinter<'a> {
         Self { sources }
     }
 
+    /// Every diagnostic rendered, one after another.
     #[must_use]
-    pub fn print(&self, diagnostic: &Diagnostic) -> String {
+    pub fn render_all(&self, diagnostics: &[Diagnostic]) -> String {
+        diagnostics
+            .iter()
+            .map(|diagnostic| self.render(diagnostic))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[must_use]
+    pub fn render(&self, diagnostic: &Diagnostic) -> String {
         let mut out = String::new();
 
         let severity = match diagnostic.severity {
@@ -24,8 +34,8 @@ impl<'a> DiagnosticPrinter<'a> {
             Severity::Remark => "remark",
         };
         out.push_str(severity);
-        if !diagnostic.code.is_empty() {
-            let _ = write!(out, "[{}]", diagnostic.code);
+        if let Some(code) = &diagnostic.code {
+            let _ = write!(out, "[{code}]");
         }
         let _ = writeln!(out, ": {}", diagnostic.message);
 
@@ -245,7 +255,7 @@ mod tests {
         let id = sources.add("test.yuzu".to_string(), source.to_string());
         let diagnostic = build(id);
         let printer = DiagnosticPrinter::new(&sources);
-        expected.assert_eq(&printer.print(&diagnostic));
+        expected.assert_eq(&printer.render(&diagnostic));
     }
 
     #[test]
@@ -296,7 +306,7 @@ mod tests {
             "let x = true\n",
             |id| {
                 DiagnosticBuilder::error(span(id, 8..12), "type error")
-                    .label(span(id, 4..5), "")
+                    .secondary_label(span(id, 4..5), "")
                     .build()
             },
             &expect![[r"
@@ -315,8 +325,8 @@ mod tests {
             "1.0 + 2\n",
             |id| {
                 DiagnosticBuilder::error(span(id, 0..7), "mismatched operand types")
-                    .label(span(id, 0..3), "this is a `float`")
-                    .label(span(id, 6..7), "this is an `int`")
+                    .secondary_label(span(id, 0..3), "this is a `float`")
+                    .secondary_label(span(id, 6..7), "this is an `int`")
                     .build()
             },
             &expect![[r"
@@ -353,7 +363,7 @@ mod tests {
             "let x = 1\nlet x = 2\n",
             |id| {
                 DiagnosticBuilder::error(span(id, 14..15), "`x` is declared twice")
-                    .label(span(id, 4..5), "first declared here")
+                    .secondary_label(span(id, 4..5), "first declared here")
                     .build()
             },
             &expect![[r"

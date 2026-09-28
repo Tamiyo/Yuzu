@@ -6,12 +6,11 @@ use melior::ir::operation::{OperationLike, OperationRef};
 use melior::ir::{Value, ValueLike};
 use rustc_hash::FxHashMap;
 use substrait::proto::{
-    AggregateFunction, AggregateRel, AggregationPhase, Expression, FetchRel, FilterRel,
-    FunctionArgument, JoinRel, NamedStruct, ProjectRel, ReadRel, Rel,
+    AggregateFunction, AggregateRel, AggregationPhase, Expression, FetchRel, FilterRel, JoinRel,
+    NamedStruct, ProjectRel, ReadRel, Rel,
     aggregate_rel::{Grouping, Measure},
     expression::literal::LiteralType,
     fetch_rel::{CountMode, OffsetMode},
-    function_argument::ArgType,
     join_rel::JoinType,
     read_rel::{NamedTable, ReadType},
     rel::RelType,
@@ -23,9 +22,9 @@ use yuzu_mlir::ir::value::{ValueExt, ValueId};
 use yuzu_mlir::ops::yzr::YzrOp;
 
 use crate::proto::{emit_common, field_index, literal, nullable, selection};
-use crate::translate::expr::{Region, expression_of, yielded};
+use crate::translate::expr::{Region, yielded};
 use crate::translate::functions;
-use crate::translate::types::{emit_type, type_code};
+use crate::translate::types::emit_type;
 use crate::translate::{Translator, report};
 
 /// What a projection keeps of its input's columns.
@@ -45,8 +44,12 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
             return Some(translated.clone());
         }
 
-        let op = Self::producer(value)?;
-        let rel_type = match op.as_yzr()? {
+        let op = Self::producer(value).expect("a relation comes out of a stage");
+        let Some(stage) = op.as_yzr() else {
+            report(op, "this is not a relation");
+            return None;
+        };
+        let rel_type = match stage {
             YzrOp::Table(table) => self.translate_table(op, table.name().value())?,
             YzrOp::Filter(_) => self.translate_filter(op)?,
             YzrOp::Project(_) => self.translate_project(op, Projection::Replace)?,
@@ -59,8 +62,12 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
             YzrOp::Aggregate(grouping) => {
                 let dense = grouping.keys();
                 let keys: Vec<i32> = (0..dense.len())
-                    .filter_map(|index| dense.element(index).ok())
-                    .map(|key| i32::try_from(key).expect("a grouping key is a field index"))
+                    .map(|index| {
+                        let key = dense
+                            .element(index)
+                            .expect("an index below the length reads");
+                        i32::try_from(key).expect("a grouping key is a field index")
+                    })
                     .collect();
                 self.translate_aggregate(op, &keys)?
             }
@@ -81,12 +88,17 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         let rel = Rel {
             rel_type: Some(rel_type),
         };
-        self.translated.insert(value.id(), rel.clone());
+        if self.shared.contains(&value.id()) {
+            self.translated.insert(value.id(), rel.clone());
+        }
         Some(rel)
     }
 
     fn translate_table(&mut self, op: OperationRef<'c, 'a>, name: &str) -> Option<RelType> {
-        let (names, types) = self.row(op.first_result().r#type())?;
+        let Some((names, types)) = self.row(op.first_result().r#type()) else {
+            report(op, "the table's row is not declared");
+            return None;
+        };
         let mut fields = Vec::with_capacity(types.len());
         for ty in types {
             let Some(field) = emit_type(self.context, ty) else {
@@ -197,8 +209,13 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
     fn translate_measures(&mut self, region: &Region<'c, 'a>) -> Option<Vec<Measure>> {
         let mut measures = Vec::with_capacity(region.yielded.len());
         for &value in &region.yielded {
-            let op = Self::producer(value)?;
-
+            let Some(op) = Self::producer(value) else {
+                report(
+                    region.op,
+                    "a grouping yields measures, and a column is not one",
+                );
+                return None;
+            };
             let Some(YzrOp::Agg(measure)) = op.as_yzr() else {
                 report(op, "a grouping yields measures, and this is not one");
                 return None;
@@ -219,28 +236,8 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         arguments: &[Value<'c, '_>],
         values: &FxHashMap<ValueId, Expression>,
     ) -> Option<Measure> {
-        let mut signature = Vec::new();
-        let mut emitted = Vec::new();
-        for &argument in arguments {
-            let Some(code) = type_code(self.context, argument.r#type()) else {
-                report(op, "this measure's argument has no Substrait type");
-                return None;
-            };
-
-            signature.push(code);
-            emitted.push(FunctionArgument {
-                arg_type: Some(ArgType::Value(expression_of(op, argument, values)?)),
-            });
-        }
-
-        let Some(output) = emit_type(self.context, op.first_result().r#type()) else {
-            report(op, "this measure has no Substrait type");
-            return None;
-        };
-
-        let anchor = self
-            .extensions
-            .register(func.urn, format!("{}:{}", func.base, signature.join("_")));
+        let (anchor, emitted, output) =
+            self.translate_arguments(op, func.urn, &func.base, arguments, values)?;
         Some(Measure {
             measure: Some(AggregateFunction {
                 function_reference: anchor,
@@ -255,8 +252,9 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
     }
 
     fn translate_join(&mut self, op: OperationRef<'c, 'a>, kind: JoinType) -> Option<RelType> {
-        let left = self.translate_rel(op.operand(0).ok()?)?;
-        let right = self.translate_rel(op.operand(1).ok()?)?;
+        let left = self.translate_rel(op.operand(0).expect("a verified join has a left input"))?;
+        let right =
+            self.translate_rel(op.operand(1).expect("a verified join has a right input"))?;
         let region = self.translate_region(op)?;
         let Some(expression) = yielded(op, &region)?.into_iter().next() else {
             report(op, "a join needs a condition to match its rows on");
@@ -274,8 +272,13 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
 
     /// The relation a stage reads, and how many columns it carries.
     fn translate_input(&mut self, op: OperationRef<'c, 'a>) -> Option<(Rel, usize)> {
-        let value = op.try_first_operand()?;
-        let width = self.width(value)?;
+        let value = op
+            .try_first_operand()
+            .expect("a verified stage has its input");
+        let Some(width) = self.width(value) else {
+            report(op, "the input's row is not declared");
+            return None;
+        };
         Some((self.translate_rel(value)?, width))
     }
 }

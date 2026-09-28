@@ -5,21 +5,20 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyo3_stub_gen::define_stub_info_gatherer;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyfunction, gen_stub_pymethods};
+use yuzu_driver::stdlib::Engine;
+
+pyo3_stub_gen::create_exception!(
+    yuzu,
+    CompileError,
+    PyValueError,
+    "A program that did not compile. The message holds its diagnostics."
+);
 
 #[gen_stub_pyclass]
 #[pyclass]
 #[derive(Debug)]
 pub struct CompileOptions {
-    #[pyo3(get)]
-    pub debug_yzl: bool,
-
-    #[pyo3(get)]
-    pub debug_yzr: bool,
-
-    #[pyo3(get)]
-    pub debug_substrait: bool,
-
-    /// The engine to compile for; `DataFusion` when it is `None`.
+    /// The engine to compile for; `datafusion` when it is `None`.
     #[pyo3(get)]
     pub target: Option<String>,
 }
@@ -28,39 +27,9 @@ pub struct CompileOptions {
 #[pymethods]
 impl CompileOptions {
     #[new]
-    #[pyo3(signature = (
-        debug_yzl = false,
-        debug_yzr = false,
-        debug_substrait = false,
-        target = None,
-    ))]
-    #[expect(
-        clippy::similar_names,
-        reason = "`debug_yzl` and `debug_yzr` name the two IR dumps"
-    )]
-    fn new(
-        debug_yzl: bool,
-        debug_yzr: bool,
-        debug_substrait: bool,
-        target: Option<String>,
-    ) -> Self {
-        Self {
-            debug_yzl,
-            debug_yzr,
-            debug_substrait,
-            target,
-        }
-    }
-}
-
-impl From<&CompileOptions> for yuzu_driver::CompileOptions {
-    fn from(options: &CompileOptions) -> Self {
-        Self {
-            debug_yzl: options.debug_yzl,
-            debug_yzr: options.debug_yzr,
-            debug_substrait: options.debug_substrait,
-            target: options.target.clone(),
-        }
+    #[pyo3(signature = (target = None))]
+    fn new(target: Option<String>) -> Self {
+        Self { target }
     }
 }
 
@@ -73,19 +42,34 @@ fn compile<'py>(
     source: &str,
     options: Option<&CompileOptions>,
 ) -> PyResult<Bound<'py, PyBytes>> {
-    let options = options
-        .map(yuzu_driver::CompileOptions::from)
-        .unwrap_or_default();
+    let engine = match options.and_then(|options| options.target.as_deref()) {
+        Some(name) => name
+            .parse::<Engine>()
+            .map_err(|unknown| CompileError::new_err(unknown.to_string()))?,
+        None => Engine::default(),
+    };
+    let options = yuzu_driver::CompileOptions {
+        engine,
+        ..yuzu_driver::CompileOptions::default()
+    };
     let resolver = yuzu_driver::modules::MapResolver(HashMap::new());
-    match yuzu_driver::compile_to_substrait("<python>", source, &options, &resolver) {
+    // The compiler keeps its state on the thread, so other Python threads
+    // run while it works.
+    let plan = py.detach(|| {
+        yuzu_driver::compile("<python>", source, &options, &resolver)
+            .into_plan()
+            .map(|plan| plan.to_protobuf())
+    });
+    match plan {
         Ok(plan) => Ok(PyBytes::new(py, &plan)),
-        Err(message) => Err(PyValueError::new_err(message)),
+        Err(error) => Err(CompileError::new_err(error.to_string())),
     }
 }
 
 #[pymodule]
 fn yuzu(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CompileOptions>()?;
+    m.add("CompileError", m.py().get_type::<CompileError>())?;
     m.add_function(wrap_pyfunction!(compile, m)?)?;
     Ok(())
 }

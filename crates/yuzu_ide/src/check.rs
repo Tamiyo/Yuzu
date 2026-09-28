@@ -3,14 +3,14 @@
 //! into the compiler.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use rustc_hash::FxHashMap;
 use text_size::TextRange;
 use yuzu_diagnostics::diagnostics::{Diagnostic, Span};
 use yuzu_diagnostics::source_map::SourceId;
 use yuzu_driver::index::Index;
-use yuzu_driver::modules::{FsResolver, Location, ModuleResolver, ModuleSource};
+use yuzu_driver::modules::{FsResolver, Location, ModuleResolver, ModuleSource, Unreadable};
 use yuzu_driver::{Focus, stdlib};
 use yuzu_syntax::{GreenNode, SyntaxNode};
 
@@ -219,7 +219,7 @@ struct DiskState {
 
 #[derive(Debug)]
 struct CachedFile {
-    text: String,
+    text: Arc<str>,
     syntax: Option<GreenNode>,
     /// The check that last read the file.
     read_by: u64,
@@ -227,28 +227,29 @@ struct CachedFile {
 
 impl DiskCache {
     /// A file's text, and its tree when that text parses without errors.
-    fn read(&self, path: &Path) -> Option<(String, Option<GreenNode>)> {
-        let text = std::fs::read_to_string(path).ok()?;
+    fn read(&self, path: &Path) -> std::io::Result<(Arc<str>, Option<GreenNode>)> {
+        let text = std::fs::read_to_string(path)?;
         let mut state = self.lock();
         let check = state.checks;
         if let Some(cached) = state.files.get_mut(path)
-            && cached.text == text
+            && *cached.text == *text
         {
             cached.read_by = check;
-            return Some((text, cached.syntax.clone()));
+            return Ok((Arc::clone(&cached.text), cached.syntax.clone()));
         }
 
         let (tree, errors) = crate::analysis::parse(&text);
         let syntax = errors.is_empty().then(|| tree.green().into_owned());
+        let text: Arc<str> = text.into();
         state.files.insert(
             path.to_path_buf(),
             CachedFile {
-                text: text.clone(),
+                text: Arc::clone(&text),
                 syntax: syntax.clone(),
                 read_by: check,
             },
         );
-        Some((text, syntax))
+        Ok((text, syntax))
     }
 
     fn start_check(&self) {
@@ -285,7 +286,7 @@ impl<'d> Overlay<'d> {
             Location::Entry { base } | Location::Module { base, .. } => base.clone(),
         };
         let library_files = match &saved.location {
-            Location::Module { path, .. } if stdlib::reserves(path) => {
+            Location::Module { path, .. } if stdlib::is_library_path(path) => {
                 Some(FsResolver { base: base.clone() })
             }
             Location::Module { .. } | Location::Entry { .. } => None,
@@ -294,7 +295,7 @@ impl<'d> Overlay<'d> {
         let library = documents
             .iter()
             .filter_map(|document| match &document.saved.location {
-                Location::Module { path, .. } if stdlib::reserves(path) => Some((
+                Location::Module { path, .. } if stdlib::is_library_path(path) => Some((
                     path.as_str(),
                     (document.saved.path.as_path(), document.parsed),
                 )),
@@ -315,35 +316,45 @@ impl<'d> Overlay<'d> {
     }
 
     /// The first candidate an open document or a file on disk holds.
-    fn read(&self, candidates: [PathBuf; 2]) -> Option<ModuleSource> {
-        candidates.into_iter().find_map(|file| {
-            let (source, syntax) = match self.documents.get(file.as_path()) {
-                Some(parsed) => (parsed.text().to_owned(), parsed.clean_tree().cloned()),
-                None => self.disk.read(&file)?,
+    fn read(&self, candidates: [PathBuf; 2]) -> Result<Option<ModuleSource>, Unreadable> {
+        for file in candidates {
+            let (source, syntax) = if let Some(parsed) = self.documents.get(file.as_path()) {
+                (parsed.shared_text(), parsed.clean_tree().cloned())
+            } else if file.is_file() {
+                match self.disk.read(&file) {
+                    Ok(read) => read,
+                    Err(error) => return Err(Unreadable::new(file, error)),
+                }
+            } else {
+                continue;
             };
-            Some(ModuleSource {
+            return Ok(Some(ModuleSource {
                 name: file.to_string_lossy().into_owned(),
                 source,
                 syntax,
-            })
-        })
+            }));
+        }
+        Ok(None)
     }
 }
 
 impl ModuleResolver for Overlay<'_> {
-    fn resolve(&self, path: &str) -> Option<ModuleSource> {
+    fn resolve(&self, path: &str) -> Result<Option<ModuleSource>, Unreadable> {
         self.read(self.files.candidates(path))
     }
 
-    fn resolve_library(&self, path: &str) -> Option<ModuleSource> {
+    fn resolve_library(&self, path: &str) -> Result<Option<ModuleSource>, Unreadable> {
         if let Some((file, parsed)) = self.library.get(path) {
-            return Some(ModuleSource {
+            return Ok(Some(ModuleSource {
                 name: file.to_string_lossy().into_owned(),
-                source: parsed.text().to_owned(),
+                source: parsed.shared_text(),
                 syntax: parsed.clean_tree().cloned(),
-            });
+            }));
         }
-        self.read(self.library_files.as_ref()?.candidates(path))
+        match &self.library_files {
+            Some(files) => self.read(files.candidates(path)),
+            None => Ok(None),
+        }
     }
 }
 

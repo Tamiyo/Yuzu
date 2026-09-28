@@ -7,7 +7,9 @@
 //! conversion wants.
 
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use yuzu_ast::AstNode;
 use yuzu_ast::ast;
@@ -32,7 +34,8 @@ pub(crate) struct Submodule {
 #[derive(Debug)]
 pub struct ModuleSource {
     pub name: String,
-    pub source: String,
+    /// Shared, so a text held elsewhere is not copied.
+    pub source: Arc<str>,
     /// A tree the resolver parsed from `source` before, without errors, so
     /// the loader does not parse it again. With `None` the loader parses.
     pub syntax: Option<GreenNode>,
@@ -42,15 +45,58 @@ pub struct ModuleSource {
 /// module under that path, which the loader reports against the import that
 /// asked for it.
 pub trait ModuleResolver {
-    fn resolve(&self, path: &str) -> Option<ModuleSource>;
+    /// # Errors
+    ///
+    /// When the module's file exists but cannot be read.
+    fn resolve(&self, path: &str) -> Result<Option<ModuleSource>, Unreadable>;
 
     /// A library module's source when the caller holds its own copy, as an
     /// editor does for a library file it has open. `None` reads the copy
     /// built into the compiler.
-    fn resolve_library(&self, _path: &str) -> Option<ModuleSource> {
-        None
+    ///
+    /// # Errors
+    ///
+    /// When the module's file exists but cannot be read.
+    fn resolve_library(&self, _path: &str) -> Result<Option<ModuleSource>, Unreadable> {
+        Ok(None)
     }
 }
+
+/// A module file that exists but could not be read.
+#[derive(Debug)]
+pub struct Unreadable {
+    file: PathBuf,
+    error: std::io::Error,
+}
+
+impl Unreadable {
+    #[must_use]
+    pub fn new(file: PathBuf, error: std::io::Error) -> Self {
+        Self { file, error }
+    }
+
+    /// The file that could not be read.
+    #[must_use]
+    pub fn file(&self) -> &Path {
+        &self.file
+    }
+}
+
+impl fmt::Display for Unreadable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "cannot read `{}`", self.file.display())
+    }
+}
+
+impl std::error::Error for Unreadable {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
+    }
+}
+
+/// The key of the entry file among the modules' submodules: it belongs to
+/// no module, so its path is empty.
+pub(crate) const ENTRY: &str = "";
 
 /// The file that marks a directory as a module and declares what it holds.
 pub const MARKER: &str = "mod.yz";
@@ -80,17 +126,23 @@ impl FsResolver {
 }
 
 impl ModuleResolver for FsResolver {
-    fn resolve(&self, path: &str) -> Option<ModuleSource> {
-        let file = self
+    fn resolve(&self, path: &str) -> Result<Option<ModuleSource>, Unreadable> {
+        let Some(file) = self
             .candidates(path)
             .into_iter()
-            .find(|file| file.is_file())?;
-        let source = std::fs::read_to_string(&file).ok()?;
-        Some(ModuleSource {
+            .find(|file| file.is_file())
+        else {
+            return Ok(None);
+        };
+        let source = match std::fs::read_to_string(&file) {
+            Ok(source) => source,
+            Err(error) => return Err(Unreadable::new(file, error)),
+        };
+        Ok(Some(ModuleSource {
             name: file.display().to_string(),
-            source,
+            source: source.into(),
             syntax: None,
-        })
+        }))
     }
 }
 
@@ -99,12 +151,12 @@ impl ModuleResolver for FsResolver {
 pub struct MapResolver(pub HashMap<String, String>);
 
 impl ModuleResolver for MapResolver {
-    fn resolve(&self, path: &str) -> Option<ModuleSource> {
-        self.0.get(path).map(|source| ModuleSource {
+    fn resolve(&self, path: &str) -> Result<Option<ModuleSource>, Unreadable> {
+        Ok(self.0.get(path).map(|source| ModuleSource {
             name: format!("{path}.yz"),
-            source: source.clone(),
+            source: source.as_str().into(),
             syntax: None,
-        })
+        }))
     }
 }
 
@@ -114,7 +166,7 @@ impl ModuleResolver for MapResolver {
 /// Each file is parsed here rather than by the conversion, because finding
 /// what a file imports means parsing it, and parsing twice would report
 /// every syntax error twice.
-pub fn load(
+pub(crate) fn load(
     entry: SourceId,
     sources: &mut SourceMap,
     diagnostics: &mut DiagnosticsEngine,
@@ -123,7 +175,12 @@ pub fn load(
 ) -> Option<Vec<File>> {
     // The cached library's sources follow its own entry, so they keep their
     // ids only in a map that holds nothing but this program's entry.
-    let library = (sources.len() == 1).then(|| stdlib::Library::for_thread(engine));
+    debug_assert_eq!(
+        sources.len(),
+        1,
+        "a compile loads into a map of its entry alone"
+    );
+    let library = stdlib::Library::for_thread(engine);
     let Loaded { files, .. } = load_program(
         EntryFile {
             source: entry,
@@ -133,10 +190,10 @@ pub fn load(
         diagnostics,
         resolver,
         engine,
-        library.as_deref(),
+        Some(&library),
         None,
     );
-    (!has_errors(diagnostics)).then_some(files)
+    (!diagnostics.has_errors()).then_some(files)
 }
 
 /// The file a program starts from, and its tree when a caller parsed its
@@ -191,7 +248,9 @@ pub(crate) fn load_program(
         syntax,
     } = entry;
     let root = loader.read_syntax(entry, syntax);
-    loader.submodules.insert(String::new(), submodules(&root));
+    loader
+        .submodules
+        .insert(ENTRY.to_owned(), submodules(&root));
     match library {
         Some(library) => loader.install(library),
         None => loader.load_path(yuzu_passes::PRELUDE, &root, entry, ""),
@@ -203,7 +262,7 @@ pub(crate) fn load_program(
 
     // The entry file belongs to no module, so nothing keeps anything from
     // it beyond what `pub` already governs.
-    loader.follow_imports(entry, &root, "");
+    loader.follow_imports(entry, &root, ENTRY);
     loader.files.push(File::entry(entry, root));
     if let Some(path) = focus
         && let Some(file) = loader
@@ -274,7 +333,7 @@ impl Loader<'_> {
                         self.report(
                             at,
                             asked_by,
-                            &format!("`{parent}` does not declare a module `{segment}`"),
+                            format!("`{parent}` does not declare a module `{segment}`"),
                         );
                         return;
                     }
@@ -282,7 +341,7 @@ impl Loader<'_> {
                         self.report(
                             at,
                             asked_by,
-                            &format!("`{parent}` keeps `{segment}` to itself"),
+                            format!("`{parent}` keeps `{segment}` to itself"),
                         );
                         return;
                     }
@@ -318,7 +377,10 @@ impl Loader<'_> {
             return Reach::Undeclared;
         };
 
-        if declared.public || asking == module || asking.starts_with(&format!("{module}.")) {
+        let within = asking
+            .strip_prefix(module)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'));
+        if declared.public || within {
             Reach::Yes
         } else {
             Reach::Private
@@ -340,21 +402,33 @@ impl Loader<'_> {
                 .chain([path])
                 .collect::<Vec<_>>()
                 .join(" imports ");
-            self.report(at, asked_by, &format!("circular import: {chain}"));
+            self.report(at, asked_by, format!("circular import: {chain}"));
             return;
         }
 
-        let module = if stdlib::reserves(path) {
+        let module = if stdlib::is_library_path(path) {
             self.resolver
                 .resolve_library(path)
-                .or_else(|| stdlib::resolve(path, self.engine))
+                .map(|module| module.or_else(|| stdlib::resolve(path, self.engine)))
         } else {
             self.resolver.resolve(path)
         };
 
-        let Some(module) = module else {
-            self.report(at, asked_by, &format!("cannot find module `{path}`"));
-            return;
+        let module = match module {
+            Ok(Some(module)) => module,
+            Ok(None) => {
+                self.report(at, asked_by, format!("cannot find module `{path}`"));
+                return;
+            }
+            Err(unreadable) => {
+                let message = format!(
+                    "cannot read module `{path}` from `{}`: {}",
+                    unreadable.file.display(),
+                    unreadable.error
+                );
+                self.report(at, asked_by, message);
+                return;
+            }
         };
 
         let source_id = self.sources.add(module.name, module.source);
@@ -366,7 +440,7 @@ impl Loader<'_> {
 
         self.loaded.insert(path.to_string());
         let mut file = File::new(source_id, Some(path.to_string()), root);
-        if stdlib::reserves(path) {
+        if stdlib::is_library_path(path) {
             file.set_lowering(Lowering::OnDemand);
         }
 
@@ -409,13 +483,13 @@ impl Loader<'_> {
         ast::Root::cast(tree).expect("a parse always yields a root")
     }
 
-    fn report(&mut self, at: &impl AstNode, source_id: SourceId, message: &str) {
+    fn report(&mut self, at: &impl AstNode, source_id: SourceId, message: String) {
         let span = Span {
             source_id,
             range: at.syntax().text_range(),
         };
         self.diagnostics
-            .emit(DiagnosticBuilder::error(span, message.to_string()));
+            .emit(DiagnosticBuilder::error(span, message));
     }
 }
 
@@ -437,13 +511,6 @@ enum Reach {
     Yes,
     Undeclared,
     Private,
-}
-
-fn has_errors(diagnostics: &DiagnosticsEngine) -> bool {
-    diagnostics
-        .diagnostics()
-        .iter()
-        .any(|diagnostic| diagnostic.severity == yuzu_diagnostics::diagnostics::Severity::Error)
 }
 
 /// Where a file sits in its program: the start of one, or a module of one.
@@ -515,7 +582,7 @@ mod tests {
         loaded_with_library(entry, modules).map(|paths| {
             paths
                 .into_iter()
-                .filter(|path| !stdlib::reserves(path))
+                .filter(|path| !stdlib::is_library_path(path))
                 .collect()
         })
     }
@@ -731,6 +798,33 @@ mod tests {
                 "app/mod.yz: module app at true",
                 "app/sub/deep.yz: module app.sub.deep at true",
             ]
+        );
+    }
+
+    #[test]
+    fn a_module_file_that_cannot_be_read_is_not_called_missing() {
+        let base = std::env::temp_dir().join(format!("yuzu-unreadable-{}", std::process::id()));
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join("helpers.yz"), [0xff, 0xfe]).unwrap();
+
+        let mut sources = SourceMap::new();
+        let mut diagnostics = DiagnosticsEngine::new();
+        let id = sources.add("main.yz", "import helpers\n");
+        let resolver = FsResolver { base: base.clone() };
+        let loaded = load(
+            id,
+            &mut sources,
+            &mut diagnostics,
+            &resolver,
+            Engine::DataFusion,
+        );
+        let _ = std::fs::remove_dir_all(&base);
+
+        assert!(loaded.is_none());
+        let message = &diagnostics.diagnostics()[0].message;
+        assert!(
+            message.starts_with("cannot read module `helpers` from `"),
+            "{message}"
         );
     }
 }

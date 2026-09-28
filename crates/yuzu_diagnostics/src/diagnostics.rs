@@ -9,7 +9,7 @@ pub mod printer;
 #[derive(Debug)]
 pub struct Diagnostic {
     pub severity: Severity,
-    pub code: String,
+    pub code: Option<String>,
     pub message: String,
     pub labels: Vec<Label>,
     pub notes: Vec<String>,

@@ -64,13 +64,13 @@ mod tests {
         engine.emit(
             DiagnosticBuilder::error(dummy_span(), "expected expression")
                 .code("E0001")
-                .label(dummy_span(), "this `+` needs a right-hand side")
+                .secondary_label(dummy_span(), "this `+` needs a right-hand side")
                 .note("expressions can start with a number, identifier, or `(`"),
         );
 
         let diagnostic = &engine.diagnostics()[0];
         assert_eq!(diagnostic.severity, Severity::Error);
-        assert_eq!(diagnostic.code, "E0001");
+        assert_eq!(diagnostic.code.as_deref(), Some("E0001"));
         assert_eq!(diagnostic.message, "expected expression");
         assert_eq!(diagnostic.labels.len(), 2);
         assert_eq!(diagnostic.notes.len(), 1);

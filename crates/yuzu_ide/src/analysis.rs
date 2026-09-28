@@ -189,6 +189,11 @@ impl ParsedFile {
         &self.text
     }
 
+    /// The text, shared rather than copied.
+    pub(crate) fn shared_text(&self) -> Arc<str> {
+        Arc::clone(&self.text)
+    }
+
     /// The tree, when its parse reported nothing: only such a tree is handed
     /// on for reuse, so a reused tree hides no error.
     pub(crate) fn clean_tree(&self) -> Option<&GreenNode> {
