@@ -1,11 +1,11 @@
 //! Substrait has no user-defined functions, so a call to one is replaced by
-//! the body it names, and a call left standing is an error. Nothing asks
-//! whether a function reaches itself: a call that reduces is fine, and the
-//! budget stops one that never finishes.
+//! the body it names, and a call left standing is an error. The language
+//! has no conditional, so a function that reaches itself never stops
+//! expanding: such a cycle is reported before anything expands.
 
 use std::collections::VecDeque;
 
-use melior::ir::attribute::TypeAttribute;
+use melior::ir::attribute::{ArrayAttribute, TypeAttribute};
 use melior::ir::operation::{OperationBuilder, OperationLike, OperationRef};
 use melior::ir::{
     Attribute, BlockLike, BlockRef, Identifier, Location, Module, RegionLike, Type, Value,
@@ -22,31 +22,31 @@ use yuzu_mlir::ir::region::RegionExt;
 use yuzu_mlir::ir::value::{ValueExt, ValueId};
 use yuzu_mlir::ops::yzl::{CallOp, ConstOp, FnOp, YzlOp};
 use yuzu_mlir::types::QueryType;
-use yuzu_mlir::{ParamType, SymbolTable};
+use yuzu_mlir::{ListType, ParamType, SymbolTable};
 
 use crate::operators::Operator;
-
-const BUDGET: usize = 1000;
+use crate::written_name;
 
 pub fn inline_calls(context: &Context, module: &mut Module) {
     let rewriter = IrRewriter::new(context);
     let rewriter = rewriter.as_rewriter_base();
     let symbols = SymbolTable::new(module);
 
-    // The module is walked once. An expansion hands back the calls it
-    // copied in, so a chain of expansions never walks the module again.
     let mut calls = Vec::new();
     collect_calls(module.body(), &mut calls);
-    let mut pending = VecDeque::from(calls);
-    let mut spent = 0;
-    while let Some(call) = pending.pop_front() {
-        if spent == BUDGET {
-            report_budget(call);
+    let mut walked = FxHashMap::default();
+    for &call in &calls {
+        if let Some(closing) = find_cycle(callee(call), &symbols, &mut walked) {
+            report_cycle(closing);
             return;
         }
+    }
 
-        spent += 1;
-        let Some(copied) = expand(&rewriter, call, &symbols) else {
+    // The module is walked once. An expansion hands back the calls it
+    // copied in, so a chain of expansions never walks the module again.
+    let mut pending = VecDeque::from(calls);
+    while let Some(call) = pending.pop_front() {
+        let Some(copied) = expand(context, &rewriter, call, &symbols) else {
             return;
         };
 
@@ -62,11 +62,7 @@ fn collect_calls<'c, 'a>(block: BlockRef<'c, 'a>, out: &mut Vec<OperationRef<'c,
             // An operator's implementation outlives this pass, so what it
             // calls is expanded where it stands.
             Some(YzlOp::Fn(function)) if implements_operator(function) => {
-                for region in op.regions() {
-                    for inner in region.blocks() {
-                        collect_calls(inner, out);
-                    }
-                }
+                collect_region_calls(op, out);
             }
             Some(YzlOp::Fn(_) | YzlOp::Trait(_) | YzlOp::Impl(_)) => {}
             Some(YzlOp::Call(_)) => {
@@ -74,13 +70,15 @@ fn collect_calls<'c, 'a>(block: BlockRef<'c, 'a>, out: &mut Vec<OperationRef<'c,
                     out.push(op);
                 }
             }
-            _ => {
-                for region in op.regions() {
-                    for inner in region.blocks() {
-                        collect_calls(inner, out);
-                    }
-                }
-            }
+            _ => collect_region_calls(op, out),
+        }
+    }
+}
+
+fn collect_region_calls<'c, 'a>(op: OperationRef<'c, 'a>, out: &mut Vec<OperationRef<'c, 'a>>) {
+    for region in op.regions() {
+        for inner in region.blocks() {
+            collect_calls(inner, out);
         }
     }
 }
@@ -96,48 +94,88 @@ fn expands(op: OperationRef) -> bool {
     )
 }
 
+fn callee<'c>(call: OperationRef<'c, '_>) -> &'c str {
+    let Some(YzlOp::Call(site)) = call.as_yzl() else {
+        unreachable!("only calls are collected");
+    };
+    site.callee().value()
+}
+
+/// The call that closes a cycle through `symbol`, when the declarations it
+/// calls reach back to one still being walked. `walked` holds each symbol
+/// seen: `true` while its calls are being walked, `false` once they are.
+fn find_cycle<'c, 'a>(
+    symbol: &'c str,
+    symbols: &SymbolTable<'c, 'a>,
+    walked: &mut FxHashMap<&'c str, bool>,
+) -> Option<OperationRef<'c, 'a>> {
+    if walked.contains_key(symbol) {
+        return None;
+    }
+    walked.insert(symbol, true);
+    let mut calls = Vec::new();
+    if let Some(declaration) = symbols.lookup(symbol) {
+        collect_region_calls(declaration, &mut calls);
+    }
+    for call in calls {
+        let target = callee(call);
+        match walked.get(target) {
+            Some(true) => return Some(call),
+            Some(false) => {}
+            None => {
+                if let Some(closing) = find_cycle(target, symbols, walked) {
+                    return Some(closing);
+                }
+            }
+        }
+    }
+    walked.insert(symbol, false);
+    None
+}
+
+fn report_cycle(call: OperationRef) {
+    let name = written_name(callee(call));
+    emit_error(
+        call.location(),
+        &format!("`{name}` calls itself here, so expanding it would not end"),
+    );
+}
+
 /// Replaces a call with a copy of its body, and returns the calls the copy
-/// holds, which need expanding in turn.
+/// holds, which need expanding in turn. The lowering and inference settled
+/// what a call names and takes, so only what a program can still get wrong
+/// is reported.
 fn expand<'c, 'a>(
+    context: &'c Context,
     rewriter: &'a RewriterBase<'c, 'a>,
     call: OperationRef<'c, 'a>,
     symbols: &SymbolTable<'c, '_>,
 ) -> Option<Vec<OperationRef<'c, 'a>>> {
     let Some(YzlOp::Call(site)) = call.as_yzl() else {
-        return error(call.location(), "expected a call to expand");
+        unreachable!("only calls are expanded");
     };
 
     let callee = site.callee().value();
     let declaration = symbols
         .lookup(callee)
-        .or_else(|| error(call.location(), &format!("unknown function `{callee}`")))?;
+        .unwrap_or_else(|| panic!("the resolved call `{callee}` names a declaration"));
 
     let (body, types) = match declaration.as_yzl() {
         Some(YzlOp::Fn(function)) => (
             function.body().first_block(),
-            type_arguments(function, site, call.location(), callee)?,
+            type_arguments(function, site),
         ),
         Some(YzlOp::Const(binding)) => (binding.body().first_block(), FxHashMap::default()),
-        _ => return error(call.location(), &format!("`{callee}` is not a function")),
+        _ => panic!("`{callee}` is called as a function and declared as something else"),
     };
-    let body = body.or_else(|| {
-        error(
-            call.location(),
-            &format!("`{callee}` has no body to expand here"),
-        )
-    })?;
+    let body = body.unwrap_or_else(|| panic!("`{callee}` has a body to expand"));
 
     let arguments: Vec<Value> = call.operands().collect();
-    if body.argument_count() != arguments.len() {
-        return error(
-            call.location(),
-            &format!(
-                "`{callee}` takes {} arguments, got {}",
-                body.argument_count(),
-                arguments.len()
-            ),
-        );
-    }
+    assert_eq!(
+        body.argument_count(),
+        arguments.len(),
+        "the call to `{callee}` passes as many arguments as it takes"
+    );
 
     rewriter.set_insertion_point_before(call);
 
@@ -157,16 +195,14 @@ fn expand<'c, 'a>(
             if op.regions().next().is_some() {
                 return error(
                     op.location(),
-                    &format!("`{callee}` has a body this expansion cannot copy"),
+                    &format!(
+                        "`{}` holds a query, and a call to it cannot be expanded yet",
+                        written_name(callee)
+                    ),
                 );
             }
 
-            let copied = copy(rewriter, op, &values, &types).or_else(|| {
-                error(
-                    op.location(),
-                    &format!("`{callee}` has a body that did not copy"),
-                )
-            })?;
+            let copied = copy(context, rewriter, op, &values, &types);
             if expands(copied) {
                 copied_calls.push(copied);
             }
@@ -181,7 +217,10 @@ fn expand<'c, 'a>(
     let returned = returned.or_else(|| {
         error(
             call.location(),
-            &format!("`{callee}` does not return a value to use here"),
+            &format!(
+                "`{}` does not return a value to use here",
+                written_name(callee)
+            ),
         )
     })?;
     rewriter.replace_all_op_uses_with_values(call, &[returned]);
@@ -189,12 +228,16 @@ fn expand<'c, 'a>(
     Some(copied_calls)
 }
 
+/// A copy of an op before the rewriter's insertion point: its operands
+/// through `values`, and its types with `types` put for the type
+/// parameters they name.
 pub(crate) fn copy<'c, 'a>(
+    context: &'c Context,
     rewriter: &'a RewriterBase<'c, 'a>,
     op: OperationRef<'c, '_>,
     values: &FxHashMap<ValueId, Value<'c, 'a>>,
     types: &FxHashMap<&str, Type<'c>>,
-) -> Option<OperationRef<'c, 'a>> {
+) -> OperationRef<'c, 'a> {
     let operands: Vec<Value> = op
         .operands()
         .map(|operand| values.get(&operand.id()).copied().unwrap_or(operand))
@@ -205,7 +248,7 @@ pub(crate) fn copy<'c, 'a>(
                 .result(index)
                 .expect("the result index is in range")
                 .r#type();
-            substitute(ty, types)
+            substitute(context, ty, types)
         })
         .collect();
     let attributes: Vec<(Identifier<'c>, Attribute<'c>)> = (0..op.attribute_count())
@@ -213,67 +256,81 @@ pub(crate) fn copy<'c, 'a>(
             let (name, attribute) = op
                 .attribute_at(index)
                 .expect("the attribute index is in range");
-            match TypeAttribute::try_from(attribute) {
-                Ok(stamp) => (
-                    name,
-                    TypeAttribute::new(substitute(stamp.value(), types)).into(),
-                ),
-                Err(_) => (name, attribute),
-            }
+            (name, substitute_attribute(context, attribute, types))
         })
         .collect();
 
-    let built = OperationBuilder::new(
-        op.name()
-            .as_string_ref()
-            .as_str()
-            .expect("op names are utf-8"),
-        op.location(),
-    )
-    .add_operands(&operands)
-    .add_results(&results)
-    .add_attributes(&attributes)
-    .build()
-    .ok()?;
+    let name = op.name();
+    let name = name.as_string_ref().as_str().expect("op names are utf-8");
+    let built = OperationBuilder::new(name, op.location())
+        .add_operands(&operands)
+        .add_results(&results)
+        .add_attributes(&attributes)
+        .build()
+        .unwrap_or_else(|_| panic!("a copy of a verified `{name}` builds"));
 
-    Some(rewriter.insert(built))
+    rewriter.insert(built)
+}
+
+/// An attribute with `types` put for the type parameters it names, inside
+/// an array of types as well, as a call's `type_args` holds them.
+fn substitute_attribute<'c>(
+    context: &'c Context,
+    attribute: Attribute<'c>,
+    types: &FxHashMap<&str, Type<'c>>,
+) -> Attribute<'c> {
+    if let Ok(stamp) = TypeAttribute::try_from(attribute) {
+        return TypeAttribute::new(substitute(context, stamp.value(), types)).into();
+    }
+    if let Ok(array) = ArrayAttribute::try_from(attribute) {
+        let elements: Vec<Attribute<'c>> = (0..array.len())
+            .map(|index| {
+                let element = array.element(index).expect("the element index is in range");
+                substitute_attribute(context, element, types)
+            })
+            .collect();
+        return ArrayAttribute::new(context, &elements).into();
+    }
+    attribute
 }
 
 fn type_arguments<'c>(
     function: FnOp<'c, '_>,
     site: CallOp<'c, '_>,
-    location: Location<'c>,
-    callee: &str,
-) -> Option<FxHashMap<&'c str, Type<'c>>> {
+) -> FxHashMap<&'c str, Type<'c>> {
     let Some(parameters) = function.type_params() else {
-        return Some(FxHashMap::default());
+        return FxHashMap::default();
     };
 
     let parameters: Vec<&str> = parameters.strings().collect();
-    let arguments = site
+    let arguments: Vec<Type<'c>> = site
         .type_args()
-        .or_else(|| {
-            error(
-                location,
-                &format!("`{callee}` is generic and this call's types were never settled"),
-            )
-        })?
+        .expect("inference settles each generic call's types")
         .types()
-        .collect::<Vec<_>>();
-    if arguments.len() != parameters.len() {
-        return error(
-            location,
-            &format!("`{callee}` takes {} type parameters", parameters.len()),
-        );
-    }
+        .collect();
+    assert_eq!(
+        arguments.len(),
+        parameters.len(),
+        "a generic call has a type for each type parameter"
+    );
 
-    Some(parameters.into_iter().zip(arguments).collect())
+    parameters.into_iter().zip(arguments).collect()
 }
 
-pub(crate) fn substitute<'c>(ty: Type<'c>, types: &FxHashMap<&str, Type<'c>>) -> Type<'c> {
-    ParamType::from_type(ty)
-        .and_then(|param| types.get(param.name()).copied())
-        .unwrap_or(ty)
+/// A type with `types` put for the type parameters it names, inside a list
+/// as well.
+pub(crate) fn substitute<'c>(
+    context: &'c Context,
+    ty: Type<'c>,
+    types: &FxHashMap<&str, Type<'c>>,
+) -> Type<'c> {
+    if let Some(param) = ParamType::from_type(ty) {
+        return types.get(param.name()).copied().unwrap_or(ty);
+    }
+    if let Some(list) = ListType::from_type(ty) {
+        return ListType::new(context, substitute(context, list.inner(), types)).into();
+    }
+    ty
 }
 
 /// A `let` bound to a query stays: its stages are rows other queries name.
@@ -305,26 +362,10 @@ fn implements_operator(function: FnOp) -> bool {
 
 fn binds_query(context: &Context, binding: ConstOp) -> bool {
     binding
-        .body()
-        .first_block()
-        .and_then(|block| block.last_operation())
+        .operation()
+        .body_terminator()
         .and_then(|yielded| yielded.try_first_operand())
         .is_some_and(|value| value.r#type() == QueryType::get(context))
-}
-
-fn report_budget(call: OperationRef) {
-    let name = match call.as_yzl() {
-        Some(YzlOp::Call(site)) => site.callee().value(),
-        _ => "a function",
-    };
-
-    emit_error(
-        call.location(),
-        &format!(
-            "expanding `{name}` did not finish within {BUDGET} calls; \
-             a function that reaches itself has to reduce to stop"
-        ),
-    );
 }
 
 fn error<T>(location: Location, message: &str) -> Option<T> {
@@ -425,7 +466,7 @@ from t
     }
 
     #[test]
-    fn a_call_that_never_reduces_exhausts_the_budget() {
+    fn a_function_that_calls_itself_is_reported() {
         check_simplified(
             r"
 struct Row { a: int64 }
@@ -437,19 +478,7 @@ from t
 |> select forever(a) as f
 ",
             &expect![[r"
-                error: expanding `forever` did not finish within 1000 calls; a function that reaches itself has to reduce to stop
-                 --> test.yz:5:41
-                  |
-                5 | def forever(x: int64) -> int64 { return forever(x) }
-                  |                                         ^^^^^^^^^^
-
-                error: `yzl.fn` was not expanded before lowering
-                 --> test.yz:5:1
-                  |
-                5 | def forever(x: int64) -> int64 { return forever(x) }
-                  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-                error: `forever` was not expanded before lowering
+                error: `forever` calls itself here, so expanding it would not end
                  --> test.yz:5:41
                   |
                 5 | def forever(x: int64) -> int64 { return forever(x) }
@@ -488,6 +517,27 @@ from t
     }
 
     #[test]
+    fn a_generic_call_inside_a_generic_body_takes_its_types() {
+        check_simplified(
+            "struct Row { a: int64 }\ntable t = Row\ndef dbl[T](x: T) -> T { return x + x }\ndef quad[T](x: T) -> T { return dbl(x) + dbl(x) }\nfrom t |> select quad(a) as q\n",
+            &expect![[r#"
+                module {
+                  yz.struct @Row ["a"] : [!yz.int64]
+                  %0 = yzr.table @t : !yz.struct<@Row>
+                  yz.struct @row ["q"] : [!yz.int64]
+                  %1 = yzr.project %0 {
+                  ^bb0(%arg0: !yz.int64):
+                    %2 = yz.add %arg0, %arg0 : !yz.int64, !yz.int64 -> !yz.int64
+                    %3 = yz.add %2, %2 : !yz.int64, !yz.int64 -> !yz.int64
+                    yzr.yield %3 : !yz.int64
+                  } : !yz.struct<@Row> -> !yz.struct<@row>
+                  yzr.output %1 : !yz.struct<@row>
+                }
+            "#]],
+        );
+    }
+
+    #[test]
     fn reports_a_trait_method_it_cannot_dispatch() {
         check_simplified(
             r"
@@ -509,12 +559,6 @@ from t
 ",
             &expect![[r"
                 error: `zero` is a trait method, and calling one is not supported yet
-                 --> test.yz:10:48
-                   |
-                10 | def shift[T](x: T) -> T where T: Zero { return zero(x) }
-                   |                                                ^^^^^^^
-
-                error: this part of the query is missing
                  --> test.yz:10:48
                    |
                 10 | def shift[T](x: T) -> T where T: Zero { return zero(x) }

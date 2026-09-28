@@ -17,7 +17,9 @@ use yuzu_mlir::types::BoolType;
 
 use crate::lower_yzl_to_yzr::region::row_block;
 use crate::lower_yzl_to_yzr::row::struct_declaration;
-use crate::lower_yzl_to_yzr::{Row, Yielded, YzlToYzr, op_name, report, struct_fields};
+use crate::lower_yzl_to_yzr::{
+    Column, Row, Stage, Yielded, YzlToYzr, op_name, report, struct_fields,
+};
 use crate::operators::Operator;
 
 impl<'c, 'a> YzlToYzr<'c, 'a> {
@@ -42,7 +44,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             Some(YzlOp::Set(stage)) => self.convert_set(op, symbols, stage),
             Some(YzlOp::Rename(stage)) => self.convert_rename(op, symbols, stage),
             Some(YzlOp::Output(_)) => self.convert_output(op),
-            // `record_externals` read its name, and a call to it becomes
+            // `read_externals` read its name, and a call to it becomes
             // `yz.extern_call`.
             Some(YzlOp::Fn(function)) if function.is_external() => {}
             Some(YzlOp::Fn(function))
@@ -50,17 +52,12 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             {
                 self.convert_implementation(op, symbols, function);
             }
-            Some(YzlOp::Fn(_) | YzlOp::Trait(_) | YzlOp::Impl(_)) => report(
-                op,
-                &format!("`{}` was not expanded before lowering", op_name(op)),
-            ),
-            Some(YzlOp::Local(_) | YzlOp::Load(_) | YzlOp::Store(_)) => report(
-                op,
-                &format!(
-                    "`{}` was not promoted to a value before lowering",
-                    op_name(op)
-                ),
-            ),
+            Some(YzlOp::Fn(_) | YzlOp::Trait(_) | YzlOp::Impl(_)) => {
+                panic!("inlining leaves no `{}` for the lowering", op_name(op))
+            }
+            Some(YzlOp::Local(_) | YzlOp::Load(_) | YzlOp::Store(_)) => {
+                panic!("promotion leaves no `{}` for the lowering", op_name(op))
+            }
             Some(YzlOp::Missing(_)) => report(op, "this part of the query is missing"),
             // `yzr.table` carries the row as its type, so a table's declaration
             // is not needed. Calls, lists and terminators are lowered with the
@@ -92,9 +89,9 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             &fields,
             op.location(),
         ));
-        self.anchor = placed;
-        // SAFETY: `op` and `item` are not used after this, and the anchor
-        // no longer points at `op`.
+        self.anchor = None;
+        // SAFETY: `op` and `item` are not used after this, and nothing is
+        // placed before `op` any more.
         unsafe { symbols.erase(op) };
         symbols.insert_placed(placed);
     }
@@ -141,9 +138,9 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             )
             .into(),
         );
-        self.anchor = placed;
-        // SAFETY: `op` and `function` are not used after this, and the
-        // anchor no longer points at `op`.
+        self.anchor = None;
+        // SAFETY: `op` and `function` are not used after this, and nothing
+        // is placed before `op` any more.
         unsafe { symbols.erase(op) };
         symbols.insert_placed(placed);
     }
@@ -155,7 +152,9 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         from: FromOp<'c, '_>,
     ) {
         let relation = from.source().value();
-        if let Some((rows, row)) = self.relation_input(relation, symbols, op.location()) {
+        if let Some(Stage { value: rows, row }) =
+            self.relation_input(relation, symbols, op.location())
+        {
             self.record_stage(op, rows, row);
         }
     }
@@ -189,7 +188,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
     }
 
     fn convert_where(&mut self, op: OperationRef<'c, '_>, stage: WhereOp<'c, '_>) {
-        let Some((input, row)) = self.input_stage(op) else {
+        let Some(Stage { value: input, row }) = self.input_stage(op) else {
             return;
         };
 
@@ -205,7 +204,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         symbols: &mut SymbolTable<'c, 'a>,
         stage: SelectOp<'c, '_>,
     ) {
-        let Some((input, row)) = self.input_stage(op) else {
+        let Some(Stage { value: input, row }) = self.input_stage(op) else {
             return;
         };
 
@@ -221,7 +220,11 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         symbols: &mut SymbolTable<'c, 'a>,
         stage: ExtendOp<'c, '_>,
     ) {
-        let Some((input, mut row)) = self.input_stage(op) else {
+        let Some(Stage {
+            value: input,
+            mut row,
+        }) = self.input_stage(op)
+        else {
             return;
         };
 
@@ -241,7 +244,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         symbols: &mut SymbolTable<'c, 'a>,
         stage: AggregateOp<'c, '_>,
     ) {
-        let Some((input, row)) = self.input_stage(op) else {
+        let Some(Stage { value: input, row }) = self.input_stage(op) else {
             return;
         };
 
@@ -309,13 +312,21 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         symbols: &mut SymbolTable<'c, 'a>,
         stage: JoinOp<'c, '_>,
     ) {
-        let Some((lhs, mut row)) = self.input_stage(op) else {
+        let Some(Stage {
+            value: lhs,
+            mut row,
+        }) = self.input_stage(op)
+        else {
             return;
         };
 
         // yzl names the right side; yzr joins two relations.
         let relation = stage.rhs().value();
-        let Some((rows, right)) = self.relation_input(relation, symbols, op.location()) else {
+        let Some(Stage {
+            value: rows,
+            row: right,
+        }) = self.relation_input(relation, symbols, op.location())
+        else {
             return;
         };
 
@@ -351,7 +362,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
     }
 
     fn convert_limit(&mut self, op: OperationRef<'c, '_>, stage: LimitOp<'c, '_>) {
-        let Some((input, row)) = self.input_stage(op) else {
+        let Some(Stage { value: input, row }) = self.input_stage(op) else {
             return;
         };
 
@@ -368,7 +379,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 
     /// `alias` only qualifies names, and resolution has already used them.
     fn convert_alias(&mut self, op: OperationRef<'c, '_>) {
-        let Some((input, row)) = self.input_stage(op) else {
+        let Some(Stage { value: input, row }) = self.input_stage(op) else {
             return;
         };
 
@@ -377,7 +388,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 
     /// yzr has no distinct: a group keyed on every column, measuring nothing.
     fn convert_distinct(&mut self, op: OperationRef<'c, '_>, symbols: &mut SymbolTable<'c, 'a>) {
-        let Some((input, row)) = self.input_stage(op) else {
+        let Some(Stage { value: input, row }) = self.input_stage(op) else {
             return;
         };
 
@@ -405,7 +416,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         symbols: &mut SymbolTable<'c, 'a>,
         stage: DropOp<'c, '_>,
     ) {
-        let Some((input, row)) = self.input_stage(op) else {
+        let Some(Stage { value: input, row }) = self.input_stage(op) else {
             return;
         };
 
@@ -425,7 +436,11 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         symbols: &mut SymbolTable<'c, 'a>,
         stage: SetOp<'c, '_>,
     ) {
-        let Some((input, mut row)) = self.input_stage(op) else {
+        let Some(Stage {
+            value: input,
+            mut row,
+        }) = self.input_stage(op)
+        else {
             return;
         };
 
@@ -453,7 +468,11 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         symbols: &mut SymbolTable<'c, 'a>,
         stage: RenameOp<'c, '_>,
     ) {
-        let Some((input, mut row)) = self.input_stage(op) else {
+        let Some(Stage {
+            value: input,
+            mut row,
+        }) = self.input_stage(op)
+        else {
             return;
         };
 
@@ -462,12 +481,10 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             .into_iter()
             .flat_map(|columns| columns.indices());
         for (index, name) in columns.zip(stage.to().strings()) {
-            if let Some(column) = row.get_mut(index) {
-                column.0 = name;
-            } else {
-                report(op, &format!("column {index} is not in the row"));
-                return;
-            }
+            let column = row.get_mut(index).unwrap_or_else(|| {
+                panic!("the lowering renames column {index}, which the row holds")
+            });
+            column.0 = name;
         }
 
         let all: Vec<usize> = (0..row.len()).collect();
@@ -476,7 +493,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
     }
 
     fn convert_output(&mut self, op: OperationRef<'c, '_>) {
-        let Some((query, _)) = self.input_stage(op) else {
+        let Some(Stage { value: query, .. }) = self.input_stage(op) else {
             return;
         };
 
@@ -505,7 +522,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         op: OperationRef<'c, '_>,
         columns: &[&str],
         left_width: usize,
-        row: &Row<'c>,
+        row: &[Column<'c>],
     ) -> Region<'c> {
         let location = op.location();
         let region = Region::new();

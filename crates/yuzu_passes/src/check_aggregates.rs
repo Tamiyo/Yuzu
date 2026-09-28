@@ -1,11 +1,9 @@
-//! An aggregate call lives only in an `aggregate` item or an `agg fn` body,
-//! never in another aggregate's arguments, and an `agg fn` must use an
+//! An aggregate call lives only in an `aggregate` item or an `agg def` body,
+//! never in another aggregate's arguments, and an `agg def` must use an
 //! aggregate without calling itself.
 
-use std::mem;
-
 use melior::ir::operation::{OperationLike, OperationRef, OperationResult};
-use melior::ir::{BlockRef, Location, Module, RegionLike};
+use melior::ir::{BlockRef, Location, Module};
 use rustc_hash::{FxHashMap, FxHashSet};
 use yuzu_mlir::diagnostics::emit_error;
 use yuzu_mlir::ir::block::BlockExt;
@@ -19,7 +17,6 @@ pub fn check_aggregates(module: &Module) {
         group_values: FxHashMap::default(),
         aggregate_calls: FxHashMap::default(),
         nested: FxHashSet::default(),
-        saw_aggregate: false,
     };
 
     checker.check_block(module.body(), None);
@@ -39,57 +36,61 @@ struct AggregateChecker<'c> {
     /// The location and callee of each aggregate call, by its result.
     aggregate_calls: FxHashMap<ValueId, (Location<'c>, &'c str)>,
     nested: FxHashSet<ValueId>,
-    saw_aggregate: bool,
 }
 
 impl<'c> AggregateChecker<'c> {
-    fn check_block(&mut self, block: BlockRef<'c, '_>, grouping: Option<Grouping<'c>>) {
+    /// Checks a block, and says whether it calls an aggregate.
+    fn check_block(&mut self, block: BlockRef<'c, '_>, grouping: Option<Grouping<'c>>) -> bool {
+        let mut aggregates = false;
         for op in block.operations() {
-            match op.as_yzl() {
+            aggregates |= match op.as_yzl() {
                 Some(YzlOp::Call(call)) if call.is_agg() => {
                     self.check_aggregate_call(op, call.callee().value(), grouping);
+                    true
                 }
                 Some(YzlOp::Aggregate(stage)) => {
-                    self.check_regions(stage.operation(), Some(Grouping::Item));
+                    self.check_regions(stage.operation(), Some(Grouping::Item))
                 }
-                // An `external agg fn` has no body to aggregate in.
+                // An `external agg def` has no body to aggregate in.
                 Some(YzlOp::Fn(function)) if function.is_agg() && !function.is_external() => {
                     let name = function.sym_name().value();
-                    let outer = mem::replace(&mut self.saw_aggregate, false);
-                    self.check_regions(function.operation(), Some(Grouping::FnBody(name)));
-                    if !self.saw_aggregate {
+                    let used =
+                        self.check_regions(function.operation(), Some(Grouping::FnBody(name)));
+                    if !used {
                         emit_error(
-                            Self::returned_location(function.operation())
+                            returned_location(function.operation())
                                 .unwrap_or_else(|| op.location()),
-                            "an `agg fn` must use an aggregate function",
+                            "an `agg def` must use an aggregate function",
                         );
                     }
-
-                    self.saw_aggregate = outer;
+                    false
                 }
-                Some(YzlOp::Fn(function)) => {
-                    self.check_regions(function.operation(), None);
-                }
+                Some(YzlOp::Fn(function)) => self.check_regions(function.operation(), None),
                 _ => {
                     self.propagate_group_values(op);
-                    self.check_regions(&op, None);
+                    self.check_regions(&op, None)
                 }
-            }
+            };
         }
+        aggregates
     }
 
+    /// Checks an op's regions, and says whether they call an aggregate.
     fn check_regions<'m, O: OperationLike<'c, 'm>>(
         &mut self,
         op: &O,
         grouping: Option<Grouping<'c>>,
-    ) where
+    ) -> bool
+    where
         'c: 'm,
     {
+        let mut aggregates = false;
         for region in op.regions() {
             for block in region.blocks() {
-                self.check_block(block, grouping);
+                aggregates |= self.check_block(block, grouping);
             }
         }
+        aggregates
     }
 
     fn check_aggregate_call(
@@ -98,7 +99,6 @@ impl<'c> AggregateChecker<'c> {
         callee: &'c str,
         grouping: Option<Grouping<'c>>,
     ) {
-        self.saw_aggregate = true;
         if grouping.is_none() {
             emit_error(
                 op.location(),
@@ -115,7 +115,7 @@ impl<'c> AggregateChecker<'c> {
             emit_error(
                 op.location(),
                 &format!(
-                    "`{}` is an `agg fn` and cannot call itself",
+                    "`{}` is an `agg def` and cannot call itself",
                     crate::written_name(name)
                 ),
             );
@@ -171,20 +171,15 @@ impl<'c> AggregateChecker<'c> {
 
         calls
     }
+}
 
-    fn returned_location<'m>(op: &impl OperationLike<'c, 'm>) -> Option<Location<'c>>
-    where
-        'c: 'm,
-    {
-        let returned = op
-            .regions()
-            .next()?
-            .first_block()?
-            .last_operation()?
-            .try_first_operand()?;
-
-        Some(OperationResult::try_from(returned).ok()?.owner().location())
-    }
+/// Where a function's body gets the value it returns.
+fn returned_location<'c, 'm>(op: &impl OperationLike<'c, 'm>) -> Option<Location<'c>>
+where
+    'c: 'm,
+{
+    let returned = op.body_terminator()?.try_first_operand()?;
+    Some(OperationResult::try_from(returned).ok()?.owner().location())
 }
 
 #[cfg(test)]
@@ -323,7 +318,7 @@ from t
 |> aggregate spread(rating) as r group by rating
     ",
             &expect![[r"
-                error: `spread` is an `agg fn` and cannot call itself
+                error: `spread` is an `agg def` and cannot call itself
                  --> test.yz:5:48
                   |
                 5 | agg def spread(x: float64) -> float64 { return spread(x) }
@@ -345,7 +340,7 @@ from t
 |> aggregate spread(rating) as r group by rating
     ",
             &expect![[r"
-                error: an `agg fn` must use an aggregate function
+                error: an `agg def` must use an aggregate function
                  --> test.yz:5:1
                   |
                 5 | agg def spread(x: float64) -> float64 { return x }

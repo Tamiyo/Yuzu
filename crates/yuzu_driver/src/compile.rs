@@ -266,6 +266,7 @@ pub(crate) fn in_thread_context<T>(compile: impl FnOnce(&melior::Context) -> T) 
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::fmt::Write;
 
     use super::{CompileOptions, compile};
     use crate::modules::MapResolver;
@@ -313,5 +314,28 @@ mod tests {
         let dumped = compile("test.yz", source, &options, &resolver);
         assert!(dumped.yzl.is_some_and(|yzl| yzl.contains("yzl.table")));
         assert!(dumped.yzr.is_some_and(|yzr| yzr.contains("yzr.output")));
+    }
+
+    #[test]
+    fn a_call_tree_of_many_expansions_compiles() {
+        let mut source = String::from("struct Row { a: int64 }\ntable t = Row\n");
+        source.push_str("def f0(x: int64) -> int64 { return x }\n");
+        for level in 1..=10 {
+            let below = level - 1;
+            writeln!(
+                source,
+                "def f{level}(x: int64) -> int64 {{ return f{below}(x) + f{below}(x) }}"
+            )
+            .expect("writing to a String cannot fail");
+        }
+        source.push_str("from t |> select f10(a) as v\n");
+        let resolver = MapResolver(HashMap::new());
+        let compilation = compile("test.yz", &source, &CompileOptions::default(), &resolver);
+        assert!(
+            compilation.diagnostics.is_empty(),
+            "{:?}",
+            compilation.diagnostics
+        );
+        assert!(compilation.plan.is_some());
     }
 }

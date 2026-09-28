@@ -36,10 +36,8 @@ impl<'c> YzlToYzr<'c, '_> {
                     return;
                 };
 
-                if let Some(lowered) = self.convert_call(op, call, &operands) {
-                    let appended = body.append_operation(lowered);
-                    values.insert(op.first_result().id(), appended.first_result());
-                }
+                let appended = body.append_operation(self.convert_call(op, call, &operands));
+                values.insert(op.first_result().id(), appended.first_result());
             }
             Some(YzlOp::List(_)) => {
                 let Some(operands) = lowered_operands(op, values) else {
@@ -73,17 +71,19 @@ impl<'c> YzlToYzr<'c, '_> {
         let mut produced = Vec::new();
         let ops: Vec<OperationRef<'c, 'b>> = body.operations().collect();
         for op in ops {
+            let Some(yzl) = op.as_yzl() else {
+                continue;
+            };
             let operands: Vec<Value<'c, 'b>> = op.operands().collect();
-            let lowered = match op.as_yzl() {
-                None => continue,
-                Some(YzlOp::Yield(_) | YzlOp::Return(_)) => {
+            let lowered = match yzl {
+                YzlOp::Yield(_) | YzlOp::Return(_) => {
                     produced = operands;
                     rewriter.erase_op(op);
                     continue;
                 }
-                Some(YzlOp::Call(call)) => self.convert_call(op, call, &operands),
-                Some(YzlOp::List(_)) => self.convert_list(op, &operands),
-                Some(_) => {
+                YzlOp::Call(call) => Some(self.convert_call(op, call, &operands)),
+                YzlOp::List(_) => self.convert_list(op, &operands),
+                _ => {
                     report_unlowered(op);
                     None
                 }
@@ -107,14 +107,14 @@ impl<'c> YzlToYzr<'c, '_> {
         op: OperationRef<'c, '_>,
         call: CallOp<'c, '_>,
         operands: &[Value<'c, '_>],
-    ) -> Option<Operation<'c>> {
+    ) -> Operation<'c> {
         let callee = call.callee().value();
         let ty = op.first_result().r#type();
         let kind = call.callee_source();
-        if matches!(kind, Some(CalleeSource::Fn | CalleeSource::Const)) {
-            report(op, &format!("`{callee}` was not expanded before lowering"));
-            return None;
-        }
+        assert!(
+            !matches!(kind, Some(CalleeSource::Fn | CalleeSource::Const)),
+            "inlining leaves no call to `{callee}` for the lowering"
+        );
 
         // The engine knows an external by its own name, not by the symbol.
         let external = (kind == Some(CalleeSource::External)).then(|| {
@@ -123,7 +123,7 @@ impl<'c> YzlToYzr<'c, '_> {
                 .get(callee)
                 .expect("an external call names a top-level external fn")
         });
-        Some(if call.is_agg() {
+        if call.is_agg() {
             self.convert_measure(op, external.unwrap_or(callee), operands, ty)
         } else if let Some(name) = external {
             yz::extern_call(
@@ -143,7 +143,7 @@ impl<'c> YzlToYzr<'c, '_> {
                 op.location(),
             )
             .into()
-        })
+        }
     }
 
     fn convert_list(
@@ -160,7 +160,7 @@ impl<'c> YzlToYzr<'c, '_> {
         Some(yz::list(self.context, ty, operands, op.location()).into())
     }
 
-    pub(super) fn record_externals(&mut self, block: BlockRef<'c, '_>) {
+    pub(super) fn read_externals(&mut self, block: BlockRef<'c, '_>) {
         for op in block.operations() {
             if let Some(YzlOp::Fn(function)) = op.as_yzl()
                 && let Some(name) = function.external_name()
@@ -232,14 +232,10 @@ fn lowered_operands<'c, 'b>(
 fn report_unlowered(op: OperationRef<'_, '_>) {
     match op.as_yzl() {
         Some(YzlOp::Missing(_)) => report(op, "this part of the query is missing"),
-        Some(YzlOp::Local(_) | YzlOp::Load(_) | YzlOp::Store(_)) => report(
-            op,
-            &format!(
-                "`{}` was not promoted to a value before lowering",
-                op_name(op)
-            ),
-        ),
-        _ => report(op, &format!("`{}` is not lowered yet", op_name(op))),
+        Some(YzlOp::Local(_) | YzlOp::Load(_) | YzlOp::Store(_)) => {
+            panic!("promotion leaves no `{}` for the lowering", op_name(op))
+        }
+        _ => report(op, "this is not supported in a query yet"),
     }
 }
 

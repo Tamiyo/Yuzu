@@ -10,7 +10,7 @@ use yuzu_mlir::ir::value::{ValueExt, ValueId};
 use yuzu_mlir::ods::yzr;
 use yuzu_mlir::ops::yzl::YzlOp;
 
-use crate::lower_yzl_to_yzr::{Row, Yielded, YzlToYzr, report_at};
+use crate::lower_yzl_to_yzr::{Column, Row, Yielded, YzlToYzr};
 
 /// An aggregation over the input row and, when an item is more than a bare
 /// measure, a projection over the keys and measures.
@@ -24,7 +24,7 @@ impl<'c> YzlToYzr<'c, '_> {
     pub(super) fn convert_region(
         &mut self,
         source: RegionRef<'c, '_>,
-        row: &Row<'c>,
+        row: &[Column<'c>],
         location: Location<'c>,
         yielded: Yielded<'_>,
     ) -> (Region<'c>, Vec<Type<'c>>) {
@@ -36,14 +36,15 @@ impl<'c> YzlToYzr<'c, '_> {
             // The expressions move into the new block, whose arguments stand
             // in for the old ones; only the yzl ops among them are rewritten.
             let arguments: Vec<Value<'c, '_>> = body.arguments().map(Into::into).collect();
-            if arguments.len() == block.argument_count() {
-                IrRewriter::new(self.context)
-                    .as_rewriter_base()
-                    .merge_blocks(block, body, &arguments);
-                produced = self.convert_moved(body);
-            } else {
-                report_at(location, "a region's arguments do not match its row");
-            }
+            assert_eq!(
+                arguments.len(),
+                block.argument_count(),
+                "a stage's region takes one argument for each column of its row"
+            );
+            IrRewriter::new(self.context)
+                .as_rewriter_base()
+                .merge_blocks(block, body, &arguments);
+            produced = self.convert_moved(body);
         }
 
         let results = match yielded {
@@ -65,7 +66,7 @@ impl<'c> YzlToYzr<'c, '_> {
     pub(super) fn convert_grouping(
         &mut self,
         source: RegionRef<'c, '_>,
-        row: &Row<'c>,
+        row: &[Column<'c>],
         keys: &[usize],
         location: Location<'c>,
     ) -> Grouping<'c> {
@@ -119,8 +120,8 @@ impl<'c> YzlToYzr<'c, '_> {
                 continue;
             };
 
-            let name = call.callee().value();
-            let column = if let Some(column) = distinct.get(&(name, arguments.clone())).copied() {
+            let key = (call.callee().value(), arguments);
+            let column = if let Some(&column) = distinct.get(&key) {
                 column
             } else {
                 self.convert_expression(op, body, &mut row_values, &mut discard);
@@ -129,7 +130,7 @@ impl<'c> YzlToYzr<'c, '_> {
                 };
 
                 measure_values.push(value);
-                distinct.insert((name, arguments), measure_values.len() - 1);
+                distinct.insert(key, measure_values.len() - 1);
                 measure_values.len() - 1
             };
 
@@ -151,7 +152,7 @@ impl<'c> YzlToYzr<'c, '_> {
     fn convert_grouped_items(
         &mut self,
         block: BlockRef<'c, '_>,
-        row: &Row<'c>,
+        row: &[Column<'c>],
         keys: &[usize],
         columns: &FxHashMap<ValueId, usize>,
         measures: &[Type<'c>],
@@ -247,7 +248,7 @@ impl<'c> YzlToYzr<'c, '_> {
 
     pub(super) fn column_region(
         &self,
-        row: &Row<'c>,
+        row: &[Column<'c>],
         columns: &[usize],
         location: Location<'c>,
     ) -> Region<'c> {
@@ -308,7 +309,7 @@ fn rests_on<'c: 'a, 'a>(
 /// A block with one argument for each column of the row.
 pub(super) fn row_block<'c, 'r>(
     region: &'r Region<'c>,
-    row: &Row<'c>,
+    row: &[Column<'c>],
     location: Location<'c>,
 ) -> BlockRef<'c, 'r> {
     let arguments: Vec<(Type<'c>, Location<'c>)> =

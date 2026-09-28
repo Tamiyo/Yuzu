@@ -76,7 +76,4 @@ def test_unbounded_recursion_is_rejected_at_compile_time():
         from employees
         |> select f(3) as v
     """
-    assert (
-        error_of(query)
-        == "error: expanding `f` did not finish within 1000 calls; a function that reaches itself has to reduce to stop"
-    )
+    assert error_of(query) == "error: `f` calls itself here, so expanding it would not end"

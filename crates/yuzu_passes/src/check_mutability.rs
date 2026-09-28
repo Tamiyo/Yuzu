@@ -34,7 +34,7 @@ enum LocalKind {
 struct Variable<'c> {
     name: &'c str,
     kind: LocalKind,
-    initialized: bool,
+    is_initialized: bool,
 }
 
 struct MutabilityChecker<'c> {
@@ -59,7 +59,7 @@ impl<'c> MutabilityChecker<'c> {
                         Variable {
                             name: local.var_name().value(),
                             kind,
-                            initialized: false,
+                            is_initialized: false,
                         },
                     );
                 }
@@ -69,8 +69,8 @@ impl<'c> MutabilityChecker<'c> {
                         .get_mut(&store.place().id())
                         .expect("a store follows the place it writes");
 
-                    if !variable.initialized {
-                        variable.initialized = true;
+                    if !variable.is_initialized {
+                        variable.is_initialized = true;
                         continue;
                     }
 

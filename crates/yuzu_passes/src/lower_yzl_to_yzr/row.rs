@@ -3,7 +3,7 @@ use melior::ir::attribute::{
     ArrayAttribute, FlatSymbolRefAttribute, StringAttribute, TypeAttribute,
 };
 use melior::ir::operation::Operation;
-use melior::ir::{Attribute, BlockRef, Location, Type, Value};
+use melior::ir::{Attribute, BlockRef, Location, Type};
 use yuzu_mlir::diagnostics::emit_error;
 use yuzu_mlir::ir::block::BlockExt;
 use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
@@ -11,13 +11,13 @@ use yuzu_mlir::ods::{yz, yzr};
 use yuzu_mlir::ops::yzl::YzlOp;
 use yuzu_mlir::{StructType, SymbolTable};
 
-use crate::lower_yzl_to_yzr::{Row, YzlToYzr, struct_fields};
+use crate::lower_yzl_to_yzr::{Column, Row, Stage, YzlToYzr, struct_fields};
 
 impl<'c, 'a> YzlToYzr<'c, 'a> {
     /// A stage whose row matches a declared struct reuses its name. The
     /// fields are kept by name too: the struct is converted in place, so a
     /// table read later finds its row here.
-    pub(super) fn intern_declared_shapes(&mut self, block: BlockRef<'c, '_>) {
+    pub(super) fn read_declared_shapes(&mut self, block: BlockRef<'c, '_>) {
         for op in block.operations() {
             if let Some(YzlOp::Struct(item)) = op.as_yzl() {
                 let name = item.sym_name().value();
@@ -39,7 +39,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 
     pub(super) fn row_type(
         &mut self,
-        row: &Row<'c>,
+        row: &[Column<'c>],
         symbols: &mut SymbolTable<'c, 'a>,
         location: Location<'c>,
     ) -> Type<'c> {
@@ -48,14 +48,14 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         }
 
         let name = self.declare_struct("row", row, symbols, location);
-        self.shapes.insert(row.clone(), name);
+        self.shapes.insert(row.to_vec(), name);
         StructType::new(self.context, name).into()
     }
 
     pub(super) fn declare_struct(
         &self,
         name: &str,
-        fields: &Row<'c>,
+        fields: &[Column<'c>],
         symbols: &mut SymbolTable<'c, 'a>,
         location: Location<'c>,
     ) -> &'c str {
@@ -73,7 +73,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         name: &str,
         symbols: &mut SymbolTable<'c, 'a>,
         location: Location<'c>,
-    ) -> Option<(Value<'c, 'a>, Row<'c>)> {
+    ) -> Option<Stage<'c, 'a>> {
         if let Some(bound) = self.bindings.get(name) {
             return Some(bound.clone());
         }
@@ -94,7 +94,10 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             .into(),
         );
 
-        Some((scanned.first_result(), row))
+        Some(Stage {
+            value: scanned.first_result(),
+            row,
+        })
     }
 }
 

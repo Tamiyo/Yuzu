@@ -10,7 +10,7 @@ use melior::ir::operation::{
     OperationLike, OperationMutLike, OperationRef, OperationRefMut, OperationResult,
 };
 use melior::ir::r#type::FunctionType;
-use melior::ir::{Attribute, BlockRef, Location, Module, RegionLike, Type, Value, ValueLike};
+use melior::ir::{Attribute, BlockRef, Location, Module, Type, Value, ValueLike};
 use rustc_hash::{FxHashMap, FxHashSet};
 use yuzu_mlir::attributes::CalleeSource;
 use yuzu_mlir::diagnostics::emit_error;
@@ -35,6 +35,7 @@ pub fn infer_types<'c>(context: &'c Context, module: &mut Module<'c>) {
         bindings: FxHashMap::default(),
         relations: FxHashMap::default(),
         pending: Vec::new(),
+        caller: None,
         instances: FxHashMap::default(),
     };
 
@@ -60,14 +61,26 @@ struct Signature<'c> {
     params: Vec<Type<'c>>,
     result: Type<'c>,
     type_params: Vec<&'c str>,
-    bounds: Vec<(&'c str, &'c str)>,
+    bounds: Vec<Bound<'c>>,
+}
+
+/// `subject: trait_` on a function's type parameter.
+struct Bound<'c> {
+    subject: &'c str,
+    trait_: &'c str,
+}
+
+/// `impl trait_ for target`.
+#[derive(PartialEq, Eq, Hash)]
+struct Implementation<'c> {
+    trait_: &'c str,
+    target: &'c str,
 }
 
 #[derive(Default)]
 struct Declarations<'c> {
     signatures: FxHashMap<&'c str, Signature<'c>>,
-    /// The `(trait, type)` pairs the implementations supply.
-    impls: FxHashSet<(&'c str, &'c str)>,
+    impls: FxHashSet<Implementation<'c>>,
     rows: FxHashMap<&'c str, Row<'c>>,
 }
 
@@ -84,9 +97,10 @@ impl<'c> Declarations<'c> {
                     }
                 }
                 Some(YzlOp::Impl(item)) => {
-                    declared
-                        .impls
-                        .insert((item.r#trait().value(), item.target().value()));
+                    declared.impls.insert(Implementation {
+                        trait_: item.r#trait().value(),
+                        target: item.target().value(),
+                    });
                 }
                 Some(YzlOp::Struct(item)) => {
                     let row = item.types().types().map(Term::Concrete).collect();
@@ -114,6 +128,9 @@ struct PendingBound<'c> {
     var: TypeVar,
     trait_: &'c str,
     callee: &'c str,
+    /// The function the call is in, whose own bounds its type parameters
+    /// satisfy.
+    caller: Option<&'c str>,
     location: Location<'c>,
 }
 
@@ -132,6 +149,8 @@ struct TypeInferrer<'c, 'd> {
     /// its yielded types.
     relations: FxHashMap<&'c str, Row<'c>>,
     pending: Vec<PendingBound<'c>>,
+    /// The function whose body is being inferred.
+    caller: Option<&'c str>,
     /// The type variables each generic call minted, in declaration order.
     instances: FxHashMap<ValueId, Vec<TypeVar>>,
 }
@@ -199,7 +218,14 @@ impl<'c> TypeInferrer<'c, '_> {
 
         match (a, b) {
             (Term::Var(a), Term::Var(b)) if a == b => {}
-            (Term::Var(var), term) | (term, Term::Var(var)) => self.filled[var.0] = Some(term),
+            (Term::Var(var), term) | (term, Term::Var(var)) => {
+                if self.occurs(var, term) {
+                    report(op, "a list cannot contain itself");
+                    self.filled[var.0] = Some(Term::Concrete(ErrorType::get(self.context)));
+                } else {
+                    self.filled[var.0] = Some(term);
+                }
+            }
             (Term::List(_), Term::List(_) | Term::Concrete(_))
             | (Term::Concrete(_), Term::List(_)) => match (element(a), element(b)) {
                 (Some(a), Some(b)) => self.unify(op, a, b),
@@ -213,6 +239,16 @@ impl<'c> TypeInferrer<'c, '_> {
         }
     }
 
+    /// Whether a variable is inside a term, which binding it to that term
+    /// would make a list of itself.
+    fn occurs(&mut self, var: TypeVar, term: Term<'c>) -> bool {
+        match self.shallow(term) {
+            Term::Var(other) => self.find(other) == var,
+            Term::List(inner) => self.occurs(var, Term::Var(inner)),
+            Term::Concrete(_) => false,
+        }
+    }
+
     fn mismatch(&mut self, op: OperationRef<'c, '_>, expected: Term<'c>, found: Term<'c>) {
         let (expected, found) = (self.display(expected), self.display(found));
         report(op, &format!("expected `{expected}`, found `{found}`"));
@@ -221,7 +257,7 @@ impl<'c> TypeInferrer<'c, '_> {
     /// Names the stage in the complaint, rather than reporting a bare
     /// mismatch.
     fn expect_yield(&mut self, op: OperationRef<'c, '_>, expected: Type<'c>, what: &str) {
-        let Some(value) = last_region_op(op).and_then(|end| end.try_first_operand()) else {
+        let Some(value) = op.body_terminator().and_then(|end| end.try_first_operand()) else {
             return;
         };
 
@@ -310,8 +346,10 @@ impl<'c> TypeInferrer<'c, '_> {
                     return;
                 };
 
+                self.caller = Some(function.sym_name().value());
                 self.infer_regions(op, &Row::new(), &signature.params);
                 self.unify_returns(op, signature.result);
+                self.caller = None;
             }
             Some(YzlOp::From(from)) => {
                 let source = from.source().value();
@@ -326,7 +364,8 @@ impl<'c> TypeInferrer<'c, '_> {
             Some(YzlOp::Const(binding)) => {
                 self.infer_regions(op, &Row::new(), &[]);
                 let name = binding.sym_name().value();
-                let query_row = last_region_op(op)
+                let query_row = op
+                    .body_terminator()
                     .and_then(|terminator| terminator.try_first_operand())
                     .and_then(|query| self.rows.get(&query.id()).cloned());
                 if let Some(query_row) = query_row {
@@ -517,12 +556,13 @@ impl<'c> TypeInferrer<'c, '_> {
             self.instances.insert(result.id(), ordered);
         }
 
-        for (subject, trait_) in &signature.bounds {
-            if let Some(&var) = bindings.get(subject) {
+        for bound in &signature.bounds {
+            if let Some(&var) = bindings.get(bound.subject) {
                 self.pending.push(PendingBound {
                     var,
-                    trait_,
+                    trait_: bound.trait_,
                     callee,
+                    caller: self.caller,
                     location: op.location(),
                 });
             }
@@ -531,17 +571,38 @@ impl<'c> TypeInferrer<'c, '_> {
         bindings
     }
 
+    /// Whether a function requires a trait of one of its type parameters.
+    fn is_bounded(&self, function: Option<&str>, subject: &str, trait_: &str) -> bool {
+        function
+            .and_then(|function| self.declared.signatures.get(function))
+            .is_some_and(|signature| {
+                signature
+                    .bounds
+                    .iter()
+                    .any(|bound| bound.subject == subject && bound.trait_ == trait_)
+            })
+    }
+
     fn check_pending_bounds(&mut self) {
         for bound in mem::take(&mut self.pending) {
             let Some(resolved) = self.resolve(Term::Var(bound.var)) else {
                 continue;
             };
 
-            let Some(name) = types::scalar_name(self.context, resolved) else {
+            if ErrorType::is(resolved) {
                 continue;
-            };
+            }
 
-            if !self.declared.impls.contains(&(bound.trait_, name)) {
+            let name = types::name(self.context, resolved);
+            let implemented = if let Some(param) = ParamType::from_type(resolved) {
+                self.is_bounded(bound.caller, param.name(), bound.trait_)
+            } else {
+                self.declared.impls.contains(&Implementation {
+                    trait_: bound.trait_,
+                    target: &name,
+                })
+            };
+            if !implemented {
                 emit_error(
                     bound.location,
                     &format!(
@@ -593,7 +654,7 @@ impl<'c> TypeInferrer<'c, '_> {
     }
 
     fn yield_terms(&mut self, op: OperationRef<'c, '_>) -> Row<'c> {
-        let Some(terminator) = last_region_op(op) else {
+        let Some(terminator) = op.body_terminator() else {
             return Row::new();
         };
 
@@ -604,7 +665,7 @@ impl<'c> TypeInferrer<'c, '_> {
     }
 
     fn unify_returns(&mut self, op: OperationRef<'c, '_>, ret: Type<'c>) {
-        if let Some(terminator) = last_region_op(op)
+        if let Some(terminator) = op.body_terminator()
             && matches!(terminator.as_yzl(), Some(YzlOp::Return(_)))
             && let Some(value) = terminator.try_first_operand()
         {
@@ -703,10 +764,6 @@ fn element(term: Term<'_>) -> Option<Term<'_>> {
     }
 }
 
-fn last_region_op<'c, 'a>(op: OperationRef<'c, 'a>) -> Option<OperationRef<'c, 'a>> {
-    op.regions().next()?.first_block()?.last_operation()
-}
-
 fn parse_signature<'c>(function: FnOp<'c, '_>) -> Option<Signature<'c>> {
     let signature = FunctionType::try_from(function.signature().value()).ok()?;
     let params = (0..signature.input_count())
@@ -728,7 +785,10 @@ fn parse_signature<'c>(function: FnOp<'c, '_>) -> Option<Signature<'c>> {
             .type_params()
             .map(|names| names.strings().collect())
             .unwrap_or_default(),
-        bounds: subjects.zip(traits).collect(),
+        bounds: subjects
+            .zip(traits)
+            .map(|(subject, trait_)| Bound { subject, trait_ })
+            .collect(),
     })
 }
 
@@ -960,6 +1020,48 @@ from t
                    |
                 16 | |> extend id(name) as n
                    |           ^^^^^^^^
+            "]],
+        );
+    }
+
+    #[test]
+    fn a_list_that_would_contain_itself_is_reported() {
+        check(
+            "struct Row { a: int64 }\ntable t = Row\nlet xs = []\nfrom t |> where xs in xs\n",
+            &expect![[r"
+                error: a list cannot contain itself
+                 --> test.yz:4:17
+                  |
+                4 | from t |> where xs in xs
+                  |                 ^^^^^^^^
+            "]],
+        );
+    }
+
+    #[test]
+    fn a_list_is_checked_against_a_bound() {
+        check(
+            "trait Numeric {\n    def zero(x: Self) -> Self\n}\nimpl Numeric for int64 {\n    def zero(x: int64) -> int64 { return 0 }\n}\ndef id[T](x: T) -> T where T: Numeric { return x }\nstruct Row { a: int64 }\ntable t = Row\nfrom t |> select id([1, 2]) as v\n",
+            &expect![[r"
+                error: `List[int64]` does not implement `Numeric`, required by `id`
+                 --> test.yz:10:18
+                   |
+                10 | from t |> select id([1, 2]) as v
+                   |                  ^^^^^^^^^^
+            "]],
+        );
+    }
+
+    #[test]
+    fn a_type_parameter_satisfies_a_bound_its_function_requires() {
+        check(
+            "trait Numeric {\n    def zero(x: Self) -> Self\n}\ndef id[T](x: T) -> T where T: Numeric { return x }\ndef twice[T](x: T) -> T where T: Numeric { return id(x) }\ndef loose[T](x: T) -> T { return id(x) }\n",
+            &expect![[r"
+                error: `T` does not implement `Numeric`, required by `id`
+                 --> test.yz:6:34
+                  |
+                6 | def loose[T](x: T) -> T { return id(x) }
+                  |                                  ^^^^^
             "]],
         );
     }

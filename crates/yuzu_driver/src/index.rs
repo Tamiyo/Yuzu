@@ -7,7 +7,7 @@
 
 use melior::Context;
 use melior::ir::operation::{OperationLike, OperationRef, OperationResult};
-use melior::ir::{Module, RegionLike, Type, Value, ValueLike};
+use melior::ir::{Module, Type, Value, ValueLike};
 use rustc_hash::FxHashMap;
 use yuzu_diagnostics::diagnostics::Span;
 use yuzu_diagnostics::source_map::SourceMap;
@@ -233,7 +233,7 @@ fn is_shown(context: &Context, ty: Type<'_>) -> bool {
 
 /// The type a `let` yields: what the last op of its region returns.
 fn last_yield<'c>(op: OperationRef<'c, '_>) -> Option<Type<'c>> {
-    let terminator = op.regions().next()?.first_block()?.last_operation()?;
+    let terminator = op.body_terminator()?;
     terminator.try_first_operand().map(|value| value.r#type())
 }
 

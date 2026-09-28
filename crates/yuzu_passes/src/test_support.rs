@@ -59,13 +59,7 @@ pub(crate) fn lower<'c>(context: &'c Context, program: &Program) -> Lowered<'c> 
 }
 
 pub(crate) fn rendered(sources: &SourceMap, diagnostics: &DiagnosticsEngine) -> String {
-    let printer = DiagnosticPrinter::new(sources);
-    diagnostics
-        .diagnostics()
-        .iter()
-        .map(|diagnostic| printer.render(diagnostic))
-        .collect::<Vec<_>>()
-        .join("\n")
+    DiagnosticPrinter::new(sources).render_all(diagnostics.diagnostics())
 }
 
 pub(crate) fn lowered_program(program: &Program) -> String {
@@ -131,18 +125,46 @@ pub(crate) fn check_yzr(source: &str, expected: &Expect) {
     );
 }
 
+/// The passes in the groups the driver runs them in, stopping after the
+/// first group that reports, as a compile does.
 pub(crate) fn check_simplified(source: &str, expected: &Expect) {
-    check(
-        source,
+    type Group = for<'c> fn(&'c Context, &mut Module<'c>);
+
+    let context = yuzu_mlir::context();
+    let Lowered {
+        mut module,
+        sources,
+        mut diagnostics,
+        ..
+    } = lower(&context, &[("test.yz", None, source)]);
+    let groups: [Group; 3] = [
         |context, module| {
+            crate::check_mutability(module);
             crate::promote_locals(context, module);
             crate::infer_types(context, module);
+            crate::check_aggregates(module);
+        },
+        |context, module| {
             crate::inline_calls(context, module);
             crate::remove_dead_symbols(context, module);
+        },
+        |context, module| {
             crate::lower_yzl_to_yzr(context, module);
             crate::simplify_yzr(context, module);
-            module.as_operation().to_string()
         },
-        expected,
-    );
+    ];
+    for group in groups {
+        if diagnostics.has_errors() {
+            break;
+        }
+        yuzu_mlir::diagnostics::capture(&context, &sources, &mut diagnostics, || {
+            group(&context, &mut module);
+        });
+    }
+    let reported = rendered(&sources, &diagnostics);
+    if reported.is_empty() {
+        expected.assert_eq(&module.as_operation().to_string());
+    } else {
+        expected.assert_eq(&reported);
+    }
 }

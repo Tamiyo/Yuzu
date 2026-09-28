@@ -6,7 +6,7 @@
 
 use melior::ir::attribute::StringAttribute;
 use melior::ir::operation::{Operation, OperationLike, OperationRef};
-use melior::ir::{BlockLike, BlockRef, Location, Module, Type, Value};
+use melior::ir::{BlockLike, BlockRef, Module, Type, Value};
 use melior::{Context, IrRewriter};
 use rustc_hash::FxHashMap;
 use yuzu_mlir::SymbolTable;
@@ -26,15 +26,12 @@ pub fn lower_yzl_to_yzr<'c>(context: &'c Context, module: &mut Module<'c>) {
     let module = &*module;
     let body = module.body();
     let ops: Vec<OperationRef<'c, '_>> = body.operations().collect();
-    let Some(&first) = ops.first() else {
-        return;
-    };
 
     let mut symbols = SymbolTable::new(module);
     let mut lowering = YzlToYzr {
         context,
         body,
-        anchor: first,
+        anchor: None,
         stages: FxHashMap::default(),
         shapes: FxHashMap::default(),
         declared: FxHashMap::default(),
@@ -42,11 +39,10 @@ pub fn lower_yzl_to_yzr<'c>(context: &'c Context, module: &mut Module<'c>) {
         externals: FxHashMap::default(),
     };
 
-    lowering.intern_declared_shapes(body);
-    lowering.record_externals(body);
+    lowering.read_declared_shapes(body);
+    lowering.read_externals(body);
     for op in ops {
-        lowering.anchor = op;
-        lowering.convert_op(op, &mut symbols);
+        lowering.convert_at(op, &mut symbols);
     }
 
     drop(symbols);
@@ -67,7 +63,17 @@ fn erase_yzl<'c>(context: &'c Context, body: BlockRef<'c, '_>) {
     }
 }
 
-type Row<'c> = Vec<(&'c str, Type<'c>)>;
+/// A column of a row: its name and its type.
+type Column<'c> = (&'c str, Type<'c>);
+
+type Row<'c> = Vec<Column<'c>>;
+
+/// A converted stage: the rows it produces and their shape.
+#[derive(Clone)]
+struct Stage<'c, 'a> {
+    value: Value<'c, 'a>,
+    row: Row<'c>,
+}
 
 /// What a region yields: what its body computed, or the whole row with
 /// those values substituted in.
@@ -80,33 +86,43 @@ enum Yielded<'k> {
 struct YzlToYzr<'c, 'a> {
     context: &'c Context,
     body: BlockRef<'c, 'a>,
-    /// The top-level yzl op being converted; what it becomes is placed
-    /// before it.
-    anchor: OperationRef<'c, 'a>,
-    stages: FxHashMap<ValueId, (Value<'c, 'a>, Row<'c>)>,
+    /// The top-level yzl op being converted, while it stands: what it
+    /// becomes is placed before it.
+    anchor: Option<OperationRef<'c, 'a>>,
+    stages: FxHashMap<ValueId, Stage<'c, 'a>>,
     /// The struct declaring each row shape; one nobody declared is declared
     /// once.
     shapes: FxHashMap<Row<'c>, &'c str>,
     /// The fields of each struct the program declared, by its name.
     declared: FxHashMap<&'c str, Row<'c>>,
-    bindings: FxHashMap<&'c str, (Value<'c, 'a>, Row<'c>)>,
+    bindings: FxHashMap<&'c str, Stage<'c, 'a>>,
     /// The engine's name for each external function, by its symbol.
     externals: FxHashMap<&'c str, &'c str>,
 }
 
 impl<'c, 'a> YzlToYzr<'c, 'a> {
-    fn insert(&self, op: Operation<'c>) -> OperationRef<'c, 'a> {
-        self.body.insert_operation_before(self.anchor, op)
+    /// Converts one top-level op, placing what it becomes before it.
+    fn convert_at(&mut self, op: OperationRef<'c, 'a>, symbols: &mut SymbolTable<'c, 'a>) {
+        self.anchor = Some(op);
+        self.convert_op(op, symbols);
+        self.anchor = None;
     }
 
-    fn input_stage(&mut self, op: OperationRef<'c, '_>) -> Option<(Value<'c, 'a>, Row<'c>)> {
+    fn insert(&self, op: Operation<'c>) -> OperationRef<'c, 'a> {
+        let anchor = self
+            .anchor
+            .expect("an op is inserted while the op it comes from stands");
+        self.body.insert_operation_before(anchor, op)
+    }
+
+    fn input_stage(&self, op: OperationRef<'c, '_>) -> Option<Stage<'c, 'a>> {
         let input = op.try_first_operand()?;
         self.stages.get(&input.id()).cloned()
     }
 
-    fn record_stage(&mut self, op: OperationRef<'c, '_>, value: Value<'c, 'a>, schema: Row<'c>) {
+    fn record_stage(&mut self, op: OperationRef<'c, '_>, value: Value<'c, 'a>, row: Row<'c>) {
         if let Some(result) = op.try_first_result() {
-            self.stages.insert(result.id(), (value, schema));
+            self.stages.insert(result.id(), Stage { value, row });
         }
     }
 
@@ -117,10 +133,6 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 
 fn report(op: OperationRef<'_, '_>, message: &str) {
     emit_error(op.location(), message);
-}
-
-fn report_at(location: Location<'_>, message: &str) {
-    emit_error(location, message);
 }
 
 fn op_name(op: OperationRef<'_, '_>) -> String {

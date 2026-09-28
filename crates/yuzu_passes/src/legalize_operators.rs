@@ -10,13 +10,14 @@ use melior::{Context, IrRewriter, RewriterBase};
 use rustc_hash::FxHashMap;
 use yuzu_mlir::diagnostics::emit_error;
 use yuzu_mlir::ir::block::BlockExt;
-use yuzu_mlir::ir::operation::OperationExt;
+use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
 use yuzu_mlir::ir::region::RegionExt;
 use yuzu_mlir::ir::value::{ValueExt, ValueId};
+use yuzu_mlir::ops::yz::YzOp;
 use yuzu_mlir::{ParamType, SymbolTable};
 
 use crate::inline_calls::copy;
-use crate::operators::{Operator, is_named};
+use crate::operators::{OPERATORS, Operator};
 
 /// Replaces each operator with a copy of the library function that implements it.
 ///
@@ -29,10 +30,18 @@ pub fn legalize_operators(context: &Context, module: &mut Module) {
     let rewriter = rewriter.as_rewriter_base();
     let symbols = SymbolTable::new(module);
 
+    let implementations: Vec<Option<OperationRef>> = OPERATORS
+        .iter()
+        .map(|operator| symbols.lookup(&operator.to_symbol()))
+        .collect();
     let mut operators = Vec::new();
     collect_operators(module.body(), &mut operators);
     for (op, operator) in operators {
-        let Some(implementation) = symbols.lookup(&operator.symbol()) else {
+        let index = OPERATORS
+            .iter()
+            .position(|known| std::ptr::eq(known, operator))
+            .expect("an operator is one of the operators");
+        let Some(implementation) = implementations[index] else {
             emit_error(
                 op.location(),
                 &format!(
@@ -43,7 +52,7 @@ pub fn legalize_operators(context: &Context, module: &mut Module) {
             continue;
         };
 
-        expand(rewriter, op, implementation, operator);
+        expand(context, rewriter, op, implementation);
     }
 
     drop(symbols);
@@ -80,22 +89,16 @@ fn collect_operators<'c, 'a>(
 
 /// Puts a copy of the implementation's body in place of the operator.
 fn expand<'c, 'a>(
+    context: &'c Context,
     rewriter: RewriterBase<'c, 'a>,
     op: OperationRef<'c, 'a>,
     implementation: OperationRef<'c, '_>,
-    operator: &Operator,
 ) {
-    let Some(body) = implementation
+    let body = implementation
         .regions()
         .next()
         .and_then(|region| region.first_block())
-    else {
-        emit_error(
-            op.location(),
-            &format!("`{}` has an implementation with no body", operator.spelling),
-        );
-        return;
-    };
+        .expect("a verified yz.func has a body");
 
     let arguments: Vec<Value<'c, 'a>> = op.operands().collect();
     debug_assert_eq!(
@@ -114,39 +117,21 @@ fn expand<'c, 'a>(
     rewriter.set_insertion_point_before(op);
     let mut returned = None;
     for inner in body.operations() {
-        if is_named(inner, "yz.return") {
+        if let Some(YzOp::Return(_)) = inner.as_yz() {
             returned = inner
                 .try_first_operand()
                 .and_then(|value| values.get(&value.id()).copied());
             continue;
         }
 
-        let Some(copied) = copy(&rewriter, inner, &values, &types) else {
-            emit_error(
-                op.location(),
-                &format!(
-                    "`{}` has an implementation that did not copy",
-                    operator.spelling
-                ),
-            );
-            return;
-        };
+        let copied = copy(context, &rewriter, inner, &values, &types);
 
         if let (Some(result), Some(value)) = (inner.try_first_result(), copied.try_first_result()) {
             values.insert(result.id(), value);
         }
     }
 
-    let Some(returned) = returned else {
-        emit_error(
-            op.location(),
-            &format!(
-                "`{}` has an implementation that returns nothing",
-                operator.spelling
-            ),
-        );
-        return;
-    };
+    let returned = returned.expect("an operator's implementation returns its value");
 
     rewriter.replace_all_op_uses_with_values(op, &[returned]);
     rewriter.erase_op(op);
@@ -178,10 +163,10 @@ fn discard_implementations(rewriter: RewriterBase, module: &Module) {
 }
 
 fn is_implementation(op: OperationRef) -> bool {
-    is_named(op, "yz.func")
-        && op
-            .text_attribute("sym_name")
-            .is_some_and(|name| Operator::implemented_by(name).is_some())
+    matches!(
+        op.as_yz(),
+        Some(YzOp::Func(function)) if Operator::implemented_by(function.sym_name().value()).is_some()
+    )
 }
 
 #[cfg(test)]

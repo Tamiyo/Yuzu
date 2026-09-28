@@ -5,7 +5,10 @@ use melior::ir::Value;
 use melior::ir::attribute::{ArrayAttribute, StringAttribute};
 use melior::ir::operation::{OperationLike, OperationMutLike, OperationRef, OperationRefMut};
 
+use melior::ir::RegionLike;
+
 use crate::ir::attribute::array::ArrayAttributeExt;
+use crate::ir::block::BlockExt;
 
 /// Reads over an operation's results, operands and attributes.
 pub trait OperationExt<'c: 'a, 'a>: OperationLike<'c, 'a> {
@@ -29,6 +32,12 @@ pub trait OperationExt<'c: 'a, 'a>: OperationLike<'c, 'a> {
     /// same reason as `try_first_result`.
     fn try_first_operand(&self) -> Option<Value<'c, 'a>> {
         (self.operand_count() > 0).then(|| self.operand(0).expect("the operand index is in range"))
+    }
+
+    /// The terminator of the op's body: the last op in the first block of
+    /// its first region.
+    fn body_terminator(&self) -> Option<OperationRef<'c, 'a>> {
+        self.regions().next()?.first_block()?.last_operation()
     }
 
     /// A string attribute, by name; `None` when the op has no such

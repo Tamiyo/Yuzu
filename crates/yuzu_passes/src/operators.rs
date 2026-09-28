@@ -3,12 +3,12 @@
 //! engine computes it: the op folds first, and `legalize_operators` puts
 //! that function's body in place of what is left.
 
-use melior::ir::operation::{OperationLike, OperationRef};
+use melior::ir::operation::OperationRef;
+use yuzu_mlir::ir::operation::OperationCast;
+use yuzu_mlir::ops::yz::YzOp;
 
-/// A primitive op, and the library function that implements it.
+/// A primitive op's operator, and the library function that implements it.
 pub(crate) struct Operator {
-    /// The op's MLIR name, such as `yz.rem`.
-    pub(crate) op: &'static str,
     /// How a program writes it, such as `%`.
     pub(crate) spelling: &'static str,
     /// The library module that declares the implementation.
@@ -19,7 +19,6 @@ pub(crate) struct Operator {
 
 /// `%`.
 pub(crate) const REM: Operator = Operator {
-    op: "yz.rem",
     spelling: "%",
     module: "yuzu.std.ops",
     name: "modulo",
@@ -27,7 +26,6 @@ pub(crate) const REM: Operator = Operator {
 
 /// `**`.
 pub(crate) const POW: Operator = Operator {
-    op: "yz.pow",
     spelling: "**",
     module: "yuzu.std.ops",
     name: "pow",
@@ -35,7 +33,6 @@ pub(crate) const POW: Operator = Operator {
 
 /// `<<`.
 pub(crate) const SHL: Operator = Operator {
-    op: "yz.shl",
     spelling: "<<",
     module: "yuzu.std.ops",
     name: "shift_left",
@@ -43,18 +40,23 @@ pub(crate) const SHL: Operator = Operator {
 
 /// `>>`.
 pub(crate) const SHR: Operator = Operator {
-    op: "yz.shr",
     spelling: ">>",
     module: "yuzu.std.ops",
     name: "shift_right",
 };
 
-const OPERATORS: &[Operator] = &[REM, POW, SHL, SHR];
+pub(crate) static OPERATORS: [Operator; 4] = [REM, POW, SHL, SHR];
 
 impl Operator {
     /// The operator an op is, when it is one the library implements.
     pub(crate) fn of(op: OperationRef) -> Option<&'static Self> {
-        OPERATORS.iter().find(|operator| is_named(op, operator.op))
+        match op.as_yz()? {
+            YzOp::Rem(_) => Some(&OPERATORS[0]),
+            YzOp::Pow(_) => Some(&OPERATORS[1]),
+            YzOp::Shl(_) => Some(&OPERATORS[2]),
+            YzOp::Shr(_) => Some(&OPERATORS[3]),
+            _ => None,
+        }
     }
 
     /// The operator a symbol implements, when it implements one.
@@ -64,8 +66,9 @@ impl Operator {
             .find(|operator| operator.is_implemented_by(symbol))
     }
 
-    /// The symbol of the function that implements the operator.
-    pub(crate) fn symbol(&self) -> String {
+    /// The symbol of the function that implements the operator: a new
+    /// `String` for each call.
+    pub(crate) fn to_symbol(&self) -> String {
         format!("{}.{}", self.module, self.name)
     }
 
@@ -77,20 +80,19 @@ impl Operator {
     }
 }
 
-/// Whether an op has a name, without copying the name out.
-pub(crate) fn is_named(op: OperationRef, name: &str) -> bool {
-    op.name().as_string_ref().as_str() == Ok(name)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::Operator;
+    use super::{OPERATORS, Operator};
 
     #[test]
     fn an_implementation_is_found_by_its_symbol() {
         let rem = Operator::implemented_by("yuzu.std.ops.modulo").expect("modulo implements `%`");
-        assert_eq!(rem.op, super::REM.op);
+        assert_eq!(rem.spelling, "%");
         assert!(Operator::implemented_by("yuzu.std.opsmodulo").is_none());
         assert!(Operator::implemented_by("modulo").is_none());
+        for operator in &OPERATORS {
+            let found = Operator::implemented_by(&operator.to_symbol());
+            assert!(found.is_some_and(|found| found.spelling == operator.spelling));
+        }
     }
 }
