@@ -561,7 +561,7 @@ impl<'c> AstToYzl<'c, '_> {
     fn int_literal(&mut self, expr: &ast::Expr) -> i64 {
         match expr {
             ast::Expr::Literal(ast::Literal::IntLiteral(int)) => {
-                int.value().unwrap_or_default() as i64
+                self.int64_value(int).unwrap_or_default()
             }
             other => {
                 self.report(other, "`limit` takes an integer literal");
@@ -661,7 +661,27 @@ impl<'c> AstToYzl<'c, '_> {
 mod tests {
     use expect_test::expect;
 
-    use crate::test_support::lowered;
+    use crate::test_support::{lowered, reported};
+
+    #[test]
+    fn a_limit_past_int64_is_reported() {
+        expect![[r"
+            error: integer literal is out of range for `int64`
+             --> test.yz:6:10
+              |
+            6 | |> limit 9223372036854775808
+              |          ^^^^^^^^^^^^^^^^^^^
+        "]]
+        .assert_eq(&reported(
+            r"
+struct Row { a: int64 }
+table t = Row
+
+from t
+|> limit 9223372036854775808
+",
+        ));
+    }
 
     #[test]
     fn converts_the_canonical_pipeline() {

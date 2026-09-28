@@ -122,6 +122,16 @@ impl<'c> AstToYzl<'c, '_> {
         self.diagnostics.emit(diagnostic);
     }
 
+    /// `None`, after a report, when `int64` cannot hold the literal.
+    fn int64_value(&mut self, int: &ast::IntLiteral) -> Option<i64> {
+        let value = i64::try_from(int.value().unwrap_or_default()).ok();
+        if value.is_none() {
+            self.report(int, "integer literal is out of range for `int64`");
+        }
+
+        value
+    }
+
     fn unresolved_column(&mut self, node: &impl AstNode, message: &str) {
         let mut diagnostic = self.error_at(node.syntax().text_range(), message);
         if let Some(note) = self.row_note() {

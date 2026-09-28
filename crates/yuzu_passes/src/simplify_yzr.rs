@@ -276,12 +276,11 @@ from t
                   %0 = yzr.table @t : !yz.struct<@Row>
                   %1 = yzr.filter %0 : !yz.struct<@Row> {
                   ^bb0(%arg0: !yz.int64):
-                    %2 = yz.constant_int -1
-                    %3 = yz.constant_int -9223372036854775808
-                    %4 = yz.neg %3 : !yz.int64 -> !yz.int64
-                    %5 = yz.div %4, %2 : !yz.int64, !yz.int64 -> !yz.int64
-                    %6 = yz.cmp "gt", %arg0, %5 : !yz.int64, !yz.int64 -> !yz.bool
-                    yzr.yield %6 : !yz.bool
+                    %2 = yz.constant_int -9223372036854775808
+                    %3 = yz.constant_int -1
+                    %4 = yz.div %2, %3 : !yz.int64, !yz.int64 -> !yz.int64
+                    %5 = yz.cmp "gt", %arg0, %4 : !yz.int64, !yz.int64 -> !yz.bool
+                    yzr.yield %5 : !yz.bool
                   }
                   yzr.output %1 : !yz.struct<@Row>
                 }

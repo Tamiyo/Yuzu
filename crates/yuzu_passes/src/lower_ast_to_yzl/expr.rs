@@ -49,13 +49,22 @@ impl<'c> AstToYzl<'c, '_> {
     ) -> Value<'c, 'a> {
         let loc = self.location(literal);
         let operation = match literal {
-            ast::Literal::IntLiteral(int) => yz::constant_int(
-                self.context,
-                Int64Type::get(self.context),
-                IntegerAttribute::from_i64(self.context, int.value().unwrap_or_default() as i64),
-                loc,
-            )
-            .into(),
+            ast::Literal::IntLiteral(int) => {
+                let Some(value) = self.int64_value(int) else {
+                    return self.emit_hole(
+                        block,
+                        int.syntax().text_range(),
+                        UnresolvedType::get(self.context),
+                    );
+                };
+                yz::constant_int(
+                    self.context,
+                    Int64Type::get(self.context),
+                    IntegerAttribute::from_i64(self.context, value),
+                    loc,
+                )
+                .into()
+            }
             ast::Literal::FloatLiteral(float) => yz::constant_float(
                 self.context,
                 Float64Type::get(self.context),
@@ -251,6 +260,21 @@ impl<'c> AstToYzl<'c, '_> {
         unary: &ast::UnaryExpr,
     ) -> Value<'c, 'a> {
         let loc = self.location(unary);
+
+        // `int64`'s least value is written as the negation of a literal one
+        // past its greatest, which alone is out of range.
+        if unary.op() == Some(UnaryOp::Neg)
+            && let Some(ast::Expr::Literal(ast::Literal::IntLiteral(int))) = unary.expr()
+            && int.value() == Some(i64::MIN.unsigned_abs())
+        {
+            let least = yz::constant_int(
+                self.context,
+                Int64Type::get(self.context),
+                IntegerAttribute::from_i64(self.context, i64::MIN),
+                loc,
+            );
+            return block.append_operation(least.into()).first_result();
+        }
 
         let value = match unary.expr() {
             Some(expr) => self.convert_expr(block, locals, &expr),
@@ -619,6 +643,26 @@ table t = Row
 from t
 |> select id
 |> where level > 1
+",
+        ));
+    }
+
+    #[test]
+    fn an_integer_literal_past_int64_is_reported() {
+        expect![[r"
+            error: integer literal is out of range for `int64`
+             --> test.yz:6:14
+              |
+            6 | |> where a > 9223372036854775808
+              |              ^^^^^^^^^^^^^^^^^^^
+        "]]
+        .assert_eq(&reported(
+            r"
+struct Row { a: int64 }
+table t = Row
+
+from t
+|> where a > 9223372036854775808
 ",
         ));
     }
