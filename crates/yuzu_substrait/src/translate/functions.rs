@@ -38,13 +38,15 @@ pub(crate) struct Aggregate {
     pub(crate) invocation: AggregationInvocation,
 }
 
-/// A measure's function, by the name the lowering put on it. A name the
-/// registry does not have is one the engine provides: an `external agg def`,
-/// declared under the engine's own name.
+/// A measure's function, by the name the lowering put on it.
+///
+/// `count` and `count_distinct` are Substrait's generic count. Any other name
+/// is one the engine provides, declared under its own name.
 pub(crate) fn of_aggregate(name: &str) -> Aggregate {
-    let func = match name {
-        "count" => AggFunc::Count,
-        "count_distinct" => AggFunc::CountDistinct,
+    let invocation = match name {
+        "count" => AggregationInvocation::All,
+        // Substrait spells a distinct count as `count` over distinct values.
+        "count_distinct" => AggregationInvocation::Distinct,
         external => {
             return Aggregate {
                 urn: EXTERNAL_URN,
@@ -54,15 +56,10 @@ pub(crate) fn of_aggregate(name: &str) -> Aggregate {
         }
     };
 
-    let (urn, base) = aggregate_target(func);
+    let (urn, base) = aggregate_target(AggFunc::Count);
     Aggregate {
         urn,
         base: base.to_string(),
-        // `count_distinct` counts the distinct values it is given; every
-        // other aggregate takes them all.
-        invocation: match func {
-            AggFunc::CountDistinct => AggregationInvocation::Distinct,
-            AggFunc::Count => AggregationInvocation::All,
-        },
+        invocation,
     }
 }

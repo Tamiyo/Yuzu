@@ -3,7 +3,6 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AggFunc {
     Count,
-    CountDistinct,
 }
 
 impl AggFunc {
@@ -11,7 +10,6 @@ impl AggFunc {
     pub fn name(self) -> &'static str {
         match self {
             AggFunc::Count => "count",
-            AggFunc::CountDistinct => "count_distinct",
         }
     }
 }

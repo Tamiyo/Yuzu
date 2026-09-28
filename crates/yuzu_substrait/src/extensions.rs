@@ -39,7 +39,7 @@ pub(crate) fn function_target(func: Func) -> Option<(&'static str, &'static str)
 /// the generic aggregate family.
 pub(crate) fn aggregate_target(func: AggFunc) -> (&'static str, &'static str) {
     match func {
-        AggFunc::Count | AggFunc::CountDistinct => (AGGREGATE_GENERIC_URN, "count"),
+        AggFunc::Count => (AGGREGATE_GENERIC_URN, "count"),
     }
 }
 

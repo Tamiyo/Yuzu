@@ -576,7 +576,7 @@ impl<'c> TypeInferrer<'c, '_> {
         let boolean = Term::Concrete(BoolType::get(self.context));
         let out = self.term_of(op.first_result());
         match entry.func {
-            BuiltinFunc::Aggregate(AggFunc::Count | AggFunc::CountDistinct) => {
+            BuiltinFunc::Aggregate(AggFunc::Count) => {
                 self.unify(op, out, int64);
             }
             BuiltinFunc::Scalar(Func::In) => {

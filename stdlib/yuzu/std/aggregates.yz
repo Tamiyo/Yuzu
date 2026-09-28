@@ -16,3 +16,7 @@ pub agg def max[T](x: T) -> T {
 pub agg def avg[T](x: T) -> T where T: Numeric {
     return datafusion.avg(x)
 }
+
+pub agg def count_distinct[T](x: T) -> int64 {
+    return datafusion.count_distinct(x)
+}

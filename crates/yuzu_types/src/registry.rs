@@ -40,12 +40,6 @@ const BUILTINS: &[FunctionRegistryEntry] = &[
         min_args: 0,
         max_args: 1,
     },
-    FunctionRegistryEntry {
-        name: "count_distinct",
-        func: BuiltinFunc::Aggregate(AggFunc::CountDistinct),
-        min_args: 1,
-        max_args: 1,
-    },
 ];
 
 impl FunctionRegistry for Builtins {
@@ -101,7 +95,7 @@ mod tests {
         },
         FunctionRegistryEntry {
             name: "count",
-            func: BuiltinFunc::Aggregate(AggFunc::CountDistinct),
+            func: BuiltinFunc::Aggregate(AggFunc::Count),
             min_args: 1,
             max_args: 1,
         },
@@ -121,7 +115,7 @@ mod tests {
             .iter()
             .find(|entry| entry.name == "count")
             .expect("count is registered");
-        assert_eq!(count.func, BuiltinFunc::Aggregate(AggFunc::CountDistinct));
+        assert_eq!((count.min_args, count.max_args), (1, 1));
     }
 
     #[test]
