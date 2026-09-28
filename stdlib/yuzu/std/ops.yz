@@ -9,7 +9,7 @@ pub def shift_right(a: int64, b: int64) -> int64 {
     return datafusion.bitwise_shift_right(a, b)
 }
 
-pub def pow(a: int64, b: int64) -> int64 {
+pub def pow[T](a: T, b: T) -> T where T: Numeric {
     return datafusion.power(a, b)
 }
 

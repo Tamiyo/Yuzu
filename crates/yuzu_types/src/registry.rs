@@ -27,24 +27,6 @@ pub struct Builtins;
 
 const BUILTINS: &[FunctionRegistryEntry] = &[
     FunctionRegistryEntry {
-        name: "pow",
-        func: BuiltinFunc::Scalar(Func::Power),
-        min_args: 2,
-        max_args: 2,
-    },
-    FunctionRegistryEntry {
-        name: "shift_left",
-        func: BuiltinFunc::Scalar(Func::ShiftLeft),
-        min_args: 2,
-        max_args: 2,
-    },
-    FunctionRegistryEntry {
-        name: "shift_right",
-        func: BuiltinFunc::Scalar(Func::ShiftRight),
-        min_args: 2,
-        max_args: 2,
-    },
-    FunctionRegistryEntry {
         name: "in",
         func: BuiltinFunc::Scalar(Func::In),
         min_args: 2,

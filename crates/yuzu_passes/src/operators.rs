@@ -25,7 +25,31 @@ pub(crate) const REM: Operator = Operator {
     name: "modulo",
 };
 
-const OPERATORS: &[Operator] = &[REM];
+/// `**`.
+pub(crate) const POW: Operator = Operator {
+    op: "yz.pow",
+    spelling: "**",
+    module: "yuzu.std.ops",
+    name: "pow",
+};
+
+/// `<<`.
+pub(crate) const SHL: Operator = Operator {
+    op: "yz.shl",
+    spelling: "<<",
+    module: "yuzu.std.ops",
+    name: "shift_left",
+};
+
+/// `>>`.
+pub(crate) const SHR: Operator = Operator {
+    op: "yz.shr",
+    spelling: ">>",
+    module: "yuzu.std.ops",
+    name: "shift_right",
+};
+
+const OPERATORS: &[Operator] = &[REM, POW, SHL, SHR];
 
 impl Operator {
     /// The operator an op is, when it is one the library implements.

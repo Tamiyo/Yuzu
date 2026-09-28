@@ -221,6 +221,63 @@ mlir::OpFoldResult RemOp::fold(FoldAdaptor adaptor) {
       [](double lhs, double rhs) { return std::fmod(lhs, rhs); });
 }
 
+mlir::OpFoldResult PowOp::fold(FoldAdaptor adaptor) {
+  return foldNumericBinary(
+      adaptor.getLhs(), adaptor.getRhs(),
+      [](int64_t base, int64_t exponent) -> std::optional<int64_t> {
+        if (exponent < 0)
+          return std::nullopt;
+        int64_t result = 1;
+        for (int64_t step = 0; step < exponent; ++step)
+          if (llvm::MulOverflow(result, base, result))
+            return std::nullopt;
+        return result;
+      },
+      [](double base, double exponent) { return std::pow(base, exponent); });
+}
+
+// A shift by a negative count or by the width or more is not defined the
+// same way everywhere, so only a count the engine agrees on folds.
+static bool isShiftCount(int64_t count) { return count >= 0 && count < 64; }
+
+static mlir::OpFoldResult
+foldIntegerBinary(mlir::Attribute lhs, mlir::Attribute rhs,
+                  std::optional<int64_t> (*ints)(int64_t, int64_t)) {
+  auto lhsInt = llvm::dyn_cast_if_present<mlir::IntegerAttr>(lhs);
+  auto rhsInt = llvm::dyn_cast_if_present<mlir::IntegerAttr>(rhs);
+  if (!lhsInt || !rhsInt)
+    return {};
+  std::optional<int64_t> folded = ints(lhsInt.getInt(), rhsInt.getInt());
+  if (!folded)
+    return {};
+  return mlir::IntegerAttr::get(lhsInt.getType(), *folded);
+}
+
+mlir::OpFoldResult ShlOp::fold(FoldAdaptor adaptor) {
+  return foldIntegerBinary(
+      adaptor.getLhs(), adaptor.getRhs(),
+      [](int64_t value, int64_t count) -> std::optional<int64_t> {
+        if (!isShiftCount(count))
+          return std::nullopt;
+        auto shifted = static_cast<int64_t>(static_cast<uint64_t>(value)
+                                            << count);
+        // A bit shifted out, or into the sign, is overflow.
+        if ((shifted >> count) != value)
+          return std::nullopt;
+        return shifted;
+      });
+}
+
+mlir::OpFoldResult ShrOp::fold(FoldAdaptor adaptor) {
+  return foldIntegerBinary(
+      adaptor.getLhs(), adaptor.getRhs(),
+      [](int64_t value, int64_t count) -> std::optional<int64_t> {
+        if (!isShiftCount(count))
+          return std::nullopt;
+        return value >> count;
+      });
+}
+
 mlir::OpFoldResult NegOp::fold(FoldAdaptor adaptor) {
   if (auto integer =
           llvm::dyn_cast_if_present<mlir::IntegerAttr>(adaptor.getValue())) {

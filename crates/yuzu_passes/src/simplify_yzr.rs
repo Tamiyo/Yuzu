@@ -374,4 +374,39 @@ from t
             "#]],
         );
     }
+
+    #[test]
+    fn a_shift_or_power_folds_only_when_exact() {
+        check_simplified(
+            r#"
+struct Row { a: int64 }
+table t = Row
+
+from t
+|> select 1 << 2 as four, -8 >> 1 as half, 2 ** 3 as eight, 1 << 63 as sign, 2 ** -1 as inverse, 2 ** 63 as over
+"#,
+            expect![[r#"
+                module {
+                  yz.struct @Row ["a"] : [!yz.int64]
+                  %0 = yzr.table @t : !yz.struct<@Row>
+                  yz.struct @row ["four", "half", "eight", "sign", "inverse", "over"] : [!yz.int64, !yz.int64, !yz.int64, !yz.int64, !yz.int64, !yz.int64]
+                  %1 = yzr.project %0 {
+                  ^bb0(%arg0: !yz.int64):
+                    %2 = yz.constant_int -1
+                    %3 = yz.constant_int 63
+                    %4 = yz.constant_int 1
+                    %5 = yz.constant_int 2
+                    %6 = yz.constant_int 4
+                    %7 = yz.constant_int -4
+                    %8 = yz.constant_int 8
+                    %9 = yz.shl %4, %3 : !yz.int64, !yz.int64 -> !yz.int64
+                    %10 = yz.pow %5, %2 : !yz.int64, !yz.int64 -> !yz.int64
+                    %11 = yz.pow %5, %3 : !yz.int64, !yz.int64 -> !yz.int64
+                    yzr.yield %6, %7, %8, %9, %10, %11 : !yz.int64, !yz.int64, !yz.int64, !yz.int64, !yz.int64, !yz.int64
+                  } : !yz.struct<@Row> -> !yz.struct<@row>
+                  yzr.output %1 : !yz.struct<@row>
+                }
+            "#]],
+        );
+    }
 }

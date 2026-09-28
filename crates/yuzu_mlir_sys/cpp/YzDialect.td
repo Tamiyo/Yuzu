@@ -118,6 +118,10 @@ def Yz_NumericType : Type<
           "::yuzu::yzl::UnresolvedType>($_self)">,
     "numeric or !yzl.unresolved">;
 
+def Yz_IntegerType : Type<
+    CPred<"::llvm::isa<::yuzu::yz::Int64Type, ::yuzu::yzl::UnresolvedType>($_self)">,
+    "!yz.int64 or !yzl.unresolved">;
+
 def Yz_ScalarOrUnresolvedType : Type<
     CPred<"::llvm::isa<::yuzu::yz::Int64Type, ::yuzu::yz::Float64Type, "
           "::yuzu::yz::BoolType, ::yuzu::yz::StrType, ::yuzu::yzl::UnresolvedType>"
@@ -162,6 +166,26 @@ def Yz_DivOp : Yz_ArithBinaryOp<"div"> {
 
 def Yz_RemOp : Yz_ArithBinaryOp<"rem"> {
   let summary = "remainder; never folds a zero divisor";
+}
+
+def Yz_PowOp : Yz_ArithBinaryOp<"pow"> {
+  let summary = "exponentiation; never folds a negative integer exponent";
+}
+
+class Yz_ShiftOp<string mnemonic> : Yz_Op<mnemonic, [Pure]> {
+  let arguments = (ins Yz_IntegerType:$lhs, Yz_IntegerType:$rhs);
+  let results = (outs Yz_IntegerType:$result);
+  let assemblyFormat =
+      "$lhs `,` $rhs `:` type($lhs) `,` type($rhs) `->` type($result) attr-dict";
+  let hasFolder = 1;
+}
+
+def Yz_ShlOp : Yz_ShiftOp<"shl"> {
+  let summary = "shift left; never folds a shift that loses bits";
+}
+
+def Yz_ShrOp : Yz_ShiftOp<"shr"> {
+  let summary = "arithmetic shift right";
 }
 
 def Yz_NegOp : Yz_Op<"neg", [Pure]> {

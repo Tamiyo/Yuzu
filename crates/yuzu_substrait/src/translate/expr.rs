@@ -112,8 +112,11 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
             }
             // `legalize_operators` puts the library's implementation in its
             // place, and reports when there is none.
-            YzOp::Rem(_) => {
-                self.report(op, "`%` reached the translation without an implementation");
+            YzOp::Rem(_) | YzOp::Pow(_) | YzOp::Shl(_) | YzOp::Shr(_) => {
+                self.report(
+                    op,
+                    "an operator reached the translation without an implementation",
+                );
                 None
             }
             // Declarations and terminators are not values.

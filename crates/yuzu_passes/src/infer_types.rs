@@ -442,11 +442,26 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
 
         let boolean = Term::Concrete(BoolType::get(self.context));
         match op.as_yz() {
-            Some(YzOp::Add(_) | YzOp::Sub(_) | YzOp::Mul(_) | YzOp::Div(_) | YzOp::Rem(_)) => {
+            Some(
+                YzOp::Add(_)
+                | YzOp::Sub(_)
+                | YzOp::Mul(_)
+                | YzOp::Div(_)
+                | YzOp::Rem(_)
+                | YzOp::Pow(_),
+            ) => {
                 let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
                 let out = self.term_of(op.first_result());
                 self.unify(op, lhs, rhs);
                 self.unify(op, lhs, out);
+            }
+            Some(YzOp::Shl(_) | YzOp::Shr(_)) => {
+                let int64 = Term::Concrete(Int64Type::get(self.context));
+                let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
+                let out = self.term_of(op.first_result());
+                self.unify(op, lhs, int64);
+                self.unify(op, rhs, int64);
+                self.unify(op, out, int64);
             }
             Some(YzOp::Neg(_)) => {
                 let value = self.operand_term(op, 0);
@@ -595,17 +610,6 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
                 self.unify(op, Term::List(inner), rhs);
                 self.unify(op, lhs, Term::Var(inner));
                 self.unify(op, out, boolean);
-            }
-            BuiltinFunc::Scalar(Func::Power) => {
-                let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
-                self.unify(op, lhs, rhs);
-                self.unify(op, lhs, out);
-            }
-            BuiltinFunc::Scalar(Func::ShiftLeft | Func::ShiftRight) => {
-                let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
-                self.unify(op, lhs, int64);
-                self.unify(op, rhs, int64);
-                self.unify(op, out, int64);
             }
             BuiltinFunc::Scalar(_) => {}
         }

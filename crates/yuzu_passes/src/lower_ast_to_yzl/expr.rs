@@ -214,12 +214,17 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             Some(BinOp::Lte) => cmp(CmpPredicate::LessOrEqual),
             Some(BinOp::Gt) => cmp(CmpPredicate::Greater),
             Some(BinOp::Gte) => cmp(CmpPredicate::GreaterOrEqual),
-            Some(BinOp::Pow) => return self.operator(block, binary, "pow", &[lhs, rhs], loc),
+            Some(BinOp::Pow) => {
+                self.symbols.refer_operator(&operators::POW);
+                yz::pow(self.context, var, lhs, rhs, loc).into()
+            }
             Some(BinOp::ShiftLeft) => {
-                return self.operator(block, binary, "shift_left", &[lhs, rhs], loc);
+                self.symbols.refer_operator(&operators::SHL);
+                yz::shl(self.context, var, lhs, rhs, loc).into()
             }
             Some(BinOp::ShiftRight) => {
-                return self.operator(block, binary, "shift_right", &[lhs, rhs], loc);
+                self.symbols.refer_operator(&operators::SHR);
+                yz::shr(self.context, var, lhs, rhs, loc).into()
             }
             Some(BinOp::In) => return self.operator(block, binary, "in", &[lhs, rhs], loc),
             Some(BinOp::NotIn) => {
@@ -619,65 +624,26 @@ from t
     }
 
     #[test]
-    fn an_operator_and_its_name_resolve_together() {
-        expect![[r#"
-            module {
-              yzl.struct @Row ["a"] : [!yz.int64] {sym_visibility = "private"}
-              yzl.table @t of @Row {sym_visibility = "private"}
-              yzl.fn @shift_left params ["x", "y"] (!yz.int64, !yz.int64) -> !yz.int64 {
-              ^bb0(%arg0: !yzl.unresolved, %arg1: !yzl.unresolved):
-                %2 = yzl.local "x" param
-                yzl.store %2, %arg0 : !yzl.unresolved
-                %3 = yzl.local "y" param
-                yzl.store %3, %arg1 : !yzl.unresolved
-                %4 = yzl.load %2 : !yzl.unresolved
-                %5 = yzl.load %3 : !yzl.unresolved
-                %6 = yz.add %4, %5 : !yzl.unresolved, !yzl.unresolved -> !yzl.unresolved
-                yzl.return %6 : !yzl.unresolved
-              } {sym_visibility = "private"}
-              %0 = yzl.from @t
-              %1 = yzl.select %0 as ["named", "operator"] {
-              ^bb0(%arg0: !yzl.unresolved):
-                %2 = yz.constant_int 2
-                %3 = yzl.call @shift_left(%arg0, %2) : (!yzl.unresolved, !yz.int64) -> !yzl.unresolved {callee_source = "fn"}
-                %4 = yz.constant_int 2
-                %5 = yzl.call @shift_left(%arg0, %4) : (!yzl.unresolved, !yz.int64) -> !yzl.unresolved {callee_source = "fn"}
-                yzl.yield %3, %5 : !yzl.unresolved, !yzl.unresolved
-              }
-              yzl.output %1
-            }
-        "#]]
-        .assert_eq(&lowered(
-            r#"
-struct Row { a: int64 }
-table t = Row
-
-def shift_left(x: int64, y: int64) -> int64 { return x + y }
-
-from t
-|> select shift_left(a, 2) as named, a << 2 as operator
-"#,
-        ));
-    }
-
-    #[test]
-    fn a_value_does_not_stand_for_an_operator() {
+    fn an_operator_is_its_op_whatever_its_name_is_bound_to() {
         let module = lowered(
             r#"
 struct Row { a: int64 }
 table t = Row
 
+def shift_left(x: int64, y: int64) -> int64 { return x + y }
 let pow = 2
 
 from t
-|> select a ** 2 as p
+|> select shift_left(a, 2) as named, a << 2 as shifted, a ** 2 as squared
 "#,
         );
-        assert!(
-            module.contains(r#"yzl.call @pow(%arg0, %2)"#)
-                && module.contains(r#"callee_source = "builtin""#),
-            "the operator still reaches the builtin:\n{module}"
+        assert_eq!(
+            module.matches("yzl.call @shift_left(").count(),
+            1,
+            "{module}"
         );
+        assert!(module.contains("yz.shl %arg0"), "{module}");
+        assert!(module.contains("yz.pow %arg0"), "{module}");
     }
 
     #[test]

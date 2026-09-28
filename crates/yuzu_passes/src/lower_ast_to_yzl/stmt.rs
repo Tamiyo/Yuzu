@@ -895,12 +895,18 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                     continue;
                 };
 
-                if self.symbols.trait_symbol(name).is_none() {
-                    self.report(&trait_ref, &format!("unknown trait `{name}`"));
-                }
+                // A bound names the trait's symbol, the one its `impl`s are
+                // recorded under: in a module the two are not spelled alike.
+                let trait_ = match self.symbols.trait_symbol(name) {
+                    Some(symbol) => symbol,
+                    None => {
+                        self.report(&trait_ref, &format!("unknown trait `{name}`"));
+                        name
+                    }
+                };
 
                 subjects.push(subject);
-                traits.push(name);
+                traits.push(trait_);
             }
         }
 

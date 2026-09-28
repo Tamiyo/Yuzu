@@ -110,7 +110,12 @@ fn plan_through_mlir(
                 println!("=== yzr ===");
                 print!("{}", module.as_operation());
             }
+        });
+        if has_errors(diagnostics) {
+            return None;
+        }
 
+        yuzu_mlir::diagnostics::capture(context, sources, diagnostics, || {
             yuzu_substrait::translate(context, &module)
         })
         .filter(|_| !has_errors(diagnostics))

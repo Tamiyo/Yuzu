@@ -20,8 +20,6 @@ pub(crate) fn function_target(func: Func) -> Option<(&'static str, &'static str)
         Func::Subtract => (ARITHMETIC_URN, "subtract"),
         Func::Multiply => (ARITHMETIC_URN, "multiply"),
         Func::Divide => (ARITHMETIC_URN, "divide"),
-        Func::ShiftLeft => (ARITHMETIC_URN, "shift_left"),
-        Func::ShiftRight => (ARITHMETIC_URN, "shift_right"),
         Func::Negate => (ARITHMETIC_URN, "negate"),
         Func::Equal => (COMPARISON_URN, "equal"),
         Func::NotEqual => (COMPARISON_URN, "not_equal"),
@@ -32,7 +30,7 @@ pub(crate) fn function_target(func: Func) -> Option<(&'static str, &'static str)
         Func::And => (BOOLEAN_URN, "and"),
         Func::Or => (BOOLEAN_URN, "or"),
         Func::Not => (BOOLEAN_URN, "not"),
-        Func::Power | Func::In => return None,
+        Func::In => return None,
     };
     Some(target)
 }

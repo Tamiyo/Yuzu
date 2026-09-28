@@ -151,7 +151,7 @@ pub(crate) mod test_support {
             None,
         );
 
-        let plan = yuzu_mlir::diagnostics::capture(&context, &sources, &mut diagnostics, || {
+        yuzu_mlir::diagnostics::capture(&context, &sources, &mut diagnostics, || {
             yuzu_passes::check_mutability(&module);
             yuzu_passes::promote_locals(&context, &mut module);
             yuzu_passes::infer_types(&context, &mut module, &yuzu_types::Builtins);
@@ -160,8 +160,14 @@ pub(crate) mod test_support {
             yuzu_passes::lower_yzl_to_yzr(&context, &mut module);
             yuzu_passes::simplify_yzr(&context, &mut module);
             yuzu_passes::legalize_operators(&context, &mut module);
-            super::translate(&context, &module)
         });
+        let plan = if diagnostics.diagnostics().is_empty() {
+            yuzu_mlir::diagnostics::capture(&context, &sources, &mut diagnostics, || {
+                super::translate(&context, &module)
+            })
+        } else {
+            None
+        };
 
         let printer = DiagnosticPrinter::new(&sources);
         let reported: Vec<String> = diagnostics
@@ -449,7 +455,7 @@ mod tests {
         check_error(
             &format!("{TABLE}from t |> select a ** 2 as p"),
             expect![[r#"
-                error: `**` is not supported by the datafusion target
+                error: `**` has no implementation for this engine
                  --> test.yz:3:18
                   |
                 3 | from t |> select a ** 2 as p

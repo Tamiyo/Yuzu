@@ -410,18 +410,20 @@ struct Row { a: int64 }
 table t = Row
 
 from t
-|> select pow(a, 2) as p
+|> select a in [1, 2] as p
 "#,
             expect![[r#"
                 module {
                   yz.struct @Row ["a"] : [!yz.int64]
                   %0 = yzr.table @t : !yz.struct<@Row>
-                  yz.struct @row ["p"] : [!yz.int64]
+                  yz.struct @row ["p"] : [!yz.bool]
                   %1 = yzr.project %0 {
                   ^bb0(%arg0: !yz.int64):
-                    %2 = yz.constant_int 2
-                    %3 = yz.call @pow(%arg0, %2) : (!yz.int64, !yz.int64) -> !yz.int64
-                    yzr.yield %3 : !yz.int64
+                    %2 = yz.constant_int 1
+                    %3 = yz.constant_int 2
+                    %4 = yz.list[%2, %3] : (!yz.int64, !yz.int64) -> !yz.list<!yz.int64>
+                    %5 = yz.call @in(%arg0, %4) : (!yz.int64, !yz.list<!yz.int64>) -> !yz.bool
+                    yzr.yield %5 : !yz.bool
                   } : !yz.struct<@Row> -> !yz.struct<@row>
                   yzr.output %1 : !yz.struct<@row>
                 }

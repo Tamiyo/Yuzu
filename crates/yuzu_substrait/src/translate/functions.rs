@@ -25,9 +25,6 @@ pub(crate) fn of_predicate(predicate: CmpPredicate) -> Func {
 /// call, the way Substrait spells it.
 pub(crate) fn of_builtin(callee: &str) -> Option<Func> {
     Some(match callee {
-        "pow" => Func::Power,
-        "shift_left" => Func::ShiftLeft,
-        "shift_right" => Func::ShiftRight,
         "in" => Func::In,
         _ => return None,
     })
@@ -69,11 +66,9 @@ pub(crate) fn of_aggregate(name: &str) -> Aggregate {
         // other aggregate takes them all.
         invocation: match func {
             AggFunc::CountDistinct => AggregationInvocation::Distinct,
-            AggFunc::Count
-            | AggFunc::Sum
-            | AggFunc::Min
-            | AggFunc::Max
-            | AggFunc::Avg => AggregationInvocation::All,
+            AggFunc::Count | AggFunc::Sum | AggFunc::Min | AggFunc::Max | AggFunc::Avg => {
+                AggregationInvocation::All
+            }
         },
     }
 }
