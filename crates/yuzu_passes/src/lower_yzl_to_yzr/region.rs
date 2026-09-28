@@ -120,7 +120,9 @@ impl<'c> YzlToYzr<'c, '_> {
             };
 
             let name = call.callee().value();
-            let column = if let Some(column) = distinct.get(&(name, arguments.clone())).copied() { column } else {
+            let column = if let Some(column) = distinct.get(&(name, arguments.clone())).copied() {
+                column
+            } else {
                 self.convert_expression(op, body, &mut row_values, &mut discard);
                 let Some(&value) = row_values.get(&result.id()) else {
                     continue;

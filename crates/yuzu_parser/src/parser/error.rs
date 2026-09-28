@@ -44,9 +44,7 @@ impl From<ParseError> for Diagnostic {
                 let message = if expected.len() == 1 {
                     format!("expected {expected_description}, found {description}")
                 } else {
-                    format!(
-                        "expected one of {expected_description}, found {description}"
-                    )
+                    format!("expected one of {expected_description}, found {description}")
                 };
 
                 DiagnosticBuilder::error(span, message)

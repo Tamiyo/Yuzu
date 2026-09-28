@@ -110,13 +110,17 @@ impl<'c> AstToYzl<'c, '_> {
 
         // An imported struct is held under the module that declared it,
         // whatever an `as` renamed it to here.
-        let row = if let Some(struct_name) = self.read_ident(decl.struct_name()) { if let Some(symbol) = self.symbols.struct_symbol(struct_name) { symbol } else {
-            debug_assert!(
-                self.diagnostics.has_errors(),
-                "`{struct_name}` passed the hoist as a struct and is not one now"
-            );
-            return;
-        } } else {
+        let row = if let Some(struct_name) = self.read_ident(decl.struct_name()) {
+            if let Some(symbol) = self.symbols.struct_symbol(struct_name) {
+                symbol
+            } else {
+                debug_assert!(
+                    self.diagnostics.has_errors(),
+                    "`{struct_name}` passed the hoist as a struct and is not one now"
+                );
+                return;
+            }
+        } else {
             let symbol = self
                 .symbols
                 .symbol_here(self.symbols.intern(&format!("{name}_row")));
@@ -199,7 +203,9 @@ impl<'c> AstToYzl<'c, '_> {
                 continue;
             };
 
-            let ty = if let Some(ty) = param.ty() { self.read_type_annotation(ty) } else {
+            let ty = if let Some(ty) = param.ty() {
+                self.read_type_annotation(ty)
+            } else {
                 self.report(&param, "parameter is missing its type");
                 has_error = true;
                 continue;
@@ -344,12 +350,16 @@ impl<'c> AstToYzl<'c, '_> {
             return;
         };
 
-        let trait_name = if let Some(symbol) = self.symbols.trait_symbol(trait_name) { symbol } else {
+        let trait_name = if let Some(symbol) = self.symbols.trait_symbol(trait_name) {
+            symbol
+        } else {
             self.report(decl, &format!("unknown trait `{trait_name}`"));
             trait_name
         };
 
-        let target = if let Some(symbol) = self.symbols.struct_symbol(target) { symbol } else {
+        let target = if let Some(symbol) = self.symbols.struct_symbol(target) {
+            symbol
+        } else {
             if types::scalar(self.context, target).is_none() {
                 self.report(decl, &format!("unknown type `{target}`"));
             }
@@ -643,7 +653,9 @@ impl<'c> AstToYzl<'c, '_> {
 
             // The struct may be imported, and an import names where it was
             // written rather than repeating it.
-            if let Some(BindingKind::Struct { fields, .. }) = self.symbols.kind(declared) { Row::from(fields.clone()) } else {
+            if let Some(BindingKind::Struct { fields, .. }) = self.symbols.kind(declared) {
+                Row::from(fields.clone())
+            } else {
                 self.report(decl, &format!("`{declared}` is not a struct"));
                 return;
             }
@@ -879,7 +891,9 @@ impl<'c> AstToYzl<'c, '_> {
 
                 // A bound names the trait's symbol, the one its `impl`s are
                 // recorded under: in a module the two are not spelled alike.
-                let trait_ = if let Some(symbol) = self.symbols.trait_symbol(name) { symbol } else {
+                let trait_ = if let Some(symbol) = self.symbols.trait_symbol(name) {
+                    symbol
+                } else {
                     self.report(&trait_ref, &format!("unknown trait `{name}`"));
                     name
                 };

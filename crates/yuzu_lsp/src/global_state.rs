@@ -64,7 +64,9 @@ impl GlobalState<'_> {
         self.connection
             .sender
             .send(message)
-            .map_err(|_| RunError::disconnected())
+            // A send fails only when the client is gone; the error holds
+            // nothing but the unsent message.
+            .map_err(|_unsent| RunError::disconnected())
     }
 
     pub(crate) fn log_error(&self, message: String) -> Result<(), RunError> {

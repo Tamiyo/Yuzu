@@ -93,18 +93,18 @@ impl From<HlTag> for Highlight {
 impl BitOr<HlMod> for HlTag {
     type Output = Highlight;
 
-    fn bitor(self, m: HlMod) -> Highlight {
-        Highlight::from(self) | m
+    fn bitor(self, rhs: HlMod) -> Highlight {
+        Highlight::from(self) | rhs
     }
 }
 
 impl BitOr<HlMod> for Highlight {
     type Output = Highlight;
 
-    fn bitor(self, m: HlMod) -> Highlight {
+    fn bitor(self, rhs: HlMod) -> Highlight {
         Highlight {
             tag: self.tag,
-            mods: HlMods(self.mods.0 | m.mask()),
+            mods: HlMods(self.mods.0 | rhs.mask()),
         }
     }
 }

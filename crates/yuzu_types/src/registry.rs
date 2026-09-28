@@ -1,10 +1,11 @@
 use crate::{AggFunc, BuiltinFunc, Func};
 
-/// A function the language offers under a name. Validation reads the metadata
-/// here — the builtin's kind and argument-count range — rather than matching
-/// on the function itself, so new entries extend the language without touching
-/// the checks.
-#[derive(Clone, Copy)]
+/// A function the language offers under a name.
+///
+/// Validation reads the metadata here — the builtin's kind and argument-count
+/// range — rather than matching on the function itself, so new entries extend
+/// the language without touching the checks.
+#[derive(Clone, Copy, Debug)]
 pub struct FunctionRegistryEntry {
     pub name: &'static str,
     pub func: BuiltinFunc,
@@ -23,6 +24,7 @@ pub trait FunctionRegistry {
     }
 }
 
+#[derive(Debug)]
 pub struct Builtins;
 
 const BUILTINS: &[FunctionRegistryEntry] = &[
@@ -53,6 +55,7 @@ impl FunctionRegistry for Builtins {
 }
 
 /// Registries tried in order; the first entry for a name or function wins.
+#[derive(Debug)]
 pub struct Chain {
     entries: Vec<FunctionRegistryEntry>,
 }

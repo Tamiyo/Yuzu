@@ -35,6 +35,11 @@ impl CmpPredicate {
 
 impl CmpOp<'_, '_> {
     /// Which comparison this asks for. Stands in for the generated accessor.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the op has no `predicate` string attribute, or the attribute
+    /// holds a spelling that is not a comparison.
     #[must_use]
     pub fn predicate(&self) -> CmpPredicate {
         let attribute = self

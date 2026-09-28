@@ -98,11 +98,12 @@ impl Library {
     /// cannot cross threads, so each thread loads its own.
     pub(crate) fn for_thread(engine: Engine) -> Rc<Self> {
         LIBRARIES.with(|libraries| {
-            libraries
-                .borrow_mut()
-                .entry(engine)
-                .or_insert_with(|| Rc::new(Self::load(engine)))
-                .clone()
+            Rc::clone(
+                libraries
+                    .borrow_mut()
+                    .entry(engine)
+                    .or_insert_with(|| Rc::new(Self::load(engine))),
+            )
         })
     }
 
@@ -200,6 +201,7 @@ fn trees() -> &'static HashMap<&'static str, GreenNode> {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::fmt::Write;
 
     use melior::ir::operation::OperationLike;
     use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
@@ -218,10 +220,10 @@ mod tests {
 
     #[test]
     fn the_whole_library_lowers_without_diagnostics() {
-        let imports: String = MODULES
-            .iter()
-            .map(|module| format!("import {}\n", module.path))
-            .collect();
+        let imports = MODULES.iter().fold(String::new(), |mut imports, module| {
+            writeln!(imports, "import {}", module.path).expect("writing to a String cannot fail");
+            imports
+        });
         let mut sources = SourceMap::new();
         let mut diagnostics = DiagnosticsEngine::new();
         let entry = sources.add("main.yz".to_string(), imports);

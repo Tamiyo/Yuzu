@@ -8,6 +8,7 @@ use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyfunction, gen_stub_pyme
 
 #[gen_stub_pyclass]
 #[pyclass]
+#[derive(Debug)]
 pub struct CompileOptions {
     #[pyo3(get)]
     pub debug_yzl: bool,

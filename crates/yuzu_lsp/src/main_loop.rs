@@ -29,6 +29,10 @@ use crate::{RunError, handlers};
 ///
 /// When the handshake fails, when the initialize params do not parse, or
 /// when the client goes away without asking the server to shut down.
+///
+/// # Panics
+///
+/// Panics if the initialize result does not serialize, which it always does.
 pub fn run(connection: &Connection) -> Result<(), RunError> {
     let (id, params) = connection.initialize_start().map_err(RunError::protocol)?;
     let params: InitializeParams =

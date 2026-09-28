@@ -36,7 +36,7 @@ impl<'c> YzlToYzr<'c, '_> {
                     return;
                 };
 
-                if let Some(lowered) = self.convert_call(op, &call, &operands) {
+                if let Some(lowered) = self.convert_call(op, call, &operands) {
                     let appended = body.append_operation(lowered);
                     values.insert(op.first_result().id(), appended.first_result());
                 }
@@ -81,7 +81,7 @@ impl<'c> YzlToYzr<'c, '_> {
                     rewriter.erase_op(op);
                     continue;
                 }
-                Some(YzlOp::Call(call)) => self.convert_call(op, &call, &operands),
+                Some(YzlOp::Call(call)) => self.convert_call(op, call, &operands),
                 Some(YzlOp::List(_)) => self.convert_list(op, &operands),
                 Some(_) => {
                     self.report_unlowered(op);
@@ -105,7 +105,7 @@ impl<'c> YzlToYzr<'c, '_> {
     fn convert_call(
         &self,
         op: OperationRef<'c, '_>,
-        call: &CallOp<'c, '_>,
+        call: CallOp<'c, '_>,
         operands: &[Value<'c, '_>],
     ) -> Option<Operation<'c>> {
         let callee = call.callee().value();

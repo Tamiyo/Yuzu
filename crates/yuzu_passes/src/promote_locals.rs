@@ -5,6 +5,12 @@ use melior::Context;
 use melior::ir::Module;
 use melior::pass::transform;
 
+/// Promotes each local variable's place to the SSA values stored to it.
+///
+/// # Panics
+///
+/// Panics if `mem2reg` fails, which it does not on any module the lowering
+/// builds.
 pub fn promote_locals(context: &Context, module: &mut Module) {
     let passes = crate::pass_manager(context);
     passes.add_pass(transform::create_mem_2_reg());

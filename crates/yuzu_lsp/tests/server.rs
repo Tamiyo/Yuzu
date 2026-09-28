@@ -13,9 +13,10 @@ use lsp_types::request::{
 use lsp_types::{
     ClientCapabilities, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
     DocumentSymbolParams, DocumentSymbolResponse, GeneralClientCapabilities, InitializeParams,
-    Position, PositionEncodingKind, PublishDiagnosticsParams, Range, SemanticTokensParams,
-    SemanticTokensResult, TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
-    Url, VersionedTextDocumentIdentifier,
+    PartialResultParams, Position, PositionEncodingKind, PublishDiagnosticsParams, Range,
+    SemanticTokensParams, SemanticTokensResult, TextDocumentContentChangeEvent,
+    TextDocumentIdentifier, TextDocumentItem, Url, VersionedTextDocumentIdentifier,
+    WorkDoneProgressParams,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -155,8 +156,8 @@ fn check_diagnostics(params: &PublishDiagnosticsParams, expected: Expect) {
 fn symbols(client: &mut Client) -> Vec<lsp_types::DocumentSymbol> {
     let response = client.request::<DocumentSymbolRequest>(DocumentSymbolParams {
         text_document: document(),
-        work_done_progress_params: Default::default(),
-        partial_result_params: Default::default(),
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
     });
     match response {
         Some(DocumentSymbolResponse::Nested(symbols)) => symbols,
@@ -242,8 +243,8 @@ fn semantic_tokens_are_sent_relative_to_the_one_before() {
 
     let result = client.request::<SemanticTokensFullRequest>(SemanticTokensParams {
         text_document: document(),
-        work_done_progress_params: Default::default(),
-        partial_result_params: Default::default(),
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
     });
     let Some(SemanticTokensResult::Tokens(tokens)) = result else {
         panic!("the server sends the tokens whole");
@@ -356,8 +357,8 @@ fn a_use_goes_to_its_declaration() {
 
     let response = client.request::<GotoDefinition>(lsp_types::GotoDefinitionParams {
         text_document_position_params: position_params(2, 11),
-        work_done_progress_params: Default::default(),
-        partial_result_params: Default::default(),
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
     });
     let Some(lsp_types::GotoDefinitionResponse::Scalar(location)) = response else {
         panic!("the server answers with one location");
@@ -379,7 +380,7 @@ fn a_hover_shows_the_declaration() {
     let hover = client
         .request::<HoverRequest>(lsp_types::HoverParams {
             text_document_position_params: position_params(2, 11),
-            work_done_progress_params: Default::default(),
+            work_done_progress_params: WorkDoneProgressParams::default(),
         })
         .expect("the server hovers a name");
     let lsp_types::HoverContents::Markup(markup) = hover.contents else {
@@ -403,7 +404,7 @@ fn a_let_gets_its_type_as_a_hint() {
         .request::<InlayHintRequest>(lsp_types::InlayHintParams {
             text_document: document(),
             range: Range::new(Position::new(0, 0), Position::new(4, 0)),
-            work_done_progress_params: Default::default(),
+            work_done_progress_params: WorkDoneProgressParams::default(),
         })
         .expect("the server gives hints");
     let rendered: Vec<String> = hints

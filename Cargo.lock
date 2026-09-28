@@ -2350,6 +2350,7 @@ dependencies = [
  "expect-test",
  "melior",
  "rustc-hash 2.1.3",
+ "text-size",
  "yuzu_ast",
  "yuzu_diagnostics",
  "yuzu_mlir",

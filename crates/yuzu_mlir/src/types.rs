@@ -37,9 +37,10 @@ pub fn scalar_name(context: &Context, ty: Type<'_>) -> Option<&'static str> {
         .map(|(spelling, _)| *spelling)
 }
 
-/// How a type is written in source, for a diagnostic: a reader wrote
-/// `int64` and `List[int64]`, not `!yz.int64` and `!yz.list<!yz.int64>`.
-/// The MLIR spelling is the fallback, so a type with no source syntax still
+/// How a type is written in source, for a diagnostic.
+///
+/// A reader wrote `int64` and `List[int64]`, not `!yz.int64` and
+/// `!yz.list<!yz.int64>`. The MLIR spelling is the fallback, so a type with no source syntax still
 /// prints as something.
 #[must_use]
 pub fn name(context: &Context, ty: Type<'_>) -> String {

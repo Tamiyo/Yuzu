@@ -44,7 +44,6 @@ impl DiagnosticsEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diagnostics::Severity;
     use crate::diagnostics::Span;
     use crate::diagnostics::builder::DiagnosticBuilder;
     use crate::source_map::SourceMap;

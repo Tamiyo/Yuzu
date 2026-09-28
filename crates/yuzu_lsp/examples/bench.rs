@@ -3,6 +3,7 @@
 //! to its diagnostics. Run it in release mode:
 //! `cargo run --release -p yuzu_lsp --example bench`.
 
+use std::fmt::Write;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -16,9 +17,9 @@ use lsp_types::request::{
 };
 use lsp_types::{
     ClientCapabilities, DidChangeTextDocumentParams, DidOpenTextDocumentParams, HoverParams,
-    InitializeParams, Position, Range, SemanticTokensParams, TextDocumentContentChangeEvent,
-    TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, Url,
-    VersionedTextDocumentIdentifier,
+    InitializeParams, PartialResultParams, Position, Range, SemanticTokensParams,
+    TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
+    TextDocumentPositionParams, Url, VersionedTextDocumentIdentifier, WorkDoneProgressParams,
 };
 use serde::Serialize;
 
@@ -61,10 +62,12 @@ impl Client {
 fn program(functions: usize) -> String {
     let mut text = String::from("table t = { a: int64, b: str }\nlet cap = 10\n");
     for i in 0..functions {
-        text.push_str(&format!(
+        write!(
+            text,
             "def f{i}(x: int64) -> int64 {{\n    let y = x * {i} + cap\n    return y\n}}\n\
              from t |> where a > {i} |> select f{i}(a) as v{i}\n\n"
-        ));
+        )
+        .expect("writing to a String cannot fail");
     }
     text
 }
@@ -126,8 +129,8 @@ fn main() {
                 SemanticTokensFullRequest::METHOD,
                 SemanticTokensParams {
                     text_document: document(),
-                    work_done_progress_params: Default::default(),
-                    partial_result_params: Default::default(),
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                    partial_result_params: PartialResultParams::default(),
                 },
             );
             keystrokes.push(start.elapsed());
@@ -144,7 +147,7 @@ fn main() {
                         text_document: document(),
                         position: Position::new(4, 11),
                     },
-                    work_done_progress_params: Default::default(),
+                    work_done_progress_params: WorkDoneProgressParams::default(),
                 },
             );
             hovers.push(start.elapsed());

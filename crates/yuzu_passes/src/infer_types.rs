@@ -83,7 +83,7 @@ impl<'c> Declarations<'c> {
         for op in block.operations() {
             match op.as_yzl() {
                 Some(YzlOp::Fn(function)) => {
-                    if let Some(signature) = parse_signature(&function) {
+                    if let Some(signature) = parse_signature(function) {
                         declared
                             .signatures
                             .insert(function.sym_name().value(), signature);
@@ -732,7 +732,7 @@ fn last_region_op<'c, 'a>(op: OperationRef<'c, 'a>) -> Option<OperationRef<'c, '
     op.regions().next()?.first_block()?.last_operation()
 }
 
-fn parse_signature<'c>(function: &FnOp<'c, '_>) -> Option<Signature<'c>> {
+fn parse_signature<'c>(function: FnOp<'c, '_>) -> Option<Signature<'c>> {
     let signature = FunctionType::try_from(function.signature().value()).ok()?;
     let params = (0..signature.input_count())
         .filter_map(|index| signature.input(index).ok())

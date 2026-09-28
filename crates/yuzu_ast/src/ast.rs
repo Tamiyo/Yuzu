@@ -104,8 +104,9 @@ pub enum Mutability {
     Immutable,
 }
 
-/// How far a declaration's name reaches. `Module` is what `pub(mod)` asks
-/// for: the files of the enclosing module and no further, which is how a
+/// How far a declaration's name reaches.
+///
+/// `Module` is what `pub(mod)` asks for: the files of the enclosing module and no further, which is how a
 /// module keeps a helper its own while its siblings still use it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Visibility {

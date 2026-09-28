@@ -6,6 +6,12 @@ use melior::Context;
 use melior::ir::Module;
 use melior::pass::transform;
 
+/// Runs MLIR's canonicalizer and CSE over the module.
+///
+/// # Panics
+///
+/// Panics if either pass fails, which it does not on any module the lowering
+/// builds.
 pub fn simplify_yzr(context: &Context, module: &mut Module) {
     let passes = crate::pass_manager(context);
     passes.add_pass(transform::create_canonicalizer_pass());

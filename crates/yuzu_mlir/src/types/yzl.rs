@@ -100,6 +100,10 @@ impl<'c> ParamType<'c> {
     }
 
     /// The parameter's name.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the name is not valid UTF-8.
     #[must_use]
     pub fn name(&self) -> &'c str {
         // SAFETY: the name is stored beside the type in the context's uniquer, so it lives as long as `'c`.

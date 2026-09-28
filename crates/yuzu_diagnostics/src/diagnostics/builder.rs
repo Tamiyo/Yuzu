@@ -1,5 +1,6 @@
 use crate::diagnostics::{Diagnostic, Label, LabelStyle, Severity, Span};
 
+#[derive(Debug)]
 pub struct DiagnosticBuilder {
     diagnostic: Diagnostic,
 }
@@ -48,11 +49,13 @@ impl DiagnosticBuilder {
         }
     }
 
+    #[must_use]
     pub fn code(mut self, code: impl Into<String>) -> Self {
         self.diagnostic.code = code.into();
         self
     }
 
+    #[must_use]
     pub fn primary_label(mut self, span: Span, message: impl Into<String>) -> Self {
         self.diagnostic.labels.push(Label {
             style: LabelStyle::Primary,
@@ -62,6 +65,7 @@ impl DiagnosticBuilder {
         self
     }
 
+    #[must_use]
     pub fn label(mut self, span: Span, message: impl Into<String>) -> Self {
         self.diagnostic.labels.push(Label {
             style: LabelStyle::Secondary,
@@ -71,6 +75,7 @@ impl DiagnosticBuilder {
         self
     }
 
+    #[must_use]
     pub fn note(mut self, text: impl Into<String>) -> Self {
         self.diagnostic.notes.push(text.into());
         self

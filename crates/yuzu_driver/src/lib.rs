@@ -10,7 +10,7 @@ use yuzu_diagnostics::{
     source_map::SourceMap,
 };
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct CompileOptions {
     /// Print the module as the frontend lowered it to yzl.
     pub debug_yzl: bool,
@@ -48,6 +48,10 @@ pub fn compile(
 }
 
 /// Compiles a file to a plan, as protobuf bytes.
+///
+/// # Errors
+///
+/// Returns the rendered diagnostics when the program does not compile.
 pub fn compile_to_substrait(
     name: &str,
     source: &str,
@@ -229,7 +233,7 @@ fn read_engine(
     if engine.is_none() {
         let span = yuzu_diagnostics::diagnostics::Span {
             source_id,
-            range: Default::default(),
+            range: text_size::TextRange::default(),
         };
         diagnostics.emit(
             yuzu_diagnostics::diagnostics::builder::DiagnosticBuilder::error(

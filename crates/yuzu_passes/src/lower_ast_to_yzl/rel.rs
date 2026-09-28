@@ -30,7 +30,9 @@ impl<'c> AstToYzl<'c, '_> {
         block: BlockRef<'c, 'a>,
         pipeline: &ast::Pipeline,
     ) -> (Value<'c, 'a>, Row<'c>) {
-        let (mut value, row) = if let Some(from) = pipeline.source() { self.convert_from(block, &from) } else {
+        let (mut value, row) = if let Some(from) = pipeline.source() {
+            self.convert_from(block, &from)
+        } else {
             let hole = self.report_and_hole(
                 block,
                 pipeline,
@@ -286,7 +288,9 @@ impl<'c> AstToYzl<'c, '_> {
         limit: &ast::LimitStage,
     ) -> Value<'c, 'a> {
         let loc = self.location(limit);
-        let count = if let Some(count) = limit.count() { self.int_literal(&count) } else {
+        let count = if let Some(count) = limit.count() {
+            self.int_literal(&count)
+        } else {
             self.reported_by_parser("`limit` is missing its row count");
             0
         };
@@ -638,7 +642,9 @@ impl<'c> AstToYzl<'c, '_> {
 
             names.push(name);
 
-            let value = if let Some(expr) = expr { self.convert_expr(body, &Locals::new(), expr) } else {
+            let value = if let Some(expr) = expr {
+                self.convert_expr(body, &Locals::new(), expr)
+            } else {
                 self.reported_by_parser(&format!("{what} is missing its expression"));
                 self.emit_hole(body, *range, UnresolvedType::get(self.context))
             };

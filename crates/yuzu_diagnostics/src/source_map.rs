@@ -25,9 +25,8 @@ pub struct SourceMap {
 }
 
 impl fmt::Debug for SourceMap {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_list()
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list()
             .entries(self.entries.iter().map(|entry| &entry.name))
             .finish()
     }

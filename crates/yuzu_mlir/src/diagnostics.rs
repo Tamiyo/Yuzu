@@ -1,5 +1,6 @@
-//! MLIR diagnostics folded into Yuzu's engine. `capture` attaches one
-//! handler to the context, so everything MLIR emits inside it — pass errors
+//! MLIR diagnostics folded into Yuzu's engine.
+//!
+//! `capture` attaches one handler to the context, so everything MLIR emits inside it — pass errors
 //! sent through `emit_error`, verifier failures, parse errors — lands in
 //! the engine as span-carrying diagnostics instead of on stderr.
 
@@ -17,6 +18,10 @@ use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
 use yuzu_diagnostics::source_map::SourceMap;
 
 /// Emits an error against a location, into whichever handler is attached.
+///
+/// # Panics
+///
+/// Panics if `message` contains a nul byte.
 pub fn emit_error(location: Location, message: &str) {
     let message = CString::new(message).expect("diagnostic messages have no interior nul");
     // SAFETY: the location belongs to a live context, and the message is nul-terminated and outlives the call.
@@ -34,7 +39,7 @@ pub fn capture<T>(
     f: impl FnOnce() -> T,
 ) -> T {
     let collected = Rc::new(RefCell::new(Vec::new()));
-    let sink = collected.clone();
+    let sink = Rc::clone(&collected);
     let handler = context.attach_diagnostic_handler(move |diagnostic| {
         sink.borrow_mut().push(Reported::of(&diagnostic));
         true
@@ -87,7 +92,7 @@ struct Position {
 impl Position {
     /// `None` for a location naming no place: an unknown one, or a fused one
     /// standing for several.
-    fn of(location: &Location) -> Option<Self> {
+    fn of(location: Location) -> Option<Self> {
         location.is_file_line_col_range().then(|| Self {
             file: location
                 .file_line_col_range_filename()
@@ -107,7 +112,7 @@ impl Reported {
     fn of(diagnostic: &Diagnostic) -> Self {
         Self {
             message: diagnostic.to_string(),
-            position: Position::of(&diagnostic.location()),
+            position: Position::of(diagnostic.location()),
             severity: diagnostic.severity(),
             notes: (0..diagnostic.note_count())
                 .filter_map(|index| diagnostic.note(index).ok())
@@ -141,7 +146,7 @@ impl Reported {
 /// names a file no source was added under.
 #[must_use]
 pub fn span(sources: &SourceMap, location: Location) -> Option<Span> {
-    span_of(sources, Position::of(&location).as_ref())
+    span_of(sources, Position::of(location).as_ref())
 }
 
 /// The span a position names.

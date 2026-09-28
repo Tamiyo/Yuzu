@@ -61,7 +61,10 @@ pub fn translate<'c>(context: &'c Context, module: &Module<'c>) -> Option<Plan> 
         return None;
     };
 
-    let names = columns.iter().map(std::string::ToString::to_string).collect();
+    let names = columns
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
 
     Some(Plan {
         version: Some(version::version_with_producer("yuzu")),

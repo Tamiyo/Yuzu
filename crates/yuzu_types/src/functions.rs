@@ -65,9 +65,11 @@ impl Func {
     }
 }
 
-/// A function the target dialect guarantees. Aggregates are the first kind;
-/// builtin scalars join as a sibling variant, so everything that handles a
-/// builtin dispatches on the kind rather than assuming aggregates.
+/// A function the target dialect guarantees.
+///
+/// Aggregates are the first kind; builtin scalars join as a sibling variant,
+/// so everything that handles a builtin dispatches on the kind rather than
+/// assuming aggregates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BuiltinFunc {
     Aggregate(AggFunc),

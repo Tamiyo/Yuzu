@@ -3,6 +3,7 @@ use std::fmt::Write;
 use crate::diagnostics::{Diagnostic, Label, LabelStyle, Severity};
 use crate::source_map::{SourceId, SourceMap};
 
+#[derive(Debug)]
 pub struct DiagnosticPrinter<'a> {
     sources: &'a SourceMap,
 }
@@ -181,7 +182,6 @@ mod tests {
 
     use super::*;
     use crate::diagnostics::{Span, builder::DiagnosticBuilder};
-    use crate::source_map::{SourceId, SourceMap};
 
     fn span(source: SourceId, range: std::ops::Range<u32>) -> Span {
         Span {

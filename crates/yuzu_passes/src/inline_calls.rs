@@ -53,7 +53,7 @@ pub fn inline_calls(context: &Context, module: &mut Module) {
         pending.extend(copied);
     }
 
-    discard_declarations(context, &rewriter, module.body());
+    discard_declarations(context, rewriter, module.body());
 }
 
 fn collect_calls<'c, 'a>(block: BlockRef<'c, 'a>, out: &mut Vec<OperationRef<'c, 'a>>) {
@@ -61,7 +61,7 @@ fn collect_calls<'c, 'a>(block: BlockRef<'c, 'a>, out: &mut Vec<OperationRef<'c,
         match op.as_yzl() {
             // An operator's implementation outlives this pass, so what it
             // calls is expanded where it stands.
-            Some(YzlOp::Fn(function)) if implements_operator(&function) => {
+            Some(YzlOp::Fn(function)) if implements_operator(function) => {
                 for region in op.regions() {
                     for inner in region.blocks() {
                         collect_calls(inner, out);
@@ -115,7 +115,7 @@ fn expand<'c, 'a>(
     let (body, types) = match declaration.as_yzl() {
         Some(YzlOp::Fn(function)) => (
             function.body().first_block(),
-            type_arguments(&function, &site, call.location(), callee)?,
+            type_arguments(function, site, call.location(), callee)?,
         ),
         Some(YzlOp::Const(binding)) => (binding.body().first_block(), FxHashMap::default()),
         _ => return error(call.location(), &format!("`{callee}` is not a function")),
@@ -171,8 +171,7 @@ fn expand<'c, 'a>(
                 copied_calls.push(copied);
             }
 
-            if let (Some(result), Some(value)) =
-                (op.try_first_result(), copied.try_first_result())
+            if let (Some(result), Some(value)) = (op.try_first_result(), copied.try_first_result())
             {
                 values.insert(result.id(), value);
             }
@@ -241,8 +240,8 @@ pub(crate) fn copy<'c, 'a>(
 }
 
 fn type_arguments<'c>(
-    function: &FnOp<'c, '_>,
-    site: &CallOp<'c, '_>,
+    function: FnOp<'c, '_>,
+    site: CallOp<'c, '_>,
     location: Location<'c>,
     callee: &str,
 ) -> Option<FxHashMap<&'c str, Type<'c>>> {
@@ -281,13 +280,13 @@ pub(crate) fn substitute<'c>(ty: Type<'c>, types: &FxHashMap<&str, Type<'c>>) ->
 /// An external function stays too: it has no body to expand, and the yzr
 /// lowering reads the engine's name from it. So does an operator's
 /// implementation, which `legalize_operators` copies in after the folds.
-fn discard_declarations(context: &Context, rewriter: &RewriterBase, block: BlockRef) {
+fn discard_declarations(context: &Context, rewriter: RewriterBase, block: BlockRef) {
     let mut declarations = Vec::new();
     for op in block.operations() {
         let discard = match op.as_yzl() {
-            Some(YzlOp::Fn(function)) => !function.is_external() && !implements_operator(&function),
+            Some(YzlOp::Fn(function)) => !function.is_external() && !implements_operator(function),
             Some(YzlOp::Trait(_) | YzlOp::Impl(_)) => true,
-            Some(YzlOp::Const(binding)) => !binds_query(context, &binding),
+            Some(YzlOp::Const(binding)) => !binds_query(context, binding),
             _ => false,
         };
         if discard {
@@ -300,11 +299,11 @@ fn discard_declarations(context: &Context, rewriter: &RewriterBase, block: Block
     }
 }
 
-fn implements_operator(function: &FnOp) -> bool {
+fn implements_operator(function: FnOp) -> bool {
     Operator::implemented_by(function.sym_name().value()).is_some()
 }
 
-fn binds_query(context: &Context, binding: &ConstOp) -> bool {
+fn binds_query(context: &Context, binding: ConstOp) -> bool {
     binding
         .body()
         .first_block()

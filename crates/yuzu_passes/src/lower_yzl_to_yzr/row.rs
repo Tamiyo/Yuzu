@@ -21,7 +21,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         for op in block.operations() {
             if let Some(YzlOp::Struct(item)) = op.as_yzl() {
                 let name = item.sym_name().value();
-                let fields = struct_fields(&item);
+                let fields = struct_fields(item);
                 self.shapes.entry(fields.clone()).or_insert(name);
                 self.declared.insert(name, fields);
             }

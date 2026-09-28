@@ -1,10 +1,10 @@
 use logos::Logos;
-use std::convert::TryFrom;
 use std::ops::Range as StdRange;
 use text_size::{TextRange, TextSize};
 
 use crate::token_kind::TokenKind;
 
+#[derive(Debug)]
 pub struct Lexer<'a> {
     inner: logos::Lexer<'a, TokenKind>,
 }

@@ -92,10 +92,8 @@ impl<'c, 'a> SymbolTable<'c, 'a> {
 }
 
 impl fmt::Debug for SymbolTable<'_, '_> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("SymbolTable")
-            .finish_non_exhaustive()
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SymbolTable").finish_non_exhaustive()
     }
 }
 

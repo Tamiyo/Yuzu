@@ -456,9 +456,11 @@ pub enum Location {
     Module { base: PathBuf, path: String },
 }
 
-/// Where a file sits, read from the module markers around it: up through
-/// the directories that hold one, the first that does not is where the
-/// program's module paths start. The reverse of [`FsResolver::candidates`].
+/// Where a file sits, read from the module markers around it.
+///
+/// Up through the directories that hold one, the first that does not is
+/// where the program's module paths start. The reverse of
+/// [`FsResolver::candidates`].
 #[must_use]
 pub fn locate(file: &Path) -> Location {
     let directory = file.parent().unwrap_or(Path::new(""));

@@ -21,11 +21,17 @@ impl<'c: 'a, 'a, T: BlockLike<'c, 'a>> BlockExt<'c, 'a> for T {
     }
 
     fn operations(&self) -> impl Iterator<Item = OperationRef<'c, 'a>> {
-        std::iter::successors(self.first_operation(), melior::ir::operation::OperationLike::next_in_block)
+        std::iter::successors(
+            self.first_operation(),
+            melior::ir::operation::OperationLike::next_in_block,
+        )
     }
 
     fn operations_mut(&self) -> impl Iterator<Item = OperationRefMut<'c, 'a>> {
-        std::iter::successors(self.first_operation_mut(), melior::ir::operation::OperationLike::next_in_block_mut)
+        std::iter::successors(
+            self.first_operation_mut(),
+            melior::ir::operation::OperationLike::next_in_block_mut,
+        )
     }
 
     fn last_operation(&self) -> Option<OperationRef<'c, 'a>> {

@@ -130,6 +130,6 @@ fn op_name(op: OperationRef<'_, '_>) -> String {
         .to_string()
 }
 
-fn struct_fields<'c>(item: &StructOp<'c, '_>) -> Row<'c> {
+fn struct_fields<'c>(item: StructOp<'c, '_>) -> Row<'c> {
     item.names().strings().zip(item.types().types()).collect()
 }

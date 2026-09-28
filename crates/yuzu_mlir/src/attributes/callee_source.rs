@@ -40,6 +40,12 @@ impl CalleeSource {
 }
 
 impl CallOp<'_, '_> {
+    /// What the call's name turned out to mean; `None` before resolution stamps it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `callee_source` is not a string attribute, or holds a
+    /// spelling resolution does not write.
     #[must_use]
     pub fn callee_source(&self) -> Option<CalleeSource> {
         let attribute = self.operation().attribute("callee_source").ok()?;

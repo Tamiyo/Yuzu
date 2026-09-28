@@ -1,6 +1,6 @@
 use mlir_sys::{MlirAttribute, MlirContext, MlirLocation, MlirStringRef, MlirType};
 
-// SAFETY: these are the symbols the C++ leaf in `cpp/` exports, with the signatures it declares; `build.rs` links that leaf into this crate.
+// These are the symbols the C++ leaf in `cpp/` exports, with the signatures it declares; `build.rs` links that leaf into this crate.
 unsafe extern "C" {
     fn yzuRegisterAllDialects(ctx: MlirContext);
     pub fn yzuParamTypeGet(ctx: MlirContext, name: MlirStringRef) -> MlirType;

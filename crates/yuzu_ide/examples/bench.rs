@@ -2,6 +2,7 @@
 //! check, and a request on a finished check. Run it in release mode:
 //! `cargo run --release -p yuzu_ide --example bench`.
 
+use std::fmt::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -16,10 +17,12 @@ const FILE: FileId = FileId(0);
 fn program(functions: usize) -> String {
     let mut text = String::from("table t = { a: int64, b: str }\nlet cap = 10\n");
     for i in 0..functions {
-        text.push_str(&format!(
+        write!(
+            text,
             "def f{i}(x: int64) -> int64 {{\n    let y = x * {i} + cap\n    return y\n}}\n\
              from t |> where a > {i} |> select f{i}(a) as v{i}\n\n"
-        ));
+        )
+        .expect("writing to a String cannot fail");
     }
     text
 }

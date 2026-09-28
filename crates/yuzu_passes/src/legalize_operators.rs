@@ -18,6 +18,12 @@ use yuzu_mlir::{ParamType, SymbolTable};
 use crate::inline_calls::copy;
 use crate::operators::{Operator, is_named};
 
+/// Replaces each operator with a copy of the library function that implements it.
+///
+/// # Panics
+///
+/// Panics if canonicalization fails, which it does not on any module the
+/// lowering builds.
 pub fn legalize_operators(context: &Context, module: &mut Module) {
     let rewriter = IrRewriter::new(context);
     let rewriter = rewriter.as_rewriter_base();
@@ -37,11 +43,11 @@ pub fn legalize_operators(context: &Context, module: &mut Module) {
             continue;
         };
 
-        expand(&rewriter, op, implementation, operator);
+        expand(rewriter, op, implementation, operator);
     }
 
     drop(symbols);
-    discard_implementations(&rewriter, module);
+    discard_implementations(rewriter, module);
 
     let passes = crate::pass_manager(context);
     passes.add_pass(transform::create_canonicalizer_pass());
@@ -74,7 +80,7 @@ fn collect_operators<'c, 'a>(
 
 /// Puts a copy of the implementation's body in place of the operator.
 fn expand<'c, 'a>(
-    rewriter: &'a RewriterBase<'c, 'a>,
+    rewriter: RewriterBase<'c, 'a>,
     op: OperationRef<'c, 'a>,
     implementation: OperationRef<'c, '_>,
     operator: &Operator,
@@ -99,7 +105,7 @@ fn expand<'c, 'a>(
     );
 
     let types = type_arguments(body, &arguments);
-    let mut values: FxHashMap<ValueId, Value<'c, 'a>> = body
+    let mut values: FxHashMap<ValueId, Value<'c, '_>> = body
         .arguments()
         .map(|parameter| parameter.id())
         .zip(arguments.iter().copied())
@@ -115,7 +121,7 @@ fn expand<'c, 'a>(
             continue;
         }
 
-        let Some(copied) = copy(rewriter, inner, &values, &types) else {
+        let Some(copied) = copy(&rewriter, inner, &values, &types) else {
             emit_error(
                 op.location(),
                 &format!(
@@ -160,7 +166,7 @@ fn type_arguments<'c>(
         .collect()
 }
 
-fn discard_implementations(rewriter: &RewriterBase, module: &Module) {
+fn discard_implementations(rewriter: RewriterBase, module: &Module) {
     let implementations: Vec<_> = module
         .body()
         .operations()
@@ -244,7 +250,7 @@ mod tests {
         let source = format!("module {{\n{PROJECTION}}}");
         let mut module = Module::parse(&context, &source).expect("the module parses");
         let reported = Rc::new(RefCell::new(Vec::new()));
-        let sink = reported.clone();
+        let sink = Rc::clone(&reported);
         let handler = context.attach_diagnostic_handler(move |diagnostic| {
             sink.borrow_mut().push(diagnostic.to_string());
             true

@@ -26,20 +26,20 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         symbols: &mut SymbolTable<'c, 'a>,
     ) {
         match op.as_yzl() {
-            Some(YzlOp::Struct(item)) => self.convert_struct(op, symbols, &item),
-            Some(YzlOp::From(from)) => self.convert_from(op, symbols, &from),
-            Some(YzlOp::Const(binding)) => self.convert_let(op, symbols, &binding),
-            Some(YzlOp::Where(stage)) => self.convert_where(op, &stage),
-            Some(YzlOp::Select(stage)) => self.convert_select(op, symbols, &stage),
-            Some(YzlOp::Extend(stage)) => self.convert_extend(op, symbols, &stage),
-            Some(YzlOp::Aggregate(stage)) => self.convert_aggregate(op, symbols, &stage),
-            Some(YzlOp::Join(stage)) => self.convert_join(op, symbols, &stage),
-            Some(YzlOp::Limit(stage)) => self.convert_limit(op, &stage),
+            Some(YzlOp::Struct(item)) => self.convert_struct(op, symbols, item),
+            Some(YzlOp::From(from)) => self.convert_from(op, symbols, from),
+            Some(YzlOp::Const(binding)) => self.convert_let(op, symbols, binding),
+            Some(YzlOp::Where(stage)) => self.convert_where(op, stage),
+            Some(YzlOp::Select(stage)) => self.convert_select(op, symbols, stage),
+            Some(YzlOp::Extend(stage)) => self.convert_extend(op, symbols, stage),
+            Some(YzlOp::Aggregate(stage)) => self.convert_aggregate(op, symbols, stage),
+            Some(YzlOp::Join(stage)) => self.convert_join(op, symbols, stage),
+            Some(YzlOp::Limit(stage)) => self.convert_limit(op, stage),
             Some(YzlOp::Alias(_)) => self.convert_alias(op),
             Some(YzlOp::Distinct(_)) => self.convert_distinct(op, symbols),
-            Some(YzlOp::Drop(stage)) => self.convert_drop(op, symbols, &stage),
-            Some(YzlOp::Set(stage)) => self.convert_set(op, symbols, &stage),
-            Some(YzlOp::Rename(stage)) => self.convert_rename(op, symbols, &stage),
+            Some(YzlOp::Drop(stage)) => self.convert_drop(op, symbols, stage),
+            Some(YzlOp::Set(stage)) => self.convert_set(op, symbols, stage),
+            Some(YzlOp::Rename(stage)) => self.convert_rename(op, symbols, stage),
             Some(YzlOp::Output(_)) => self.convert_output(op),
             // `yzr.table` carries the row as its type, so the declaration is
             // not needed.
@@ -50,7 +50,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             Some(YzlOp::Fn(function))
                 if Operator::implemented_by(function.sym_name().value()).is_some() =>
             {
-                self.convert_implementation(op, symbols, &function);
+                self.convert_implementation(op, symbols, function);
             }
             Some(YzlOp::Fn(_) | YzlOp::Trait(_) | YzlOp::Impl(_)) => self.report(
                 op,
@@ -74,7 +74,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         &mut self,
         op: OperationRef<'c, '_>,
         symbols: &mut SymbolTable<'c, 'a>,
-        item: &StructOp<'c, '_>,
+        item: StructOp<'c, '_>,
     ) {
         let name = item.sym_name().value();
         let fields = struct_fields(item);
@@ -98,7 +98,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         &mut self,
         op: OperationRef<'c, '_>,
         symbols: &mut SymbolTable<'c, 'a>,
-        function: &FnOp<'c, '_>,
+        function: FnOp<'c, '_>,
     ) {
         let location = op.location();
         let Ok(signature) = FunctionType::try_from(function.signature().value()) else {
@@ -144,7 +144,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         &mut self,
         op: OperationRef<'c, '_>,
         symbols: &mut SymbolTable<'c, 'a>,
-        from: &FromOp<'c, '_>,
+        from: FromOp<'c, '_>,
     ) {
         let relation = from.source().value();
         if let Some((rows, row)) = self.relation_input(relation, symbols, op.location()) {
@@ -156,7 +156,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         &mut self,
         op: OperationRef<'c, '_>,
         symbols: &mut SymbolTable<'c, 'a>,
-        binding: &ConstOp<'c, '_>,
+        binding: ConstOp<'c, '_>,
     ) {
         let Some(block) = binding.body().first_block() else {
             self.report(op, "`let` has no body to bind");
@@ -180,7 +180,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         }
     }
 
-    fn convert_where(&mut self, op: OperationRef<'c, '_>, stage: &WhereOp<'c, '_>) {
+    fn convert_where(&mut self, op: OperationRef<'c, '_>, stage: WhereOp<'c, '_>) {
         let Some((input, row)) = self.input_stage(op) else {
             return;
         };
@@ -195,7 +195,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         &mut self,
         op: OperationRef<'c, '_>,
         symbols: &mut SymbolTable<'c, 'a>,
-        stage: &SelectOp<'c, '_>,
+        stage: SelectOp<'c, '_>,
     ) {
         let Some((input, row)) = self.input_stage(op) else {
             return;
@@ -211,7 +211,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         &mut self,
         op: OperationRef<'c, '_>,
         symbols: &mut SymbolTable<'c, 'a>,
-        stage: &ExtendOp<'c, '_>,
+        stage: ExtendOp<'c, '_>,
     ) {
         let Some((input, mut row)) = self.input_stage(op) else {
             return;
@@ -231,7 +231,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         &mut self,
         op: OperationRef<'c, '_>,
         symbols: &mut SymbolTable<'c, 'a>,
-        stage: &AggregateOp<'c, '_>,
+        stage: AggregateOp<'c, '_>,
     ) {
         let Some((input, row)) = self.input_stage(op) else {
             return;
@@ -299,7 +299,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         &mut self,
         op: OperationRef<'c, '_>,
         symbols: &mut SymbolTable<'c, 'a>,
-        stage: &JoinOp<'c, '_>,
+        stage: JoinOp<'c, '_>,
     ) {
         let Some((lhs, mut row)) = self.input_stage(op) else {
             return;
@@ -342,7 +342,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         self.record_stage(op, joined.first_result(), row);
     }
 
-    fn convert_limit(&mut self, op: OperationRef<'c, '_>, stage: &LimitOp<'c, '_>) {
+    fn convert_limit(&mut self, op: OperationRef<'c, '_>, stage: LimitOp<'c, '_>) {
         let Some((input, row)) = self.input_stage(op) else {
             return;
         };
@@ -395,7 +395,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         &mut self,
         op: OperationRef<'c, '_>,
         symbols: &mut SymbolTable<'c, 'a>,
-        stage: &DropOp<'c, '_>,
+        stage: DropOp<'c, '_>,
     ) {
         let Some((input, row)) = self.input_stage(op) else {
             return;
@@ -415,7 +415,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         &mut self,
         op: OperationRef<'c, '_>,
         symbols: &mut SymbolTable<'c, 'a>,
-        stage: &SetOp<'c, '_>,
+        stage: SetOp<'c, '_>,
     ) {
         let Some((input, mut row)) = self.input_stage(op) else {
             return;
@@ -443,7 +443,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         &mut self,
         op: OperationRef<'c, '_>,
         symbols: &mut SymbolTable<'c, 'a>,
-        stage: &RenameOp<'c, '_>,
+        stage: RenameOp<'c, '_>,
     ) {
         let Some((input, mut row)) = self.input_stage(op) else {
             return;
@@ -454,7 +454,9 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             .into_iter()
             .flat_map(|columns| columns.indices());
         for (index, name) in columns.zip(stage.to().strings()) {
-            if let Some(column) = row.get_mut(index) { column.0 = name } else {
+            if let Some(column) = row.get_mut(index) {
+                column.0 = name
+            } else {
                 self.report(op, &format!("column {index} is not in the row"));
                 return;
             }
@@ -570,7 +572,9 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                 .find(|(index, (name, _))| name == column && !dropped.contains(index))
                 .map(|(index, _)| index);
 
-            if let Some(index) = found { dropped.push(index) } else {
+            if let Some(index) = found {
+                dropped.push(index)
+            } else {
                 self.report(op, &format!("`{column}` is not in the row"));
                 return None;
             }
