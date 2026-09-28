@@ -11,7 +11,6 @@ use melior::ir::{Module, RegionLike, Type, Value, ValueLike};
 use rustc_hash::FxHashMap;
 use yuzu_diagnostics::diagnostics::Span;
 use yuzu_diagnostics::source_map::SourceMap;
-use yuzu_mlir::attributes::CalleeSource;
 use yuzu_mlir::diagnostics::span;
 use yuzu_mlir::ir::block::BlockExt;
 use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
@@ -125,12 +124,7 @@ impl<'s> IndexReader<'s> {
                 self.read_initializer(op);
                 None
             }
-            Some(YzlOp::Call(call)) => match call.callee_source() {
-                Some(CalleeSource::Builtin) => None,
-                Some(CalleeSource::Fn | CalleeSource::External | CalleeSource::Const) | None => {
-                    symbol(declarations, call.callee().value())
-                }
-            },
+            Some(YzlOp::Call(call)) => symbol(declarations, call.callee().value()),
             Some(YzlOp::From(from)) => symbol(declarations, from.source().value()),
             Some(YzlOp::Join(join)) => symbol(declarations, join.rhs().value()),
             _ => None,

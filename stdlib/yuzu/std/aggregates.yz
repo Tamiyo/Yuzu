@@ -17,6 +17,14 @@ pub agg def avg[T](x: T) -> T where T: Numeric {
     return datafusion.avg(x)
 }
 
+pub agg def count() -> int64 {
+    return datafusion.count()
+}
+
+pub agg def count[T](x: T) -> int64 {
+    return datafusion.count(x)
+}
+
 pub agg def count_distinct[T](x: T) -> int64 {
     return datafusion.count_distinct(x)
 }

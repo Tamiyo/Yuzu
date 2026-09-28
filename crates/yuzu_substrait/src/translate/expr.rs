@@ -15,9 +15,8 @@ use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
 use yuzu_mlir::ir::value::{ValueExt, ValueId};
 use yuzu_mlir::ops::yz::YzOp;
 use yuzu_mlir::ops::yzr::YzrOp;
-use yuzu_types::Func;
 
-use crate::extensions::{EXTERNAL_URN, function_target};
+use crate::extensions::{EXTERNAL_URN, Func, function_target};
 use crate::proto::{field_index, literal, selection};
 use crate::translate::functions;
 use crate::translate::types::{emit_type, type_code};
@@ -51,7 +50,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
             // A measure belongs to the grouping that holds it, and a list
             // only ever stands to the right of a membership test, which
             // reads its elements where they are.
-            let skip = matches!(inner.as_yzr(), Some(YzrOp::Agg(_) | YzrOp::Count(_)))
+            let skip = matches!(inner.as_yzr(), Some(YzrOp::Agg(_)))
                 || matches!(inner.as_yz(), Some(YzOp::List(_)));
             if matches!(inner.as_yzr(), Some(YzrOp::Yield(_))) {
                 yielded.extend(inner.operands());

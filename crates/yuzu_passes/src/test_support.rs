@@ -49,14 +49,7 @@ pub(crate) fn lower<'c>(context: &'c Context, program: &Program) -> Lowered<'c> 
             File::new(source_id, module.map(str::to_string), root)
         }))
         .collect();
-    let module = crate::lower_ast_to_yzl(
-        context,
-        &sources,
-        &files,
-        &mut diagnostics,
-        &yuzu_types::Builtins,
-        None,
-    );
+    let module = crate::lower_ast_to_yzl(context, &sources, &files, &mut diagnostics, None);
 
     Lowered {
         module,
@@ -130,7 +123,7 @@ pub(crate) fn check_yzr(source: &str, expected: &Expect) {
         source,
         |context, module| {
             crate::promote_locals(context, module);
-            crate::infer_types(context, module, &yuzu_types::Builtins);
+            crate::infer_types(context, module);
             crate::lower_yzl_to_yzr(context, module);
             module.as_operation().to_string()
         },
@@ -143,7 +136,7 @@ pub(crate) fn check_simplified(source: &str, expected: &Expect) {
         source,
         |context, module| {
             crate::promote_locals(context, module);
-            crate::infer_types(context, module, &yuzu_types::Builtins);
+            crate::infer_types(context, module);
             crate::inline_calls(context, module);
             crate::remove_dead_symbols(context, module);
             crate::lower_yzl_to_yzr(context, module);

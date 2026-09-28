@@ -23,18 +23,12 @@ use yuzu_mlir::ops::yz::YzOp;
 use yuzu_mlir::ops::yzl::{FnOp, YzlOp};
 use yuzu_mlir::types::{self, BoolType, ErrorType, Int64Type, UnresolvedType};
 use yuzu_mlir::{ListType, ParamType};
-use yuzu_types::{AggFunc, BuiltinFunc, FunctionRegistry};
 
-pub fn infer_types<'c>(
-    context: &'c Context,
-    module: &mut Module<'c>,
-    registry: &dyn FunctionRegistry,
-) {
+pub fn infer_types<'c>(context: &'c Context, module: &mut Module<'c>) {
     let declared = Declarations::of(module.body());
     let mut inferrer = TypeInferrer {
         context,
         declared: &declared,
-        registry,
         filled: Vec::new(),
         vars: FxHashMap::default(),
         rows: FxHashMap::default(),
@@ -126,7 +120,6 @@ struct PendingBound<'c> {
 struct TypeInferrer<'c, 'd> {
     context: &'c Context,
     declared: &'d Declarations<'c>,
-    registry: &'d dyn FunctionRegistry,
     /// One slot per type variable: unbound, substituted by another variable,
     /// or filled with its concrete type.
     filled: Vec<Option<Term<'c>>>,
@@ -284,7 +277,6 @@ impl<'c> TypeInferrer<'c, '_> {
             Some(YzlOp::Call(call)) => {
                 let callee = call.callee().value();
                 match call.callee_source() {
-                    Some(CalleeSource::Builtin) => self.resolve_builtin_ty(op, callee),
                     Some(CalleeSource::Const) => {
                         let yielded = self
                             .bindings
@@ -569,27 +561,6 @@ impl<'c> TypeInferrer<'c, '_> {
         }
     }
 
-    /// The builtins are polymorphic, so each carries its own typing rule.
-    fn resolve_builtin_ty(&mut self, op: OperationRef<'c, '_>, callee: &str) {
-        let Some(entry) = self
-            .registry
-            .entries()
-            .iter()
-            .find(|entry| entry.name == callee)
-        else {
-            return;
-        };
-
-        let int64 = Term::Concrete(Int64Type::get(self.context));
-        let out = self.term_of(op.first_result());
-        match entry.func {
-            BuiltinFunc::Aggregate(AggFunc::Count) => {
-                self.unify(op, out, int64);
-            }
-            BuiltinFunc::Scalar(_) => {}
-        }
-    }
-
     /// The block arguments are the row's columns or the function's
     /// parameters, by position.
     fn infer_regions(&mut self, op: OperationRef<'c, '_>, columns: &Row<'c>, params: &[Type<'c>]) {
@@ -773,7 +744,7 @@ mod tests {
             source,
             |context, module| {
                 crate::promote_locals(context, module);
-                infer_types(context, module, &yuzu_types::Builtins);
+                infer_types(context, module);
                 module.as_operation().to_string()
             },
             expected,

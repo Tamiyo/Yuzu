@@ -171,7 +171,6 @@ impl<'c> YzlToYzr<'c, '_> {
         }
     }
 
-    /// A measure: `count` takes no value, every other aggregate does.
     fn convert_measure(
         &self,
         op: OperationRef<'c, '_>,
@@ -179,17 +178,14 @@ impl<'c> YzlToYzr<'c, '_> {
         operands: &[Value<'c, '_>],
         ty: Type<'c>,
     ) -> Operation<'c> {
-        match operands.first() {
-            Some(value) => yzr::agg(
-                self.context,
-                ty,
-                *value,
-                StringAttribute::new(self.context, callee),
-                op.location(),
-            )
-            .into(),
-            None => yzr::count(self.context, ty, op.location()).into(),
-        }
+        yzr::agg(
+            self.context,
+            ty,
+            operands,
+            StringAttribute::new(self.context, callee),
+            op.location(),
+        )
+        .into()
     }
 }
 
@@ -270,8 +266,8 @@ from t
                   yz.struct @row ["b", "total", "n"] : [!yz.int64, !yz.int64, !yz.int64]
                   %1 = yzr.aggregate %0 keys [1] {
                   ^bb0(%arg0: !yz.int64, %arg1: !yz.int64):
-                    %2 = yzr.agg "sum", %arg0 : !yz.int64 -> !yz.int64
-                    %3 = yzr.count : !yz.int64
+                    %2 = yzr.agg "sum"(%arg0) : (!yz.int64) -> !yz.int64
+                    %3 = yzr.agg "count"() : () -> !yz.int64
                     yzr.yield %2, %3 : !yz.int64, !yz.int64
                   } : !yz.struct<@Row> -> !yz.struct<@row>
                   yzr.output %1 : !yz.struct<@row>

@@ -1,3 +1,3 @@
 from yuzu.engine import ENGINE
-from yuzu.std.aggregates import sum, min, max, avg, count_distinct
+from yuzu.std.aggregates import sum, min, max, avg, count, count_distinct
 from yuzu.std.ops import shift_left, shift_right, pow

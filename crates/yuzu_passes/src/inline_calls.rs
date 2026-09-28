@@ -399,7 +399,7 @@ from t
     }
 
     #[test]
-    fn a_builtin_call_is_left_alone() {
+    fn an_external_call_is_left_alone() {
         check_simplified(
             r"
 struct Row { a: int64 }
@@ -415,7 +415,7 @@ from t
                   yz.struct @row ["n"] : [!yz.int64]
                   %1 = yzr.aggregate %0 keys [] {
                   ^bb0(%arg0: !yz.int64):
-                    %2 = yzr.agg "count", %arg0 : !yz.int64 -> !yz.int64
+                    %2 = yzr.agg "count"(%arg0) : (!yz.int64) -> !yz.int64
                     yzr.yield %2 : !yz.int64
                   } : !yz.struct<@Row> -> !yz.struct<@row>
                   yzr.output %1 : !yz.struct<@row>

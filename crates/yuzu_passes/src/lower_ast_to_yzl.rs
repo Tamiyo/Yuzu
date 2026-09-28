@@ -13,7 +13,6 @@ use yuzu_diagnostics::source_map::{SourceId, SourceMap};
 use yuzu_mlir::ir::location::LocationExt;
 use yuzu_mlir::ir::operation::OperationExt;
 use yuzu_mlir::ods::yzl;
-use yuzu_types::FunctionRegistry;
 
 use crate::lower_ast_to_yzl::symbols::SymbolTable;
 
@@ -42,14 +41,12 @@ pub fn lower_ast_to_yzl<'c>(
     sources: &SourceMap,
     files: &[File],
     diagnostics: &mut DiagnosticsEngine,
-    registry: &dyn FunctionRegistry,
     library: Option<&'c BoundLibrary<'c>>,
 ) -> Module<'c> {
     let entry = files.last().expect("a program has an entry file");
     let mut lowerer = AstToYzl {
         context,
         symbols: SymbolTable::new(context, library),
-        registry,
         sources,
         source_id: entry.source_id,
         file: StringAttribute::new(context, sources.name(entry.source_id)),
@@ -71,13 +68,11 @@ pub fn bind_library<'c>(
     sources: &SourceMap,
     files: &[File],
     diagnostics: &mut DiagnosticsEngine,
-    registry: &dyn FunctionRegistry,
 ) -> BoundLibrary<'c> {
     let first = files.first().expect("a library has a file");
     let mut lowerer = AstToYzl {
         context,
         symbols: SymbolTable::new(context, None),
-        registry,
         sources,
         source_id: first.source_id,
         file: StringAttribute::new(context, sources.name(first.source_id)),
@@ -92,7 +87,6 @@ struct AstToYzl<'c, 'd> {
     // What the whole run is given.
     context: &'c Context,
     symbols: SymbolTable<'c>,
-    registry: &'d dyn FunctionRegistry,
     sources: &'d SourceMap,
     source_id: SourceId,
     /// The name of the file being lowered, made once for its locations.

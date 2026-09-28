@@ -303,14 +303,14 @@ def Yzl_ListOp : Yzl_Op<"list", [Pure]> {
 }
 
 def Yzl_CallOp : Yzl_Op<"call", [Pure]> {
-  let summary = "a call by name; registry and shadowing unresolved";
+  let summary = "a call to a function or a file-level constant, by symbol";
   let description = [{
-    `is_agg` says the callee aggregates, whichever kind of callee it is: a
-    builtin, an `agg fn`, or an `external agg fn`. Resolution knows which
-    at the point the call is built, so nothing downstream asks again.
+    `is_agg` says the callee aggregates, whichever kind of callee it is: an
+    `agg def` or an `external agg def`. Resolution knows which at the point
+    the call is built, so nothing downstream asks again.
   }];
   let arguments = (ins FlatSymbolRefAttr:$callee, Variadic<AnyType>:$operands,
-                       OptionalAttr<Yuzu_StrEnumAttr<["fn", "builtin", "external", "const"]>>:$callee_source,
+                       OptionalAttr<Yuzu_StrEnumAttr<["fn", "external", "const"]>>:$callee_source,
                        OptionalAttr<TypeArrayAttr>:$type_args, UnitAttr:$is_agg);
   let results = (outs AnyType:$result);
   let assemblyFormat =

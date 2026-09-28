@@ -2347,7 +2347,6 @@ dependencies = [
  "yuzu_passes",
  "yuzu_substrait",
  "yuzu_syntax",
- "yuzu_types",
 ]
 
 [[package]]
@@ -2440,7 +2439,6 @@ dependencies = [
  "yuzu_mlir",
  "yuzu_parser",
  "yuzu_syntax",
- "yuzu_types",
 ]
 
 [[package]]
@@ -2467,7 +2465,6 @@ dependencies = [
  "yuzu_mlir",
  "yuzu_parser",
  "yuzu_passes",
- "yuzu_types",
 ]
 
 [[package]]
@@ -2477,10 +2474,6 @@ dependencies = [
  "rowan",
  "yuzu_lexer",
 ]
-
-[[package]]
-name = "yuzu_types"
-version = "0.0.0"
 
 [[package]]
 name = "zerocopy"

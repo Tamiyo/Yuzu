@@ -2,4 +2,6 @@ pub external agg def sum[T](x: T) -> T
 pub external agg def min[T](x: T) -> T
 pub external agg def max[T](x: T) -> T
 pub external agg def avg[T](x: T) -> T
+pub external agg def count() -> int64
+pub external agg def count[T](x: T) -> int64
 pub external agg def count_distinct[T](x: T) -> int64

@@ -2,7 +2,6 @@ use substrait::proto::extensions::{
     SimpleExtensionDeclaration, SimpleExtensionUrn,
     simple_extension_declaration::{ExtensionFunction, MappingType},
 };
-use yuzu_types::{AggFunc, Func};
 
 // Substrait standard extensions (the function families DuckDB consumes).
 const ARITHMETIC_URN: &str = "extension:io.substrait:functions_arithmetic";
@@ -10,6 +9,25 @@ pub(crate) const COMPARISON_URN: &str = "extension:io.substrait:functions_compar
 pub(crate) const BOOLEAN_URN: &str = "extension:io.substrait:functions_boolean";
 const AGGREGATE_GENERIC_URN: &str = "extension:io.substrait:functions_aggregate_generic";
 pub(crate) const EXTERNAL_URN: &str = "extension:io.yuzu:external";
+
+/// A function a primitive yz op computes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum Func {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Negate,
+    Equal,
+    NotEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
+    And,
+    Or,
+    Not,
+}
 
 /// Map a primitive op's function to its Substrait extension function.
 /// Membership is not one: it is a `SingularOrList`.
@@ -32,13 +50,9 @@ pub(crate) fn function_target(func: Func) -> (&'static str, &'static str) {
     }
 }
 
-/// Map a builtin aggregate to its Substrait extension function: `count`, in
-/// the generic aggregate family.
-pub(crate) fn aggregate_target(func: AggFunc) -> (&'static str, &'static str) {
-    match func {
-        AggFunc::Count => (AGGREGATE_GENERIC_URN, "count"),
-    }
-}
+/// Substrait's generic `count`, which counts every row or every value, or
+/// only distinct ones.
+pub(crate) const COUNT: (&str, &str) = (AGGREGATE_GENERIC_URN, "count");
 
 /// The plan's extension tables, built up as functions are registered.
 #[derive(Default)]

@@ -13,7 +13,6 @@ yuzu_parser = { path = "../yuzu_parser" }
 yuzu_diagnostics = { path = "../yuzu_diagnostics" }
 yuzu_mlir = { path = "../yuzu_mlir" }
 yuzu_syntax = { path = "../yuzu_syntax" }
-yuzu_types = { path = "../yuzu_types" }
 
 [dev-dependencies]
 expect-test = "1.5.0"

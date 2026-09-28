@@ -17,7 +17,6 @@ default-members = [
     "crates/yuzu_passes",
     "crates/yuzu_substrait",
     "crates/yuzu_syntax",
-    "crates/yuzu_types",
 ]
 
 resolver = "3"

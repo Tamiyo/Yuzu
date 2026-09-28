@@ -84,7 +84,6 @@ fn the_correctness_corpus_lowers() {
                 &sources,
                 &[prelude, File::entry(source_id, root)],
                 &mut diagnostics,
-                &yuzu_types::Builtins,
                 None,
             );
             let messages: Vec<&str> = diagnostics

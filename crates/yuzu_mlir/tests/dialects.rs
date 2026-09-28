@@ -129,7 +129,7 @@ yzr.yield %1 : !yz.int64
   } : !yz.struct<@row_ab> -> !yz.struct<@row_e>
   %g = yzr.aggregate %e keys [1] {
   ^bb0(%a: !yz.int64, %b: !yz.int64, %e0: !yz.int64):
-%m = yzr.agg "sum", %e0 : !yz.int64 -> !yz.int64
+%m = yzr.agg "sum"(%e0) : (!yz.int64) -> !yz.int64
 yzr.yield %m : !yz.int64
   } : !yz.struct<@row_e> -> !yz.struct<@agg>
   %l = yzr.limit %g, 10 offset 2 : !yz.struct<@agg>
@@ -155,7 +155,7 @@ yzr.yield %m : !yz.int64
           } : !yz.struct<@row_ab> -> !yz.struct<@row_e>
           %3 = yzr.aggregate %2 keys [1] {
           ^bb0(%arg0: !yz.int64, %arg1: !yz.int64, %arg2: !yz.int64):
-            %5 = yzr.agg "sum", %arg2 : !yz.int64 -> !yz.int64
+            %5 = yzr.agg "sum"(%arg2) : (!yz.int64) -> !yz.int64
             yzr.yield %5 : !yz.int64
           } : !yz.struct<@row_e> -> !yz.struct<@agg>
           %4 = yzr.limit %3, 10 offset 2 : !yz.struct<@agg>
@@ -334,7 +334,7 @@ yzr.yield %p : !yz.bool
   %e = yzr.except %u, %i : !yz.struct<@row>
   %g = yzr.aggregate %e keys [] {
   ^bb0(%a: !yz.int64):
-%n = yzr.count : !yz.int64
+%n = yzr.agg "count"() : () -> !yz.int64
 yzr.yield %n : !yz.int64
   } : !yz.struct<@row> -> !yz.struct<@counted>
 }
@@ -355,7 +355,7 @@ yzr.yield %n : !yz.int64
           %5 = yzr.except %3, %4 : !yz.struct<@row>
           %6 = yzr.aggregate %5 keys [] {
           ^bb0(%arg0: !yz.int64):
-            %7 = yzr.count : !yz.int64
+            %7 = yzr.agg "count"() : () -> !yz.int64
             yzr.yield %7 : !yz.int64
           } : !yz.struct<@row> -> !yz.struct<@counted>
         }
@@ -562,7 +562,7 @@ module {{
         )
     };
     let measured = "%s = yz.add %a, %a : !yz.int64, !yz.int64 -> !yz.int64\n    \
-                    %m = yzr.agg \"sum\", %s : !yz.int64 -> !yz.int64\n    \
+                    %m = yzr.agg \"sum\"(%s) : (!yz.int64) -> !yz.int64\n    \
                     yzr.yield %m : !yz.int64";
     let bare = "yzr.yield %a : !yz.int64";
     assert!(verifies(&aggregate("", measured)));

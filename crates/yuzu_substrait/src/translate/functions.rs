@@ -1,13 +1,11 @@
-//! Which function a yzr operation is. `Func` and `AggFunc` are the model's
-//! own vocabulary — the identity a plan holds however a dialect spelled it —
-//! so a yz op maps onto one of those and the Substrait tables answer from
-//! there, rather than growing a second mapping of their own.
+//! Which function a yzr operation is. A yz op maps onto a [`Func`], and the
+//! Substrait tables answer from there, rather than each op growing a mapping
+//! of its own.
 
 use substrait::proto::aggregate_function::AggregationInvocation;
 use yuzu_mlir::attributes::CmpPredicate;
-use yuzu_types::{AggFunc, Func};
 
-use crate::extensions::{EXTERNAL_URN, aggregate_target};
+use crate::extensions::{COUNT, EXTERNAL_URN, Func};
 
 pub(crate) fn of_predicate(predicate: CmpPredicate) -> Func {
     match predicate {
@@ -46,7 +44,7 @@ pub(crate) fn of_aggregate(name: &str) -> Aggregate {
         }
     };
 
-    let (urn, base) = aggregate_target(AggFunc::Count);
+    let (urn, base) = COUNT;
     Aggregate {
         urn,
         base: base.to_string(),

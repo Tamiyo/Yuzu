@@ -72,7 +72,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
                 report(op, "set operations are not lowered yet");
                 return None;
             }
-            YzrOp::Output(_) | YzrOp::Agg(_) | YzrOp::Count(_) | YzrOp::Yield(_) => {
+            YzrOp::Output(_) | YzrOp::Agg(_) | YzrOp::Yield(_) => {
                 report(op, "this is not a relation");
                 return None;
             }
@@ -170,8 +170,8 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
     }
 
     /// The keys are columns of the input row, by position, and the measures
-    /// are the region's `yzr.agg` and `yzr.count` ops. A grouping with no
-    /// measures is what `distinct` became.
+    /// are the region's `yzr.agg` ops. A grouping with no measures is what
+    /// `distinct` became.
     fn translate_aggregate(&mut self, op: OperationRef<'c, 'a>, keys: &[i32]) -> Option<RelType> {
         let (input, _) = self.translate_input(op)?;
         let region = self.translate_region(op)?;
@@ -199,18 +199,13 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         for &value in &region.yielded {
             let op = Self::producer(value)?;
 
-            let (func, arguments) = match op.as_yzr() {
-                Some(YzrOp::Agg(measure)) => (
-                    functions::of_aggregate(measure.r#fn().value()),
-                    vec![measure.value()],
-                ),
-                Some(YzrOp::Count(_)) => (functions::of_aggregate("count"), Vec::new()),
-                _ => {
-                    report(op, "a grouping yields measures, and this is not one");
-                    return None;
-                }
+            let Some(YzrOp::Agg(measure)) = op.as_yzr() else {
+                report(op, "a grouping yields measures, and this is not one");
+                return None;
             };
 
+            let func = functions::of_aggregate(measure.r#fn().value());
+            let arguments: Vec<Value<'c, '_>> = measure.values().collect();
             measures.push(self.translate_measure(op, &func, &arguments, &region.values)?);
         }
 

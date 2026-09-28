@@ -12,7 +12,6 @@ use rustc_hash::FxHashMap;
 use text_size::TextRange;
 use yuzu_ast::Visibility;
 use yuzu_mlir::attributes::CalleeSource;
-use yuzu_types::FunctionRegistry;
 
 use crate::operators::Operator;
 
@@ -655,18 +654,10 @@ impl<'c> SymbolTable<'c> {
         Some((self.refer(at), row))
     }
 
-    /// What a call names with `given` arguments: a `let`, the overload of
-    /// a function that takes that many, or a builtin.
-    pub(super) fn callable(
-        &mut self,
-        name: &str,
-        given: usize,
-        registry: &dyn FunctionRegistry,
-    ) -> Option<Callable<'c>> {
-        let Some((at, binding)) = self.find(name) else {
-            return builtin(name, given, registry);
-        };
-
+    /// What a call names with `given` arguments: a `let`, or the overload
+    /// of a function that takes that many.
+    pub(super) fn callable(&mut self, name: &str, given: usize) -> Option<Callable<'c>> {
+        let (at, binding) = self.find(name)?;
         if matches!(binding.kind, BindingKind::Let) {
             return Some(Callable::constant(self.refer(at)));
         }
@@ -698,19 +689,9 @@ impl<'c> SymbolTable<'c> {
 
     /// The argument counts a function's visible overloads take, least
     /// first, when a name is a function.
-    pub(super) fn arities(
-        &self,
-        name: &str,
-        registry: &dyn FunctionRegistry,
-    ) -> Option<Vec<usize>> {
-        match self.find(name) {
-            Some((at, _)) => self.arities_in(at),
-            None => registry
-                .entries()
-                .iter()
-                .find(|entry| entry.name == name)
-                .map(|entry| (entry.min_args..=entry.max_args).collect()),
-        }
+    pub(super) fn arities(&self, name: &str) -> Option<Vec<usize>> {
+        let (at, _) = self.find(name)?;
+        self.arities_in(at)
     }
 
     /// The argument counts the visible overloads of the function declared
@@ -924,21 +905,6 @@ impl<'c> SymbolTable<'c> {
     }
 }
 
-fn builtin<'c>(name: &str, given: usize, registry: &dyn FunctionRegistry) -> Option<Callable<'c>> {
-    let entry = registry
-        .entries()
-        .iter()
-        .find(|entry| entry.name == name && (entry.min_args..=entry.max_args).contains(&given))?;
-    Some(Callable {
-        symbol: entry.name,
-        source: CalleeSource::Builtin,
-        kind: match entry.func {
-            yuzu_types::BuiltinFunc::Scalar(_) => FunctionKind::Scalar,
-            yuzu_types::BuiltinFunc::Aggregate(_) => FunctionKind::Aggregate,
-        },
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use text_size::TextRange;
@@ -1146,9 +1112,7 @@ mod tests {
         assert_eq!(symbols.struct_symbol("Row"), Some("helpers.Row"));
         assert_eq!(symbols.trait_symbol("Show"), Some("helpers.Show"));
         assert_eq!(
-            symbols
-                .callable("f", 0, &yuzu_types::Builtins)
-                .map(|callable| callable.symbol),
+            symbols.callable("f", 0).map(|callable| callable.symbol),
             Some("helpers.f")
         );
         assert_eq!(symbols.trait_symbol("Row"), None);
@@ -1174,33 +1138,24 @@ mod tests {
             },
         );
 
-        let registry = &yuzu_types::Builtins;
         assert_eq!(
-            symbols
-                .callable("cap", 0, registry)
-                .map(|callable| callable.source),
+            symbols.callable("cap", 0).map(|callable| callable.source),
             Some(CalleeSource::Const)
         );
         assert_eq!(
-            symbols.callable("f", 2, registry),
+            symbols.callable("f", 2),
             Some(Callable {
                 symbol: "f",
                 source: CalleeSource::Fn,
                 kind: FunctionKind::Scalar,
             })
         );
-        assert_eq!(symbols.callable("f", 1, registry), None);
-        assert_eq!(symbols.arities("f", registry), Some(vec![2]));
-        assert_eq!(
-            symbols
-                .callable("count", 1, registry)
-                .map(|callable| callable.source),
-            Some(CalleeSource::Builtin)
-        );
+        assert_eq!(symbols.callable("f", 1), None);
+        assert_eq!(symbols.arities("f"), Some(vec![2]));
 
-        assert_eq!(symbols.callable("zero", 0, registry), None);
+        assert_eq!(symbols.callable("zero", 0), None);
         assert!(symbols.is_method("zero"));
-        assert_eq!(symbols.callable("Zero", 0, registry), None);
+        assert_eq!(symbols.callable("Zero", 0), None);
         assert!(!symbols.is_method("Zero"));
     }
 
@@ -1209,17 +1164,16 @@ mod tests {
         let mut symbols = table();
         symbols.enter_module(ModulePath::from_path("stats"));
         bind_fn(&mut symbols, "spread", &[2, 1]);
-        let registry = &yuzu_types::Builtins;
 
         let symbol = |symbols: &mut SymbolTable<'static>, given| {
             symbols
-                .callable("spread", given, registry)
+                .callable("spread", given)
                 .map(|callable| callable.symbol)
         };
         assert_eq!(symbol(&mut symbols, 1), Some("stats.spread.1"));
         assert_eq!(symbol(&mut symbols, 2), Some("stats.spread.2"));
         assert_eq!(symbol(&mut symbols, 0), None);
-        assert_eq!(symbols.arities("spread", registry), Some(vec![1, 2]));
+        assert_eq!(symbols.arities("spread"), Some(vec![1, 2]));
         assert_eq!(crate::written_name("stats.spread.2"), "spread");
     }
 

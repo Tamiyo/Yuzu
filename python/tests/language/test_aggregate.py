@@ -1,7 +1,7 @@
-"""Every aggregate form is writable: each builtin, grouped and full-table,
-composite items, and aggregation over a join."""
+"""Every aggregate form is writable: each library aggregate, grouped and
+full-table, composite items, and aggregation over a join."""
 
-from support import rows, sorted_rows
+from support import error_of, rows, sorted_rows
 
 
 def test_count_rows():
@@ -78,3 +78,19 @@ def test_agg_fn_composes_builtins():
         group by dept_id
     """
     assert rows(query) == sorted_rows((1, 120000), (2, 0), (9, 0))
+
+
+def test_count_of_values():
+    query = """
+        from employees
+        |> aggregate count(name) as n
+    """
+    assert rows(query) == [(4,)]
+
+
+def test_count_takes_at_most_one_value():
+    query = """
+        from employees
+        |> aggregate count(name, level) as n
+    """
+    assert error_of(query) == "error: `count` expects 0 or 1 argument(s), found 2"

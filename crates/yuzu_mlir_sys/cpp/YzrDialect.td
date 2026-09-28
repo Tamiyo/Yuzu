@@ -108,16 +108,15 @@ def Yzr_ExceptOp : Yzr_SetOp<"except"> {
 }
 
 def Yzr_AggOp : Yzr_Op<"agg", [Pure]> {
-  let summary = "a measure: an aggregate function over a row-level value";
-  let arguments = (ins StrAttr:$fn, AnyType:$value);
+  let summary = "a measure: an aggregate function over row-level values";
+  let description = [{
+    `fn` is the name the engine knows the function by. A measure with no
+    values, such as `count()`, counts the group's rows.
+  }];
+  let arguments = (ins StrAttr:$fn, Variadic<AnyType>:$values);
   let results = (outs AnyType:$result);
-  let assemblyFormat = "$fn `,` $value `:` type($value) `->` type($result) attr-dict";
-}
-
-def Yzr_CountOp : Yzr_Op<"count", [Pure]> {
-  let summary = "a measure counting the group's rows; takes no value";
-  let results = (outs AnyType:$result);
-  let assemblyFormat = "attr-dict `:` type($result)";
+  let assemblyFormat =
+      "$fn `(` $values `)` attr-dict `:` functional-type($values, $result)";
 }
 
 def Yzr_OutputOp : Yzr_Op<"output"> {

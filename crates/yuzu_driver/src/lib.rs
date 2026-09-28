@@ -145,14 +145,7 @@ pub(crate) fn lower_and_check<'c>(
 ) -> Option<melior::ir::Module<'c>> {
     use melior::ir::operation::OperationLike;
 
-    let mut module = yuzu_passes::lower_ast_to_yzl(
-        context,
-        sources,
-        files,
-        diagnostics,
-        &yuzu_types::Builtins,
-        library,
-    );
+    let mut module = yuzu_passes::lower_ast_to_yzl(context, sources, files, diagnostics, library);
 
     if options.debug_yzl {
         println!("=== yzl ===");
@@ -172,7 +165,7 @@ pub(crate) fn lower_and_check<'c>(
     yuzu_mlir::diagnostics::capture(context, sources, diagnostics, || {
         yuzu_passes::check_mutability(&module);
         yuzu_passes::promote_locals(context, &mut module);
-        yuzu_passes::infer_types(context, &mut module, &yuzu_types::Builtins);
+        yuzu_passes::infer_types(context, &mut module);
     });
     if let Some(reader) = index {
         reader.read_inferred(context, &module);

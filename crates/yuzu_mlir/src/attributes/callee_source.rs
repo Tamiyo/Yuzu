@@ -15,8 +15,6 @@ pub enum CalleeSource {
     /// A function the program declared, scalar or aggregate. Expansion
     /// replaces the call.
     Fn,
-    /// A function the registry supplies, scalar or aggregate.
-    Builtin,
     /// Declared without a body: the engine is promised to have it, and the
     /// call reaches the plan by name.
     External,
@@ -28,7 +26,7 @@ pub enum CalleeSource {
 
 impl CalleeSource {
     /// Every kind, in declaration order.
-    pub const ALL: [Self; 4] = [Self::Fn, Self::Builtin, Self::External, Self::Const];
+    pub const ALL: [Self; 3] = [Self::Fn, Self::External, Self::Const];
 
     /// The kind a spelling names.
     #[must_use]
@@ -41,7 +39,6 @@ impl CalleeSource {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Fn => "fn",
-            Self::Builtin => "builtin",
             Self::External => "external",
             Self::Const => "const",
         }

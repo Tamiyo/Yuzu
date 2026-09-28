@@ -161,13 +161,7 @@ fn bind_library(engine: Engine) -> BoundLibrary<'static> {
     let Library { sources, files, .. } = Library::load(engine);
     let mut diagnostics = DiagnosticsEngine::new();
     let context: &'static Context = Box::leak(Box::new(yuzu_mlir::context()));
-    let bound = yuzu_passes::bind_library(
-        context,
-        &sources,
-        &files,
-        &mut diagnostics,
-        &yuzu_types::Builtins,
-    );
+    let bound = yuzu_passes::bind_library(context, &sources, &files, &mut diagnostics);
     assert!(
         diagnostics.diagnostics().is_empty(),
         "the library binds without diagnostics"
@@ -241,14 +235,8 @@ mod tests {
         }
 
         let context = yuzu_mlir::context();
-        let module = yuzu_passes::lower_ast_to_yzl(
-            &context,
-            &sources,
-            &files,
-            &mut diagnostics,
-            &yuzu_types::Builtins,
-            None,
-        );
+        let module =
+            yuzu_passes::lower_ast_to_yzl(&context, &sources, &files, &mut diagnostics, None);
         let messages: Vec<&str> = diagnostics
             .diagnostics()
             .iter()

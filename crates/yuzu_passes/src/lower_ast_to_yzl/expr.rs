@@ -359,8 +359,8 @@ impl<'c> AstToYzl<'c, '_> {
             .map(|arg| self.convert_expr(block, locals, &arg))
             .collect();
         let given = operands.len();
-        let Some(callable) = self.symbols.callable(callee, given, self.registry) else {
-            let message = if let Some(arities) = self.symbols.arities(callee, self.registry) {
+        let Some(callable) = self.symbols.callable(callee, given) else {
+            let message = if let Some(arities) = self.symbols.arities(callee) {
                 arity_mismatch(callee, &arities, given)
             } else {
                 match self.symbols.kind(callee) {
