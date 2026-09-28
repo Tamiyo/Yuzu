@@ -388,7 +388,8 @@ fn a_hover_shows_the_declaration() {
     expect![[r#"
         ```yuzu
         let y: int64
-        ```"#]].assert_eq(&markup.value);
+        ```"#]]
+    .assert_eq(&markup.value);
     client.shutdown();
 }
 

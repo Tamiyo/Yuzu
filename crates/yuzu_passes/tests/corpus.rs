@@ -73,8 +73,12 @@ fn the_correctness_corpus_lowers() {
             let mut diagnostics = DiagnosticsEngine::new();
             let prelude = prelude(&mut sources, &mut diagnostics);
             let source_id = sources.add("corpus.yz".to_string(), program.clone());
-            let root = ast::Root::cast(yuzu_parser::parse_text(&program, &mut diagnostics, source_id))
-                .expect("a parse always yields a root");
+            let root = ast::Root::cast(yuzu_parser::parse_text(
+                &program,
+                &mut diagnostics,
+                source_id,
+            ))
+            .expect("a parse always yields a root");
             let module = lower_ast_to_yzl(
                 &context,
                 &sources,

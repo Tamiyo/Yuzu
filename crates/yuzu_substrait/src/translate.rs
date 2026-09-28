@@ -145,8 +145,11 @@ pub(crate) mod test_support {
             prelude_id,
         ))
         .expect("a source has a root");
-        let mut prelude =
-            yuzu_passes::File::new(prelude_id, Some(yuzu_passes::PRELUDE.to_string()), prelude_root);
+        let mut prelude = yuzu_passes::File::new(
+            prelude_id,
+            Some(yuzu_passes::PRELUDE.to_string()),
+            prelude_root,
+        );
         prelude.set_lowering(yuzu_passes::Lowering::OnDemand);
         let source_id = sources.add("test.yz".to_string(), source.to_string());
         let syntax = yuzu_parser::parse_text(source, &mut diagnostics, source_id);

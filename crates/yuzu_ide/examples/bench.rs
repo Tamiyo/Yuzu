@@ -69,7 +69,11 @@ fn main() {
         let start = Instant::now();
         let checked = analysis.check(FILE).expect("the file has a path");
         let first = start.elapsed();
-        assert!(checked.diagnostics().is_empty(), "{:?}", checked.diagnostics());
+        assert!(
+            checked.diagnostics().is_empty(),
+            "{:?}",
+            checked.diagnostics()
+        );
         println!("  {:<34} {first:>17.1?}", "first check (cold)");
 
         println!(" keystroke (main thread)");
@@ -83,8 +87,14 @@ fn main() {
             }),
         );
         let analysis = host.analysis();
-        report("semantic tokens (syntax)", time(50, || drop(analysis.highlight(FILE))));
-        report("folding ranges", time(50, || drop(analysis.folding_ranges(FILE))));
+        report(
+            "semantic tokens (syntax)",
+            time(50, || drop(analysis.highlight(FILE))),
+        );
+        report(
+            "folding ranges",
+            time(50, || drop(analysis.folding_ranges(FILE))),
+        );
         report("outline", time(50, || drop(analysis.file_structure(FILE))));
         report(
             "selection ranges",
@@ -104,10 +114,22 @@ fn main() {
         let use_of_y = offset_of(&text, "return y") + TextSize::from(7);
         let call = offset_of(&text, "select f0") + TextSize::from(7);
         report("hover", time(200, || drop(checked.hover(&path, use_of_y))));
-        report("go to definition", time(200, || drop(checked.goto_definition(&path, call))));
-        report("references", time(200, || drop(checked.references(&path, call))));
-        report("highlight uses (whole file)", time(50, || drop(checked.highlight_uses(&path))));
-        report("inlay hints (whole file)", time(50, || drop(checked.inlay_hints(&path))));
+        report(
+            "go to definition",
+            time(200, || drop(checked.goto_definition(&path, call))),
+        );
+        report(
+            "references",
+            time(200, || drop(checked.references(&path, call))),
+        );
+        report(
+            "highlight uses (whole file)",
+            time(50, || drop(checked.highlight_uses(&path))),
+        );
+        report(
+            "inlay hints (whole file)",
+            time(50, || drop(checked.inlay_hints(&path))),
+        );
         println!();
     }
 
