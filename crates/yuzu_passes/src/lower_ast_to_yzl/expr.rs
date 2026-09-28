@@ -14,6 +14,7 @@ use yuzu_mlir::types::{BoolType, Float64Type, Int64Type, StrType, UnresolvedType
 
 use crate::lower_ast_to_yzl::symbols::{BindingKind, Callable, FunctionKind, Lookup, Reference};
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
+use crate::operators;
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
     pub(super) fn convert_expr<'a>(
@@ -201,6 +202,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             Some(BinOp::Sub) => yz::sub(self.context, var, lhs, rhs, loc).into(),
             Some(BinOp::Mul) => yz::mul(self.context, var, lhs, rhs, loc).into(),
             Some(BinOp::Div) => yz::div(self.context, var, lhs, rhs, loc).into(),
+            Some(BinOp::Rem) => {
+                self.symbols.refer_operator(&operators::REM);
+                yz::rem(self.context, var, lhs, rhs, loc).into()
+            }
             Some(BinOp::And) => yz::and(self.context, var, lhs, rhs, loc).into(),
             Some(BinOp::Or) => yz::or(self.context, var, lhs, rhs, loc).into(),
             Some(BinOp::Eq) => cmp(CmpPredicate::Equal),

@@ -65,7 +65,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
     }
 
     /// Lowers the yzl ops among expressions moved into `body`, and returns
-    /// what its `yzl.yield` yielded. A `yz` op is already what yzr wants,
+    /// what its `yzl.yield` or `yzl.return` gave back. A `yz` op is already what yzr wants,
     /// so it stays where it is.
     pub(super) fn convert_moved<'b>(&mut self, body: BlockRef<'c, 'b>) -> Vec<Value<'c, 'b>> {
         let rewriter = IrRewriter::new(self.context);
@@ -76,7 +76,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             let operands: Vec<Value<'c, 'b>> = op.operands().collect();
             let lowered = match op.as_yzl() {
                 None => continue,
-                Some(YzlOp::Yield(_)) => {
+                Some(YzlOp::Yield(_) | YzlOp::Return(_)) => {
                     produced = operands;
                     rewriter.erase_op(op);
                     continue;

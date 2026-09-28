@@ -1,6 +1,8 @@
-use melior::ir::attribute::{DenseI64ArrayAttribute, StringAttribute};
+use melior::IrRewriter;
+use melior::ir::attribute::{DenseI64ArrayAttribute, StringAttribute, TypeAttribute};
 use melior::ir::operation::{OperationLike, OperationRef};
-use melior::ir::{BlockLike, Region, RegionLike, Value};
+use melior::ir::r#type::FunctionType;
+use melior::ir::{Block, BlockLike, Region, RegionLike, Value};
 use yuzu_mlir::SymbolTable;
 use yuzu_mlir::ir::attribute::array::ArrayAttributeExt;
 use yuzu_mlir::ir::block::BlockExt;
@@ -8,13 +10,14 @@ use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
 use yuzu_mlir::ir::value::ValueExt;
 use yuzu_mlir::ods::{yz, yzr};
 use yuzu_mlir::ops::yzl::{
-    AggregateOp, ConstOp, DropOp, ExtendOp, FromOp, JoinOp, LimitOp, RenameOp, SelectOp, SetOp,
-    StructOp, WhereOp, YzlOp,
+    AggregateOp, ConstOp, DropOp, ExtendOp, FnOp, FromOp, JoinOp, LimitOp, RenameOp, SelectOp,
+    SetOp, StructOp, WhereOp, YzlOp,
 };
 use yuzu_mlir::types::BoolType;
 
 use crate::lower_yzl_to_yzr::row::struct_declaration;
 use crate::lower_yzl_to_yzr::{Row, Yielded, YzlToYzr, op_name, struct_fields};
+use crate::operators::Operator;
 
 impl<'c, 'a> YzlToYzr<'c, 'a> {
     pub(super) fn convert_op(
@@ -44,6 +47,11 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             // `record_externals` read its name, and a call to it becomes
             // `yz.extern_call`.
             Some(YzlOp::Fn(function)) if function.is_external() => {}
+            Some(YzlOp::Fn(function))
+                if Operator::implemented_by(function.sym_name().value()).is_some() =>
+            {
+                self.convert_implementation(op, symbols, &function);
+            }
             Some(YzlOp::Fn(_) | YzlOp::Trait(_) | YzlOp::Impl(_)) => self.report(
                 op,
                 &format!("`{}` was not expanded before lowering", op_name(op)),
@@ -79,6 +87,55 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         self.anchor = placed;
         // SAFETY: `op` and `item` are not used after this, and the anchor
         // no longer points at `op`.
+        unsafe { symbols.erase(op) };
+        symbols.insert_placed(placed);
+    }
+
+    /// An operator's implementation becomes a `yz.func`, generic as it was
+    /// declared, under the same name. `legalize_operators` copies its body
+    /// in place of each operator a fold did not remove.
+    fn convert_implementation(
+        &mut self,
+        op: OperationRef<'c, '_>,
+        symbols: &mut SymbolTable<'c, 'a>,
+        function: &FnOp<'c, '_>,
+    ) {
+        let location = op.location();
+        let Ok(signature) = FunctionType::try_from(function.signature().value()) else {
+            self.report(op, "an operator's implementation has no function type");
+            return;
+        };
+
+        let parameters: Vec<_> = (0..signature.input_count())
+            .map(|index| {
+                let ty = signature.input(index).expect("the input index is in range");
+                (ty, location)
+            })
+            .collect();
+        let region = Region::new();
+        let body = region.append_block(Block::new(&parameters));
+        if let Some(block) = function.body().first_block() {
+            let arguments: Vec<Value<'c, '_>> = body.arguments().map(Into::into).collect();
+            IrRewriter::new(self.context)
+                .as_rewriter_base()
+                .merge_blocks(block, body, &arguments);
+            let returned = self.convert_moved(body);
+            body.append_operation(yz::r#return(self.context, &returned, location).into());
+        }
+
+        let placed = self.insert(
+            yz::func(
+                self.context,
+                region,
+                function.sym_name(),
+                TypeAttribute::new(signature.into()),
+                location,
+            )
+            .into(),
+        );
+        self.anchor = placed;
+        // SAFETY: `op` and `function` are not used after this, and the
+        // anchor no longer points at `op`.
         unsafe { symbols.erase(op) };
         symbols.insert_placed(placed);
     }

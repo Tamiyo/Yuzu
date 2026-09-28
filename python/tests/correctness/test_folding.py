@@ -65,3 +65,17 @@ def test_membership_over_a_constant_list_folds():
         |> select name
     """
     assert rows(query) == sorted_rows(("alice",), ("carol",))
+
+
+def test_folded_remainder_matches_the_engine():
+    folded = rows("""
+        from employees
+        |> where name == "alice"
+        |> select -7 % 3 as r
+    """)
+    computed = rows("""
+        from employees
+        |> where name == "alice"
+        |> select (level - 8) % 3 as r
+    """)
+    assert folded == computed == [(-1,)]

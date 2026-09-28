@@ -159,6 +159,7 @@ pub(crate) mod test_support {
             yuzu_passes::inline_calls(&context, &mut module);
             yuzu_passes::lower_yzl_to_yzr(&context, &mut module);
             yuzu_passes::simplify_yzr(&context, &mut module);
+            yuzu_passes::legalize_operators(&context, &mut module);
             super::translate(&context, &module)
         });
 

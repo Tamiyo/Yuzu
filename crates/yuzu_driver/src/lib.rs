@@ -105,6 +105,7 @@ fn plan_through_mlir(
         yuzu_mlir::diagnostics::capture(context, sources, diagnostics, || {
             yuzu_passes::lower_yzl_to_yzr(context, &mut module);
             yuzu_passes::simplify_yzr(context, &mut module);
+            yuzu_passes::legalize_operators(context, &mut module);
             if options.debug_yzr {
                 println!("=== yzr ===");
                 print!("{}", module.as_operation());

@@ -14,6 +14,8 @@ use yuzu_ast::Visibility;
 use yuzu_mlir::attributes::CalleeSource;
 use yuzu_types::FunctionRegistry;
 
+use crate::operators::Operator;
+
 /// The module every file sees without importing it.
 pub const PRELUDE: &str = "yuzu.prelude";
 
@@ -383,6 +385,17 @@ impl<'c> SymbolTable<'c> {
     fn refer(&mut self, at: Declared<'c>) -> &'c str {
         self.used.push(at);
         self.symbol(at)
+    }
+
+    /// Records a use of the library function that implements an operator,
+    /// so the lowering brings it into the module. A program built without
+    /// the library has none to use.
+    pub(super) fn refer_operator(&mut self, operator: &Operator) {
+        let at = Declared {
+            module: ModulePath::from_path(self.intern(operator.module)),
+            name: self.intern(operator.name),
+        };
+        let _ = self.callable_in(at);
     }
 
     /// The declarations references have named since the last call.

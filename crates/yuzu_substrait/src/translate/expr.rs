@@ -110,8 +110,10 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
                 let callee = call.callee().value().to_string();
                 self.translate_function(op, EXTERNAL_URN, callee, values)
             }
+            // `legalize_operators` puts the library's implementation in its
+            // place, and reports when there is none.
             YzOp::Rem(_) => {
-                self.report(op, "`%` is not supported by the datafusion target");
+                self.report(op, "`%` reached the translation without an implementation");
                 None
             }
             // Declarations and terminators are not values.

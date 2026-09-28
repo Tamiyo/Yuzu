@@ -24,6 +24,8 @@ use yuzu_mlir::ops::yzl::{CallOp, ConstOp, FnOp, YzlOp};
 use yuzu_mlir::types::QueryType;
 use yuzu_mlir::{ParamType, SymbolTable};
 
+use crate::operators::Operator;
+
 const BUDGET: usize = 1000;
 
 pub fn inline_calls(context: &Context, module: &mut Module) {
@@ -57,6 +59,15 @@ pub fn inline_calls(context: &Context, module: &mut Module) {
 fn collect_calls<'c, 'a>(block: BlockRef<'c, 'a>, out: &mut Vec<OperationRef<'c, 'a>>) {
     for op in block.operations() {
         match op.as_yzl() {
+            // An operator's implementation outlives this pass, so what it
+            // calls is expanded where it stands.
+            Some(YzlOp::Fn(function)) if implements_operator(&function) => {
+                for region in op.regions() {
+                    for inner in region.blocks() {
+                        collect_calls(inner, out);
+                    }
+                }
+            }
             Some(YzlOp::Fn(_) | YzlOp::Trait(_) | YzlOp::Impl(_)) => {}
             Some(YzlOp::Call(_)) => {
                 if expands(op) {
@@ -182,7 +193,7 @@ fn expand<'c, 'a>(
     Some(copied_calls)
 }
 
-fn copy<'c, 'a>(
+pub(crate) fn copy<'c, 'a>(
     rewriter: &'a RewriterBase<'c, 'a>,
     op: OperationRef<'c, '_>,
     values: &FxHashMap<ValueId, Value<'c, 'a>>,
@@ -263,7 +274,7 @@ fn type_arguments<'c>(
     Some(parameters.into_iter().zip(arguments).collect())
 }
 
-fn substitute<'c>(ty: Type<'c>, types: &FxHashMap<&str, Type<'c>>) -> Type<'c> {
+pub(crate) fn substitute<'c>(ty: Type<'c>, types: &FxHashMap<&str, Type<'c>>) -> Type<'c> {
     ParamType::from_type(ty)
         .and_then(|param| types.get(param.name()).copied())
         .unwrap_or(ty)
@@ -271,12 +282,13 @@ fn substitute<'c>(ty: Type<'c>, types: &FxHashMap<&str, Type<'c>>) -> Type<'c> {
 
 /// A `let` bound to a query stays: its stages are rows other queries name.
 /// An external function stays too: it has no body to expand, and the yzr
-/// lowering reads the engine's name from it.
+/// lowering reads the engine's name from it. So does an operator's
+/// implementation, which `legalize_operators` copies in after the folds.
 fn discard_declarations(context: &Context, rewriter: &RewriterBase, block: BlockRef) {
     let mut declarations = Vec::new();
     for op in block.operations() {
         let discard = match op.as_yzl() {
-            Some(YzlOp::Fn(function)) => !function.is_external(),
+            Some(YzlOp::Fn(function)) => !function.is_external() && !implements_operator(&function),
             Some(YzlOp::Trait(_) | YzlOp::Impl(_)) => true,
             Some(YzlOp::Const(binding)) => !binds_query(context, &binding),
             _ => false,
@@ -289,6 +301,10 @@ fn discard_declarations(context: &Context, rewriter: &RewriterBase, block: Block
     for declaration in declarations {
         rewriter.erase_op(declaration);
     }
+}
+
+fn implements_operator(function: &FnOp) -> bool {
+    Operator::implemented_by(function.sym_name().value()).is_some()
 }
 
 fn binds_query(context: &Context, binding: &ConstOp) -> bool {

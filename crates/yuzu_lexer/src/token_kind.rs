@@ -19,6 +19,9 @@ pub enum TokenKind {
     #[token("/", priority = 1)]
     Slash,
 
+    #[token("%", priority = 1)]
+    Percent,
+
     #[token("=", priority = 1)]
     Eq,
 
@@ -251,6 +254,7 @@ impl std::fmt::Display for TokenKind {
             TokenKind::Star => "*",
             TokenKind::StarStar => "**",
             TokenKind::Slash => "/",
+            TokenKind::Percent => "%",
             TokenKind::Eq => "=",
             TokenKind::EqEq => "==",
             TokenKind::Neq => "!=",
@@ -339,6 +343,7 @@ mod tests {
             (TokenKind::Star, "*"),
             (TokenKind::StarStar, "**"),
             (TokenKind::Slash, "/"),
+            (TokenKind::Percent, "%"),
             (TokenKind::Eq, "="),
             (TokenKind::EqEq, "=="),
             (TokenKind::Neq, "!="),

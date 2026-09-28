@@ -322,7 +322,7 @@ mod tests {
         check(
             &[(&datafusion, &text)],
             0,
-            expect!["datafusion.yz 39..42 unknown type `i64`"],
+            expect!["datafusion.yz 74..77 unknown type `i64`"],
         );
     }
 }

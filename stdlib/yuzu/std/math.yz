@@ -1,0 +1,4 @@
+pub trait Numeric {}
+
+impl Numeric for int64 {}
+impl Numeric for float64 {}

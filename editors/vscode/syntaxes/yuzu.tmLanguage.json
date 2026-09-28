@@ -281,6 +281,10 @@
           "name": "keyword.operator.pipe.yuzu"
         },
         {
+          "match": "%",
+          "name": "keyword.operator.arithmetic.yuzu"
+        },
+        {
           "match": "\\*",
           "name": "keyword.operator.arithmetic.yuzu"
         },

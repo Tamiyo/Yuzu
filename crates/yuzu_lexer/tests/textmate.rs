@@ -67,6 +67,7 @@ roles! {
     Star => Arithmetic,
     StarStar => Arithmetic,
     Slash => Arithmetic,
+    Percent => Arithmetic,
     Eq => Assignment,
     EqEq => Comparison,
     Neq => Comparison,

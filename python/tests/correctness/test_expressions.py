@@ -130,3 +130,15 @@ def test_shifts_and_powers_reach_the_engine():
         |> select level << 2 as shl, level >> 1 as shr, level ** 2 as sq
     """
     assert rows(query) == [(12, 1, 9)]
+
+
+def test_remainder_runs_in_the_engine():
+    assert rows("""
+        from employees
+        |> select name, salary % 7 as whole, rating % 1.0 as fraction
+    """) == sorted_rows(
+        ("alice", 120000 % 7, 0.5),
+        ("bob", 90000 % 7, 0.5),
+        ("carol", 240000 % 7, 0.5),
+        ("dan", 60000 % 7, 0.5),
+    )

@@ -99,6 +99,7 @@ fn parse_bin_op(p: &mut Parser) -> Option<BinOp> {
         TokenKind::Star => BinOp::Mul,
         TokenKind::StarStar => BinOp::Pow,
         TokenKind::Slash => BinOp::Div,
+        TokenKind::Percent => BinOp::Rem,
         TokenKind::EqEq => BinOp::Eq,
         TokenKind::Neq => BinOp::Neq,
         TokenKind::AndKw => BinOp::And,
@@ -244,6 +245,7 @@ enum BinOp {
     Sub,
     Mul,
     Div,
+    Rem,
     Pow,
     Eq,
     Neq,
@@ -270,7 +272,7 @@ impl BinOp {
             | BinOp::Gte => (5, 6),
             BinOp::ShiftLeft | BinOp::ShiftRight => (7, 8),
             BinOp::Add | BinOp::Sub => (9, 10),
-            BinOp::Mul | BinOp::Div => (11, 12),
+            BinOp::Mul | BinOp::Div | BinOp::Rem => (11, 12),
             BinOp::Pow => (15, 14),
         }
     }
@@ -518,6 +520,35 @@ mod tests {
                     IntLiteral@8..9
                       IntLit@8..9 "3"
             "#]],
+        );
+    }
+
+    #[test]
+    fn remainder_binds_like_multiplication() {
+        check(
+            "1 + 2 % 3 * 4",
+            expect![[r#"
+            BinaryExpr@0..13
+              IntLiteral@0..1
+                IntLit@0..1 "1"
+              Space@1..2 " "
+              Plus@2..3 "+"
+              Space@3..4 " "
+              BinaryExpr@4..13
+                BinaryExpr@4..9
+                  IntLiteral@4..5
+                    IntLit@4..5 "2"
+                  Space@5..6 " "
+                  Percent@6..7 "%"
+                  Space@7..8 " "
+                  IntLiteral@8..9
+                    IntLit@8..9 "3"
+                Space@9..10 " "
+                Star@10..11 "*"
+                Space@11..12 " "
+                IntLiteral@12..13
+                  IntLit@12..13 "4"
+        "#]],
         );
     }
 
