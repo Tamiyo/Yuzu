@@ -2,7 +2,8 @@ use mlir_sys::{MlirAttribute, MlirContext, MlirLocation, MlirStringRef, MlirType
 
 // These are the symbols the C++ leaf in `cpp/` exports, with the signatures it declares; `build.rs` links that leaf into this crate.
 unsafe extern "C" {
-    fn yzuRegisterAllDialects(ctx: MlirContext);
+    /// Loads the `yz`, `yzl` and `yzr` dialects into a live context.
+    pub fn yzuRegisterAllDialects(ctx: MlirContext);
     pub fn yzuParamTypeGet(ctx: MlirContext, name: MlirStringRef) -> MlirType;
     pub fn yzuTypeIsParamType(ty: MlirType) -> bool;
     pub fn yzuParamTypeName(ty: MlirType) -> MlirStringRef;
@@ -36,9 +37,4 @@ unsafe extern "C" {
         end_line: u32,
         end_column: u32,
     ) -> MlirLocation;
-}
-
-pub fn register_all(ctx: MlirContext) {
-    // SAFETY: the context is a live MLIR context; registration adds dialects to it and touches nothing else.
-    unsafe { yzuRegisterAllDialects(ctx) }
 }

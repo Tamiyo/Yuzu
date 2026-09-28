@@ -19,6 +19,24 @@ pub enum CmpPredicate {
 }
 
 impl CmpPredicate {
+    /// Every comparison, in declaration order.
+    pub const ALL: [Self; 6] = [
+        Self::Equal,
+        Self::NotEqual,
+        Self::Less,
+        Self::LessOrEqual,
+        Self::Greater,
+        Self::GreaterOrEqual,
+    ];
+
+    /// The comparison a spelling names.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|predicate| predicate.as_str() == text)
+    }
+
     /// The spelling the attribute carries.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -48,14 +66,21 @@ impl CmpOp<'_, '_> {
             .expect("`yz.cmp` has a `predicate` attribute");
         let text = StringAttribute::try_from(attribute)
             .expect("`predicate` on `yz.cmp` is a string attribute");
-        match text.value() {
-            "eq" => CmpPredicate::Equal,
-            "ne" => CmpPredicate::NotEqual,
-            "lt" => CmpPredicate::Less,
-            "le" => CmpPredicate::LessOrEqual,
-            "gt" => CmpPredicate::Greater,
-            "ge" => CmpPredicate::GreaterOrEqual,
-            other => panic!("`{other}` is not a comparison `yz.cmp` carries"),
+        let text = text.value();
+        CmpPredicate::parse(text)
+            .unwrap_or_else(|| panic!("`{text}` is not a comparison `yz.cmp` carries"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CmpPredicate;
+
+    #[test]
+    fn every_comparison_reads_back_as_itself() {
+        for predicate in CmpPredicate::ALL {
+            assert_eq!(CmpPredicate::parse(predicate.as_str()), Some(predicate));
         }
+        assert_eq!(CmpPredicate::parse("like"), None);
     }
 }

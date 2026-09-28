@@ -15,6 +15,15 @@ pub enum JoinKind {
 }
 
 impl JoinKind {
+    /// Every kind, in declaration order.
+    pub const ALL: [Self; 4] = [Self::Inner, Self::Left, Self::Right, Self::Full];
+
+    /// The kind a spelling names.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.as_str() == text)
+    }
+
     /// The spelling the attribute carries.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -32,13 +41,8 @@ impl JoinKind {
             .unwrap_or_else(|_| panic!("`{op}` has a `kind` attribute"));
         let text = StringAttribute::try_from(attribute)
             .unwrap_or_else(|_| panic!("`kind` on `{op}` is a string attribute"));
-        match text.value() {
-            "inner" => Self::Inner,
-            "left" => Self::Left,
-            "right" => Self::Right,
-            "full" => Self::Full,
-            other => panic!("`{other}` is not a join kind"),
-        }
+        let text = text.value();
+        Self::parse(text).unwrap_or_else(|| panic!("`{text}` is not a join kind"))
     }
 }
 
@@ -55,5 +59,18 @@ impl yzr::JoinOp<'_, '_> {
     #[must_use]
     pub fn kind(&self) -> JoinKind {
         JoinKind::of(self.operation(), "yzr.join")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::JoinKind;
+
+    #[test]
+    fn every_kind_reads_back_as_itself() {
+        for kind in JoinKind::ALL {
+            assert_eq!(JoinKind::parse(kind.as_str()), Some(kind));
+        }
+        assert_eq!(JoinKind::parse("cross"), None);
     }
 }

@@ -27,6 +27,15 @@ pub enum CalleeSource {
 }
 
 impl CalleeSource {
+    /// Every kind, in declaration order.
+    pub const ALL: [Self; 4] = [Self::Fn, Self::Builtin, Self::External, Self::Const];
+
+    /// The kind a spelling names.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.as_str() == text)
+    }
+
     /// The spelling the attribute carries.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -52,13 +61,10 @@ impl CallOp<'_, '_> {
         let text = StringAttribute::try_from(attribute)
             .expect("`callee_source` on `yzl.call` is a string attribute");
 
-        match text.value() {
-            "fn" => Some(CalleeSource::Fn),
-            "builtin" => Some(CalleeSource::Builtin),
-            "external" => Some(CalleeSource::External),
-            "const" => Some(CalleeSource::Const),
-            other => panic!("`{other}` is not a callee source resolution writes"),
-        }
+        let text = text.value();
+        let source = CalleeSource::parse(text)
+            .unwrap_or_else(|| panic!("`{text}` is not a callee source resolution writes"));
+        Some(source)
     }
 }
 
@@ -66,26 +72,11 @@ impl CallOp<'_, '_> {
 mod tests {
     use super::CalleeSource;
 
-    /// The spelling and the reading are one pair, so a kind that goes onto an
-    /// op comes back as itself.
     #[test]
-    fn every_kind_spells_itself() {
-        for kind in [
-            CalleeSource::Fn,
-            CalleeSource::Builtin,
-            CalleeSource::External,
-            CalleeSource::Const,
-        ] {
-            let spelled = kind.as_str();
-            let read = match spelled {
-                "fn" => CalleeSource::Fn,
-                "builtin" => CalleeSource::Builtin,
-                "external" => CalleeSource::External,
-                "const" => CalleeSource::Const,
-                other => panic!("`{other}` is not a kind this reads back"),
-            };
-
-            assert_eq!(kind, read);
+    fn every_kind_reads_back_as_itself() {
+        for kind in CalleeSource::ALL {
+            assert_eq!(CalleeSource::parse(kind.as_str()), Some(kind));
         }
+        assert_eq!(CalleeSource::parse("macro"), None);
     }
 }

@@ -25,6 +25,29 @@ void YzlDialect::initialize() {
       >();
 }
 
+mlir::LogicalResult StructOp::verify() {
+  if (getNames().size() != getTypes().size())
+    return emitOpError("has ") << getNames().size() << " field names and "
+                               << getTypes().size() << " field types";
+  return mlir::success();
+}
+
+mlir::LogicalResult FnOp::verify() {
+  size_t inputs = getSignature().getInputs().size();
+  if (getParams().size() != inputs)
+    return emitOpError("names ") << getParams().size()
+                                 << " parameters, but its signature takes "
+                                 << inputs;
+  mlir::ArrayAttr boundParams = getBoundParamsAttr();
+  mlir::ArrayAttr boundTraits = getBoundTraitsAttr();
+  size_t bounded = boundParams ? boundParams.size() : 0;
+  size_t traits = boundTraits ? boundTraits.size() : 0;
+  if (bounded != traits)
+    return emitOpError("bounds ") << bounded << " parameters with " << traits
+                                  << " traits";
+  return mlir::success();
+}
+
 } // namespace yuzu::yzl
 
 // Promotion of places to values, for MLIR's `mem2reg`. This follows the
@@ -42,7 +65,7 @@ llvm::SmallVector<mlir::MemorySlot> LocalOp::getPromotableSlots() {
 // where it declares it, so the value is removed again unused.
 mlir::Value LocalOp::getDefaultValue(const mlir::MemorySlot &slot,
                                      mlir::OpBuilder &builder) {
-  return builder.create<MissingOp>(getLoc(), slot.elemType);
+  return MissingOp::create(builder, getLoc(), slot.elemType);
 }
 
 void LocalOp::handleBlockArgument(const mlir::MemorySlot &,

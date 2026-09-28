@@ -5,11 +5,13 @@ include "mlir/IR/OpBase.td"
 include "mlir/IR/AttrTypeBase.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
+include "YuzuAttrs.td"
 
 def Yzr_Dialect : Dialect {
   let name = "yzr";
   let summary = "Yuzu's relational algebra: what the target runs";
   let cppNamespace = "::yuzu::yzr";
+  let dependentDialects = ["::yuzu::yz::YzDialect"];
 }
 
 // A relation is a name tied to a struct: relational values are typed by the
@@ -67,17 +69,19 @@ def Yzr_AggregateOp : Yzr_Op<"aggregate", [IsolatedFromAbove, Pure]> {
   let description = [{
     The region's block arguments are the input row's columns. A block argument
     is used either through a `yzr.agg` op, or freely if its column index is in
-    `keys` — the grouping rule, enforced by this op's verifier.
+    `keys`: the grouping rule, which the verifier checks.
   }];
   let arguments = (ins Yzr_RowType:$input, DenseI64ArrayAttr:$keys);
   let results = (outs Yzr_RowType:$result);
   let regions = (region SizedRegion<1>:$body);
   let assemblyFormat = "$input `keys` $keys $body `:` type($input) `->` type($result) attr-dict";
+  let hasVerifier = 1;
 }
 
 def Yzr_JoinOp : Yzr_Op<"join", [IsolatedFromAbove, Pure]> {
   let summary = "join two relations; the on-region sees both rows' columns";
-  let arguments = (ins StrAttr:$kind, Yzr_RowType:$lhs, Yzr_RowType:$rhs);
+  let arguments = (ins Yuzu_StrEnumAttr<["inner", "left", "right", "full"]>:$kind,
+                       Yzr_RowType:$lhs, Yzr_RowType:$rhs);
   let results = (outs Yzr_RowType:$result);
   let regions = (region SizedRegion<1>:$on);
   let assemblyFormat =

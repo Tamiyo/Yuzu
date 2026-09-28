@@ -6,6 +6,7 @@ include "mlir/IR/AttrTypeBase.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
+include "YuzuAttrs.td"
 
 def Yz_Dialect : Dialect {
   let name = "yz";
@@ -13,6 +14,7 @@ def Yz_Dialect : Dialect {
   let cppNamespace = "::yuzu::yz";
   let useDefaultTypePrinterParser = 1;
   let hasConstantMaterializer = 1;
+  let dependentDialects = ["::yuzu::yzl::YzlDialect"];
 }
 
 class Yz_Type<string name, string typeMnemonic> : TypeDef<Yz_Dialect, name> {
@@ -43,7 +45,7 @@ def Yz_StructType : Yz_Type<"Struct", "struct"> {
     list lives on the declaring op, not here.
   }];
   let parameters = (ins "::mlir::FlatSymbolRefAttr":$name);
-  let hasCustomAssemblyFormat = 1;
+  let assemblyFormat = "`<` $name `>`";
 }
 
 def Yz_ListType : Yz_Type<"List", "list"> {
@@ -62,6 +64,7 @@ def Yz_StructOp : Yz_Op<"struct", [Symbol]> {
   let arguments = (ins SymbolNameAttr:$sym_name, StrArrayAttr:$names,
       TypeArrayAttr:$types);
   let assemblyFormat = "$sym_name $names `:` $types attr-dict";
+  let hasVerifier = 1;
 }
 
 // Literals — one op per type, each constant-like and foldable so the stock
@@ -200,7 +203,8 @@ def Yz_NegOp : Yz_Op<"neg", [Pure]> {
 
 def Yz_CmpOp : Yz_Op<"cmp", [Pure]> {
   let summary = "scalar comparison";
-  let arguments = (ins StrAttr:$predicate, Yz_ScalarOrUnresolvedType:$lhs,
+  let arguments = (ins Yuzu_StrEnumAttr<["eq", "ne", "lt", "le", "gt", "ge"]>:$predicate,
+                       Yz_ScalarOrUnresolvedType:$lhs,
                        Yz_ScalarOrUnresolvedType:$rhs);
   let results = (outs Yz_BoolOrUnresolvedType:$result);
   let assemblyFormat =

@@ -1,7 +1,7 @@
 //! Times the server as a client sees it, through the protocol: a keystroke
 //! followed by a semantic-token request, a hover, and the time from an edit
 //! to its diagnostics. Run it in release mode:
-//! `cargo run --release -p yuzu_lsp --example bench`.
+//! `cargo run --release -p yuzu_lsp --example lsp_bench`.
 
 use std::fmt::Write;
 use std::thread;

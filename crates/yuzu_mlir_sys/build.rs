@@ -28,6 +28,8 @@ fn main() {
                 .arg(format!("cpp/{dialect}Dialect.td"))
                 .arg("-I")
                 .arg(&include)
+                .arg("-I")
+                .arg("cpp")
                 .arg("-o")
                 .arg(out.join(format!("{dialect}{suffix}")))
                 .status()
@@ -46,11 +48,15 @@ fn main() {
             "cpp/YzrDialect.cpp",
             "cpp/Register.cpp",
         ])
-        .include(&out)
+        // LLVM's headers and the generated `.inc` files are not this crate's
+        // code, so only the warnings in `cpp/` are shown.
+        .flag("-isystem")
+        .flag(&out)
+        .flag("-isystem")
+        .flag(&include)
         .include("cpp")
-        .include(&include)
-        .flag("-w")
         .compile("yuzu_dialects");
 
     println!("cargo:rerun-if-changed=cpp");
+    println!("cargo:rerun-if-env-changed=MLIR_SYS_230_PREFIX");
 }

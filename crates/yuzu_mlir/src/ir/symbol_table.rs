@@ -3,6 +3,7 @@
 use std::fmt;
 
 use melior::StringRef;
+use melior::ir::attribute::StringAttribute;
 use melior::ir::operation::{Operation, OperationLike, OperationRef};
 use melior::ir::{Attribute, Module};
 
@@ -36,7 +37,15 @@ impl<'c, 'a> SymbolTable<'c, 'a> {
         }
     }
 
+    /// Adds a symbol op to the end of the module, renaming it when its name
+    /// is taken.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the op has no `sym_name` string: MLIR reads the name
+    /// without checking it.
     pub fn insert(&mut self, operation: Operation<'c>) -> Attribute<'c> {
+        assert_symbol(&operation);
         // SAFETY: `into_raw` hands the operation to MLIR, which owns it from here. The returned attribute is owned by the context.
         unsafe {
             Attribute::from_raw(mlir_sys::mlirSymbolTableInsert(
@@ -52,12 +61,14 @@ impl<'c, 'a> SymbolTable<'c, 'a> {
     ///
     /// # Panics
     ///
-    /// Panics if the op is not directly in the table's module.
+    /// Panics if the op is not directly in the table's module, or has no
+    /// `sym_name` string.
     pub fn insert_placed(&mut self, operation: OperationRef<'c, 'a>) -> Attribute<'c> {
         assert!(
             self.is_top_level(operation),
             "a placed symbol is directly in the table's module"
         );
+        assert_symbol(&operation);
         // SAFETY: the op is live and directly in the borrowed module, as the assert checked; the returned attribute is owned by the context.
         unsafe {
             Attribute::from_raw(mlir_sys::mlirSymbolTableInsert(
@@ -75,8 +86,8 @@ impl<'c, 'a> SymbolTable<'c, 'a> {
     ///
     /// # Safety
     ///
-    /// The op is freed. The caller must not use any copy of `operation`, or
-    /// any reference into the op, after this call.
+    /// The op is a symbol, and it is freed. The caller must not use any copy
+    /// of `operation`, or any reference into the op, after this call.
     pub unsafe fn erase(&mut self, operation: OperationRef<'c, '_>) {
         assert!(
             self.is_top_level(operation),
@@ -89,6 +100,19 @@ impl<'c, 'a> SymbolTable<'c, 'a> {
     fn is_top_level(&self, operation: OperationRef<'c, '_>) -> bool {
         operation.parent_operation() == Some(self.module.as_operation())
     }
+}
+
+/// MLIR's table casts an op's `sym_name` to a string without a check, so a
+/// safe insert checks it first.
+fn assert_symbol<'c: 'a, 'a>(operation: &impl OperationLike<'c, 'a>) {
+    let named = operation
+        .attribute("sym_name")
+        .is_ok_and(|name| StringAttribute::try_from(name).is_ok());
+    assert!(
+        named,
+        "a symbol op has a `sym_name` string: {}",
+        operation.name().as_string_ref().as_str().unwrap_or("<op>")
+    );
 }
 
 impl fmt::Debug for SymbolTable<'_, '_> {

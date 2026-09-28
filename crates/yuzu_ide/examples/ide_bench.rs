@@ -1,6 +1,6 @@
 //! Times the work the language server does on each path: a keystroke, a
 //! check, and a request on a finished check. Run it in release mode:
-//! `cargo run --release -p yuzu_ide --example bench`.
+//! `cargo run --release -p yuzu_ide --example ide_bench`.
 
 use std::fmt::Write;
 use std::path::{Path, PathBuf};

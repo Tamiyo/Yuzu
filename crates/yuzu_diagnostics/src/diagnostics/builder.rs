@@ -1,6 +1,7 @@
 use crate::diagnostics::{Diagnostic, Label, LabelStyle, Severity, Span};
 
 #[derive(Debug)]
+#[must_use = "a diagnostic does nothing until it is emitted"]
 pub struct DiagnosticBuilder {
     diagnostic: Diagnostic,
 }
@@ -22,9 +23,14 @@ impl DiagnosticBuilder {
     /// as a whole. It prints as its message alone, the way a compiler
     /// reports a file it could not read.
     pub fn error_without_span(message: impl Into<String>) -> Self {
+        Self::without_span(Severity::Error, message)
+    }
+
+    /// A diagnostic of any severity with no place in the source.
+    pub fn without_span(severity: Severity, message: impl Into<String>) -> Self {
         Self {
             diagnostic: Diagnostic {
-                severity: Severity::Error,
+                severity,
                 code: String::new(),
                 message: message.into(),
                 labels: Vec::new(),
@@ -49,13 +55,11 @@ impl DiagnosticBuilder {
         }
     }
 
-    #[must_use]
     pub fn code(mut self, code: impl Into<String>) -> Self {
         self.diagnostic.code = code.into();
         self
     }
 
-    #[must_use]
     pub fn primary_label(mut self, span: Span, message: impl Into<String>) -> Self {
         self.diagnostic.labels.push(Label {
             style: LabelStyle::Primary,
@@ -65,7 +69,6 @@ impl DiagnosticBuilder {
         self
     }
 
-    #[must_use]
     pub fn label(mut self, span: Span, message: impl Into<String>) -> Self {
         self.diagnostic.labels.push(Label {
             style: LabelStyle::Secondary,
@@ -75,7 +78,6 @@ impl DiagnosticBuilder {
         self
     }
 
-    #[must_use]
     pub fn note(mut self, text: impl Into<String>) -> Self {
         self.diagnostic.notes.push(text.into());
         self

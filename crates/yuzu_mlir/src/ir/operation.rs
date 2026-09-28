@@ -31,12 +31,17 @@ pub trait OperationExt<'c: 'a, 'a>: OperationLike<'c, 'a> {
         (self.operand_count() > 0).then(|| self.operand(0).expect("the operand index is in range"))
     }
 
-    /// A string attribute, by name.
+    /// A string attribute, by name; `None` when the op has no such
+    /// attribute.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the attribute is there but is not a string.
     fn text_attribute(&self, name: &str) -> Option<&'c str> {
         let attribute = self.attribute(name).ok()?;
-        StringAttribute::try_from(attribute)
-            .ok()
-            .map(|string| string.value())
+        let text = StringAttribute::try_from(attribute)
+            .unwrap_or_else(|_| panic!("`{name}` is a string attribute"));
+        Some(text.value())
     }
 }
 

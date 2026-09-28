@@ -40,14 +40,28 @@ const DIALECTS: [Dialect; 3] = [
 enum Arg {
     Operand {
         name: String,
-        variadic: bool,
+        arity: Arity,
     },
 
     Attr {
         name: String,
         storage: Storage,
-        optional: bool,
+        presence: Presence,
     },
+}
+
+/// How many values an operand stands for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Arity {
+    One,
+    Variadic,
+}
+
+/// Whether a verified op always has an attribute.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Presence {
+    Required,
+    Optional,
 }
 
 /// ODS `storageType`s mapped to melior attribute wrappers — every wrapper
@@ -173,6 +187,8 @@ fn parse_dialect(llvm: &Path, cpp: &Path, dialect: &Dialect) -> Vec<Op> {
         .arg(cpp.join(format!("{}Dialect.td", dialect.tblgen_prefix)))
         .arg("-I")
         .arg(llvm.join("include"))
+        .arg("-I")
+        .arg(cpp)
         .output()
         .expect("llvm-tblgen runs");
     assert!(
@@ -210,23 +226,11 @@ fn parse_dialect(llvm: &Path, cpp: &Path, dialect: &Dialect) -> Vec<Op> {
             });
 
         let full_name = format!("{}.{op_name}", dialect.mlir_namespace);
-        let args: Vec<Arg> = dag_args(&record["arguments"])
-            .map(|(constraint, name)| {
-                let constraint = &records[constraint];
-                if superclasses(constraint).any(|class| class == "Attr") {
-                    Arg::Attr {
-                        name,
-                        storage: Storage::from_ods(constraint["storageType"].as_str().unwrap()),
-                        optional: constraint["isOptional"].as_i64() == Some(1),
-                    }
-                } else {
-                    Arg::Operand {
-                        name,
-                        variadic: superclasses(constraint).any(|class| class == "Variadic"),
-                    }
-                }
-            })
-            .collect();
+        assert!(
+            !traits(record).any(|name| name == "AttrSizedOperandSegments"),
+            "`{full_name}` sizes its operand segments by attribute: the generated index scheme cannot represent it"
+        );
+        let args = parse_args(records, record, &full_name);
         let regions: Vec<String> = dag_args(&record["regions"])
             .map(|(constraint, name)| {
                 assert!(
@@ -265,15 +269,58 @@ fn parse_dialect(llvm: &Path, cpp: &Path, dialect: &Dialect) -> Vec<Op> {
     ops
 }
 
+/// An op's operands and attributes, in the order the op declares them.
+fn parse_args(records: &serde_json::Map<String, Json>, record: &Json, full_name: &str) -> Vec<Arg> {
+    dag_args(&record["arguments"])
+        .map(|(constraint, name)| {
+            let constraint = &records[constraint];
+            let is = |class: &str| superclasses(constraint).any(|superclass| superclass == class);
+            if is("Attr") {
+                assert!(
+                    !is("DefaultValuedAttr") && !is("DefaultValuedOptionalAttr"),
+                    "`{full_name}` argument `{name}` has a default value: its accessor would expect an attribute the op may not hold"
+                );
+                Arg::Attr {
+                    name,
+                    storage: Storage::from_ods(constraint["storageType"].as_str().unwrap()),
+                    presence: if constraint["isOptional"].as_i64() == Some(1) {
+                        Presence::Optional
+                    } else {
+                        Presence::Required
+                    },
+                }
+            } else {
+                assert!(
+                    !is("Optional"),
+                    "`{full_name}` operand `{name}` is optional: the generated index scheme cannot represent it"
+                );
+                Arg::Operand {
+                    name,
+                    arity: if is("Variadic") {
+                        Arity::Variadic
+                    } else {
+                        Arity::One
+                    },
+                }
+            }
+        })
+    .collect()
+}
+
 /// Rejects an op whose accessors the generated index scheme cannot give,
 /// or whose accessor names collide.
 fn check_accessors(full_name: &str, args: &[Arg], regions: &[String], results: &[String]) {
     // The variadic accessor reads every operand from its start index on,
     // which is only right when nothing follows it.
-    if let Some(index) = args
-        .iter()
-        .position(|arg| matches!(arg, Arg::Operand { variadic: true, .. }))
-    {
+    if let Some(index) = args.iter().position(|arg| {
+        matches!(
+            arg,
+            Arg::Operand {
+                arity: Arity::Variadic,
+                ..
+            }
+        )
+    }) {
         assert!(
             args[index + 1..]
                 .iter()
@@ -296,6 +343,14 @@ fn check_accessors(full_name: &str, args: &[Arg], regions: &[String], results: &
             "`{full_name}` argument `{name}` collides with another accessor"
         );
     }
+}
+
+fn traits(record: &Json) -> impl Iterator<Item = &str> {
+    record["traits"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item["def"].as_str())
 }
 
 fn superclasses(record: &Json) -> impl Iterator<Item = &str> {
@@ -479,14 +534,14 @@ fn generate_struct(out: &mut String, op: &Op) {
         match arg {
             Arg::Operand {
                 name,
-                variadic: false,
+                arity: Arity::One,
             } => {
                 write_operand(out, op, name, operand_index);
                 operand_index += 1;
             }
             Arg::Operand {
                 name,
-                variadic: true,
+                arity: Arity::Variadic,
             } => write_variadic_operand(out, name, operand_index),
             Arg::Attr {
                 name,
@@ -496,8 +551,8 @@ fn generate_struct(out: &mut String, op: &Op) {
             Arg::Attr {
                 name,
                 storage,
-                optional,
-            } => write_attribute(out, op, name, *storage, *optional),
+                presence,
+            } => write_attribute(out, op, name, *storage, *presence),
         }
     }
 
@@ -601,7 +656,14 @@ fn write_unit_attribute(out: &mut String, arg_name: &str) {
     writeln!(out, "        }}").unwrap();
 }
 
-fn write_attribute(out: &mut String, op: &Op, arg_name: &str, storage: Storage, optional: bool) {
+fn write_attribute(
+    out: &mut String,
+    op: &Op,
+    arg_name: &str,
+    storage: Storage,
+    presence: Presence,
+) {
+    let optional = presence == Presence::Optional;
     let raw = arg_name.trim_start_matches("r#");
     if TYPED_ACCESSORS.contains(&(op.full_name.as_str(), raw)) {
         return;
@@ -610,7 +672,7 @@ fn write_attribute(out: &mut String, op: &Op, arg_name: &str, storage: Storage, 
     let wrapper = storage.wrapper();
     let note = match storage {
         Storage::Other => " Raw: melior has no wrapper for its storage type.",
-        _ => "",
+        Storage::Wrapped(_) | Storage::Unit => "",
     };
     writeln!(out, "\n        /// The `{raw}` attribute.{note}").unwrap();
     // Only an optional attribute kept raw is read without `expect`.

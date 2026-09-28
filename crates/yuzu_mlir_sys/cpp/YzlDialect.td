@@ -6,6 +6,7 @@ include "mlir/IR/AttrTypeBase.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/MemorySlotInterfaces.td"
+include "YuzuAttrs.td"
 
 def Yzl_Dialect : Dialect {
   let name = "yzl";
@@ -72,6 +73,7 @@ def Yzl_StructOp : Yzl_Op<"struct", [Symbol]> {
   let arguments = (ins SymbolNameAttr:$sym_name, StrArrayAttr:$names,
       TypeArrayAttr:$types);
   let assemblyFormat = "$sym_name $names `:` $types attr-dict";
+  let hasVerifier = 1;
 }
 
 def Yzl_TraitOp : Yzl_Op<"trait",
@@ -124,6 +126,7 @@ def Yzl_FnOp : Yzl_Op<"fn", [Symbol, IsolatedFromAbove]> {
       "(`where` $bound_params^ `:` $bound_traits)? "
       "`params` $params $signature (`agg` $is_agg^)? "
       "(`external` $external_name^)? $body attr-dict";
+  let hasVerifier = 1;
 }
 
 def Yzl_ConstOp : Yzl_Op<"const", [Symbol]> {
@@ -216,7 +219,9 @@ def Yzl_AliasOp : Yzl_Op<"alias", [Pure]> {
 
 def Yzl_JoinOp : Yzl_Op<"join", [IsolatedFromAbove, Pure]> {
   let summary = "join a named relation onto the query";
-  let arguments = (ins Yzl_QueryType:$lhs, StrAttr:$kind, FlatSymbolRefAttr:$rhs,
+  let arguments = (ins Yzl_QueryType:$lhs,
+                       Yuzu_StrEnumAttr<["inner", "left", "right", "full"]>:$kind,
+                       FlatSymbolRefAttr:$rhs,
                        OptionalAttr<StrAttr>:$rhs_alias,
                        OptionalAttr<StrArrayAttr>:$using_columns);
   let results = (outs Yzl_QueryType:$result);
@@ -305,7 +310,7 @@ def Yzl_CallOp : Yzl_Op<"call", [Pure]> {
     at the point the call is built, so nothing downstream asks again.
   }];
   let arguments = (ins FlatSymbolRefAttr:$callee, Variadic<AnyType>:$operands,
-                       OptionalAttr<StrAttr>:$callee_source,
+                       OptionalAttr<Yuzu_StrEnumAttr<["fn", "builtin", "external", "const"]>>:$callee_source,
                        OptionalAttr<TypeArrayAttr>:$type_args, UnitAttr:$is_agg);
   let results = (outs AnyType:$result);
   let assemblyFormat =

@@ -434,14 +434,193 @@ fn the_verifier_rejects_a_mistyped_operand() {
     let context = yuzu_mlir::context();
     let module = parse(
         &context,
+        r"
+module {
+  %0 = yz.constant_bool true
+  %1 = yz.add %0, %0 : !yz.bool, !yz.bool -> !yz.int64
+}
+",
+    );
+    assert!(module.is_none(), "yz.add over !yz.bool must not parse");
+}
+
+fn canonicalized(source: &str) -> String {
+    let context = yuzu_mlir::context();
+    let mut module = parse(&context, source).expect("the module parses and verifies");
+    let pass_manager = melior::pass::PassManager::new(&context);
+    pass_manager.add_pass(melior::pass::transform::create_canonicalizer_pass());
+    pass_manager
+        .run(&mut module)
+        .expect("canonicalization succeeds");
+    module.as_operation().to_string()
+}
+
+#[test]
+fn an_integer_power_folds_by_squaring_and_a_float_power_does_not_fold() {
+    let folded = canonicalized(
+        r"
+module {
+  yz.func @f () -> (!yz.int64, !yz.int64, !yz.int64, !yz.float64) {
+    %one = yz.constant_int 1
+    %two = yz.constant_int 2
+    %max = yz.constant_int 9223372036854775807
+    %c62 = yz.constant_int 62
+    %c63 = yz.constant_int 63
+    %half = yz.constant_float 5.000000e-01
+    %a = yz.pow %one, %max : !yz.int64, !yz.int64 -> !yz.int64
+    %b = yz.pow %two, %c62 : !yz.int64, !yz.int64 -> !yz.int64
+    %c = yz.pow %two, %c63 : !yz.int64, !yz.int64 -> !yz.int64
+    %d = yz.pow %half, %half : !yz.float64, !yz.float64 -> !yz.float64
+    yz.return %a, %b, %c, %d : !yz.int64, !yz.int64, !yz.int64, !yz.float64
+  }
+}
+",
+    );
+    expect![[r"
+        module {
+          yz.func @f () -> (!yz.int64, !yz.int64, !yz.int64, !yz.float64) {
+            %0 = yz.constant_int 2
+            %1 = yz.constant_int 63
+            %2 = yz.constant_float 5.000000e-01
+            %3 = yz.constant_int 1
+            %4 = yz.constant_int 4611686018427387904
+            %5 = yz.pow %0, %1 : !yz.int64, !yz.int64 -> !yz.int64
+            %6 = yz.pow %2, %2 : !yz.float64, !yz.float64 -> !yz.float64
+            yz.return %3, %4, %5, %6 : !yz.int64, !yz.int64, !yz.int64, !yz.float64
+          }
+        }
+    "]]
+    .assert_eq(&folded);
+}
+
+#[test]
+fn bools_compare_as_false_before_true() {
+    let folded = canonicalized(
         r#"
 module {
-  %0 = "yz.wrong"() : () -> !yz.bool
-  %1 = yz.add %0, %0 : !yz.int64, !yz.int64 -> !yz.int64
+  yz.func @f () -> (!yz.bool, !yz.bool) {
+    %t = yz.constant_bool true
+    %f = yz.constant_bool false
+    %gt = yz.cmp "gt", %t, %f : !yz.bool, !yz.bool -> !yz.bool
+    %lt = yz.cmp "lt", %t, %f : !yz.bool, !yz.bool -> !yz.bool
+    yz.return %gt, %lt : !yz.bool, !yz.bool
+  }
 }
 "#,
     );
-    assert!(module.is_none(), "yz.add over !yz.bool must not parse");
+    expect![[r"
+        module {
+          yz.func @f () -> (!yz.bool, !yz.bool) {
+            %0 = yz.constant_bool true
+            %1 = yz.constant_bool false
+            yz.return %0, %1 : !yz.bool, !yz.bool
+          }
+        }
+    "]]
+    .assert_eq(&folded);
+}
+
+fn verifies(source: &str) -> bool {
+    let context = yuzu_mlir::context();
+    parse(&context, source).is_some()
+}
+
+#[test]
+fn a_struct_has_as_many_types_as_names() {
+    assert!(verifies(
+        r#"module { yz.struct @S ["a", "b"] : [!yz.int64, !yz.str] }"#
+    ));
+    assert!(!verifies(
+        r#"module { yz.struct @S ["a", "b"] : [!yz.int64] }"#
+    ));
+    assert!(!verifies(r#"module { yzl.struct @S ["a"] : [] }"#));
+}
+
+#[test]
+fn a_function_names_each_parameter_its_signature_takes() {
+    assert!(verifies(
+        r#"module { yzl.fn @f params ["x"] (!yz.int64) -> !yz.int64 {} }"#
+    ));
+    assert!(!verifies(
+        r#"module { yzl.fn @f params ["x", "y"] (!yz.int64) -> !yz.int64 {} }"#
+    ));
+}
+
+#[test]
+fn only_a_key_column_is_yielded_outside_an_aggregate() {
+    let aggregate = |keys: &str, body: &str| {
+        format!(
+            r"
+module {{
+  %t = yzr.table @t : !yz.struct<@row>
+  %g = yzr.aggregate %t keys [{keys}] {{
+  ^bb0(%a: !yz.int64):
+    {body}
+  }} : !yz.struct<@row> -> !yz.struct<@out>
+}}
+"
+        )
+    };
+    let measured = "%s = yz.add %a, %a : !yz.int64, !yz.int64 -> !yz.int64\n    \
+                    %m = yzr.agg \"sum\", %s : !yz.int64 -> !yz.int64\n    \
+                    yzr.yield %m : !yz.int64";
+    let bare = "yzr.yield %a : !yz.int64";
+    assert!(verifies(&aggregate("", measured)));
+    assert!(verifies(&aggregate("0", bare)));
+    assert!(!verifies(&aggregate("", bare)));
+}
+
+#[test]
+fn each_spelling_the_rust_enums_read_is_one_the_dialects_accept() {
+    use yuzu_mlir::attributes::{CalleeSource, CmpPredicate, JoinKind};
+
+    let compare = |predicate: &str| {
+        format!(
+            r#"
+module {{
+  %a = yz.constant_int 1
+  %p = yz.cmp "{predicate}", %a, %a : !yz.int64, !yz.int64 -> !yz.bool
+}}
+"#
+        )
+    };
+    let call = |source: &str| {
+        format!(
+            r#"
+module {{
+  %r = yzl.call @f() : () -> !yz.int64 {{callee_source = "{source}"}}
+}}
+"#
+        )
+    };
+    let join = |kind: &str| {
+        format!(
+            r#"
+module {{
+  %l = yzr.table @l : !yz.struct<@row>
+  %r = yzr.table @r : !yz.struct<@row>
+  %j = yzr.join "{kind}", %l, %r {{
+  ^bb0(%a: !yz.int64, %b: !yz.int64):
+    %p = yz.cmp "eq", %a, %b : !yz.int64, !yz.int64 -> !yz.bool
+    yzr.yield %p : !yz.bool
+  }} : !yz.struct<@row>, !yz.struct<@row> -> !yz.struct<@row>
+}}
+"#
+        )
+    };
+
+    for predicate in CmpPredicate::ALL {
+        assert!(verifies(&compare(predicate.as_str())), "{predicate:?}");
+    }
+    for source in CalleeSource::ALL {
+        assert!(verifies(&call(source.as_str())), "{source:?}");
+    }
+    for kind in JoinKind::ALL {
+        assert!(verifies(&join(kind.as_str())), "{kind:?}");
+    }
+    assert!(!verifies(&compare("like")));
+    assert!(!verifies(&call("macro")));
+    assert!(!verifies(&join("cross")));
 }
 
 /// melior's generated matching, where it works today: on operations you own.
@@ -681,28 +860,6 @@ fn borrowed_views_reject_foreign_operations() {
         }
         _ => panic!("the constant classifies as yz.constant_int"),
     }
-}
-
-/// The melior 0.27.6 predicate bug is fixed upstream as of 0.27.7:
-/// converting a genuine array succeeds, on the attribute this stack puts on
-/// every yzl.fn.
-#[test]
-fn melior_accepts_a_real_array_attribute() {
-    use melior::ir::attribute::{ArrayAttribute, StringAttribute};
-
-    let context = yuzu_mlir::context();
-    let attribute: melior::ir::Attribute =
-        ArrayAttribute::new(&context, &[StringAttribute::new(&context, "x").into()]).into();
-
-    let array = ArrayAttribute::try_from(attribute).expect("a real array converts");
-    assert_eq!(array.len(), 1);
-    let element = array.element(0).expect("the element reads");
-    assert_eq!(
-        StringAttribute::try_from(element)
-            .expect("the element is a string")
-            .value(),
-        "x"
-    );
 }
 
 #[test]

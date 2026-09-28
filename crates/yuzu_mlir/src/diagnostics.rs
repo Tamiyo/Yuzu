@@ -12,9 +12,9 @@ use melior::Context;
 use melior::diagnostic::{Diagnostic, DiagnosticHandlerId, DiagnosticSeverity};
 use melior::ir::Location;
 use text_size::{TextRange, TextSize};
-use yuzu_diagnostics::diagnostics::Span;
 use yuzu_diagnostics::diagnostics::builder::DiagnosticBuilder;
 use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
+use yuzu_diagnostics::diagnostics::{Severity, Span};
 use yuzu_diagnostics::source_map::SourceMap;
 
 /// Emits an error against a location, into whichever handler is attached.
@@ -130,7 +130,15 @@ impl Reported {
             (Some(span), DiagnosticSeverity::Note | DiagnosticSeverity::Remark) => {
                 DiagnosticBuilder::remark(span, self.message)
             }
-            (None, _) => DiagnosticBuilder::error_without_span(self.message),
+            (None, DiagnosticSeverity::Error) => {
+                DiagnosticBuilder::without_span(Severity::Error, self.message)
+            }
+            (None, DiagnosticSeverity::Warning) => {
+                DiagnosticBuilder::without_span(Severity::Warning, self.message)
+            }
+            (None, DiagnosticSeverity::Note | DiagnosticSeverity::Remark) => {
+                DiagnosticBuilder::without_span(Severity::Remark, self.message)
+            }
         };
 
         for note in self.notes {

@@ -67,11 +67,13 @@ mod tests {
     use melior::Context;
     use melior::ir::Type;
 
-    use super::{BoolType, Float64Type, Int64Type, QueryType, RefType, StrType, UnresolvedType};
+    use super::{
+        BoolType, ErrorType, Float64Type, Int64Type, QueryType, RefType, StrType, UnresolvedType,
+    };
 
     type Singleton = (fn(&Context) -> Type<'_>, fn(Type<'_>) -> bool);
 
-    const SINGLETONS: [Singleton; 7] = [
+    const SINGLETONS: [Singleton; 8] = [
         (Int64Type::get, Int64Type::is),
         (Float64Type::get, Float64Type::is),
         (BoolType::get, BoolType::is),
@@ -79,6 +81,7 @@ mod tests {
         (UnresolvedType::get, UnresolvedType::is),
         (QueryType::get, QueryType::is),
         (RefType::get, RefType::is),
+        (ErrorType::get, ErrorType::is),
     ];
 
     #[test]

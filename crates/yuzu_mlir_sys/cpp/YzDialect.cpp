@@ -33,18 +33,11 @@ void YzDialect::initialize() {
       >();
 }
 
-// !yz.struct<@Row> — the declared struct the symbol names.
-mlir::Type StructType::parse(mlir::AsmParser &parser) {
-  mlir::StringAttr name;
-  if (parser.parseLess() || parser.parseSymbolName(name) ||
-      parser.parseGreater())
-    return {};
-  return StructType::get(parser.getContext(),
-                         mlir::FlatSymbolRefAttr::get(name));
-}
-
-void StructType::print(mlir::AsmPrinter &printer) const {
-  printer << "<" << getName() << ">";
+mlir::LogicalResult StructOp::verify() {
+  if (getNames().size() != getTypes().size())
+    return emitOpError("has ") << getNames().size() << " field names and "
+                               << getTypes().size() << " field types";
+  return mlir::success();
 }
 
 mlir::Operation *YzDialect::materializeConstant(mlir::OpBuilder &builder,
@@ -53,16 +46,16 @@ mlir::Operation *YzDialect::materializeConstant(mlir::OpBuilder &builder,
                                                 mlir::Location loc) {
   if (llvm::isa<BoolType>(type))
     if (auto boolean = llvm::dyn_cast<mlir::BoolAttr>(value))
-      return builder.create<ConstantBoolOp>(loc, type, boolean);
+      return ConstantBoolOp::create(builder, loc, type, boolean);
   if (llvm::isa<Int64Type>(type))
     if (auto integer = llvm::dyn_cast<mlir::IntegerAttr>(value))
-      return builder.create<ConstantIntOp>(loc, type, integer);
+      return ConstantIntOp::create(builder, loc, type, integer);
   if (llvm::isa<Float64Type>(type))
     if (auto real = llvm::dyn_cast<mlir::FloatAttr>(value))
-      return builder.create<ConstantFloatOp>(loc, type, real);
+      return ConstantFloatOp::create(builder, loc, type, real);
   if (llvm::isa<StrType>(type))
     if (auto text = llvm::dyn_cast<mlir::StringAttr>(value))
-      return builder.create<ConstantStrOp>(loc, type, text);
+      return ConstantStrOp::create(builder, loc, type, text);
   return nullptr;
 }
 
@@ -74,7 +67,8 @@ mlir::OpFoldResult ConstantStrOp::fold(FoldAdaptor) { return getValueAttr(); }
 // Folding answers at compile time what the engine would answer at run time,
 // so a fold that cannot be carried out exactly declines instead of guessing.
 // The engine owns overflow and division by zero; a constant that disagreed
-// with it would quietly change the query rather than fail.
+// with it would quietly change the query rather than fail. `floats` is null
+// for an operation whose float result the engine rounds its own way.
 static mlir::OpFoldResult
 foldNumericBinary(mlir::Attribute lhs, mlir::Attribute rhs,
                   std::optional<int64_t> (*ints)(int64_t, int64_t),
@@ -86,6 +80,8 @@ foldNumericBinary(mlir::Attribute lhs, mlir::Attribute rhs,
         return {};
       return mlir::IntegerAttr::get(lhsInt.getType(), *folded);
     }
+  if (!floats)
+    return {};
   if (auto lhsFloat = llvm::dyn_cast_if_present<mlir::FloatAttr>(lhs))
     if (auto rhsFloat = llvm::dyn_cast_if_present<mlir::FloatAttr>(rhs))
       return mlir::FloatAttr::get(
@@ -156,8 +152,8 @@ struct ReassociateAdd : public mlir::OpRewritePattern<AddOp> {
     if (llvm::AddOverflow(left, right, total))
       return mlir::failure();
 
-    auto folded = rewriter.create<ConstantIntOp>(
-        op.getLoc(), outer.getType(),
+    auto folded = ConstantIntOp::create(
+        rewriter, op.getLoc(), outer.getType(),
         mlir::IntegerAttr::get(held.getValueAttr().getType(), total));
     rewriter.replaceOpWithNewOp<AddOp>(op, op.getType(), inner.getLhs(),
                                        folded);
@@ -222,6 +218,9 @@ mlir::OpFoldResult RemOp::fold(FoldAdaptor adaptor) {
       [](double lhs, double rhs) { return std::fmod(lhs, rhs); });
 }
 
+// By squaring, so an exponent of any size takes at most 64 steps. A float
+// power does not fold: `pow` is not correctly rounded, so a folded constant
+// could differ from the engine's answer in its last bit.
 mlir::OpFoldResult PowOp::fold(FoldAdaptor adaptor) {
   return foldNumericBinary(
       adaptor.getLhs(), adaptor.getRhs(),
@@ -229,12 +228,16 @@ mlir::OpFoldResult PowOp::fold(FoldAdaptor adaptor) {
         if (exponent < 0)
           return std::nullopt;
         int64_t result = 1;
-        for (int64_t step = 0; step < exponent; ++step)
-          if (llvm::MulOverflow(result, base, result))
+        while (exponent > 0) {
+          if ((exponent & 1) && llvm::MulOverflow(result, base, result))
             return std::nullopt;
+          exponent >>= 1;
+          if (exponent > 0 && llvm::MulOverflow(base, base, base))
+            return std::nullopt;
+        }
         return result;
       },
-      [](double base, double exponent) { return std::pow(base, exponent); });
+      nullptr);
 }
 
 // A shift by a negative count or by the width or more is not defined the
@@ -284,15 +287,15 @@ namespace {
 // Whether two constants hold the same value, as the engine compares them:
 // -0.0 equals 0.0, and NaN equals nothing. None when the kinds differ.
 std::optional<bool> sameValue(mlir::Attribute lhs, mlir::Attribute rhs) {
+  if (auto left = llvm::dyn_cast<mlir::BoolAttr>(lhs))
+    if (auto right = llvm::dyn_cast<mlir::BoolAttr>(rhs))
+      return left.getValue() == right.getValue();
   if (auto left = llvm::dyn_cast<mlir::IntegerAttr>(lhs))
     if (auto right = llvm::dyn_cast<mlir::IntegerAttr>(rhs))
       return left.getInt() == right.getInt();
   if (auto left = llvm::dyn_cast<mlir::FloatAttr>(lhs))
     if (auto right = llvm::dyn_cast<mlir::FloatAttr>(rhs))
       return left.getValueAsDouble() == right.getValueAsDouble();
-  if (auto left = llvm::dyn_cast<mlir::BoolAttr>(lhs))
-    if (auto right = llvm::dyn_cast<mlir::BoolAttr>(rhs))
-      return left.getValue() == right.getValue();
   if (auto left = llvm::dyn_cast<mlir::StringAttr>(lhs))
     if (auto right = llvm::dyn_cast<mlir::StringAttr>(rhs))
       return left.getValue() == right.getValue();
@@ -378,12 +381,19 @@ static std::optional<bool> comparePredicate(llvm::StringRef predicate, T lhs,
 }
 
 mlir::OpFoldResult CmpOp::fold(FoldAdaptor adaptor) {
-  // Integers compare as integers. Above 2^53 a double stands for more than
-  // one of them, so comparing through one answers a different question than
-  // the engine will.
+  // A bool is an i1 integer attribute whose `getInt` sign-extends `true` to
+  // -1, so bools are read first, as false before true. Integers compare as
+  // integers: above 2^53 a double stands for more than one of them, so
+  // comparing through one answers a different question than the engine will.
   std::optional<bool> value;
-  if (auto lhs =
-          llvm::dyn_cast_if_present<mlir::IntegerAttr>(adaptor.getLhs())) {
+  if (auto lhs = llvm::dyn_cast_if_present<mlir::BoolAttr>(adaptor.getLhs())) {
+    auto rhs = llvm::dyn_cast_if_present<mlir::BoolAttr>(adaptor.getRhs());
+    if (!rhs)
+      return {};
+    value = comparePredicate(getPredicate(), static_cast<int>(lhs.getValue()),
+                             static_cast<int>(rhs.getValue()));
+  } else if (auto lhs = llvm::dyn_cast_if_present<mlir::IntegerAttr>(
+                 adaptor.getLhs())) {
     auto rhs = llvm::dyn_cast_if_present<mlir::IntegerAttr>(adaptor.getRhs());
     if (!rhs)
       return {};
