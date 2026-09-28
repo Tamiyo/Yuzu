@@ -137,15 +137,27 @@ pub(crate) mod test_support {
     fn compile(source: &str) -> (Option<String>, String) {
         let context = yuzu_mlir::context();
         let mut sources = SourceMap::new();
-        let source_id = sources.add("test.yz".to_string(), source.to_string());
         let mut diagnostics = DiagnosticsEngine::new();
+        let prelude = include_str!("../../yuzu_passes/tests/prelude.yz");
+        let prelude_id = sources.add("<prelude>".to_string(), prelude.to_string());
+        let tokens: Vec<Token> = Lexer::new(prelude).collect();
+        let prelude_root =
+            ast::Root::cast(yuzu_parser::parse(&tokens, &mut diagnostics, prelude_id))
+                .expect("a source has a root");
+        let mut prelude = yuzu_passes::File::new(
+            prelude_id,
+            Some(yuzu_passes::PRELUDE.to_string()),
+            prelude_root,
+        );
+        prelude.set_lowering(yuzu_passes::Lowering::OnDemand);
+        let source_id = sources.add("test.yz".to_string(), source.to_string());
         let tokens: Vec<Token> = Lexer::new(source).collect();
         let syntax = yuzu_parser::parse(&tokens, &mut diagnostics, source_id);
         let root = ast::Root::cast(syntax).expect("a source has a root");
         let mut module = yuzu_passes::lower_ast_to_yzl(
             &context,
             &sources,
-            &[yuzu_passes::File::entry(source_id, root)],
+            &[prelude, yuzu_passes::File::entry(source_id, root)],
             &mut diagnostics,
             &yuzu_types::Builtins,
             None,
@@ -220,6 +232,10 @@ mod tests {
                     {
                       "extensionUrnAnchor": 2,
                       "urn": "extension:io.substrait:functions_arithmetic"
+                    },
+                    {
+                      "extensionUrnAnchor": 3,
+                      "urn": "extension:io.yuzu:external"
                     }
                   ],
                   "extensions": [
@@ -239,7 +255,7 @@ mod tests {
                     },
                     {
                       "extensionFunction": {
-                        "extensionUrnReference": 2,
+                        "extensionUrnReference": 3,
                         "functionAnchor": 3,
                         "name": "sum:i64"
                       }

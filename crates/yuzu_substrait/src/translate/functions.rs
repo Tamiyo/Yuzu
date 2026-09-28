@@ -39,16 +39,12 @@ pub(crate) struct Aggregate {
 }
 
 /// A measure's function, by the name the lowering put on it. A name the
-/// registry does not have is one the target provides — an
-/// `external agg fn`, which is declared under the name as written.
+/// registry does not have is one the engine provides: an `external agg def`,
+/// declared under the engine's own name.
 pub(crate) fn of_aggregate(name: &str) -> Aggregate {
     let func = match name {
         "count" => AggFunc::Count,
         "count_distinct" => AggFunc::CountDistinct,
-        "sum" => AggFunc::Sum,
-        "min" => AggFunc::Min,
-        "max" => AggFunc::Max,
-        "avg" => AggFunc::Avg,
         external => {
             return Aggregate {
                 urn: EXTERNAL_URN,
@@ -66,9 +62,7 @@ pub(crate) fn of_aggregate(name: &str) -> Aggregate {
         // other aggregate takes them all.
         invocation: match func {
             AggFunc::CountDistinct => AggregationInvocation::Distinct,
-            AggFunc::Count | AggFunc::Sum | AggFunc::Min | AggFunc::Max | AggFunc::Avg => {
-                AggregationInvocation::All
-            }
+            AggFunc::Count => AggregationInvocation::All,
         },
     }
 }

@@ -102,7 +102,10 @@ impl<'c> AggregateChecker<'c> {
         if grouping.is_none() {
             emit_error(
                 op.location(),
-                &format!("aggregate function `{callee}` can only be used in an `aggregate` item"),
+                &format!(
+                    "aggregate function `{}` can only be used in an `aggregate` item",
+                    crate::written_name(callee)
+                ),
             );
         }
 
@@ -111,7 +114,10 @@ impl<'c> AggregateChecker<'c> {
         {
             emit_error(
                 op.location(),
-                &format!("`{name}` is an `agg fn` and cannot call itself"),
+                &format!(
+                    "`{}` is an `agg fn` and cannot call itself",
+                    crate::written_name(name)
+                ),
             );
         }
 
@@ -123,7 +129,8 @@ impl<'c> AggregateChecker<'c> {
                     emit_error(
                         location,
                         &format!(
-                            "aggregate function `{name}` cannot be nested in another aggregate"
+                            "aggregate function `{}` cannot be nested in another aggregate",
+                            crate::written_name(name)
                         ),
                     );
                 }

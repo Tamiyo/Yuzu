@@ -4,10 +4,6 @@
 pub enum AggFunc {
     Count,
     CountDistinct,
-    Sum,
-    Min,
-    Max,
-    Avg,
 }
 
 impl AggFunc {
@@ -15,10 +11,6 @@ impl AggFunc {
         match self {
             AggFunc::Count => "count",
             AggFunc::CountDistinct => "count_distinct",
-            AggFunc::Sum => "sum",
-            AggFunc::Min => "min",
-            AggFunc::Max => "max",
-            AggFunc::Avg => "avg",
         }
     }
 }

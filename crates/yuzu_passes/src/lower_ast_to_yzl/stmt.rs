@@ -1181,14 +1181,18 @@ mod tests {
                 %0 = yzl.local "x" param
                 yzl.store %0, %arg0 : !yzl.unresolved
                 %1 = yzl.load %0 : !yzl.unresolved
-                %2 = yzl.call @max(%1) : (!yzl.unresolved) -> !yzl.unresolved {callee_source = "builtin", is_agg}
+                %2 = yzl.call @yuzu.prelude.max(%1) : (!yzl.unresolved) -> !yzl.unresolved {callee_source = "external", is_agg}
                 %3 = yzl.load %0 : !yzl.unresolved
-                %4 = yzl.call @min(%3) : (!yzl.unresolved) -> !yzl.unresolved {callee_source = "builtin", is_agg}
+                %4 = yzl.call @yuzu.prelude.min(%3) : (!yzl.unresolved) -> !yzl.unresolved {callee_source = "external", is_agg}
                 %5 = yz.sub %2, %4 : !yzl.unresolved, !yzl.unresolved -> !yzl.unresolved
                 yzl.return %5 : !yzl.unresolved
               } {sym_visibility = "private"}
               yzl.fn @upper params ["s"] (!yz.str) -> !yz.str external "upper" {
               } {sym_visibility = "private"}
+              yzl.fn @yuzu.prelude.max generics ["T"] params ["x"] (!yzl.param<"T">) -> !yzl.param<"T"> agg external "max" {
+              }
+              yzl.fn @yuzu.prelude.min generics ["T"] params ["x"] (!yzl.param<"T">) -> !yzl.param<"T"> agg external "min" {
+              }
             }
         "#]]
         .assert_eq(&lowered(

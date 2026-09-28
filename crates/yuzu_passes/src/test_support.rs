@@ -9,7 +9,11 @@ use yuzu_diagnostics::diagnostics::printer::DiagnosticPrinter;
 use yuzu_diagnostics::source_map::{SourceId, SourceMap};
 use yuzu_lexer::lexer::{Lexer, Token};
 
-use crate::File;
+use crate::{File, Lowering};
+
+/// The aggregates the library's prelude brings into every file, declared
+/// as the engine's own, since a test compiles without the library.
+const PRELUDE: &str = include_str!("../tests/prelude.yz");
 
 /// The files of a program as `(name, module, source)`, the entry last.
 pub(crate) type Program<'s> = [(&'s str, Option<&'s str>, &'s str)];
@@ -33,13 +37,19 @@ pub(crate) fn parsed(
 pub(crate) fn lower<'c>(context: &'c Context, program: &Program) -> Lowered<'c> {
     let mut sources = SourceMap::new();
     let mut diagnostics = DiagnosticsEngine::new();
-    let files: Vec<File> = program
-        .iter()
-        .map(|&(name, module, source)| {
+    let prelude_id = sources.add("<prelude>".to_string(), PRELUDE.to_string());
+    let mut prelude = File::new(
+        prelude_id,
+        Some(crate::PRELUDE.to_string()),
+        parsed(&sources, prelude_id, &mut diagnostics),
+    );
+    prelude.set_lowering(Lowering::OnDemand);
+    let files: Vec<File> = std::iter::once(prelude)
+        .chain(program.iter().map(|&(name, module, source)| {
             let source_id = sources.add(name.to_string(), source.to_string());
             let root = parsed(&sources, source_id, &mut diagnostics);
             File::new(source_id, module.map(str::to_string), root)
-        })
+        }))
         .collect();
     let module = crate::lower_ast_to_yzl(
         context,

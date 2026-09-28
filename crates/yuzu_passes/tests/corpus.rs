@@ -6,7 +6,7 @@ use yuzu_ast::ast;
 use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
 use yuzu_diagnostics::source_map::SourceMap;
 use yuzu_lexer::lexer::{Lexer, Token};
-use yuzu_passes::{File, lower_ast_to_yzl};
+use yuzu_passes::{File, Lowering, lower_ast_to_yzl};
 
 const CORPUS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../python/tests");
 
@@ -22,6 +22,19 @@ fn yuzu_chunks(source: &str) -> impl Iterator<Item = (&str, Option<&str>)> {
                 && ((chunk.contains("|>") && chunk.contains("from")) || chunk.contains("struct "))
         })
         .map(move |(index, chunk)| (chunk, parts.get(index + 1).copied()))
+}
+
+/// The aggregates the library's prelude brings into every file, declared
+/// as the engine's own, since the corpus lowers without the library.
+fn prelude(sources: &mut SourceMap, diagnostics: &mut DiagnosticsEngine) -> File {
+    let text = include_str!("prelude.yz");
+    let source_id = sources.add("<prelude>".to_string(), text.to_string());
+    let tokens: Vec<Token> = Lexer::new(text).collect();
+    let root = ast::Root::cast(yuzu_parser::parse(&tokens, diagnostics, source_id))
+        .expect("a parse always yields a root");
+    let mut file = File::new(source_id, Some(yuzu_passes::PRELUDE.to_string()), root);
+    file.set_lowering(Lowering::OnDemand);
+    file
 }
 
 #[test]
@@ -61,13 +74,14 @@ fn the_correctness_corpus_lowers() {
             let mut sources = SourceMap::new();
             let source_id = sources.add("corpus.yz".to_string(), program.clone());
             let mut diagnostics = DiagnosticsEngine::new();
+            let prelude = prelude(&mut sources, &mut diagnostics);
             let tokens: Vec<Token> = Lexer::new(&program).collect();
             let root = ast::Root::cast(yuzu_parser::parse(&tokens, &mut diagnostics, source_id))
                 .expect("a parse always yields a root");
             let module = lower_ast_to_yzl(
                 &context,
                 &sources,
-                &[File::entry(source_id, root)],
+                &[prelude, File::entry(source_id, root)],
                 &mut diagnostics,
                 &yuzu_types::Builtins,
                 None,

@@ -1074,7 +1074,7 @@ mod tests {
         );
         assert_eq!(
             symbols
-                .callable("sum", registry)
+                .callable("count", registry)
                 .map(|callable| callable.source),
             Some(CalleeSource::Builtin)
         );

@@ -35,15 +35,11 @@ pub(crate) fn function_target(func: Func) -> Option<(&'static str, &'static str)
     Some(target)
 }
 
-/// Map a plan aggregate to its Substrait extension function. `count` alone
-/// lives in the generic aggregate family; the rest are arithmetic.
+/// Map a builtin aggregate to its Substrait extension function: `count`, in
+/// the generic aggregate family.
 pub(crate) fn aggregate_target(func: AggFunc) -> (&'static str, &'static str) {
     match func {
         AggFunc::Count | AggFunc::CountDistinct => (AGGREGATE_GENERIC_URN, "count"),
-        AggFunc::Sum => (ARITHMETIC_URN, "sum"),
-        AggFunc::Min => (ARITHMETIC_URN, "min"),
-        AggFunc::Max => (ARITHMETIC_URN, "max"),
-        AggFunc::Avg => (ARITHMETIC_URN, "avg"),
     }
 }
 

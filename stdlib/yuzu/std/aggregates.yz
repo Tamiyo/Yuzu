@@ -1,0 +1,18 @@
+import yuzu.target.datafusion as datafusion
+from yuzu.std.math import Numeric
+
+pub agg def sum[T](x: T) -> T where T: Numeric {
+    return datafusion.sum(x)
+}
+
+pub agg def min[T](x: T) -> T {
+    return datafusion.min(x)
+}
+
+pub agg def max[T](x: T) -> T {
+    return datafusion.max(x)
+}
+
+pub agg def avg[T](x: T) -> T where T: Numeric {
+    return datafusion.avg(x)
+}

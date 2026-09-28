@@ -116,13 +116,16 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             return None;
         }
 
-        Some(if call.is_agg() {
-            self.convert_measure(op, callee, operands, ty)
-        } else if kind == Some(CalleeSource::External) {
-            let name = *self
+        // The engine knows an external by its own name, not by the symbol.
+        let external = (kind == Some(CalleeSource::External)).then(|| {
+            *self
                 .externals
                 .get(callee)
-                .expect("an external call names a top-level external fn");
+                .expect("an external call names a top-level external fn")
+        });
+        Some(if call.is_agg() {
+            self.convert_measure(op, external.unwrap_or(callee), operands, ty)
+        } else if let Some(name) = external {
             yz::extern_call(
                 self.context,
                 ty,

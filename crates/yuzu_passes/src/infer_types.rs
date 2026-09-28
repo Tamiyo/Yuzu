@@ -21,7 +21,7 @@ use yuzu_mlir::ir::region::RegionExt;
 use yuzu_mlir::ir::value::{ValueExt, ValueId};
 use yuzu_mlir::ops::yz::YzOp;
 use yuzu_mlir::ops::yzl::{FnOp, YzlOp};
-use yuzu_mlir::types::{self, BoolType, ErrorType, Float64Type, Int64Type, UnresolvedType};
+use yuzu_mlir::types::{self, BoolType, ErrorType, Int64Type, UnresolvedType};
 use yuzu_mlir::{ListType, ParamType};
 use yuzu_types::{AggFunc, BuiltinFunc, Func, FunctionRegistry};
 
@@ -552,7 +552,8 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
                     bound.location,
                     &format!(
                         "`{name}` does not implement `{}`, required by `{}`",
-                        bound.trait_, bound.callee
+                        crate::written_name(bound.trait_),
+                        crate::written_name(bound.callee)
                     ),
                 );
             }
@@ -583,26 +584,6 @@ impl<'c, 'd> TypeInferrer<'c, 'd> {
         match entry.func {
             BuiltinFunc::Aggregate(AggFunc::Count | AggFunc::CountDistinct) => {
                 self.unify(op, out, int64);
-            }
-            BuiltinFunc::Aggregate(AggFunc::Sum) => {
-                if let Some(argument) = op.try_first_operand() {
-                    let term = self.term_of(argument);
-                    if let Some(ty) = self.resolve(term) {
-                        let result = if ty == Float64Type::get(self.context) || ErrorType::is(ty) {
-                            Term::Concrete(ty)
-                        } else {
-                            int64
-                        };
-
-                        self.unify(op, out, result);
-                    }
-                }
-            }
-            BuiltinFunc::Aggregate(AggFunc::Min | AggFunc::Max | AggFunc::Avg) => {
-                if let Some(argument) = op.try_first_operand() {
-                    let term = self.term_of(argument);
-                    self.unify(op, out, term);
-                }
             }
             BuiltinFunc::Scalar(Func::In) => {
                 let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
@@ -871,10 +852,14 @@ from t
                   }
                   %3 = yzl.aggregate %2 group_by ["b"] as ["s", "r"] {
                   ^bb0(%arg0: !yz.int64, %arg1: !yz.int64, %arg2: !yz.float64, %arg3: !yz.int64):
-                    %4 = yzl.call @sum(%arg3) : (!yz.int64) -> !yz.int64 {callee_source = "builtin", is_agg}
-                    %5 = yzl.call @avg(%arg2) : (!yz.float64) -> !yz.float64 {callee_source = "builtin", is_agg}
+                    %4 = yzl.call @yuzu.prelude.sum(%arg3) : (!yz.int64) -> !yz.int64 {callee_source = "external", is_agg, type_args = [!yz.int64]}
+                    %5 = yzl.call @yuzu.prelude.avg(%arg2) : (!yz.float64) -> !yz.float64 {callee_source = "external", is_agg, type_args = [!yz.float64]}
                     yzl.yield %4, %5 : !yz.int64, !yz.float64
                   } {key_cols = [1]}
+                  yzl.fn @yuzu.prelude.sum generics ["T"] params ["x"] (!yzl.param<"T">) -> !yzl.param<"T"> agg external "sum" {
+                  }
+                  yzl.fn @yuzu.prelude.avg generics ["T"] params ["x"] (!yzl.param<"T">) -> !yzl.param<"T"> agg external "avg" {
+                  }
                   yzl.output %3
                 }
             "#]],

@@ -4,3 +4,8 @@ pub external def bitwise_shift_left(a: int64, b: int64) -> int64
 pub external def bitwise_shift_right(a: int64, b: int64) -> int64
 pub external def power[T](a: T, b: T) -> T where T: Numeric
 pub external def modulus[T](a: T, b: T) -> T where T: Numeric
+
+pub external agg def sum[T](x: T) -> T where T: Numeric
+pub external agg def min[T](x: T) -> T
+pub external agg def max[T](x: T) -> T
+pub external agg def avg[T](x: T) -> T where T: Numeric

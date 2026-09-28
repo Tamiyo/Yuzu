@@ -44,30 +44,6 @@ const BUILTINS: &[FunctionRegistryEntry] = &[
         min_args: 1,
         max_args: 1,
     },
-    FunctionRegistryEntry {
-        name: "sum",
-        func: BuiltinFunc::Aggregate(AggFunc::Sum),
-        min_args: 1,
-        max_args: 1,
-    },
-    FunctionRegistryEntry {
-        name: "min",
-        func: BuiltinFunc::Aggregate(AggFunc::Min),
-        min_args: 1,
-        max_args: 1,
-    },
-    FunctionRegistryEntry {
-        name: "max",
-        func: BuiltinFunc::Aggregate(AggFunc::Max),
-        min_args: 1,
-        max_args: 1,
-    },
-    FunctionRegistryEntry {
-        name: "avg",
-        func: BuiltinFunc::Aggregate(AggFunc::Avg),
-        min_args: 1,
-        max_args: 1,
-    },
 ];
 
 impl FunctionRegistry for Builtins {
@@ -113,9 +89,9 @@ mod tests {
 
     const ALIASES: &[FunctionRegistryEntry] = &[
         FunctionRegistryEntry {
-            name: "total",
-            func: BuiltinFunc::Aggregate(AggFunc::Sum),
-            min_args: 1,
+            name: "tally",
+            func: BuiltinFunc::Aggregate(AggFunc::Count),
+            min_args: 0,
             max_args: 1,
         },
         FunctionRegistryEntry {
@@ -146,16 +122,16 @@ mod tests {
     #[test]
     fn chain_adds_new_names() {
         let chained = chain(vec![Box::new(Aliases), Box::new(Builtins)]);
-        assert!(chained.entries().iter().any(|entry| entry.name == "total"));
-        assert!(chained.entries().iter().any(|entry| entry.name == "avg"));
+        assert!(chained.entries().iter().any(|entry| entry.name == "tally"));
+        assert!(chained.entries().iter().any(|entry| entry.name == "in"));
     }
 
     #[test]
     fn resolve_finds_the_first_entry_for_a_function() {
         let chained = chain(vec![Box::new(Aliases), Box::new(Builtins)]);
-        let sum = chained
-            .resolve(BuiltinFunc::Aggregate(AggFunc::Sum))
-            .expect("sum is registered");
-        assert_eq!(sum.name, "total");
+        let count = chained
+            .resolve(BuiltinFunc::Aggregate(AggFunc::Count))
+            .expect("count is registered");
+        assert_eq!(count.name, "tally");
     }
 }
