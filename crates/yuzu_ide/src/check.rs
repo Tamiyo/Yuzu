@@ -292,7 +292,7 @@ mod tests {
     use crate::test_support::Tree;
     use crate::{AnalysisHost, Change, FileId};
 
-    fn check(open: &[(&Path, &str)], file: usize, expected: Expect) {
+    fn check(open: &[(&Path, &str)], file: usize, expected: &Expect) {
         let mut change = Change::default();
         for (at, (path, text)) in open.iter().enumerate() {
             let file_id = FileId(u32::try_from(at).unwrap());
@@ -328,7 +328,7 @@ mod tests {
         check(
             &[(&main, "import helpers\nlet x: str = 1\n")],
             0,
-            expect![[r"
+            &expect![[r"
                 helpers.yz 17..20 unknown type `i64`
                 main.yz 15..29 expected `str`, found `int64`"]],
         );
@@ -344,7 +344,7 @@ mod tests {
         check(
             &[(&util, "def unused(x: i64) -> int64 { return 1 }\n")],
             0,
-            expect!["util.yz 14..17 unknown type `i64`"],
+            &expect!["util.yz 14..17 unknown type `i64`"],
         );
     }
 
@@ -362,7 +362,7 @@ mod tests {
                 (&helpers, "pub def two() -> float32 { return 2 }\n"),
             ],
             0,
-            expect!["helpers.yz 17..24 unknown type `float32`"],
+            &expect!["helpers.yz 17..24 unknown type `float32`"],
         );
     }
 
@@ -378,7 +378,7 @@ mod tests {
         check(
             &[(&datafusion, &text)],
             0,
-            expect!["datafusion.yz 74..77 unknown type `i64`"],
+            &expect!["datafusion.yz 74..77 unknown type `i64`"],
         );
     }
 

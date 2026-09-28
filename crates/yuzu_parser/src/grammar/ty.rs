@@ -56,7 +56,7 @@ mod tests {
     use super::*;
     use crate::grammar::test_support;
 
-    fn check(input: &str, expected: Expect) {
+    fn check(input: &str, expected: &Expect) {
         test_support::check(input, parse_type, expected);
     }
 
@@ -65,7 +65,7 @@ mod tests {
         test_support::check(
             "Relation[Employee]",
             parse_named_type,
-            expect![[r#"
+            &expect![[r#"
             NamedTypeAnnotation@0..18
               Ident@0..8
                 Identifier@0..8 "Relation"
@@ -83,7 +83,7 @@ mod tests {
         test_support::check(
             "(int, str) -> bool",
             parse_func_type,
-            expect![[r#"
+            &expect![[r#"
                 FuncTypeAnnotation@0..18
                   FuncTypeAnnotationParams@0..10
                     LeftParen@0..1 "("
@@ -110,7 +110,7 @@ mod tests {
     fn named_type() {
         check(
             "int",
-            expect![[r#"
+            &expect![[r#"
             NamedTypeAnnotation@0..3
               Ident@0..3
                 Identifier@0..3 "int"
@@ -122,7 +122,7 @@ mod tests {
     fn generic_type() {
         check(
             "Relation[Employee]",
-            expect![[r#"
+            &expect![[r#"
             NamedTypeAnnotation@0..18
               Ident@0..8
                 Identifier@0..8 "Relation"
@@ -139,7 +139,7 @@ mod tests {
     fn generic_type_with_multiple_args() {
         check(
             "Map[str, int]",
-            expect![[r#"
+            &expect![[r#"
             NamedTypeAnnotation@0..13
               Ident@0..3
                 Identifier@0..3 "Map"
@@ -161,7 +161,7 @@ mod tests {
     fn nested_generic_type() {
         check(
             "Aggregate[decimal, List[int]]",
-            expect![[r#"
+            &expect![[r#"
             NamedTypeAnnotation@0..29
               Ident@0..9
                 Identifier@0..9 "Aggregate"
@@ -188,7 +188,7 @@ mod tests {
     fn function_type() {
         check(
             "(int, str) -> bool",
-            expect![[r#"
+            &expect![[r#"
                 FuncTypeAnnotation@0..18
                   FuncTypeAnnotationParams@0..10
                     LeftParen@0..1 "("
@@ -215,7 +215,7 @@ mod tests {
     fn function_type_without_params() {
         check(
             "() -> int",
-            expect![[r#"
+            &expect![[r#"
                 FuncTypeAnnotation@0..9
                   FuncTypeAnnotationParams@0..2
                     LeftParen@0..1 "("

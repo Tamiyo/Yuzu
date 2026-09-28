@@ -195,13 +195,13 @@ pub(crate) mod test_support {
         (plan.map(|plan| to_json(&plan)), reported.join("\n"))
     }
 
-    pub(crate) fn check(source: &str, expected: Expect) {
+    pub(crate) fn check(source: &str, expected: &Expect) {
         let (plan, reported) = compile(source);
         assert!(reported.is_empty(), "translation reported:\n{reported}");
         expected.assert_eq(&plan.expect("the program has a query"));
     }
 
-    pub(crate) fn check_error(source: &str, expected: Expect) {
+    pub(crate) fn check_error(source: &str, expected: &Expect) {
         let (plan, reported) = compile(source);
         assert!(plan.is_none(), "an untranslatable program has no plan");
         expected.assert_eq(&reported);
@@ -222,7 +222,7 @@ mod tests {
             &format!(
                 "{TABLE}from t\n|> where a > 10\n|> extend a + b as e\n|> aggregate sum(e) as s group by b\n|> limit 5 offset 2"
             ),
-            expect![[r#"
+            &expect![[r#"
                 {
                   "version": {
                     "minorNumber": 85,
@@ -464,7 +464,7 @@ mod tests {
     fn reports_a_program_with_no_query() {
         check_error(
             "struct Row { a: int64 }\ntable t = Row\n",
-            expect![[r"
+            &expect![[r"
                 error: the program has no query
             "]],
         );
@@ -474,7 +474,7 @@ mod tests {
     fn reports_an_operator_the_target_does_not_have() {
         check_error(
             &format!("{TABLE}from t |> select a ** 2 as p"),
-            expect![[r"
+            &expect![[r"
                 error: `**` has no implementation for this engine
                  --> test.yz:3:18
                   |

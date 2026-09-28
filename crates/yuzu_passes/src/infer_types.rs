@@ -764,7 +764,7 @@ mod tests {
     use crate::infer_types;
     use crate::test_support;
 
-    fn check(source: &str, expected: Expect) {
+    fn check(source: &str, expected: &Expect) {
         test_support::check(
             source,
             |context, module| {
@@ -782,7 +782,7 @@ mod tests {
     fn a_query_let_gives_its_row_to_from() {
         check(
             "struct Row { a: int64 }\ntable t = Row\n\nlet cap = 42\nlet small = from t |> where a < 10\n\nfrom small |> select a + cap as v\n",
-            expect![[r#"
+            &expect![[r#"
                 module {
                   yzl.struct @Row ["a"] : [!yz.int64] {sym_visibility = "private"}
                   yzl.table @t of @Row {sym_visibility = "private"}
@@ -827,7 +827,7 @@ from t
 |> extend f(a) + b as e
 |> aggregate sum(e) as s, avg(rating) as r group by b
     ",
-            expect![[r#"
+            &expect![[r#"
                 module {
                   yzl.struct @Row ["a", "b", "rating"] : [!yz.int64, !yz.int64, !yz.float64] {sym_visibility = "private"}
                   yzl.table @t of @Row {sym_visibility = "private"}
@@ -890,7 +890,7 @@ table t = Row
 from t
 |> extend id(a) as m, id(r) as n
 ",
-            expect![[r#"
+            &expect![[r#"
                 module {
                   yzl.trait @Numeric {
                     yzl.fn @zero generics ["Self"] params ["x"] (!yzl.param<"Self">) -> !yzl.param<"Self"> {
@@ -941,7 +941,7 @@ table t = Row
 from t
 |> extend median(rating) as m
 ",
-            expect![[r#"
+            &expect![[r#"
                 module {
                   yzl.fn @median params ["x"] (!yz.float64) -> !yz.float64 external "median" {
                   } {sym_visibility = "private"}
@@ -979,7 +979,7 @@ table t = Row
 from t
 |> extend id(name) as n
 ",
-            expect![[r"
+            &expect![[r"
                 error: `str` does not implement `Numeric`, required by `id`
                  --> test.yz:16:11
                    |
@@ -999,7 +999,7 @@ table t = Row
 from t
 |> where name == 1
     ",
-            expect![[r"
+            &expect![[r"
                 error: expected `str`, found `int64`
                  --> test.yz:6:10
                   |
@@ -1021,7 +1021,7 @@ def f(x: int64) -> bool { return x }
 from t
 |> extend f(a) as e
     ",
-            expect![[r"
+            &expect![[r"
                 error: expected `int64`, found `bool`
                  --> test.yz:5:27
                   |
@@ -1041,7 +1041,7 @@ table t = Row
 from t
 |> set level = "high"
     "#,
-            expect![[r#"
+            &expect![[r#"
                 error: expected `int64`, found `str`
                  --> test.yz:6:1
                   |
@@ -1061,7 +1061,7 @@ table t = Row
 from t
 |> where a in [1, 3]
 ",
-            expect![[r#"
+            &expect![[r#"
                 module {
                   yzl.struct @Row ["a"] : [!yz.int64] {sym_visibility = "private"}
                   yzl.table @t of @Row {sym_visibility = "private"}
@@ -1092,7 +1092,7 @@ let ids: List[str] = [1, 3]
 from t
 |> where a in ids
 ",
-            expect![[r"
+            &expect![[r"
                 error: expected `str`, found `int64`
                  --> test.yz:5:1
                   |
@@ -1114,7 +1114,7 @@ table depts = Dept
 from t
 |> where level
 ",
-            expect![[r"
+            &expect![[r"
                 error: expected the `where` predicate to be `bool`, found `int64`
                  --> test.yz:8:1
                   |
@@ -1136,7 +1136,7 @@ table depts = Dept
 from t as e
 |> inner join depts as d on e.level
 ",
-            expect![[r"
+            &expect![[r"
                 error: expected the `on` condition to be `bool`, found `int64`
                  --> test.yz:8:1
                   |
@@ -1156,7 +1156,7 @@ table t = Row
 from t
 |> where a in 1
 ",
-            expect![[r"
+            &expect![[r"
                 error: expected `List[_]`, found `int64`
                  --> test.yz:6:10
                   |
@@ -1178,7 +1178,7 @@ let xs = []
 from t
 |> where a > 1
 ",
-            expect![[r"
+            &expect![[r"
                 error: the type of this expression could not be inferred
                  --> test.yz:5:10
                   |
@@ -1200,7 +1200,7 @@ let xs = [1, 2]
 from t
 |> where a > 1
 ",
-            expect![[r#"
+            &expect![[r#"
                 module {
                   yzl.struct @Row ["a"] : [!yz.int64] {sym_visibility = "private"}
                   yzl.table @t of @Row {sym_visibility = "private"}

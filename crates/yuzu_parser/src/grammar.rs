@@ -119,7 +119,7 @@ mod test_support {
     use crate::token_sink::TokenSink;
     use crate::token_source::TokenSource;
 
-    pub(crate) fn check<R>(input: &str, parse: impl FnOnce(&mut Parser) -> R, expected: Expect) {
+    pub(crate) fn check<R>(input: &str, parse: impl FnOnce(&mut Parser) -> R, expected: &Expect) {
         let tokens: Vec<Token> = Lexer::new(input).collect();
         let mut sources = SourceMap::new();
         let source_id = sources.add("test".to_string(), input.to_string());
@@ -136,7 +136,7 @@ mod test_support {
     }
 
     /// The tree and the errors, for a test of how a parse recovers.
-    pub(crate) fn check_recovery(input: &str, expected: Expect) {
+    pub(crate) fn check_recovery(input: &str, expected: &Expect) {
         let tokens: Vec<Token> = Lexer::new(input).collect();
         let mut sources = SourceMap::new();
         let source_id = sources.add("test".to_string(), input.to_string());
@@ -169,7 +169,7 @@ mod tests {
         test_support::check(
             "foo",
             parse_ident,
-            expect![[r#"
+            &expect![[r#"
             Ident@0..3
               Identifier@0..3 "foo"
         "#]],
@@ -181,7 +181,7 @@ mod tests {
         test_support::check(
             "",
             parse_root,
-            expect![[r"
+            &expect![[r"
             Root@0..0
         "]],
         );
@@ -191,7 +191,7 @@ mod tests {
     fn a_missing_name_keeps_the_next_declaration() {
         test_support::check_recovery(
             "let = 1\nstruct P { x: int64 }",
-            expect![[r#"
+            &expect![[r#"
                 Root@0..29
                   LetStmt@0..7
                     LetKw@0..3 "let"
@@ -227,7 +227,7 @@ mod tests {
     fn an_empty_stage_keeps_the_next_stage() {
         test_support::check_recovery(
             "from t\n|> where\n|> select a",
-            expect![[r#"
+            &expect![[r#"
                 Root@0..27
                   ExprStmt@0..27
                     Pipeline@0..27
@@ -259,7 +259,7 @@ mod tests {
     fn a_missing_argument_keeps_the_closing_paren() {
         test_support::check_recovery(
             "f(a, )",
-            expect![[r#"
+            &expect![[r#"
             Root@0..6
               ExprStmt@0..6
                 CallExpr@0..6
@@ -282,7 +282,7 @@ mod tests {
     fn a_gap_in_a_list_keeps_the_rest() {
         test_support::check_recovery(
             "[1, , 2]",
-            expect![[r#"
+            &expect![[r#"
             Root@0..8
               ExprStmt@0..8
                 ListExpr@0..8
@@ -304,7 +304,7 @@ mod tests {
     fn a_stray_paren_is_skipped_at_file_level() {
         test_support::check_recovery(
             ")\nlet x = 1",
-            expect![[r#"
+            &expect![[r#"
             Root@0..11
               ExprStmt@0..0
               Error@0..1
@@ -328,7 +328,7 @@ mod tests {
     fn a_stray_paren_is_skipped_in_a_block() {
         test_support::check_recovery(
             "def f() { ) }\nlet x = 1",
-            expect![[r#"
+            &expect![[r#"
             Root@0..23
               FuncStmt@0..13
                 DefKw@0..3 "def"
@@ -365,7 +365,7 @@ mod tests {
     fn a_missing_struct_name_keeps_the_body() {
         test_support::check_recovery(
             "struct { x: int64 }",
-            expect![[r#"
+            &expect![[r#"
                 Root@0..19
                   StructStmt@0..19
                     StructKw@0..6 "struct"
@@ -390,7 +390,7 @@ mod tests {
     fn a_missing_paren_keeps_the_body() {
         test_support::check_recovery(
             "def f(x: int64 { return x }",
-            expect![[r#"
+            &expect![[r#"
             Root@0..27
               FuncStmt@0..27
                 DefKw@0..3 "def"
@@ -426,7 +426,7 @@ mod tests {
     fn a_keyword_before_a_name_follower_is_the_name() {
         test_support::check_recovery(
             "let def = 1",
-            expect![[r#"
+            &expect![[r#"
                 Root@0..11
                   LetStmt@0..11
                     LetKw@0..3 "let"
@@ -446,7 +446,7 @@ mod tests {
     fn a_keyword_that_starts_a_statement_is_not_the_name() {
         test_support::check_recovery(
             "let\ndef f() { return 1 }",
-            expect![[r#"
+            &expect![[r#"
                 Root@0..24
                   LetStmt@0..3
                     LetKw@0..3 "let"

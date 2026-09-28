@@ -138,7 +138,7 @@ fn document() -> TextDocumentIdentifier {
     TextDocumentIdentifier::new(url())
 }
 
-fn check_diagnostics(params: &PublishDiagnosticsParams, expected: Expect) {
+fn check_diagnostics(params: &PublishDiagnosticsParams, expected: &Expect) {
     let rendered: Vec<String> = params
         .diagnostics
         .iter()
@@ -174,7 +174,7 @@ fn an_open_file_publishes_its_parse_errors() {
     assert_eq!(params.version, Some(1));
     check_diagnostics(
         &params,
-        expect!["1:4-1:5 expected one of mut, identifier, found ="],
+        &expect!["1:4-1:5 expected one of mut, identifier, found ="],
     );
     client.shutdown();
 }
@@ -195,7 +195,7 @@ fn a_change_is_applied_where_the_client_says() {
     });
     let params = client.notification::<PublishDiagnostics>();
     assert_eq!(params.version, Some(2));
-    check_diagnostics(&params, expect![""]);
+    check_diagnostics(&params, &expect![""]);
 
     let names: Vec<String> = symbols(&mut client)
         .into_iter()
@@ -313,7 +313,7 @@ fn a_semantic_error_is_published() {
     client.open("def f(x: i64) -> int64 { return 1 }\n");
 
     let params = client.notification::<PublishDiagnostics>();
-    check_diagnostics(&params, expect!["0:9-0:12 unknown type `i64`"]);
+    check_diagnostics(&params, &expect!["0:9-0:12 unknown type `i64`"]);
     client.shutdown();
 }
 
@@ -335,7 +335,7 @@ fn an_error_in_an_imported_file_is_published_for_that_file() {
     let helpers = Url::from_file_path(root.join("helpers.yz")).unwrap();
     let params = client.diagnostics_for(&helpers);
     assert_eq!(params.version, None);
-    check_diagnostics(&params, expect!["0:17-0:20 unknown type `i64`"]);
+    check_diagnostics(&params, &expect!["0:17-0:20 unknown type `i64`"]);
     client.shutdown();
     std::fs::remove_dir_all(&root).unwrap();
 }

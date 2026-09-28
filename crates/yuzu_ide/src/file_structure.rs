@@ -211,7 +211,7 @@ mod tests {
 
     use crate::test_support::{FILE, analysis};
 
-    fn check(text: &str, expected: Expect) {
+    fn check(text: &str, expected: &Expect) {
         let nodes = analysis(text).file_structure(FILE).unwrap();
         let rendered: Vec<String> = nodes
             .iter()
@@ -246,7 +246,7 @@ agg def spread(x: int64) -> int64 { return max(x) - min(x) }
 let cap = 10
 from employees e |> select e.id
 ",
-            expect![[r"
+            &expect![[r"
                 Module helpers
                 Struct Point
                   Field x float64
@@ -265,6 +265,6 @@ from employees e |> select e.id
 
     #[test]
     fn a_name_lost_to_parse_recovery_is_left_out() {
-        check("let = 1\n", expect![[r""]]);
+        check("let = 1\n", &expect![[r""]]);
     }
 }

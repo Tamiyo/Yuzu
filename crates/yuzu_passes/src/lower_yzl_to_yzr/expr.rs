@@ -264,7 +264,7 @@ table t = Row
 from t
 |> aggregate sum(a) as total, count() as n group by b
 ",
-            expect![[r#"
+            &expect![[r#"
                 module {
                   yz.struct @Row ["a", "b"] : [!yz.int64, !yz.int64]
                   %0 = yzr.table @t : !yz.struct<@Row>
@@ -291,7 +291,7 @@ table t = Row
 from t
 |> where a >
 ",
-            expect![[r"
+            &expect![[r"
                 error: expected expression, found end of input
                  --> test.yz:6:13
                   |
@@ -317,7 +317,7 @@ table t = Row
 from t
 |> where a in [1, 3]
 ",
-            expect![[r#"
+            &expect![[r#"
                 module {
                   yz.struct @Row ["a"] : [!yz.int64]
                   %0 = yzr.table @t : !yz.struct<@Row>

@@ -190,7 +190,7 @@ mod tests {
         }
     }
 
-    fn check(source: &str, build: impl FnOnce(SourceId) -> Diagnostic, expected: Expect) {
+    fn check(source: &str, build: impl FnOnce(SourceId) -> Diagnostic, expected: &Expect) {
         let mut sources = SourceMap::new();
         let id = sources.add("test.yuzu".to_string(), source.to_string());
         let diagnostic = build(id);
@@ -209,7 +209,7 @@ mod tests {
                 )
                 .build()
             },
-            expect![[r"
+            &expect![[r"
                 error: value of type `Bool` is not assignable to `Int64`
                  --> test.yuzu:1:16
                   |
@@ -229,7 +229,7 @@ mod tests {
                     .note("expected an expression")
                     .build()
             },
-            expect![[r"
+            &expect![[r"
                 error[E0001]: unexpected token
                  --> test.yuzu:1:9
                   |
@@ -249,7 +249,7 @@ mod tests {
                     .label(span(id, 4..5), "")
                     .build()
             },
-            expect![[r"
+            &expect![[r"
                 error: type error
                  --> test.yuzu:1:9
                   |
@@ -269,7 +269,7 @@ mod tests {
                     .label(span(id, 6..7), "this is an `int`")
                     .build()
             },
-            expect![[r"
+            &expect![[r"
                 error: mismatched operand types
                  --> test.yuzu:1:1
                   |

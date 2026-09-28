@@ -259,11 +259,11 @@ mod tests {
     use crate::modules::MapResolver;
     use crate::{Focus, check};
 
-    fn check_index(source: &str, expected: Expect) {
+    fn check_index(source: &str, expected: &Expect) {
         check_program(&[], source, expected);
     }
 
-    fn check_program(modules: &[(&str, &str)], source: &str, expected: Expect) {
+    fn check_program(modules: &[(&str, &str)], source: &str, expected: &Expect) {
         let resolver = MapResolver(
             modules
                 .iter()
@@ -319,7 +319,7 @@ def double(x: int64) -> int64 {
 }
 from t |> select double(a) + cap as v
 ",
-            expect![[r#"
+            &expect![[r#"
                 use "x" -> "def double(x: int64) -> int64 {"
                 use "y" -> "let y = x * 2"
                 use "from t" -> "table t = { a: int64 }"
@@ -345,7 +345,7 @@ table t = { a: int64 }
 table u = { b: int64 }
 from t |> join u on a == b |> select a + two() as v
 ",
-            expect![[r#"
+            &expect![[r#"
                 use "from t" -> "table t = { a: int64 }"
                 use "|> join u on a == b" -> "table u = { b: int64 }"
                 use "two()" -> helpers.yz: "pub def two() -> int64 { return 2 }"

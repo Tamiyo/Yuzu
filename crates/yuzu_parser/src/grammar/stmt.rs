@@ -449,7 +449,7 @@ mod tests {
     use super::*;
     use crate::grammar::test_support;
 
-    fn check(input: &str, expected: Expect) {
+    fn check(input: &str, expected: &Expect) {
         test_support::check(input, parse_stmt, expected);
     }
 
@@ -458,7 +458,7 @@ mod tests {
         test_support::check(
             "external def upper(s: str) -> str",
             parse_stmt,
-            expect![[r#"
+            &expect![[r#"
                 FuncStmt@0..33
                   ExternalKw@0..8 "external"
                   Space@8..9 " "
@@ -491,7 +491,7 @@ mod tests {
         test_support::check(
             "external agg def median(x: int64) -> float64",
             parse_stmt,
-            expect![[r#"
+            &expect![[r#"
                 FuncStmt@0..44
                   ExternalKw@0..8 "external"
                   Space@8..9 " "
@@ -526,7 +526,7 @@ mod tests {
         test_support::check(
             "agg def spread(x: int64) -> int64 { return sum(x) }",
             parse_stmt,
-            expect![[r#"
+            &expect![[r#"
                 FuncStmt@0..51
                   AggKw@0..3 "agg"
                   Space@3..4 " "
@@ -578,7 +578,7 @@ mod tests {
         test_support::check(
             "let agg = 1",
             parse_stmt,
-            expect![[r#"
+            &expect![[r#"
                 LetStmt@0..11
                   LetKw@0..3 "let"
                   Space@3..4 " "
@@ -598,7 +598,7 @@ mod tests {
         test_support::check(
             "{ return x }",
             parse_block_stmt,
-            expect![[r#"
+            &expect![[r#"
                 BlockStmt@0..12
                   LeftCurly@0..1 "{"
                   Space@1..2 " "
@@ -619,7 +619,7 @@ mod tests {
         test_support::check(
             "def f(x: int) -> int { return x }",
             parse_func_stmt,
-            expect![[r#"
+            &expect![[r#"
                 FuncStmt@0..33
                   DefKw@0..3 "def"
                   Space@3..4 " "
@@ -662,7 +662,7 @@ mod tests {
         test_support::check(
             "impl Point { def x(self) { return self } }",
             parse_impl_stmt,
-            expect![[r#"
+            &expect![[r#"
                 ImplStmt@0..42
                   ImplKw@0..4 "impl"
                   Space@4..5 " "
@@ -704,7 +704,7 @@ mod tests {
         test_support::check(
             "trait Show { def show(self) -> str }",
             parse_trait_stmt,
-            expect![[r#"
+            &expect![[r#"
                 TraitStmt@0..36
                   TraitKw@0..5 "trait"
                   Space@5..6 " "
@@ -740,7 +740,7 @@ mod tests {
         test_support::check(
             "def show(self) -> str",
             parse_trait_method,
-            expect![[r#"
+            &expect![[r#"
                 FuncStmt@0..21
                   DefKw@0..3 "def"
                   Space@3..4 " "
@@ -766,7 +766,7 @@ mod tests {
         test_support::check(
             "let mut x: int = 1",
             parse_let_stmt,
-            expect![[r#"
+            &expect![[r#"
                 LetStmt@0..18
                   LetKw@0..3 "let"
                   Space@3..4 " "
@@ -793,7 +793,7 @@ mod tests {
         test_support::check(
             "return x",
             parse_return_stmt,
-            expect![[r#"
+            &expect![[r#"
             ReturnStmt@0..8
               ReturnKw@0..6 "return"
               Space@6..7 " "
@@ -809,7 +809,7 @@ mod tests {
         test_support::check(
             "struct P { x: int }",
             parse_struct_stmt,
-            expect![[r#"
+            &expect![[r#"
                 StructStmt@0..19
                   StructKw@0..6 "struct"
                   Space@6..7 " "
@@ -837,7 +837,7 @@ mod tests {
         test_support::check(
             "table T = Row",
             parse_table_stmt,
-            expect![[r#"
+            &expect![[r#"
                 TableStmt@0..13
                   TableKw@0..5 "table"
                   Space@5..6 " "
@@ -857,7 +857,7 @@ mod tests {
         test_support::check(
             "f(x)",
             parse_expr_stmt,
-            expect![[r#"
+            &expect![[r#"
             ExprStmt@0..4
               CallExpr@0..4
                 IdentExpr@0..1
@@ -878,7 +878,7 @@ mod tests {
         test_support::check(
             "1 + 2",
             parse_value,
-            expect![[r#"
+            &expect![[r#"
                 BinaryExpr@0..5
                   IntLiteral@0..1
                     IntLit@0..1 "1"
@@ -896,7 +896,7 @@ mod tests {
         test_support::check(
             "from t |> select a",
             parse_value,
-            expect![[r#"
+            &expect![[r#"
                 Pipeline@0..18
                   FromSource@0..6
                     FromKw@0..4 "from"
@@ -922,7 +922,7 @@ mod tests {
         test_support::check(
             "x: int",
             parse_param,
-            expect![[r#"
+            &expect![[r#"
             FuncParam@0..6
               Ident@0..1
                 Identifier@0..1 "x"
@@ -940,7 +940,7 @@ mod tests {
         test_support::check(
             "self",
             parse_param,
-            expect![[r#"
+            &expect![[r#"
             FuncParam@0..4
               Ident@0..4
                 Identifier@0..4 "self"
@@ -953,7 +953,7 @@ mod tests {
         test_support::check(
             "T",
             parse_type_param,
-            expect![[r#"
+            &expect![[r#"
             TypeParam@0..1
               Ident@0..1
                 Identifier@0..1 "T"
@@ -966,7 +966,7 @@ mod tests {
         test_support::check(
             "T: Add + Eq",
             parse_type_bound,
-            expect![[r#"
+            &expect![[r#"
                 TypeBound@0..11
                   Ident@0..1
                     Identifier@0..1 "T"
@@ -990,7 +990,7 @@ mod tests {
         test_support::check(
             "Comparable",
             parse_trait_ref,
-            expect![[r#"
+            &expect![[r#"
             TraitRef@0..10
               Ident@0..10
                 Identifier@0..10 "Comparable"
@@ -1004,7 +1004,7 @@ mod tests {
     fn parse_public_struct_with_a_public_field() {
         check(
             "pub struct P { pub x: int, y: int }",
-            expect![[r#"
+            &expect![[r#"
                 StructStmt@0..35
                   PubKw@0..3 "pub"
                   Space@3..4 " "
@@ -1047,7 +1047,7 @@ mod tests {
     fn parse_module_visible_declaration() {
         check(
             "pub(mod) def f(x: int) -> int { return x }",
-            expect![[r#"
+            &expect![[r#"
                 FuncStmt@0..42
                   PubKw@0..3 "pub"
                   LeftParen@3..4 "("
@@ -1096,7 +1096,7 @@ mod tests {
     fn parse_module_declarations() {
         check(
             "mod internal",
-            expect![[r#"
+            &expect![[r#"
             ModStmt@0..12
               ModKw@0..3 "mod"
               Space@3..4 " "
@@ -1106,7 +1106,7 @@ mod tests {
         );
         check(
             "pub mod math",
-            expect![[r#"
+            &expect![[r#"
             ModStmt@0..12
               PubKw@0..3 "pub"
               Space@3..4 " "
@@ -1122,7 +1122,7 @@ mod tests {
     fn parse_import_of_a_path() {
         check(
             "import yuzu.std.math as m",
-            expect![[r#"
+            &expect![[r#"
             ImportStmt@0..25
               ImportKw@0..6 "import"
               Space@6..7 " "
@@ -1148,7 +1148,7 @@ mod tests {
     fn parse_from_import_with_renames() {
         check(
             "from helpers import spread, avg3 as mean",
-            expect![[r#"
+            &expect![[r#"
             FromImportStmt@0..40
               FromKw@0..4 "from"
               Space@4..5 " "
@@ -1182,7 +1182,7 @@ mod tests {
     fn a_query_is_not_an_import() {
         check(
             "from t |> select a as v",
-            expect![[r#"
+            &expect![[r#"
                 ExprStmt@0..23
                   Pipeline@0..23
                     FromSource@0..6
@@ -1214,7 +1214,7 @@ mod tests {
         test_support::check(
             "x: int",
             parse_struct_field_decl,
-            expect![[r#"
+            &expect![[r#"
             StructField@0..6
               Ident@0..1
                 Identifier@0..1 "x"
@@ -1231,7 +1231,7 @@ mod tests {
     fn let_stmt() {
         check(
             "let x = 1",
-            expect![[r#"
+            &expect![[r#"
                 LetStmt@0..9
                   LetKw@0..3 "let"
                   Space@3..4 " "
@@ -1250,7 +1250,7 @@ mod tests {
     fn let_mut_with_type_annotation() {
         check(
             "let mut x: int = 1",
-            expect![[r#"
+            &expect![[r#"
                 LetStmt@0..18
                   LetKw@0..3 "let"
                   Space@3..4 " "
@@ -1276,7 +1276,7 @@ mod tests {
     fn return_stmt() {
         check(
             "return x",
-            expect![[r#"
+            &expect![[r#"
             ReturnStmt@0..8
               ReturnKw@0..6 "return"
               Space@6..7 " "
@@ -1291,7 +1291,7 @@ mod tests {
     fn assign_stmt() {
         check(
             "x = 5",
-            expect![[r#"
+            &expect![[r#"
                 AssignStmt@0..5
                   IdentExpr@0..1
                     Ident@0..1
@@ -1309,7 +1309,7 @@ mod tests {
     fn func_stmt() {
         check(
             "def add(x: int, y: int) -> int { return x }",
-            expect![[r#"
+            &expect![[r#"
                 FuncStmt@0..43
                   DefKw@0..3 "def"
                   Space@3..4 " "
@@ -1361,7 +1361,7 @@ mod tests {
     fn generic_func_with_where_clause() {
         check(
             "def id[T](x: T) -> T where T: Eq { return x }",
-            expect![[r#"
+            &expect![[r#"
                 FuncStmt@0..45
                   DefKw@0..3 "def"
                   Space@3..4 " "
@@ -1419,7 +1419,7 @@ mod tests {
     fn struct_stmt() {
         check(
             "struct Point { x: int, y: int }",
-            expect![[r#"
+            &expect![[r#"
                 StructStmt@0..31
                   StructKw@0..6 "struct"
                   Space@6..7 " "
@@ -1456,7 +1456,7 @@ mod tests {
     fn table_stmt_inline() {
         check(
             "table T = { x: int }",
-            expect![[r#"
+            &expect![[r#"
                 TableStmt@0..20
                   TableKw@0..5 "table"
                   Space@5..6 " "
@@ -1485,7 +1485,7 @@ mod tests {
     fn table_stmt_named() {
         check(
             "table T = Row",
-            expect![[r#"
+            &expect![[r#"
                 TableStmt@0..13
                   TableKw@0..5 "table"
                   Space@5..6 " "
@@ -1504,7 +1504,7 @@ mod tests {
     fn impl_trait_for_type() {
         check(
             "impl Show for Point { def show(self) { return self } }",
-            expect![[r#"
+            &expect![[r#"
                 ImplStmt@0..54
                   ImplKw@0..4 "impl"
                   Space@4..5 " "
@@ -1551,7 +1551,7 @@ mod tests {
     fn trait_stmt() {
         check(
             "trait Show { def show(self) -> str }",
-            expect![[r#"
+            &expect![[r#"
                 TraitStmt@0..36
                   TraitKw@0..5 "trait"
                   Space@5..6 " "

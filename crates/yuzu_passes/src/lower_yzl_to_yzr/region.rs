@@ -332,7 +332,7 @@ table t = Row
 from t
 |> where a > 10
 ",
-            expect![[r#"
+            &expect![[r#"
                 module {
                   yz.struct @Row ["a", "b"] : [!yz.int64, !yz.int64]
                   %0 = yzr.table @t : !yz.struct<@Row>

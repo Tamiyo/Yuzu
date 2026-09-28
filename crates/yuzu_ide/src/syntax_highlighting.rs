@@ -181,14 +181,11 @@ fn highlight_name(token: &SyntaxToken) -> Option<Highlight> {
         SyntaxKind::TraitStmt => HlTag::Trait | HlMod::Declaration,
         SyntaxKind::TraitRef => HlTag::Trait.into(),
         SyntaxKind::StructStmt => HlTag::Struct | HlMod::Declaration,
-        SyntaxKind::StructExpr => HlTag::Struct.into(),
         SyntaxKind::ImplStmt | SyntaxKind::NamedTypeAnnotation => HlTag::Type.into(),
-        SyntaxKind::StructField => HlTag::Field | HlMod::Declaration,
-        SyntaxKind::StructFieldInit | SyntaxKind::FieldAccessExpr => HlTag::Field.into(),
         SyntaxKind::TableStmt if names(&parent, &ident, ast::TableStmt::name) => {
             HlTag::Table | HlMod::Declaration
         }
-        SyntaxKind::TableStmt => HlTag::Struct.into(),
+        SyntaxKind::StructExpr | SyntaxKind::TableStmt => HlTag::Struct.into(),
         SyntaxKind::LetStmt => highlight_let(&parent),
         SyntaxKind::ModStmt | SyntaxKind::ImportStmt => HlTag::Module | HlMod::Declaration,
         SyntaxKind::ModulePath => HlTag::Module.into(),
@@ -214,8 +211,12 @@ fn highlight_name(token: &SyntaxToken) -> Option<Highlight> {
         SyntaxKind::GroupByItem if names(&parent, &ident, ast::GroupByItem::alias) => {
             HlTag::Field | HlMod::Declaration
         }
-        SyntaxKind::SelectItem | SyntaxKind::AggregateItem => HlTag::Field | HlMod::Declaration,
-        SyntaxKind::RenameItem
+        SyntaxKind::StructField | SyntaxKind::SelectItem | SyntaxKind::AggregateItem => {
+            HlTag::Field | HlMod::Declaration
+        }
+        SyntaxKind::StructFieldInit
+        | SyntaxKind::FieldAccessExpr
+        | SyntaxKind::RenameItem
         | SyntaxKind::GroupByItem
         | SyntaxKind::DropStage
         | SyntaxKind::SetItem
@@ -260,7 +261,7 @@ mod tests {
     use crate::HlTag;
     use crate::test_support::{FILE, analysis};
 
-    fn check(text: &str, expected: Expect) {
+    fn check(text: &str, expected: &Expect) {
         let rendered: Vec<String> = analysis(text)
             .highlight(FILE)
             .unwrap()
@@ -298,7 +299,7 @@ def classify[T](n: int64) -> List[int64] where T: Shape { let mut total = 0 }
 mod helpers
 import yuzu.std.math as m
 ",
-            expect![[r"
+            &expect![[r"
                 Point Struct Declaration
                 x Field Declaration
                 float64 Type
@@ -349,7 +350,7 @@ from employees e
 |> drop n
 |> as summary
 ",
-            expect![[r"
+            &expect![[r"
                 employees Table
                 e Local Declaration
                 departments Table

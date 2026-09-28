@@ -105,7 +105,7 @@ pub(crate) fn reported(source: &str) -> String {
 pub(crate) fn check(
     source: &str,
     passes: impl for<'c> FnOnce(&'c Context, &mut Module<'c>) -> String,
-    expected: Expect,
+    expected: &Expect,
 ) {
     let context = yuzu_mlir::context();
     let Lowered {
@@ -125,7 +125,7 @@ pub(crate) fn check(
     });
 }
 
-pub(crate) fn check_yzr(source: &str, expected: Expect) {
+pub(crate) fn check_yzr(source: &str, expected: &Expect) {
     check(
         source,
         |context, module| {
@@ -138,7 +138,7 @@ pub(crate) fn check_yzr(source: &str, expected: Expect) {
     );
 }
 
-pub(crate) fn check_simplified(source: &str, expected: Expect) {
+pub(crate) fn check_simplified(source: &str, expected: &Expect) {
     check(
         source,
         |context, module| {

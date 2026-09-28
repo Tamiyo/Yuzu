@@ -17,7 +17,7 @@ use crate::{from_proto, to_proto};
 
 pub(crate) fn document_symbol(
     state: &GlobalState,
-    params: DocumentSymbolParams,
+    params: &DocumentSymbolParams,
 ) -> Option<DocumentSymbolResponse> {
     let (file_id, document) = state.document(&params.text_document.uri)?;
     let nodes = state.analysis().file_structure(file_id)?;
@@ -27,7 +27,7 @@ pub(crate) fn document_symbol(
 
 pub(crate) fn folding_range(
     state: &GlobalState,
-    params: FoldingRangeParams,
+    params: &FoldingRangeParams,
 ) -> Option<Vec<FoldingRange>> {
     let (file_id, document) = state.document(&params.text_document.uri)?;
     let folds = state.analysis().folding_ranges(file_id)?;
@@ -42,14 +42,14 @@ pub(crate) fn folding_range(
 
 pub(crate) fn selection_range(
     state: &GlobalState,
-    params: SelectionRangeParams,
+    params: &SelectionRangeParams,
 ) -> Option<Vec<SelectionRange>> {
     let (file_id, document) = state.document(&params.text_document.uri)?;
     let analysis = state.analysis();
     params
         .positions
-        .into_iter()
-        .map(|position| {
+        .iter()
+        .map(|&position| {
             let offset = from_proto::offset(&document.line_index, position)?;
             let ranges = analysis.selection_ranges(FilePosition { file_id, offset })?;
             Some(to_proto::selection_range(&document.line_index, &ranges))
@@ -59,15 +59,15 @@ pub(crate) fn selection_range(
 
 pub(crate) fn semantic_tokens_full(
     state: &GlobalState,
-    params: SemanticTokensParams,
+    params: &SemanticTokensParams,
 ) -> Option<SemanticTokensResult> {
     let url = &params.text_document.uri;
     let (file_id, document) = state.document(url)?;
     let mut highlights = state.analysis().highlight(file_id)?;
     if let Some((_, path, checked)) = state.checked_document(url) {
         let uses = checked.highlight_uses(path);
-        let used: FxHashSet<TextRange> = uses.iter().map(|used| used.range).collect();
-        highlights.retain(|syntax| !used.contains(&syntax.range));
+        let resolved: FxHashSet<TextRange> = uses.iter().map(|used| used.range).collect();
+        highlights.retain(|syntax| !resolved.contains(&syntax.range));
         highlights.extend(uses);
         highlights.sort_by_key(|highlight| highlight.range.start());
     }
@@ -77,9 +77,9 @@ pub(crate) fn semantic_tokens_full(
 
 pub(crate) fn goto_definition(
     state: &GlobalState,
-    params: GotoDefinitionParams,
+    params: &GotoDefinitionParams,
 ) -> Option<GotoDefinitionResponse> {
-    let position = params.text_document_position_params;
+    let position = &params.text_document_position_params;
     let (document, path, checked) = state.checked_document(&position.text_document.uri)?;
     let offset = from_proto::offset(&document.line_index, position.position)?;
     let target = checked.goto_definition(path, offset)?;
@@ -87,8 +87,8 @@ pub(crate) fn goto_definition(
     Some(GotoDefinitionResponse::Scalar(location))
 }
 
-pub(crate) fn references(state: &GlobalState, params: ReferenceParams) -> Option<Vec<Location>> {
-    let position = params.text_document_position;
+pub(crate) fn references(state: &GlobalState, params: &ReferenceParams) -> Option<Vec<Location>> {
+    let position = &params.text_document_position;
     let (document, path, checked) = state.checked_document(&position.text_document.uri)?;
     let offset = from_proto::offset(&document.line_index, position.position)?;
     let skip = usize::from(!params.context.include_declaration);
@@ -103,9 +103,9 @@ pub(crate) fn references(state: &GlobalState, params: ReferenceParams) -> Option
 
 pub(crate) fn document_highlight(
     state: &GlobalState,
-    params: DocumentHighlightParams,
+    params: &DocumentHighlightParams,
 ) -> Option<Vec<DocumentHighlight>> {
-    let position = params.text_document_position_params;
+    let position = &params.text_document_position_params;
     let (document, path, checked) = state.checked_document(&position.text_document.uri)?;
     let offset = from_proto::offset(&document.line_index, position.position)?;
     let highlights = checked
@@ -119,8 +119,8 @@ pub(crate) fn document_highlight(
     Some(highlights)
 }
 
-pub(crate) fn hover(state: &GlobalState, params: HoverParams) -> Option<Hover> {
-    let position = params.text_document_position_params;
+pub(crate) fn hover(state: &GlobalState, params: &HoverParams) -> Option<Hover> {
+    let position = &params.text_document_position_params;
     let (document, path, checked) = state.checked_document(&position.text_document.uri)?;
     let offset = from_proto::offset(&document.line_index, position.position)?;
     let hover = checked.hover(path, offset)?;
@@ -133,7 +133,7 @@ pub(crate) fn hover(state: &GlobalState, params: HoverParams) -> Option<Hover> {
     })
 }
 
-pub(crate) fn inlay_hint(state: &GlobalState, params: InlayHintParams) -> Option<Vec<InlayHint>> {
+pub(crate) fn inlay_hint(state: &GlobalState, params: &InlayHintParams) -> Option<Vec<InlayHint>> {
     let (document, path, checked) = state.checked_document(&params.text_document.uri)?;
     let hints = checked
         .inlay_hints(path)

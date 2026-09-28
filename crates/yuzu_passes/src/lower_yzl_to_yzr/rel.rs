@@ -606,7 +606,7 @@ from t
 |> select a as x, e as y
 |> limit 5 offset 1
 ",
-            expect![[r#"
+            &expect![[r#"
                 module {
                   yz.struct @Row ["a", "b"] : [!yz.int64, !yz.int64]
                   %0 = yzr.table @t : !yz.struct<@Row>
@@ -640,7 +640,7 @@ table depts = Dept
 from t
 |> left join depts as d on dept_id == d.key
 ",
-            expect![[r#"
+            &expect![[r#"
                 module {
                   yz.struct @Row ["id", "dept_id"] : [!yz.int64, !yz.int64]
                   yz.struct @Dept ["key", "name"] : [!yz.int64, !yz.str]
@@ -670,7 +670,7 @@ table u = Other
 from t
 |> inner join u using (id, part)
 ",
-            expect![[r#"
+            &expect![[r#"
                 module {
                   yz.struct @Row ["id", "tag", "part"] : [!yz.int64, !yz.str, !yz.int64]
                   yz.struct @Other ["id", "part", "extra"] : [!yz.int64, !yz.int64, !yz.int64]
@@ -701,7 +701,7 @@ from t
 |> as r
 |> where r.a > 1
 ",
-            expect![[r#"
+            &expect![[r#"
                 module {
                   yz.struct @Row ["a", "b"] : [!yz.int64, !yz.int64]
                   %0 = yzr.table @t : !yz.struct<@Row>
@@ -727,7 +727,7 @@ table t = Row
 from t
 |> distinct
 ",
-            expect![[r#"
+            &expect![[r#"
                 module {
                   yz.struct @Row ["a", "b"] : [!yz.int64, !yz.str]
                   %0 = yzr.table @t : !yz.struct<@Row>
@@ -751,7 +751,7 @@ table t = Row
 from t
 |> drop b
 ",
-            expect![[r#"
+            &expect![[r#"
                 module {
                   yz.struct @Row ["a", "b", "c"] : [!yz.int64, !yz.str, !yz.int64]
                   %0 = yzr.table @t : !yz.struct<@Row>
@@ -776,7 +776,7 @@ table t = Row
 from t
 |> set b = a + 1
 ",
-            expect![[r#"
+            &expect![[r#"
                 module {
                   yz.struct @Row ["a", "b", "c"] : [!yz.int64, !yz.int64, !yz.int64]
                   %0 = yzr.table @t : !yz.struct<@Row>
@@ -804,7 +804,7 @@ let big = from t |> where a > 10
 from big
 |> inner join big using (a)
 ",
-            expect![[r#"
+            &expect![[r#"
                 module {
                   yz.struct @Row ["a", "b"] : [!yz.int64, !yz.int64]
                   %0 = yzr.table @t : !yz.struct<@Row>
@@ -837,7 +837,7 @@ let n = 1 + 2
 
 from t
 ",
-            expect![[r"
+            &expect![[r"
                 error: only a query can be bound by `let`
                  --> test.yz:5:1
                   |
@@ -857,7 +857,7 @@ table t = Row
 from t
 |> rename a as x, b as y
 ",
-            expect![[r#"
+            &expect![[r#"
                 module {
                   yz.struct @Row ["a", "b"] : [!yz.int64, !yz.str]
                   %0 = yzr.table @t : !yz.struct<@Row>
@@ -886,7 +886,7 @@ from l
 |> inner join r as b on a.id == b.id
 |> rename b.id as other
 ",
-            expect![[r#"
+            &expect![[r#"
                 module {
                   yz.struct @Row ["id"] : [!yz.int64]
                   yz.struct @Other ["id"] : [!yz.int64]
@@ -919,7 +919,7 @@ table t = Row
 from t
 |> rename a as b
 ",
-            expect![[r#"
+            &expect![[r#"
                 module {
                   yz.struct @Row ["a"] : [!yz.int64]
                   %0 = yzr.table @t : !yz.struct<@Row>

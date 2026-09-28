@@ -148,14 +148,14 @@ impl GlobalState<'_> {
         }
     }
 
-    fn respond<R>(&self, request: Request, handler: fn(&Self, R::Params) -> R::Result) -> Response
+    fn respond<R>(&self, request: Request, handler: fn(&Self, &R::Params) -> R::Result) -> Response
     where
         R: lsp_types::request::Request,
         R::Params: DeserializeOwned,
         R::Result: Serialize,
     {
         match serde_json::from_value(request.params) {
-            Ok(params) => Response::new_ok(request.id, handler(self, params)),
+            Ok(params) => Response::new_ok(request.id, handler(self, &params)),
             Err(error) => Response::new_err(
                 request.id,
                 ErrorCode::InvalidParams as i32,

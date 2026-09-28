@@ -87,7 +87,7 @@ mod tests {
 
     use crate::test_support::{checked, cursor};
 
-    fn check(fixture: &str, expected: Expect) {
+    fn check(fixture: &str, expected: &Expect) {
         let (text, offset) = cursor(fixture);
         let (_tree, main, checked) = checked(&[], &text);
         let hover = checked.hover(&main, offset);
@@ -108,7 +108,7 @@ from t |> select double(1) + cap as v
     fn a_call_shows_the_signature() {
         check(
             &PROGRAM.replacen("select double", "select dou$0ble", 1),
-            expect![[r#"
+            &expect![[r#"
                 Some(
                     "double ```yuzu\ndef double(x: int64) -> int64\n```",
                 )
@@ -120,7 +120,7 @@ from t |> select double(1) + cap as v
     fn a_local_shows_its_type() {
         check(
             &PROGRAM.replacen("return y", "return $0y", 1),
-            expect![[r#"
+            &expect![[r#"
                 Some(
                     "y ```yuzu\nlet mut y: int64\n```",
                 )
@@ -132,7 +132,7 @@ from t |> select double(1) + cap as v
     fn a_parameter_shows_its_annotation() {
         check(
             &PROGRAM.replacen("= x * 2", "= $0x * 2", 1),
-            expect![[r#"
+            &expect![[r#"
                 Some(
                     "x ```yuzu\nx: int64\n```",
                 )
@@ -144,7 +144,7 @@ from t |> select double(1) + cap as v
     fn a_literal_shows_its_type() {
         check(
             &PROGRAM.replacen("* 2", "* $02", 1),
-            expect![[r#"
+            &expect![[r#"
             Some(
                 "2 ```yuzu\nint64\n```",
             )
@@ -156,7 +156,7 @@ from t |> select double(1) + cap as v
     fn a_declaration_shows_itself() {
         check(
             &PROGRAM.replacen("let cap", "let c$0ap", 1),
-            expect![[r#"
+            &expect![[r#"
                 Some(
                     "cap ```yuzu\nlet cap: int64\n```",
                 )

@@ -145,7 +145,7 @@ mod tests {
 
     use crate::test_support::{FILE, analysis};
 
-    fn check(text: &str, expected: Expect) {
+    fn check(text: &str, expected: &Expect) {
         let rendered: Vec<String> = analysis(text)
             .folding_ranges(FILE)
             .unwrap()
@@ -175,7 +175,7 @@ from employees
 |> select id
 from staff |> select id
 ",
-            expect![[r#"
+            &expect![[r#"
                 Comment "// one\n// two"
                 Imports "import a\nimport b"
                 Block "{\n    x: float64,\n}"

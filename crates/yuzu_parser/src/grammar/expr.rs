@@ -302,7 +302,7 @@ mod tests {
     use super::*;
     use crate::grammar::test_support;
 
-    fn check(input: &str, expected: Expect) {
+    fn check(input: &str, expected: &Expect) {
         test_support::check(input, parse_expr, expected);
     }
 
@@ -311,7 +311,7 @@ mod tests {
         test_support::check(
             "foo",
             parse_lhs,
-            expect![[r#"
+            &expect![[r#"
             IdentExpr@0..3
               Ident@0..3
                 Identifier@0..3 "foo"
@@ -324,7 +324,7 @@ mod tests {
         test_support::check(
             "3.14",
             parse_literal_expr,
-            expect![[r#"
+            &expect![[r#"
             FloatLiteral@0..4
               FloatLit@0..4 "3.14"
         "#]],
@@ -336,7 +336,7 @@ mod tests {
         test_support::check(
             "foo",
             parse_ident_expr,
-            expect![[r#"
+            &expect![[r#"
             IdentExpr@0..3
               Ident@0..3
                 Identifier@0..3 "foo"
@@ -349,7 +349,7 @@ mod tests {
         test_support::check(
             "x: 1",
             parse_struct_field_init,
-            expect![[r#"
+            &expect![[r#"
             StructFieldInit@0..4
               Ident@0..1
                 Identifier@0..1 "x"
@@ -366,7 +366,7 @@ mod tests {
         test_support::check(
             "Point { x: 1, y: 2 }",
             parse_struct_expr,
-            expect![[r#"
+            &expect![[r#"
                 StructExpr@0..20
                   Ident@0..5
                     Identifier@0..5 "Point"
@@ -400,7 +400,7 @@ mod tests {
         test_support::check(
             "[1, 2, 3]",
             parse_list_expr,
-            expect![[r#"
+            &expect![[r#"
             ListExpr@0..9
               LeftSquare@0..1 "["
               IntLiteral@1..2
@@ -423,7 +423,7 @@ mod tests {
         test_support::check(
             "(1 + 2)",
             parse_paren_expr,
-            expect![[r#"
+            &expect![[r#"
                 ParenExpr@0..7
                   LeftParen@0..1 "("
                   BinaryExpr@1..6
@@ -444,7 +444,7 @@ mod tests {
         test_support::check(
             "-5",
             parse_unary_expr,
-            expect![[r#"
+            &expect![[r#"
             UnaryExpr@0..2
               Minus@0..1 "-"
               IntLiteral@1..2
@@ -458,7 +458,7 @@ mod tests {
         test_support::check(
             "(1, 2)",
             parse_arg_list,
-            expect![[r#"
+            &expect![[r#"
             ArgList@0..6
               LeftParen@0..1 "("
               IntLiteral@1..2
@@ -476,7 +476,7 @@ mod tests {
     fn integer_literal() {
         check(
             "42",
-            expect![[r#"
+            &expect![[r#"
             IntLiteral@0..2
               IntLit@0..2 "42"
         "#]],
@@ -487,7 +487,7 @@ mod tests {
     fn addition() {
         check(
             "1 + 2",
-            expect![[r#"
+            &expect![[r#"
                 BinaryExpr@0..5
                   IntLiteral@0..1
                     IntLit@0..1 "1"
@@ -504,7 +504,7 @@ mod tests {
     fn multiplication_binds_tighter_than_addition() {
         check(
             "1 + 2 * 3",
-            expect![[r#"
+            &expect![[r#"
                 BinaryExpr@0..9
                   IntLiteral@0..1
                     IntLit@0..1 "1"
@@ -527,7 +527,7 @@ mod tests {
     fn remainder_binds_like_multiplication() {
         check(
             "1 + 2 % 3 * 4",
-            expect![[r#"
+            &expect![[r#"
             BinaryExpr@0..13
               IntLiteral@0..1
                 IntLit@0..1 "1"
@@ -556,7 +556,7 @@ mod tests {
     fn power_is_right_associative() {
         check(
             "2 ** 3 ** 4",
-            expect![[r#"
+            &expect![[r#"
                 BinaryExpr@0..11
                   IntLiteral@0..1
                     IntLit@0..1 "2"
@@ -579,7 +579,7 @@ mod tests {
     fn unary_minus_is_looser_than_power() {
         check(
             "-2 ** 2",
-            expect![[r#"
+            &expect![[r#"
                 UnaryExpr@0..7
                   Minus@0..1 "-"
                   BinaryExpr@1..7
@@ -598,7 +598,7 @@ mod tests {
     fn parentheses_group() {
         check(
             "(1 + 2) * 3",
-            expect![[r#"
+            &expect![[r#"
                 BinaryExpr@0..11
                   ParenExpr@0..7
                     LeftParen@0..1 "("
@@ -624,7 +624,7 @@ mod tests {
     fn call_of_field_access() {
         check(
             "a.b(c)",
-            expect![[r#"
+            &expect![[r#"
             CallExpr@0..6
               FieldAccessExpr@0..3
                 IdentExpr@0..1
@@ -647,7 +647,7 @@ mod tests {
     fn struct_literal() {
         check(
             "P { x: 1 }",
-            expect![[r#"
+            &expect![[r#"
                 StructExpr@0..10
                   Ident@0..1
                     Identifier@0..1 "P"
@@ -671,7 +671,7 @@ mod tests {
     fn not_in_operator() {
         check(
             "a not in b",
-            expect![[r#"
+            &expect![[r#"
                 BinaryExpr@0..10
                   IdentExpr@0..1
                     Ident@0..1
@@ -692,7 +692,7 @@ mod tests {
     fn list_literal() {
         check(
             "[1, 2, 3]",
-            expect![[r#"
+            &expect![[r#"
             ListExpr@0..9
               LeftSquare@0..1 "["
               IntLiteral@1..2

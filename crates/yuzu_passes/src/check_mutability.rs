@@ -108,7 +108,7 @@ mod tests {
     use crate::check_mutability;
     use crate::test_support;
 
-    fn check(source: &str, expected: Expect) {
+    fn check(source: &str, expected: &Expect) {
         test_support::check(
             source,
             |_, module| {
@@ -134,7 +134,7 @@ def f(x: int64) -> int64 {
 
 from t |> select f(a) as v
 ",
-            expect![[r"
+            &expect![[r"
                 error: `n` is not mutable; declare it with `let mut` to assign it
                  --> test.yz:7:5
                   |
@@ -160,7 +160,7 @@ def f(x: int64) -> int64 {
 
 from t |> select f(a) as v
 ",
-            expect!["no diagnostics"],
+            &expect!["no diagnostics"],
         );
     }
 
@@ -178,7 +178,7 @@ def f(x: int64) -> int64 {
 
 from t |> select f(a) as v
 ",
-            expect![[r"
+            &expect![[r"
                 error: `x` is a parameter and cannot be assigned
                  --> test.yz:6:5
                   |
@@ -203,7 +203,7 @@ def f(x: int64) -> int64 {
 
 from t |> select f(a) as v
 ",
-            expect!["no diagnostics"],
+            &expect!["no diagnostics"],
         );
     }
 }

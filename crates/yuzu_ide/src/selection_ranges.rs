@@ -37,7 +37,7 @@ mod tests {
     use crate::FilePosition;
     use crate::test_support::{FILE, analysis};
 
-    fn check(text: &str, expected: Expect) {
+    fn check(text: &str, expected: &Expect) {
         let offset = text
             .find("$0")
             .expect("the fixture marks the position with $0");
@@ -59,7 +59,7 @@ mod tests {
     fn widens_from_the_name_to_the_file() {
         check(
             "def f(x: int64) -> int64 { return x + $0y }\nlet z = 1",
-            expect![[r#"
+            &expect![[r#"
                 [
                     "y",
                     "x + y",

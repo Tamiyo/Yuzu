@@ -194,7 +194,7 @@ mod tests {
     use crate::check_aggregates;
     use crate::test_support;
 
-    fn check(source: &str, expected: Expect) {
+    fn check(source: &str, expected: &Expect) {
         test_support::check(
             source,
             |context, module| {
@@ -220,7 +220,7 @@ from t
 |> where a > 1
 |> aggregate sum(double(a)) as s, spread(rating) as r group by a
     ",
-            expect!["no diagnostics"],
+            &expect!["no diagnostics"],
         );
     }
 
@@ -236,7 +236,7 @@ def double(x: int64) -> int64 { return sum(x) }
 from t
 |> where sum(a) > 1
     ",
-            expect![[r"
+            &expect![[r"
                 error: aggregate function `sum` can only be used in an `aggregate` item
                  --> test.yz:5:40
                   |
@@ -264,7 +264,7 @@ external agg def median(x: int64) -> float64
 from t
 |> aggregate median(a) as m group by a
 ",
-            expect!["no diagnostics"],
+            &expect!["no diagnostics"],
         );
     }
 
@@ -280,7 +280,7 @@ table u = Other
 from t
 |> inner join u on sum(a) == b
 ",
-            expect![[r"
+            &expect![[r"
                 error: aggregate function `sum` can only be used in an `aggregate` item
                  --> test.yz:8:20
                   |
@@ -300,7 +300,7 @@ table t = Row
 from t
 |> aggregate sum(min(a) + 1) as s group by a
     ",
-            expect![[r"
+            &expect![[r"
                 error: aggregate function `min` cannot be nested in another aggregate
                  --> test.yz:6:18
                   |
@@ -322,7 +322,7 @@ agg def spread(x: float64) -> float64 { return spread(x) }
 from t
 |> aggregate spread(rating) as r group by rating
     ",
-            expect![[r"
+            &expect![[r"
                 error: `spread` is an `agg fn` and cannot call itself
                  --> test.yz:5:48
                   |
@@ -344,7 +344,7 @@ agg def spread(x: float64) -> float64 { return x }
 from t
 |> aggregate spread(rating) as r group by rating
     ",
-            expect![[r"
+            &expect![[r"
                 error: an `agg fn` must use an aggregate function
                  --> test.yz:5:1
                   |

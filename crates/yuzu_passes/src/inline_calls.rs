@@ -350,7 +350,7 @@ def double(x: int64) -> int64 { return x * 2 }
 from t
 |> select double(a) as d
 ",
-            expect![[r#"
+            &expect![[r#"
                 module {
                   yz.struct @Row ["a"] : [!yz.int64]
                   %0 = yzr.table @t : !yz.struct<@Row>
@@ -380,7 +380,7 @@ def quadruple(x: int64) -> int64 { return double(double(x)) }
 from t
 |> select quadruple(a) as q
 ",
-            expect![[r#"
+            &expect![[r#"
                 module {
                   yz.struct @Row ["a"] : [!yz.int64]
                   %0 = yzr.table @t : !yz.struct<@Row>
@@ -408,7 +408,7 @@ table t = Row
 from t
 |> select a in [1, 2] as p
 ",
-            expect![[r#"
+            &expect![[r#"
                 module {
                   yz.struct @Row ["a"] : [!yz.int64]
                   %0 = yzr.table @t : !yz.struct<@Row>
@@ -439,7 +439,7 @@ def forever(x: int64) -> int64 { return forever(x) }
 from t
 |> select forever(a) as f
 ",
-            expect![[r"
+            &expect![[r"
                 error: expanding `forever` did not finish within 1000 calls; a function that reaches itself has to reduce to stop
                  --> test.yz:5:41
                   |
@@ -473,7 +473,7 @@ def twice[T](x: T) -> T { return x + x }
 from t
 |> extend twice(a) as m, twice(r) as n
 ",
-            expect![[r#"
+            &expect![[r#"
                 module {
                   yz.struct @Row ["a", "r"] : [!yz.int64, !yz.float64]
                   %0 = yzr.table @t : !yz.struct<@Row>
@@ -510,7 +510,7 @@ table t = Row
 from t
 |> extend shift(a) as z
 ",
-            expect![[r"
+            &expect![[r"
                 error: `zero` is a trait method, and calling one is not supported yet
                  --> test.yz:10:48
                    |
@@ -538,7 +538,7 @@ let ids: List[int64] = [1, 3]
 from t
 |> where a in ids
 ",
-            expect![[r#"
+            &expect![[r#"
                 module {
                   yz.struct @Row ["a"] : [!yz.int64]
                   %0 = yzr.table @t : !yz.struct<@Row>

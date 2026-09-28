@@ -93,7 +93,7 @@ mod tests {
 
     const HELPERS: (&str, &str) = ("helpers.yz", "pub def two() -> int64 { return 2 }\n");
 
-    fn check_definition(fixture: &str, expected: Expect) {
+    fn check_definition(fixture: &str, expected: &Expect) {
         let (text, offset) = cursor(fixture);
         let (_tree, main, checked) = checked(&[HELPERS], &text);
         let rendered = checked
@@ -102,7 +102,7 @@ mod tests {
         expected.assert_debug_eq(&rendered);
     }
 
-    fn check_references(fixture: &str, expected: Expect) {
+    fn check_references(fixture: &str, expected: &Expect) {
         let (text, offset) = cursor(fixture);
         let (_tree, main, checked) = checked(&[HELPERS], &text);
         let rendered: Vec<String> = checked
@@ -133,7 +133,7 @@ from t |> select double(a) + cap + two() as v
     fn a_local_goes_to_its_let() {
         check_definition(
             &PROGRAM.replacen("return y", "return $0y", 1),
-            expect![[r#"
+            &expect![[r#"
                 Some(
                     "main.yz:y",
                 )
@@ -145,7 +145,7 @@ from t |> select double(a) + cap + two() as v
     fn a_parameter_goes_to_the_parameter() {
         check_definition(
             &PROGRAM.replacen("= x * 2", "= $0x * 2", 1),
-            expect![[r#"
+            &expect![[r#"
                 Some(
                     "main.yz:x",
                 )
@@ -157,7 +157,7 @@ from t |> select double(a) + cap + two() as v
     fn a_call_goes_to_the_function() {
         check_definition(
             &PROGRAM.replacen("select double", "select dou$0ble", 1),
-            expect![[r#"
+            &expect![[r#"
                 Some(
                     "main.yz:double",
                 )
@@ -169,7 +169,7 @@ from t |> select double(a) + cap + two() as v
     fn a_module_let_goes_to_its_let() {
         check_definition(
             &PROGRAM.replacen("+ cap", "+ $0cap", 1),
-            expect![[r#"
+            &expect![[r#"
             Some(
                 "main.yz:cap",
             )
@@ -181,7 +181,7 @@ from t |> select double(a) + cap + two() as v
     fn a_relation_goes_to_its_table() {
         check_definition(
             &PROGRAM.replacen("from t", "from $0t", 1),
-            expect![[r#"
+            &expect![[r#"
             Some(
                 "main.yz:t",
             )
@@ -193,7 +193,7 @@ from t |> select double(a) + cap + two() as v
     fn an_import_goes_to_the_other_file() {
         check_definition(
             &PROGRAM.replacen("+ two()", "+ t$0wo()", 1),
-            expect![[r#"
+            &expect![[r#"
                 Some(
                     "helpers.yz:two",
                 )
@@ -205,7 +205,7 @@ from t |> select double(a) + cap + two() as v
     fn references_start_at_the_declaration() {
         check_references(
             &PROGRAM.replacen("let y = x", "let $0y = x", 1),
-            expect![[r"
+            &expect![[r"
                 main.yz:y 100..101
                 main.yz:y 121..122"]],
         );
@@ -237,7 +237,7 @@ from t |> select double(a) + cap + two() as v
     fn references_reach_the_declaration_in_another_file() {
         check_references(
             &PROGRAM.replacen("+ two()", "+ t$0wo()", 1),
-            expect![[r"
+            &expect![[r"
                 helpers.yz:two 8..11
                 main.yz:two 160..163"]],
         );

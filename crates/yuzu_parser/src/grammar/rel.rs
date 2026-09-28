@@ -296,7 +296,7 @@ mod tests {
         test_support::check(
             "from employees",
             parse_from_source,
-            expect![[r#"
+            &expect![[r#"
             FromSource@0..14
               FromKw@0..4 "from"
               Space@4..5 " "
@@ -311,7 +311,7 @@ mod tests {
         test_support::check(
             "from employees as e",
             parse_from_source,
-            expect![[r#"
+            &expect![[r#"
                 FromSource@0..19
                   FromKw@0..4 "from"
                   Space@4..5 " "
@@ -331,7 +331,7 @@ mod tests {
         test_support::check(
             "name as n",
             parse_select_item,
-            expect![[r#"
+            &expect![[r#"
                 SelectItem@0..9
                   IdentExpr@0..4
                     Ident@0..4
@@ -350,7 +350,7 @@ mod tests {
         test_support::check(
             "old as new",
             parse_rename_item,
-            expect![[r#"
+            &expect![[r#"
                 RenameItem@0..10
                   Ident@0..3
                     Identifier@0..3 "old"
@@ -368,7 +368,7 @@ mod tests {
         test_support::check(
             "from t |> select a, b",
             parse_query,
-            expect![[r#"
+            &expect![[r#"
                 Pipeline@0..21
                   FromSource@0..6
                     FromKw@0..4 "from"
@@ -400,7 +400,7 @@ mod tests {
         test_support::check(
             "from t |> where active",
             parse_query,
-            expect![[r#"
+            &expect![[r#"
                 Pipeline@0..22
                   FromSource@0..6
                     FromKw@0..4 "from"
@@ -425,7 +425,7 @@ mod tests {
         test_support::check(
             "from t |> distinct",
             parse_query,
-            expect![[r#"
+            &expect![[r#"
                 Pipeline@0..18
                   FromSource@0..6
                     FromKw@0..4 "from"
@@ -446,7 +446,7 @@ mod tests {
         test_support::check(
             "from t |> drop a, b",
             parse_query,
-            expect![[r#"
+            &expect![[r#"
                 Pipeline@0..19
                   FromSource@0..6
                     FromKw@0..4 "from"
@@ -474,7 +474,7 @@ mod tests {
         test_support::check(
             "from t |> rename a as b",
             parse_query,
-            expect![[r#"
+            &expect![[r#"
                 Pipeline@0..23
                   FromSource@0..6
                     FromKw@0..4 "from"
@@ -504,7 +504,7 @@ mod tests {
         test_support::check(
             "from t |> extend a",
             parse_query,
-            expect![[r#"
+            &expect![[r#"
                 Pipeline@0..18
                   FromSource@0..6
                     FromKw@0..4 "from"
@@ -530,7 +530,7 @@ mod tests {
         test_support::check(
             "e.id as eid",
             parse_rename_item,
-            expect![[r#"
+            &expect![[r#"
             RenameItem@0..11
               Ident@0..1
                 Identifier@0..1 "e"
@@ -551,7 +551,7 @@ mod tests {
         test_support::check(
             "from t |> set a = 1",
             parse_query,
-            expect![[r#"
+            &expect![[r#"
                 Pipeline@0..19
                   FromSource@0..6
                     FromKw@0..4 "from"
@@ -581,7 +581,7 @@ mod tests {
         test_support::check(
             "from t |> aggregate sum(a) as s group by b",
             parse_query,
-            expect![[r#"
+            &expect![[r#"
                 Pipeline@0..42
                   FromSource@0..6
                     FromKw@0..4 "from"
@@ -628,7 +628,7 @@ mod tests {
         test_support::check(
             "from t |> aggregate count()",
             parse_query,
-            expect![[r#"
+            &expect![[r#"
                 Pipeline@0..27
                   FromSource@0..6
                     FromKw@0..4 "from"
@@ -658,7 +658,7 @@ mod tests {
         test_support::check(
             "from t |> limit 2 offset 1",
             parse_query,
-            expect![[r#"
+            &expect![[r#"
                 Pipeline@0..26
                   FromSource@0..6
                     FromKw@0..4 "from"
@@ -687,7 +687,7 @@ mod tests {
         test_support::check(
             "from t |> as u",
             parse_query,
-            expect![[r#"
+            &expect![[r#"
                 Pipeline@0..14
                   FromSource@0..6
                     FromKw@0..4 "from"
@@ -711,7 +711,7 @@ mod tests {
         test_support::check(
             "from t |> join u as d on a == d.b",
             parse_query,
-            expect![[r#"
+            &expect![[r#"
                 Pipeline@0..33
                   FromSource@0..6
                     FromKw@0..4 "from"
@@ -758,7 +758,7 @@ mod tests {
         test_support::check(
             "from t |> left join u using (a, b)",
             parse_query,
-            expect![[r#"
+            &expect![[r#"
                 Pipeline@0..34
                   FromSource@0..6
                     FromKw@0..4 "from"
@@ -796,7 +796,7 @@ mod tests {
         test_support::check(
             "from t |> full join u d on a == d.b",
             parse_query,
-            expect![[r#"
+            &expect![[r#"
                 Pipeline@0..35
                   FromSource@0..6
                     FromKw@0..4 "from"
@@ -843,7 +843,7 @@ mod tests {
         test_support::check(
             "from t |> where a |> select b",
             parse_query,
-            expect![[r#"
+            &expect![[r#"
                 Pipeline@0..29
                   FromSource@0..6
                     FromKw@0..4 "from"
