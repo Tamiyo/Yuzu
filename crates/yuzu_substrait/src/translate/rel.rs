@@ -98,7 +98,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
 
         Some(RelType::Read(Box::new(ReadRel {
             base_schema: Some(NamedStruct {
-                names: names.iter().map(|name| name.to_string()).collect(),
+                names: names.iter().map(std::string::ToString::to_string).collect(),
                 r#struct: Some(r#type::Struct {
                     types: fields,
                     nullability: nullable(),

@@ -12,6 +12,7 @@ impl Default for DiagnosticsEngine {
 }
 
 impl DiagnosticsEngine {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             diagnostics: Vec::new(),
@@ -22,16 +23,19 @@ impl DiagnosticsEngine {
         self.diagnostics.push(diagnostic.into());
     }
 
+    #[must_use]
     pub fn has_errors(&self) -> bool {
         self.diagnostics
             .iter()
             .any(|diagnostic| matches!(diagnostic.severity, Severity::Error))
     }
 
+    #[must_use]
     pub fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics
     }
 
+    #[must_use]
     pub fn into_diagnostics(self) -> Vec<Diagnostic> {
         self.diagnostics
     }

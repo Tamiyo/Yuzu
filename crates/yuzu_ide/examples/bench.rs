@@ -102,7 +102,7 @@ fn main() {
                 drop(analysis.selection_ranges(FilePosition {
                     file_id: FILE,
                     offset: offset_of(&text, "return y"),
-                }))
+                }));
             }),
         );
 

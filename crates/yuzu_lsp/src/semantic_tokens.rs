@@ -150,11 +150,11 @@ mod tests {
                 )
             })
             .collect();
-        expect![[r#"
+        expect![[r"
             +0 +4 len 3 type 1 mods 0
             +0 +6 len 2 type 2 mods 1
             +2 +1 len 2 type 3 mods 0
-            +0 +7 len 1 type 4 mods 2"#]]
+            +0 +7 len 1 type 4 mods 2"]]
         .assert_eq(&rendered.join("\n"));
     }
 }

@@ -96,7 +96,7 @@ fn the_correctness_corpus_lowers() {
             match (expects_error, messages.is_empty()) {
                 (false, true) if module.as_operation().verify() => {}
                 (false, true) => {
-                    failures.push(format!("{program}\n  -> the module does not verify"))
+                    failures.push(format!("{program}\n  -> the module does not verify"));
                 }
                 (false, false) => failures.push(format!("{program}\n  -> {messages:?}")),
                 (true, false) => {}

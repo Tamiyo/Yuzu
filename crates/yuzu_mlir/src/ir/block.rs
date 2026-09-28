@@ -2,7 +2,7 @@
 
 use melior::ir::BlockLike;
 use melior::ir::block::BlockArgument;
-use melior::ir::operation::{OperationLike, OperationRef, OperationRefMut};
+use melior::ir::operation::{OperationRef, OperationRefMut};
 
 /// Iteration over a block's arguments and operations.
 pub trait BlockExt<'c: 'a, 'a> {
@@ -21,11 +21,11 @@ impl<'c: 'a, 'a, T: BlockLike<'c, 'a>> BlockExt<'c, 'a> for T {
     }
 
     fn operations(&self) -> impl Iterator<Item = OperationRef<'c, 'a>> {
-        std::iter::successors(self.first_operation(), |op| op.next_in_block())
+        std::iter::successors(self.first_operation(), melior::ir::operation::OperationLike::next_in_block)
     }
 
     fn operations_mut(&self) -> impl Iterator<Item = OperationRefMut<'c, 'a>> {
-        std::iter::successors(self.first_operation_mut(), |op| op.next_in_block_mut())
+        std::iter::successors(self.first_operation_mut(), melior::ir::operation::OperationLike::next_in_block_mut)
     }
 
     fn last_operation(&self) -> Option<OperationRef<'c, 'a>> {

@@ -7,6 +7,7 @@ pub enum AggFunc {
 }
 
 impl AggFunc {
+    #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             AggFunc::Count => "count",
@@ -42,6 +43,7 @@ pub enum Func {
 
 impl Func {
     /// How the function is spelled in source, for diagnostics.
+    #[must_use]
     pub fn symbol(self) -> &'static str {
         match self {
             Func::Add => "+",
@@ -75,6 +77,7 @@ pub enum BuiltinFunc {
 }
 
 impl BuiltinFunc {
+    #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             BuiltinFunc::Aggregate(func) => func.name(),

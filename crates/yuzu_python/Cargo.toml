@@ -2,6 +2,7 @@
 name = "yuzu_python"
 version = "0.1.0"
 edition = "2021"
+publish.workspace = true
 
 [lib]
 name = "yuzu"
@@ -20,3 +21,6 @@ yuzu_driver = { path = "../yuzu_driver" }
 
 [features]
 extension-module = ["pyo3/extension-module"]
+
+[lints]
+workspace = true

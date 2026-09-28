@@ -191,6 +191,7 @@ ast_node!(Ident);
 impl Ident {
     /// The identifier, the node's only token. Its text is read without a
     /// copy while the caller holds the token.
+    #[must_use]
     pub fn token(&self) -> Option<SyntaxToken> {
         self.0.first_token()
     }
@@ -203,6 +204,7 @@ ast_enum!(TypeAnnotation, {
 
 ast_node!(NamedTypeAnnotation);
 impl NamedTypeAnnotation {
+    #[must_use]
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
@@ -214,9 +216,11 @@ impl NamedTypeAnnotation {
 
 ast_node!(FuncTypeAnnotation);
 impl FuncTypeAnnotation {
+    #[must_use]
     pub fn params(&self) -> Option<FuncTypeAnnotationParams> {
         support::child(self.syntax())
     }
+    #[must_use]
     pub fn result(&self) -> Option<TypeAnnotation> {
         support::child(self.syntax())
     }
@@ -231,6 +235,7 @@ impl FuncTypeAnnotationParams {
 
 ast_node!(TypeParam);
 impl TypeParam {
+    #[must_use]
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
@@ -238,6 +243,7 @@ impl TypeParam {
 
 ast_node!(TypeBound);
 impl TypeBound {
+    #[must_use]
     pub fn subject(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
@@ -249,6 +255,7 @@ impl TypeBound {
 
 ast_node!(TraitRef);
 impl TraitRef {
+    #[must_use]
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
@@ -273,6 +280,7 @@ ast_enum!(Stmt, {
 ast_node!(ModulePath);
 impl ModulePath {
     /// The path as one string, `yuzu.std.math`: a new `String` for each call.
+    #[must_use]
     pub fn to_dotted(&self) -> String {
         let mut dotted = String::new();
         for segment in self.segments().filter_map(|segment| segment.token()) {
@@ -296,10 +304,12 @@ impl ModStmt {
     /// Whether another file may name this. Private unless `pub` says so, so
     /// forgetting to export is a complaint from the importer rather than a
     /// name that quietly became API.
+    #[must_use]
     pub fn visibility(&self) -> Visibility {
         visibility_of(self.syntax())
     }
 
+    #[must_use]
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
@@ -307,11 +317,13 @@ impl ModStmt {
 
 ast_node!(ImportStmt);
 impl ImportStmt {
+    #[must_use]
     pub fn path(&self) -> Option<ModulePath> {
         support::child(self.syntax())
     }
 
     /// The name this file calls the module, when `as` gave it one.
+    #[must_use]
     pub fn alias(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
@@ -319,6 +331,7 @@ impl ImportStmt {
 
 ast_node!(FromImportStmt);
 impl FromImportStmt {
+    #[must_use]
     pub fn path(&self) -> Option<ModulePath> {
         support::child(self.syntax())
     }
@@ -330,11 +343,13 @@ impl FromImportStmt {
 
 ast_node!(ImportItem);
 impl ImportItem {
+    #[must_use]
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
 
     /// The name this file calls the import, when `as` gave it one.
+    #[must_use]
     pub fn alias(&self) -> Option<Ident> {
         support::children(self.syntax()).nth(1)
     }
@@ -345,10 +360,12 @@ impl StructStmt {
     /// Whether another file may name this. Private unless `pub` says so, so
     /// forgetting to export is a complaint from the importer rather than a
     /// name that quietly became API.
+    #[must_use]
     pub fn visibility(&self) -> Visibility {
         visibility_of(self.syntax())
     }
 
+    #[must_use]
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
@@ -360,10 +377,12 @@ impl StructStmt {
 
 ast_node!(StructField);
 impl StructField {
+    #[must_use]
     pub fn visibility(&self) -> Visibility {
         visibility_of(self.syntax())
     }
 
+    #[must_use]
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
@@ -382,6 +401,7 @@ impl StructField {
         }
     }
 
+    #[must_use]
     pub fn ty(&self) -> Option<TypeAnnotation> {
         support::child(self.syntax())
     }
@@ -389,10 +409,12 @@ impl StructField {
 
 ast_node!(TraitStmt);
 impl TraitStmt {
+    #[must_use]
     pub fn visibility(&self) -> Visibility {
         visibility_of(self.syntax())
     }
 
+    #[must_use]
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
@@ -404,10 +426,12 @@ impl TraitStmt {
 
 ast_node!(ImplStmt);
 impl ImplStmt {
+    #[must_use]
     pub fn trait_(&self) -> Option<TraitRef> {
         support::child(self.syntax())
     }
 
+    #[must_use]
     pub fn ty(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
@@ -422,13 +446,16 @@ impl FuncStmt {
     /// Whether another file may name this. Private unless `pub` says so, so
     /// forgetting to export is a complaint from the importer rather than a
     /// name that quietly became API.
+    #[must_use]
     pub fn visibility(&self) -> Visibility {
         visibility_of(self.syntax())
     }
+    #[must_use]
     pub fn is_agg(&self) -> bool {
         self.has_marker(SyntaxKind::AggKw)
     }
 
+    #[must_use]
     pub fn is_external(&self) -> bool {
         self.has_marker(SyntaxKind::ExternalKw)
     }
@@ -441,6 +468,7 @@ impl FuncStmt {
             .any(|token| token.kind() == marker)
     }
 
+    #[must_use]
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
@@ -453,10 +481,12 @@ impl FuncStmt {
         support::children(self.syntax())
     }
 
+    #[must_use]
     pub fn param_count(&self) -> usize {
         self.params().count()
     }
 
+    #[must_use]
     pub fn result(&self) -> Option<TypeAnnotation> {
         support::child(self.syntax())
     }
@@ -465,6 +495,7 @@ impl FuncStmt {
         support::children(self.syntax())
     }
 
+    #[must_use]
     pub fn body(&self) -> Option<BlockStmt> {
         support::child(self.syntax())
     }
@@ -472,10 +503,12 @@ impl FuncStmt {
 
 ast_node!(FuncParam);
 impl FuncParam {
+    #[must_use]
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
 
+    #[must_use]
     pub fn ty(&self) -> Option<TypeAnnotation> {
         support::child(self.syntax())
     }
@@ -483,14 +516,17 @@ impl FuncParam {
 
 ast_node!(TableStmt);
 impl TableStmt {
+    #[must_use]
     pub fn visibility(&self) -> Visibility {
         visibility_of(self.syntax())
     }
 
+    #[must_use]
     pub fn name(&self) -> Option<Ident> {
         support::nth_child(self.syntax(), 0)
     }
 
+    #[must_use]
     pub fn struct_name(&self) -> Option<Ident> {
         support::nth_child(self.syntax(), 1)
     }
@@ -509,14 +545,17 @@ impl BlockStmt {
 
 ast_node!(LetStmt);
 impl LetStmt {
+    #[must_use]
     pub fn visibility(&self) -> Visibility {
         visibility_of(self.syntax())
     }
 
+    #[must_use]
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
 
+    #[must_use]
     pub fn mutability(&self) -> Mutability {
         match self.mut_token() {
             Some(_) => Mutability::Mutable,
@@ -531,10 +570,12 @@ impl LetStmt {
             .find(|token| token.kind() == SyntaxKind::MutKw)
     }
 
+    #[must_use]
     pub fn type_annotation(&self) -> Option<TypeAnnotation> {
         support::child(self.syntax())
     }
 
+    #[must_use]
     pub fn expr(&self) -> Option<Expr> {
         support::child(self.syntax())
     }
@@ -542,10 +583,12 @@ impl LetStmt {
 
 ast_node!(AssignStmt);
 impl AssignStmt {
+    #[must_use]
     pub fn target(&self) -> Option<Expr> {
         support::nth_child(self.syntax(), 0)
     }
 
+    #[must_use]
     pub fn value(&self) -> Option<Expr> {
         support::nth_child(self.syntax(), 1)
     }
@@ -553,6 +596,7 @@ impl AssignStmt {
 
 ast_node!(ReturnStmt);
 impl ReturnStmt {
+    #[must_use]
     pub fn expr(&self) -> Option<Expr> {
         support::child(self.syntax())
     }
@@ -560,6 +604,7 @@ impl ReturnStmt {
 
 ast_node!(ExprStmt);
 impl ExprStmt {
+    #[must_use]
     pub fn expr(&self) -> Option<Expr> {
         support::child(self.syntax())
     }
@@ -580,6 +625,7 @@ ast_enum!(Expr, {
 
 ast_node!(IdentExpr);
 impl IdentExpr {
+    #[must_use]
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
@@ -587,10 +633,12 @@ impl IdentExpr {
 
 ast_node!(CallExpr);
 impl CallExpr {
+    #[must_use]
     pub fn callee(&self) -> Option<Expr> {
         support::child(self.syntax())
     }
 
+    #[must_use]
     pub fn args(&self) -> Option<ArgList> {
         support::child(self.syntax())
     }
@@ -605,10 +653,12 @@ impl ArgList {
 
 ast_node!(FieldAccessExpr);
 impl FieldAccessExpr {
+    #[must_use]
     pub fn base(&self) -> Option<Expr> {
         support::child(self.syntax())
     }
 
+    #[must_use]
     pub fn field(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
@@ -616,6 +666,7 @@ impl FieldAccessExpr {
 
 ast_node!(StructExpr);
 impl StructExpr {
+    #[must_use]
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
@@ -627,10 +678,12 @@ impl StructExpr {
 
 ast_node!(StructFieldInit);
 impl StructFieldInit {
+    #[must_use]
     pub fn name(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
 
+    #[must_use]
     pub fn value(&self) -> Option<Expr> {
         support::child(self.syntax())
     }
@@ -645,6 +698,7 @@ impl ListExpr {
 
 ast_node!(BinaryExpr);
 impl BinaryExpr {
+    #[must_use]
     pub fn lhs(&self) -> Option<Expr> {
         support::nth_child(self.syntax(), 0)
     }
@@ -656,6 +710,7 @@ impl BinaryExpr {
             .find_map(BinOp::from_token)
     }
 
+    #[must_use]
     pub fn rhs(&self) -> Option<Expr> {
         support::nth_child(self.syntax(), 1)
     }
@@ -670,6 +725,7 @@ impl UnaryExpr {
             .find_map(UnaryOp::from_token)
     }
 
+    #[must_use]
     pub fn expr(&self) -> Option<Expr> {
         support::child(self.syntax())
     }
@@ -677,6 +733,7 @@ impl UnaryExpr {
 
 ast_node!(ParenExpr);
 impl ParenExpr {
+    #[must_use]
     pub fn expr(&self) -> Option<Expr> {
         support::child(self.syntax())
     }
@@ -684,6 +741,7 @@ impl ParenExpr {
 
 ast_node!(Pipeline);
 impl Pipeline {
+    #[must_use]
     pub fn source(&self) -> Option<FromSource> {
         support::child(self.syntax())
     }
@@ -713,10 +771,12 @@ ast_enum!(
 
 ast_node!(FromSource);
 impl FromSource {
+    #[must_use]
     pub fn relation(&self) -> Option<Ident> {
         support::nth_child(self.syntax(), 0)
     }
 
+    #[must_use]
     pub fn alias(&self) -> Option<Ident> {
         support::nth_child(self.syntax(), 1)
     }
@@ -731,10 +791,12 @@ impl SelectStage {
 
 ast_node!(SelectItem);
 impl SelectItem {
+    #[must_use]
     pub fn expr(&self) -> Option<Expr> {
         support::child(self.syntax())
     }
 
+    #[must_use]
     pub fn alias(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
@@ -742,6 +804,7 @@ impl SelectItem {
 
 ast_node!(WhereStage);
 impl WhereStage {
+    #[must_use]
     pub fn predicate(&self) -> Option<Expr> {
         support::child(self.syntax())
     }
@@ -767,18 +830,21 @@ ast_node!(RenameItem);
 impl RenameItem {
     /// `e.id as eid` names the column of one input; a bare `id as eid` has to
     /// find it on its own.
+    #[must_use]
     pub fn qualifier(&self) -> Option<Ident> {
         self.is_qualified()
             .then(|| support::nth_child(self.syntax(), 0))
             .flatten()
     }
 
+    #[must_use]
     pub fn from(&self) -> Option<Ident> {
-        support::nth_child(self.syntax(), self.is_qualified() as usize)
+        support::nth_child(self.syntax(), usize::from(self.is_qualified()))
     }
 
+    #[must_use]
     pub fn to(&self) -> Option<Ident> {
-        support::nth_child(self.syntax(), self.is_qualified() as usize + 1)
+        support::nth_child(self.syntax(), usize::from(self.is_qualified()) + 1)
     }
 
     fn is_qualified(&self) -> bool {
@@ -825,18 +891,22 @@ impl JoinStage {
             .find_map(JoinKind::from_token)
     }
 
+    #[must_use]
     pub fn relation(&self) -> Option<Ident> {
         support::nth_child(self.syntax(), 0)
     }
 
+    #[must_use]
     pub fn alias(&self) -> Option<Ident> {
         support::nth_child(self.syntax(), 1)
     }
 
+    #[must_use]
     pub fn on(&self) -> Option<JoinOn> {
         support::child(self.syntax())
     }
 
+    #[must_use]
     pub fn using(&self) -> Option<JoinUsing> {
         support::child(self.syntax())
     }
@@ -844,6 +914,7 @@ impl JoinStage {
 
 ast_node!(JoinOn);
 impl JoinOn {
+    #[must_use]
     pub fn condition(&self) -> Option<Expr> {
         support::child(self.syntax())
     }
@@ -865,10 +936,12 @@ impl SetStage {
 
 ast_node!(SetItem);
 impl SetItem {
+    #[must_use]
     pub fn column(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
 
+    #[must_use]
     pub fn value(&self) -> Option<Expr> {
         support::child(self.syntax())
     }
@@ -876,10 +949,12 @@ impl SetItem {
 
 ast_node!(LimitStage);
 impl LimitStage {
+    #[must_use]
     pub fn count(&self) -> Option<Expr> {
         support::nth_child(self.syntax(), 0)
     }
 
+    #[must_use]
     pub fn offset(&self) -> Option<Expr> {
         support::nth_child(self.syntax(), 1)
     }
@@ -887,6 +962,7 @@ impl LimitStage {
 
 ast_node!(AliasStage);
 impl AliasStage {
+    #[must_use]
     pub fn alias(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
@@ -898,6 +974,7 @@ impl AggregateStage {
         support::children(self.syntax())
     }
 
+    #[must_use]
     pub fn group_by(&self) -> Option<GroupBy> {
         support::child(self.syntax())
     }
@@ -905,10 +982,12 @@ impl AggregateStage {
 
 ast_node!(AggregateItem);
 impl AggregateItem {
+    #[must_use]
     pub fn expr(&self) -> Option<Expr> {
         support::child(self.syntax())
     }
 
+    #[must_use]
     pub fn alias(&self) -> Option<Ident> {
         support::child(self.syntax())
     }
@@ -923,19 +1002,22 @@ impl GroupBy {
 
 ast_node!(GroupByItem);
 impl GroupByItem {
+    #[must_use]
     pub fn qualifier(&self) -> Option<Ident> {
         self.is_qualified()
             .then(|| support::nth_child(self.syntax(), 0))
             .flatten()
     }
 
+    #[must_use]
     pub fn column(&self) -> Option<Ident> {
-        support::nth_child(self.syntax(), self.is_qualified() as usize)
+        support::nth_child(self.syntax(), usize::from(self.is_qualified()))
     }
 
+    #[must_use]
     pub fn alias(&self) -> Option<Ident> {
         self.is_aliased()
-            .then(|| support::nth_child(self.syntax(), self.is_qualified() as usize + 1))
+            .then(|| support::nth_child(self.syntax(), usize::from(self.is_qualified()) + 1))
             .flatten()
     }
 
@@ -963,6 +1045,7 @@ ast_enum!(Literal, {
 
 ast_node!(BoolLiteral);
 impl BoolLiteral {
+    #[must_use]
     pub fn value(&self) -> Option<bool> {
         self.0.first_token()?.text().parse().ok()
     }
@@ -970,6 +1053,7 @@ impl BoolLiteral {
 
 ast_node!(IntLiteral);
 impl IntLiteral {
+    #[must_use]
     pub fn value(&self) -> Option<u64> {
         self.0.first_token()?.text().parse().ok()
     }
@@ -977,6 +1061,7 @@ impl IntLiteral {
 
 ast_node!(FloatLiteral);
 impl FloatLiteral {
+    #[must_use]
     pub fn value(&self) -> Option<f64> {
         self.0.first_token()?.text().parse().ok()
     }
@@ -984,6 +1069,7 @@ impl FloatLiteral {
 
 ast_node!(StringLiteral);
 impl StringLiteral {
+    #[must_use]
     pub fn value(&self) -> Option<String> {
         let text = self.0.first_token()?.text().to_string();
         let unquoted = text

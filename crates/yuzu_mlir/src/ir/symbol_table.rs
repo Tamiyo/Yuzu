@@ -12,6 +12,7 @@ pub struct SymbolTable<'c, 'a> {
 }
 
 impl<'c, 'a> SymbolTable<'c, 'a> {
+    #[must_use]
     pub fn new(module: &'a Module<'c>) -> Self {
         Self {
             // SAFETY: the module is a live op for `'a`, which the table borrows; MLIR returns an owned handle that `drop` frees once.
@@ -20,6 +21,7 @@ impl<'c, 'a> SymbolTable<'c, 'a> {
         }
     }
 
+    #[must_use]
     pub fn lookup(&self, name: &str) -> Option<OperationRef<'c, 'a>> {
         // SAFETY: the table and the name outlive the call. A null result is checked before it becomes a reference, and the op found belongs to the borrowed module.
         unsafe {

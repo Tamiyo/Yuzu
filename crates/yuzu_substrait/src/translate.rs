@@ -32,6 +32,7 @@ mod types;
 
 /// Translates the module's query. `None` once it has reported why it could
 /// not, so run this inside `yuzu_mlir::diagnostics::capture`.
+#[must_use]
 pub fn translate<'c>(context: &'c Context, module: &Module<'c>) -> Option<Plan> {
     let symbols = SymbolTable::new(module);
     let body = module.body();
@@ -60,7 +61,7 @@ pub fn translate<'c>(context: &'c Context, module: &Module<'c>) -> Option<Plan> 
         return None;
     };
 
-    let names = columns.iter().map(|name| name.to_string()).collect();
+    let names = columns.iter().map(std::string::ToString::to_string).collect();
 
     Some(Plan {
         version: Some(version::version_with_producer("yuzu")),
@@ -460,9 +461,9 @@ mod tests {
     fn reports_a_program_with_no_query() {
         check_error(
             "struct Row { a: int64 }\ntable t = Row\n",
-            expect![[r#"
+            expect![[r"
                 error: the program has no query
-            "#]],
+            "]],
         );
     }
 
@@ -470,13 +471,13 @@ mod tests {
     fn reports_an_operator_the_target_does_not_have() {
         check_error(
             &format!("{TABLE}from t |> select a ** 2 as p"),
-            expect![[r#"
+            expect![[r"
                 error: `**` has no implementation for this engine
                  --> test.yz:3:18
                   |
                 3 | from t |> select a ** 2 as p
                   |                  ^^^^^^
-            "#]],
+            "]],
         );
     }
 }

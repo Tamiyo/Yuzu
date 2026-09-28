@@ -122,7 +122,7 @@ mod tests {
     #[test]
     fn assigning_a_binding_needs_mut() {
         check(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
@@ -133,21 +133,21 @@ def f(x: int64) -> int64 {
 }
 
 from t |> select f(a) as v
-"#,
-            expect![[r#"
+",
+            expect![[r"
                 error: `n` is not mutable; declare it with `let mut` to assign it
                  --> test.yz:7:5
                   |
                 7 |     n = n + 1
                   |     ^^^^^^^^^
-            "#]],
+            "]],
         );
     }
 
     #[test]
     fn a_mutable_binding_may_be_assigned() {
         check(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
@@ -159,7 +159,7 @@ def f(x: int64) -> int64 {
 }
 
 from t |> select f(a) as v
-"#,
+",
             expect!["no diagnostics"],
         );
     }
@@ -167,7 +167,7 @@ from t |> select f(a) as v
     #[test]
     fn a_parameter_is_not_assignable() {
         check(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
@@ -177,21 +177,21 @@ def f(x: int64) -> int64 {
 }
 
 from t |> select f(a) as v
-"#,
-            expect![[r#"
+",
+            expect![[r"
                 error: `x` is a parameter and cannot be assigned
                  --> test.yz:6:5
                   |
                 6 |     x = 1
                   |     ^^^^^
-            "#]],
+            "]],
         );
     }
 
     #[test]
     fn a_shadowing_let_is_a_new_place() {
         check(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
@@ -202,7 +202,7 @@ def f(x: int64) -> int64 {
 }
 
 from t |> select f(a) as v
-"#,
+",
             expect!["no diagnostics"],
         );
     }

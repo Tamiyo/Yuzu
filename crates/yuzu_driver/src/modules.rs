@@ -65,6 +65,7 @@ pub struct FsResolver {
 
 impl FsResolver {
     /// The files that can hold a module, in the order they are tried.
+    #[must_use]
     pub fn candidates(&self, path: &str) -> [PathBuf; 2] {
         let mut directory = self.base.clone();
         for segment in path.split('.') {
@@ -458,6 +459,7 @@ pub enum Location {
 /// Where a file sits, read from the module markers around it: up through
 /// the directories that hold one, the first that does not is where the
 /// program's module paths start. The reverse of [`FsResolver::candidates`].
+#[must_use]
 pub fn locate(file: &Path) -> Location {
     let directory = file.parent().unwrap_or(Path::new(""));
     let is_marker = file.file_name().is_some_and(|name| name == MARKER);
@@ -488,6 +490,7 @@ pub fn locate(file: &Path) -> Location {
 }
 
 /// The directory a file's modules are resolved against.
+#[must_use]
 pub fn base_of(file: &Path) -> PathBuf {
     file.parent().unwrap_or(Path::new(".")).to_path_buf()
 }

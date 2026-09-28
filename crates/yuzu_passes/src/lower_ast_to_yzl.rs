@@ -104,7 +104,7 @@ struct AstToYzl<'c, 'd> {
 /// the symbol table because each borrows the block being built.
 type Locals<'c, 'a> = Vec<Value<'c, 'a>>;
 
-impl<'c, 'd> AstToYzl<'c, 'd> {
+impl<'c> AstToYzl<'c, '_> {
     fn error_at(&self, range: TextRange, message: &str) -> DiagnosticBuilder {
         let span = Span {
             source_id: self.source_id,

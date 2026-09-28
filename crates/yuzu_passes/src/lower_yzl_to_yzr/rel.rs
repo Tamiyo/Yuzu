@@ -454,12 +454,9 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             .into_iter()
             .flat_map(|columns| columns.indices());
         for (index, name) in columns.zip(stage.to().strings()) {
-            match row.get_mut(index) {
-                Some(column) => column.0 = name,
-                None => {
-                    self.report(op, &format!("column {index} is not in the row"));
-                    return;
-                }
+            if let Some(column) = row.get_mut(index) { column.0 = name } else {
+                self.report(op, &format!("column {index} is not in the row"));
+                return;
             }
         }
 
@@ -573,12 +570,9 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                 .find(|(index, (name, _))| name == column && !dropped.contains(index))
                 .map(|(index, _)| index);
 
-            match found {
-                Some(index) => dropped.push(index),
-                None => {
-                    self.report(op, &format!("`{column}` is not in the row"));
-                    return None;
-                }
+            if let Some(index) = found { dropped.push(index) } else {
+                self.report(op, &format!("`{column}` is not in the row"));
+                return None;
             }
         }
 
@@ -599,7 +593,7 @@ mod tests {
     #[test]
     fn named_stages_declare_the_row_they_produce() {
         check_yzr(
-            r#"
+            r"
 struct Row { a: int64, b: int64 }
 table t = Row
 
@@ -607,7 +601,7 @@ from t
 |> extend a + b as e
 |> select a as x, e as y
 |> limit 5 offset 1
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["a", "b"] : [!yz.int64, !yz.int64]
@@ -633,7 +627,7 @@ from t
     #[test]
     fn join_materialises_its_right_side() {
         check_yzr(
-            r#"
+            r"
 struct Row { id: int64, dept_id: int64 }
 table t = Row
 struct Dept { key: int64, name: str }
@@ -641,7 +635,7 @@ table depts = Dept
 
 from t
 |> left join depts as d on dept_id == d.key
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["id", "dept_id"] : [!yz.int64, !yz.int64]
@@ -663,7 +657,7 @@ from t
     #[test]
     fn using_becomes_the_equality_it_means() {
         check_yzr(
-            r#"
+            r"
 struct Row { id: int64, tag: str, part: int64 }
 table t = Row
 struct Other { id: int64, part: int64, extra: int64 }
@@ -671,7 +665,7 @@ table u = Other
 
 from t
 |> inner join u using (id, part)
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["id", "tag", "part"] : [!yz.int64, !yz.str, !yz.int64]
@@ -695,14 +689,14 @@ from t
     #[test]
     fn alias_leaves_no_trace() {
         check_yzr(
-            r#"
+            r"
 struct Row { a: int64, b: int64 }
 table t = Row
 
 from t
 |> as r
 |> where r.a > 1
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["a", "b"] : [!yz.int64, !yz.int64]
@@ -722,13 +716,13 @@ from t
     #[test]
     fn distinct_groups_on_every_column() {
         check_yzr(
-            r#"
+            r"
 struct Row { a: int64, b: str }
 table t = Row
 
 from t
 |> distinct
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["a", "b"] : [!yz.int64, !yz.str]
@@ -746,13 +740,13 @@ from t
     #[test]
     fn drop_projects_the_columns_that_stay() {
         check_yzr(
-            r#"
+            r"
 struct Row { a: int64, b: str, c: int64 }
 table t = Row
 
 from t
 |> drop b
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["a", "b", "c"] : [!yz.int64, !yz.str, !yz.int64]
@@ -771,13 +765,13 @@ from t
     #[test]
     fn set_yields_the_untouched_columns_too() {
         check_yzr(
-            r#"
+            r"
 struct Row { a: int64, b: int64, c: int64 }
 table t = Row
 
 from t
 |> set b = a + 1
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["a", "b", "c"] : [!yz.int64, !yz.int64, !yz.int64]
@@ -797,7 +791,7 @@ from t
     #[test]
     fn a_binding_is_reused_not_rescanned() {
         check_yzr(
-            r#"
+            r"
 struct Row { a: int64, b: int64 }
 table t = Row
 
@@ -805,7 +799,7 @@ let big = from t |> where a > 10
 
 from big
 |> inner join big using (a)
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["a", "b"] : [!yz.int64, !yz.int64]
@@ -831,34 +825,34 @@ from big
     #[test]
     fn reports_a_binding_that_is_not_a_query() {
         check_yzr(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
 let n = 1 + 2
 
 from t
-"#,
-            expect![[r#"
+",
+            expect![[r"
                 error: only a query can be bound by `let`
                  --> test.yz:5:1
                   |
                 5 | let n = 1 + 2
                   | ^^^^^^^^^^^^^
-            "#]],
+            "]],
         );
     }
 
     #[test]
     fn rename_projects_under_the_new_names() {
         check_yzr(
-            r#"
+            r"
 struct Row { a: int64, b: str }
 table t = Row
 
 from t
 |> rename a as x, b as y
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["a", "b"] : [!yz.int64, !yz.str]
@@ -877,7 +871,7 @@ from t
     #[test]
     fn rename_follows_the_stamped_column() {
         check_yzr(
-            r#"
+            r"
 struct Row { id: int64 }
 table l = Row
 struct Other { id: int64 }
@@ -887,7 +881,7 @@ from l
 |> as a
 |> inner join r as b on a.id == b.id
 |> rename b.id as other
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["id"] : [!yz.int64]
@@ -914,13 +908,13 @@ from l
     #[test]
     fn a_single_rename_projects_too() {
         check_yzr(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
 from t
 |> rename a as b
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["a"] : [!yz.int64]

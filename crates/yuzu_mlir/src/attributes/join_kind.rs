@@ -16,6 +16,7 @@ pub enum JoinKind {
 
 impl JoinKind {
     /// The spelling the attribute carries.
+    #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Inner => "inner",
@@ -43,6 +44,7 @@ impl JoinKind {
 
 impl yzl::JoinOp<'_, '_> {
     /// Which rows this join keeps. Stands in for the generated accessor.
+    #[must_use]
     pub fn kind(&self) -> JoinKind {
         JoinKind::of(self.operation(), "yzl.join")
     }
@@ -50,6 +52,7 @@ impl yzl::JoinOp<'_, '_> {
 
 impl yzr::JoinOp<'_, '_> {
     /// Which rows this join keeps. Stands in for the generated accessor.
+    #[must_use]
     pub fn kind(&self) -> JoinKind {
         JoinKind::of(self.operation(), "yzr.join")
     }

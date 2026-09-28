@@ -1,7 +1,7 @@
-//! Generates borrowed, typed op views from the TableGen dialect definitions.
+//! Generates borrowed, typed op views from the `TableGen` dialect definitions.
 //!
 //! `llvm-tblgen --dump-json` reads the same `.td` files that melior's
-//! `dialect!` macro and the C++ build consume, so the TableGen stays the
+//! `dialect!` macro and the C++ build consume, so the `TableGen` stays the
 //! single source of truth: adding an op there materializes its kind-enum
 //! variant, its typed view struct, and its accessors on the next build.
 //!
@@ -53,7 +53,7 @@ enum Arg {
 /// ODS `storageType`s mapped to melior attribute wrappers — every wrapper
 /// melior has. A storage type melior cannot wrap reads as a plain
 /// `Attribute` (with a build warning), so a new attribute kind in the
-/// TableGen never breaks the build; it just reads untyped until melior
+/// `TableGen` never breaks the build; it just reads untyped until melior
 /// grows a wrapper for it.
 #[derive(Clone, Copy)]
 enum Storage {
@@ -108,7 +108,7 @@ impl Storage {
 /// Attributes the crate gives a type of its own. The generator leaves the
 /// accessor out so a hand-written one of the same name stands in its place,
 /// reading the attribute back as what it means rather than what it stores.
-/// Every entry is checked against the dialect, so renaming one in TableGen
+/// Every entry is checked against the dialect, so renaming one in `TableGen`
 /// fails the build rather than silently leaving two accessors or none.
 const TYPED_ACCESSORS: &[(&str, &str)] = &[
     ("yzl.call", "callee_source"),
@@ -351,7 +351,7 @@ fn generate_typed_module(out: &mut String, dialect: &Dialect, ops: &[Op]) {
         dialect.mlir_namespace
     )
     .unwrap();
-    writeln!(out, "    #[derive(Clone, Copy)]").unwrap();
+    writeln!(out, "    #[derive(Clone, Copy, Debug)]").unwrap();
     writeln!(out, "    pub enum {enum_name}<'c, 'a> {{").unwrap();
     for op in ops {
         writeln!(out, "        {}({}Op<'c, 'a>),", op.variant, op.variant).unwrap();
@@ -387,6 +387,7 @@ fn generate_typed_module(out: &mut String, dialect: &Dialect, ops: &[Op]) {
     writeln!(out, "                _ => return None,").unwrap();
     writeln!(out, "            }})").unwrap();
     writeln!(out, "        }}\n").unwrap();
+    writeln!(out, "        #[must_use]").unwrap();
     writeln!(
         out,
         "        pub fn operation(&self) -> &'a Operation<'c> {{"
@@ -467,7 +468,7 @@ fn write_imports(out: &mut String, ops: &[Op]) {
 fn generate_struct(out: &mut String, op: &Op) {
     let name = format!("{}Op", op.variant);
     writeln!(out, "\n    /// A borrowed `{}` operation.", op.full_name).unwrap();
-    writeln!(out, "    #[derive(Clone, Copy)]").unwrap();
+    writeln!(out, "    #[derive(Clone, Copy, Debug)]").unwrap();
     writeln!(out, "    pub struct {name}<'c, 'a> {{").unwrap();
     writeln!(out, "        operation: &'a Operation<'c>,").unwrap();
     writeln!(out, "    }}\n").unwrap();
@@ -479,6 +480,7 @@ fn generate_struct(out: &mut String, op: &Op) {
         op.full_name
     )
     .unwrap();
+    writeln!(out, "        #[must_use]").unwrap();
     writeln!(
         out,
         "        pub fn of(operation: &'a Operation<'c>) -> Option<Self> {{"
@@ -491,6 +493,7 @@ fn generate_struct(out: &mut String, op: &Op) {
     .unwrap();
     writeln!(out, "                .then_some(Self {{ operation }})").unwrap();
     writeln!(out, "        }}\n").unwrap();
+    writeln!(out, "        #[must_use]").unwrap();
     writeln!(
         out,
         "        pub fn operation(&self) -> &'a Operation<'c> {{"
@@ -507,6 +510,8 @@ fn generate_struct(out: &mut String, op: &Op) {
                 variadic: false,
             } => {
                 writeln!(out, "\n        /// The `{arg_name}` operand.").unwrap();
+                writeln!(out, "        ///\n        /// # Panics\n        ///\n        /// Panics if the op does not verify: a verified op always has it.").unwrap();
+                writeln!(out, "        #[must_use]").unwrap();
                 writeln!(out, "        pub fn {arg_name}(&self) -> Value<'c, 'a> {{").unwrap();
                 writeln!(
                     out,
@@ -527,17 +532,15 @@ fn generate_struct(out: &mut String, op: &Op) {
                     "        pub fn {arg_name}(&self) -> impl Iterator<Item = Value<'c, 'a>> {{"
                 )
                 .unwrap();
-                writeln!(out, "            let operation = self.operation;").unwrap();
-                writeln!(
-                    out,
-                    "            ({operand_index}..operation.operand_count())"
-                )
-                .unwrap();
-                writeln!(
-                    out,
-                    "                .map(move |index| operation.operand(index).expect(\"the operand index is in range\"))"
-                )
-                .unwrap();
+                if operand_index == 0 {
+                    writeln!(out, "            self.operation.operands()").unwrap();
+                } else {
+                    writeln!(
+                        out,
+                        "            self.operation.operands().skip({operand_index})"
+                    )
+                    .unwrap();
+                }
                 writeln!(out, "        }}").unwrap();
             }
             Arg::Attr {
@@ -551,6 +554,7 @@ fn generate_struct(out: &mut String, op: &Op) {
                     "\n        /// Whether the `{raw}` unit attribute is present."
                 )
                 .unwrap();
+                writeln!(out, "        #[must_use]").unwrap();
                 writeln!(out, "        pub fn {arg_name}(&self) -> bool {{").unwrap();
                 writeln!(
                     out,
@@ -575,7 +579,12 @@ fn generate_struct(out: &mut String, op: &Op) {
                     _ => "",
                 };
                 writeln!(out, "\n        /// The `{raw}` attribute.{note}").unwrap();
+                // Only an optional attribute kept raw is read without `expect`.
+                if !(*optional && storage.is_raw()) {
+                    writeln!(out, "        ///\n        /// # Panics\n        ///\n        /// Panics if the op does not verify: a verified op always has it.").unwrap();
+                }
                 if *optional {
+                    writeln!(out, "        #[must_use]").unwrap();
                     writeln!(
                         out,
                         "        pub fn {arg_name}(&self) -> Option<{wrapper}<'c>> {{"
@@ -599,6 +608,7 @@ fn generate_struct(out: &mut String, op: &Op) {
                     }
                     writeln!(out, "        }}").unwrap();
                 } else if storage.is_raw() {
+                    writeln!(out, "        #[must_use]").unwrap();
                     writeln!(out, "        pub fn {arg_name}(&self) -> {wrapper}<'c> {{").unwrap();
                     writeln!(out, "            self.operation").unwrap();
                     writeln!(out, "                .attribute(\"{raw}\")").unwrap();
@@ -610,6 +620,7 @@ fn generate_struct(out: &mut String, op: &Op) {
                     .unwrap();
                     writeln!(out, "        }}").unwrap();
                 } else {
+                    writeln!(out, "        #[must_use]").unwrap();
                     writeln!(out, "        pub fn {arg_name}(&self) -> {wrapper}<'c> {{").unwrap();
                     writeln!(out, "            let attribute = self.operation").unwrap();
                     writeln!(out, "                .attribute(\"{raw}\")").unwrap();
@@ -634,6 +645,8 @@ fn generate_struct(out: &mut String, op: &Op) {
 
     for (index, region) in op.regions.iter().enumerate() {
         writeln!(out, "\n        /// The `{region}` region.").unwrap();
+        writeln!(out, "        ///\n        /// # Panics\n        ///\n        /// Panics if the op does not verify: a verified op always has it.").unwrap();
+        writeln!(out, "        #[must_use]").unwrap();
         writeln!(
             out,
             "        pub fn {region}(&self) -> RegionRef<'c, 'a> {{"
@@ -650,6 +663,8 @@ fn generate_struct(out: &mut String, op: &Op) {
 
     for (index, result) in op.results.iter().enumerate() {
         writeln!(out, "\n        /// The `{result}` result.").unwrap();
+        writeln!(out, "        ///\n        /// # Panics\n        ///\n        /// Panics if the op does not verify: a verified op always has it.").unwrap();
+        writeln!(out, "        #[must_use]").unwrap();
         writeln!(
             out,
             "        pub fn {result}(&self) -> OperationResult<'c, 'a> {{"

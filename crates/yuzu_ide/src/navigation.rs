@@ -119,7 +119,7 @@ mod tests {
         expected.assert_eq(&rendered.join("\n"));
     }
 
-    const PROGRAM: &str = r#"from helpers import two
+    const PROGRAM: &str = r"from helpers import two
 table t = { a: int64 }
 let cap = 10
 def double(x: int64) -> int64 {
@@ -127,7 +127,7 @@ def double(x: int64) -> int64 {
     return y
 }
 from t |> select double(a) + cap + two() as v
-"#;
+";
 
     #[test]
     fn a_local_goes_to_its_let() {
@@ -205,9 +205,9 @@ from t |> select double(a) + cap + two() as v
     fn references_start_at_the_declaration() {
         check_references(
             &PROGRAM.replacen("let y = x", "let $0y = x", 1),
-            expect![[r#"
+            expect![[r"
                 main.yz:y 100..101
-                main.yz:y 121..122"#]],
+                main.yz:y 121..122"]],
         );
     }
 
@@ -237,9 +237,9 @@ from t |> select double(a) + cap + two() as v
     fn references_reach_the_declaration_in_another_file() {
         check_references(
             &PROGRAM.replacen("+ two()", "+ t$0wo()", 1),
-            expect![[r#"
+            expect![[r"
                 helpers.yz:two 8..11
-                main.yz:two 160..163"#]],
+                main.yz:two 160..163"]],
         );
     }
 }

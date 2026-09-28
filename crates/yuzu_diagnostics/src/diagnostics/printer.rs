@@ -8,10 +8,12 @@ pub struct DiagnosticPrinter<'a> {
 }
 
 impl<'a> DiagnosticPrinter<'a> {
+    #[must_use]
     pub fn new(sources: &'a SourceMap) -> Self {
         Self { sources }
     }
 
+    #[must_use]
     pub fn print(&self, diagnostic: &Diagnostic) -> String {
         let mut out = String::new();
 
@@ -207,13 +209,13 @@ mod tests {
                 )
                 .build()
             },
-            expect![[r#"
+            expect![[r"
                 error: value of type `Bool` is not assignable to `Int64`
                  --> test.yuzu:1:16
                   |
                 1 | let x: int64 = true
                   |                ^^^^
-            "#]],
+            "]],
         );
     }
 
@@ -227,14 +229,14 @@ mod tests {
                     .note("expected an expression")
                     .build()
             },
-            expect![[r#"
+            expect![[r"
                 error[E0001]: unexpected token
                  --> test.yuzu:1:9
                   |
                 1 | let x = 1
                   |         ^
                   = note: expected an expression
-            "#]],
+            "]],
         );
     }
 
@@ -247,13 +249,13 @@ mod tests {
                     .label(span(id, 4..5), "")
                     .build()
             },
-            expect![[r#"
+            expect![[r"
                 error: type error
                  --> test.yuzu:1:9
                   |
                 1 | let x = true
                   |     -   ^^^^
-            "#]],
+            "]],
         );
     }
 
@@ -267,7 +269,7 @@ mod tests {
                     .label(span(id, 6..7), "this is an `int`")
                     .build()
             },
-            expect![[r#"
+            expect![[r"
                 error: mismatched operand types
                  --> test.yuzu:1:1
                   |
@@ -276,7 +278,7 @@ mod tests {
                   | |     |
                   | |     - this is an `int`
                   | --- this is a `float`
-            "#]],
+            "]],
         );
     }
 }

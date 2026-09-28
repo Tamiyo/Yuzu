@@ -139,6 +139,7 @@ impl Reported {
 /// The span a location names in `sources`: what an op's location says it
 /// was lowered from. `None` for a location that is no file range, or that
 /// names a file no source was added under.
+#[must_use]
 pub fn span(sources: &SourceMap, location: Location) -> Option<Span> {
     span_of(sources, Position::of(&location).as_ref())
 }
@@ -192,13 +193,13 @@ mod tests {
             .iter()
             .map(|diagnostic| printer.print(diagnostic))
             .collect();
-        expect![[r#"
+        expect![[r"
         error: unknown relation `t`
          --> test.yz:1:6
           |
         1 | from t
           |      ^
-    "#]]
+    "]]
         .assert_eq(&rendered.join("\n"));
     }
 
@@ -236,7 +237,7 @@ mod tests {
             .iter()
             .map(|diagnostic| printer.print(diagnostic))
             .collect();
-        expect![[r#"
+        expect![[r"
             error: unknown relation `t`
              --> query.yz:1:6
               |
@@ -250,7 +251,7 @@ mod tests {
               |             ^
 
             error: the query could not be built
-        "#]]
+        "]]
         .assert_eq(&rendered.join("\n"));
     }
 

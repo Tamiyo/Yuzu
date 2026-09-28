@@ -40,6 +40,7 @@ impl Default for SourceMap {
 }
 
 impl SourceMap {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             entries: Vec::new(),
@@ -57,10 +58,12 @@ impl SourceMap {
     }
 
     /// The number of sources added so far.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
@@ -77,6 +80,7 @@ impl SourceMap {
         self.entries.extend(other.entries.iter().skip(own).cloned());
     }
 
+    #[must_use]
     pub fn name(&self, source_id: SourceId) -> &str {
         &self.entries[source_id.0 - 1].name
     }
@@ -84,6 +88,7 @@ impl SourceMap {
     /// The source added under a name. Positions that reach the compiler from
     /// outside carry the name the file was read under rather than its id, so
     /// this is how they find their way back.
+    #[must_use]
     pub fn id(&self, name: &str) -> Option<SourceId> {
         let index = self.entries.iter().position(|entry| &*entry.name == name)?;
         Some(SourceId(index + 1))
@@ -92,6 +97,7 @@ impl SourceMap {
     /// The offset a line and column name, both counted from one. The inverse
     /// of [`SourceMap::line_col`]. `None` when the position is past the end
     /// of the source, which a position from outside may well be.
+    #[must_use]
     pub fn offset(&self, source_id: SourceId, line: usize, col: usize) -> Option<usize> {
         let entry = self.entries.get(source_id.0.checked_sub(1)?)?;
         let start = *entry.line_starts.get(line.checked_sub(1)?)?;
@@ -99,10 +105,12 @@ impl SourceMap {
         (offset <= entry.text.len()).then_some(offset)
     }
 
+    #[must_use]
     pub fn text(&self, source_id: SourceId) -> &str {
         &self.entries[source_id.0 - 1].text
     }
 
+    #[must_use]
     pub fn line_col(&self, source_id: SourceId, offset: usize) -> LineCol {
         let entry = &self.entries[source_id.0 - 1];
         let line_index = entry.line_starts.partition_point(|&start| start <= offset) - 1;
@@ -113,6 +121,7 @@ impl SourceMap {
         }
     }
 
+    #[must_use]
     pub fn line_text(&self, source_id: SourceId, line: usize) -> &str {
         let entry = &self.entries[source_id.0 - 1];
 

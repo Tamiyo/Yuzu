@@ -95,14 +95,14 @@ mod tests {
         expected.assert_debug_eq(&rendered);
     }
 
-    const PROGRAM: &str = r#"table t = { a: int64 }
+    const PROGRAM: &str = r"table t = { a: int64 }
 let cap = 10
 def double(x: int64) -> int64 {
     let mut y = x * 2
     return y
 }
 from t |> select double(1) + cap as v
-"#;
+";
 
     #[test]
     fn a_call_shows_the_signature() {

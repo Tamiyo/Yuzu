@@ -228,9 +228,9 @@ fn document_symbols_nest_fields_under_their_struct() {
             )
         })
         .collect();
-    expect![[r#"
+    expect![[r"
         Struct Point [x, y]
-        Function f []"#]]
+        Function f []"]]
     .assert_eq(&rendered.join("\n"));
     client.shutdown();
 }
@@ -262,12 +262,12 @@ fn semantic_tokens_are_sent_relative_to_the_one_before() {
             )
         })
         .collect();
-    expect![[r#"
+    expect![[r"
         +0 +0 len 3 type 0 mods 0
         +0 +4 len 1 type 9 mods 1
         +0 +2 len 1 type 10 mods 1
         +0 +3 len 5 type 12 mods 0
-        +1 +4 len 6 type 0 mods 0"#]]
+        +1 +4 len 6 type 0 mods 0"]]
     .assert_eq(&rendered.join("\n"));
     client.shutdown();
 }
@@ -385,10 +385,10 @@ fn a_hover_shows_the_declaration() {
     let lsp_types::HoverContents::Markup(markup) = hover.contents else {
         panic!("the hover is markdown");
     };
-    expect![[r#"
+    expect![[r"
         ```yuzu
         let y: int64
-        ```"#]]
+        ```"]]
     .assert_eq(&markup.value);
     client.shutdown();
 }

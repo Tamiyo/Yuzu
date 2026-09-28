@@ -234,7 +234,7 @@ mod tests {
     #[test]
     fn declarations_and_queries() {
         check(
-            r#"
+            r"
 mod helpers
 struct Point { x: float64, y: List[int64] }
 table employees = { id: str }
@@ -245,8 +245,8 @@ impl Shape for Point {
 agg def spread(x: int64) -> int64 { return max(x) - min(x) }
 let cap = 10
 from employees e |> select e.id
-"#,
-            expect![[r#"
+",
+            expect![[r"
                 Module helpers
                 Struct Point
                   Field x float64
@@ -259,12 +259,12 @@ from employees e |> select e.id
                   Function area (p: Point) -> float64
                 Function spread (x: int64) -> int64
                 Constant cap
-                Query from employees"#]],
+                Query from employees"]],
         );
     }
 
     #[test]
     fn a_name_lost_to_parse_recovery_is_left_out() {
-        check("let = 1\n", expect![[r#""#]]);
+        check("let = 1\n", expect![[r""]]);
     }
 }

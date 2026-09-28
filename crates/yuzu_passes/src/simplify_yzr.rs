@@ -25,13 +25,13 @@ mod tests {
     #[test]
     fn constant_arithmetic_folds_in_place() {
         check_simplified(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
 from t
 |> where a > 2 * 3 + 1
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["a"] : [!yz.int64]
@@ -51,13 +51,13 @@ from t
     #[test]
     fn repeated_work_is_computed_once() {
         check_simplified(
-            r#"
+            r"
 struct Row { a: int64, b: int64 }
 table t = Row
 
 from t
 |> extend a + b as x, a + b as y
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["a", "b"] : [!yz.int64, !yz.int64]
@@ -79,14 +79,14 @@ from t
     #[test]
     fn an_unread_column_is_still_computed() {
         check_simplified(
-            r#"
+            r"
 struct Row { a: int64, b: int64 }
 table t = Row
 
 from t
 |> extend a * b as unused
 |> select a as kept
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["a", "b"] : [!yz.int64, !yz.int64]
@@ -113,13 +113,13 @@ from t
     #[test]
     fn large_integers_compare_exactly() {
         check_simplified(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
 from t
 |> where 9007199254740993 > 9007199254740992
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["a"] : [!yz.int64]
@@ -138,7 +138,7 @@ from t
     #[test]
     fn constants_reach_each_other_through_a_value() {
         check_simplified(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
@@ -146,7 +146,7 @@ def f(x: int64) -> int64 { return x + 1 + 2 }
 
 from t
 |> select f(a) as v
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["a"] : [!yz.int64]
@@ -167,7 +167,7 @@ from t
     #[test]
     fn an_unrepresentable_sum_keeps_its_order() {
         check_simplified(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
@@ -175,7 +175,7 @@ def f(x: int64) -> int64 { return x + 9223372036854775807 + 1 }
 
 from t
 |> select f(a) as v
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["a"] : [!yz.int64]
@@ -198,7 +198,7 @@ from t
     #[test]
     fn opposite_signs_keep_the_order_they_were_written_in() {
         check_simplified(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
@@ -206,7 +206,7 @@ def f(x: int64) -> int64 { return x + 1 + -1 }
 
 from t
 |> select f(a) as v
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["a"] : [!yz.int64]
@@ -229,13 +229,13 @@ from t
     #[test]
     fn an_overflowing_sum_is_left_to_the_engine() {
         check_simplified(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
 from t
 |> where a > 9223372036854775807 + 1
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["a"] : [!yz.int64]
@@ -257,13 +257,13 @@ from t
     #[test]
     fn the_least_integer_is_left_to_the_engine() {
         check_simplified(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
 from t
 |> where a > -9223372036854775808 / -1
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["a"] : [!yz.int64]
@@ -286,13 +286,13 @@ from t
     #[test]
     fn arithmetic_that_fits_still_folds() {
         check_simplified(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
 from t
 |> where a > 9223372036854775806 + 1
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["a"] : [!yz.int64]
@@ -313,7 +313,7 @@ from t
     #[test]
     fn a_relation_the_output_never_reads_is_dropped() {
         check_simplified(
-            r#"
+            r"
 struct Row { a: int64, b: int64 }
 table t = Row
 
@@ -321,7 +321,7 @@ let never_read = from t |> where a > 1 |> extend a * b as c
 
 from t
 |> select a as x
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["a", "b"] : [!yz.int64, !yz.int64]
@@ -342,7 +342,7 @@ from t
     #[test]
     fn a_join_survives_when_nothing_reads_its_right_side() {
         check_simplified(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 struct Other { k: int64, extra: str }
@@ -351,7 +351,7 @@ table u = Other
 from t
 |> inner join u on a == k
 |> select a as x
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["a"] : [!yz.int64]
@@ -378,13 +378,13 @@ from t
     #[test]
     fn a_shift_or_power_folds_only_when_exact() {
         check_simplified(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
 from t
 |> select 1 << 2 as four, -8 >> 1 as half, 2 ** 3 as eight, 1 << 63 as sign, 2 ** -1 as inverse, 2 ** 63 as over
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["a"] : [!yz.int64]

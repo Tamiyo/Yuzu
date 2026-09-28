@@ -33,6 +33,7 @@ pub enum Lowering {
 }
 
 impl File {
+    #[must_use]
     pub fn new(source_id: SourceId, module: Option<String>, root: ast::Root) -> Self {
         Self {
             source_id,
@@ -42,11 +43,13 @@ impl File {
         }
     }
 
+    #[must_use]
     pub fn entry(source_id: SourceId, root: ast::Root) -> Self {
         Self::new(source_id, None, root)
     }
 
     /// The module this file is, or `None` for the entry file.
+    #[must_use]
     pub fn module(&self) -> Option<&str> {
         self.module.as_deref()
     }
@@ -56,7 +59,7 @@ impl File {
     }
 }
 
-impl<'c, 'd> AstToYzl<'c, 'd> {
+impl<'c> AstToYzl<'c, '_> {
     pub(super) fn lower(&mut self, files: &[File], entry: &File) -> Module<'c> {
         let module = Module::new(Location::new(
             self.context,
@@ -323,13 +326,13 @@ mod tests {
 
     #[test]
     fn a_private_prelude_name_is_not_found() {
-        expect![[r#"
+        expect![[r"
             error: unresolved identifier `two`
              --> main.yz:4:22
               |
             4 | from t |> select a + two() as v
               |                      ^^^^^
-        "#]]
+        "]]
         .assert_eq(&reported_program(&[
             (
                 "prelude.yz",
@@ -346,13 +349,13 @@ mod tests {
 
     #[test]
     fn a_binding_a_module_keeps_to_itself_cannot_be_imported() {
-        expect![[r#"
+        expect![[r"
             error: `cap` is not public; `helpers` keeps it to itself
              --> main.yz:1:21
               |
             1 | from helpers import cap
               |                     ^^^
-        "#]]
+        "]]
         .assert_eq(&reported_program(&[
             ("helpers.yz", Some("helpers"), "let cap = 42\n"),
             (
@@ -365,14 +368,14 @@ mod tests {
 
     #[test]
     fn a_name_a_binding_and_a_declaration_both_take_is_reported() {
-        expect![[r#"
+        expect![[r"
             error: the binding `f` is already defined
              --> test.yz:2:1
               |
             2 | let f = 1
               | ^^^^^^^^^
               = note: also declared at test.yz:1:1
-        "#]]
+        "]]
         .assert_eq(&reported_program(&[(
             "test.yz",
             None,
@@ -382,13 +385,13 @@ mod tests {
 
     #[test]
     fn a_module_cannot_hold_a_query() {
-        expect![[r#"
+        expect![[r"
             error: a module cannot hold a query
              --> helpers.yz:4:1
               |
             4 | from t |> select a as v
               | ^^^^^^^^^^^^^^^^^^^^^^^
-        "#]]
+        "]]
         .assert_eq(&reported_program(&[
             (
                 "helpers.yz",

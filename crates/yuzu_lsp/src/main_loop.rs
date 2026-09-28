@@ -86,12 +86,9 @@ pub fn run(connection: &Connection) -> Result<(), RunError> {
                     Message::Response(_) => {}
                 }
             }
-            recv(checks) -> result => match result {
-                Ok(result) => state.on_checked(result)?,
-                Err(_) => {
-                    checks = crossbeam_channel::never();
-                    state.log_error("the checker stopped; only syntax errors are shown".to_owned())?;
-                }
+            recv(checks) -> result => if let Ok(result) = result { state.on_checked(result)? } else {
+                checks = crossbeam_channel::never();
+                state.log_error("the checker stopped; only syntax errors are shown".to_owned())?;
             },
         }
     }

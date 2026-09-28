@@ -58,7 +58,7 @@ fn fold_node(node: &SyntaxNode) -> Option<Fold> {
 fn braces(node: &SyntaxNode) -> Option<TextRange> {
     let tokens: Vec<SyntaxToken> = node
         .children_with_tokens()
-        .filter_map(|element| element.into_token())
+        .filter_map(rowan::NodeOrToken::into_token)
         .collect();
     let open = tokens
         .iter()
@@ -78,7 +78,7 @@ fn fold_comments(root: &SyntaxNode, folds: &mut Vec<Fold>) {
     let mut newlines = 0;
     for token in root
         .descendants_with_tokens()
-        .filter_map(|element| element.into_token())
+        .filter_map(rowan::NodeOrToken::into_token)
     {
         match token.kind() {
             SyntaxKind::Comment => {
@@ -158,7 +158,7 @@ mod tests {
     #[test]
     fn multiline_constructs() {
         check(
-            r#"// one
+            r"// one
 // two
 import a
 import b
@@ -174,7 +174,7 @@ def g(x: int64) -> int64 {
 from employees
 |> select id
 from staff |> select id
-"#,
+",
             expect![[r#"
                 Comment "// one\n// two"
                 Imports "import a\nimport b"

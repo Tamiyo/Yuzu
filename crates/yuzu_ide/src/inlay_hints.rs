@@ -57,9 +57,9 @@ mod tests {
                 )
             })
             .collect();
-        expect![[r#"
+        expect![[r"
             cap: int64
-            half: float64"#]]
+            half: float64"]]
         .assert_eq(&rendered.join("\n"));
     }
 }

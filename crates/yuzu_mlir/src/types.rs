@@ -41,6 +41,7 @@ pub fn scalar_name(context: &Context, ty: Type<'_>) -> Option<&'static str> {
 /// `int64` and `List[int64]`, not `!yz.int64` and `!yz.list<!yz.int64>`.
 /// The MLIR spelling is the fallback, so a type with no source syntax still
 /// prints as something.
+#[must_use]
 pub fn name(context: &Context, ty: Type<'_>) -> String {
     if let Some(list) = ListType::from_type(ty) {
         return format!("List[{}]", name(context, list.inner()));

@@ -311,14 +311,14 @@ mod tests {
     #[test]
     fn names_and_types_of_a_program() {
         check_index(
-            r#"table t = { a: int64 }
+            r"table t = { a: int64 }
 let cap = 10
 def double(x: int64) -> int64 {
     let y = x * 2
     return y
 }
 from t |> select double(a) + cap as v
-"#,
+",
             expect![[r#"
                 use "x" -> "def double(x: int64) -> int64 {"
                 use "y" -> "let y = x * 2"
@@ -340,11 +340,11 @@ from t |> select double(a) + cap as v
     fn a_join_and_an_import_name_their_declarations() {
         check_program(
             &[("helpers", "pub def two() -> int64 { return 2 }\n")],
-            r#"from helpers import two
+            r"from helpers import two
 table t = { a: int64 }
 table u = { b: int64 }
 from t |> join u on a == b |> select a + two() as v
-"#,
+",
             expect![[r#"
                 use "from t" -> "table t = { a: int64 }"
                 use "|> join u on a == b" -> "table u = { b: int64 }"

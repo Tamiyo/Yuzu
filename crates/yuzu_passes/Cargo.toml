@@ -1,7 +1,8 @@
 [package]
 name = "yuzu_passes"
-version = "0.0.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
 
 [dependencies]
 rustc-hash = "2"
@@ -16,3 +17,6 @@ yuzu_types = { path = "../yuzu_types" }
 
 [dev-dependencies]
 expect-test = "1.5.0"
+
+[lints]
+workspace = true

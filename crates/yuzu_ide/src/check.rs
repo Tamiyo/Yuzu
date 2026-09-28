@@ -49,33 +49,39 @@ impl Checked {
     }
 
     /// Each diagnostic the check reported, in every file it read.
+    #[must_use]
     pub fn diagnostics(&self) -> &[Diagnostic] {
         &self.inner.diagnostics
     }
 
     /// The file a source was read from. `None` for a library module built
     /// into the compiler, and for the entry a module's check makes up.
+    #[must_use]
     pub fn path(&self, source: SourceId) -> Option<&Path> {
         let path = Path::new(self.inner.sources.name(source));
         path.is_absolute().then_some(path)
     }
 
     /// A source's text, as the check read it.
+    #[must_use]
     pub fn text(&self, source: SourceId) -> &str {
         self.inner.sources.text(source)
     }
 
     /// The text of a file as this check read it.
+    #[must_use]
     pub fn file_text(&self, file: &Path) -> Option<&str> {
         Some(self.text(self.source_of(file)?))
     }
 
     /// Where the name at a position is declared.
+    #[must_use]
     pub fn goto_definition(&self, file: &Path, offset: TextSize) -> Option<FileRange> {
         navigation::goto_definition(self, self.source_of(file)?, offset)
     }
 
     /// The declaration of the name at a position, and each use of it.
+    #[must_use]
     pub fn references(&self, file: &Path, offset: TextSize) -> Vec<FileRange> {
         self.source_of(file)
             .map(|source| navigation::references(self, source, offset))
@@ -83,6 +89,7 @@ impl Checked {
     }
 
     /// The declaration and uses of the name at a position, in its own file.
+    #[must_use]
     pub fn highlight(&self, file: &Path, offset: TextSize) -> Vec<TextRange> {
         self.source_of(file)
             .map(|source| navigation::highlight(self, source, offset))
@@ -90,11 +97,13 @@ impl Checked {
     }
 
     /// What hovering at a position shows.
+    #[must_use]
     pub fn hover(&self, file: &Path, offset: TextSize) -> Option<HoverResult> {
         hover::hover(self, self.source_of(file)?, offset)
     }
 
     /// Each resolved use in a file, highlighted as its declaration is.
+    #[must_use]
     pub fn highlight_uses(&self, file: &Path) -> Vec<HlRange> {
         self.source_of(file)
             .map(|source| syntax_highlighting::highlight_uses(self, source))
@@ -102,6 +111,7 @@ impl Checked {
     }
 
     /// The type of each `let` in a file that does not write one.
+    #[must_use]
     pub fn inlay_hints(&self, file: &Path) -> Vec<InlayHint> {
         self.source_of(file)
             .map(|source| inlay_hints::inlay_hints(self, source))
@@ -318,9 +328,9 @@ mod tests {
         check(
             &[(&main, "import helpers\nlet x: str = 1\n")],
             0,
-            expect![[r#"
+            expect![[r"
                 helpers.yz 17..20 unknown type `i64`
-                main.yz 15..29 expected `str`, found `int64`"#]],
+                main.yz 15..29 expected `str`, found `int64`"]],
         );
     }
 
@@ -382,14 +392,14 @@ mod tests {
         let (_, again) = cache.read(&helpers).unwrap();
         let (first, again) = (first.unwrap(), again.unwrap());
         assert!(
-            std::ptr::eq(&*first, &*again),
+            std::ptr::eq(&raw const *first, &raw const *again),
             "an unchanged file keeps its tree"
         );
 
         std::fs::write(&helpers, "pub def three() -> int64 { return 3 }\n").unwrap();
         let (_, changed) = cache.read(&helpers).unwrap();
         assert!(
-            !std::ptr::eq(&*first, &*changed.unwrap()),
+            !std::ptr::eq(&raw const *first, &raw const *changed.unwrap()),
             "a changed file is parsed again"
         );
 

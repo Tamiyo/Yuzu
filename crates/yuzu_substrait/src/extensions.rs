@@ -53,12 +53,9 @@ pub(crate) struct Extensions {
 impl Extensions {
     /// Intern a `(urn, name)` function; returns its function anchor.
     pub(crate) fn register(&mut self, urn: &'static str, name: String) -> u32 {
-        let urn_anchor = match self.urns.iter().position(|&candidate| candidate == urn) {
-            Some(index) => index as u32 + 1,
-            None => {
-                self.urns.push(urn);
-                self.urns.len() as u32
-            }
+        let urn_anchor = if let Some(index) = self.urns.iter().position(|&candidate| candidate == urn) { index as u32 + 1 } else {
+            self.urns.push(urn);
+            self.urns.len() as u32
         };
         self.functions.push((urn_anchor, name));
         self.functions.len() as u32

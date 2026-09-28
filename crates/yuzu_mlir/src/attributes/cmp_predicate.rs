@@ -20,6 +20,7 @@ pub enum CmpPredicate {
 
 impl CmpPredicate {
     /// The spelling the attribute carries.
+    #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Equal => "eq",
@@ -34,6 +35,7 @@ impl CmpPredicate {
 
 impl CmpOp<'_, '_> {
     /// Which comparison this asks for. Stands in for the generated accessor.
+    #[must_use]
     pub fn predicate(&self) -> CmpPredicate {
         let attribute = self
             .operation()

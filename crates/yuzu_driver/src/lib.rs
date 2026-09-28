@@ -215,7 +215,7 @@ fn in_thread_context<T>(compile: impl FnOnce(&melior::Context) -> T) -> T {
     })
 }
 
-/// The engine `--target` names; DataFusion when it names none.
+/// The engine `--target` names; `DataFusion` when it names none.
 fn read_engine(
     options: &CompileOptions,
     diagnostics: &mut DiagnosticsEngine,

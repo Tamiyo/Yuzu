@@ -233,12 +233,9 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         value: Value<'c, '_>,
         values: &FxHashMap<ValueId, Expression>,
     ) -> Option<Expression> {
-        match values.get(&value.id()) {
-            Some(expression) => Some(expression.clone()),
-            None => {
-                self.report(op, "this expression has no Substrait equivalent");
-                None
-            }
+        if let Some(expression) = values.get(&value.id()) { Some(expression.clone()) } else {
+            self.report(op, "this expression has no Substrait equivalent");
+            None
         }
     }
 }

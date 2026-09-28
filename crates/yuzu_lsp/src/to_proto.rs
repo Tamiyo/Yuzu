@@ -294,9 +294,9 @@ mod tests {
                 format!("{} [{}]", symbol.name, children.join(", "))
             })
             .collect();
-        expect![[r#"
+        expect![[r"
             P [x]
-            f []"#]]
+            f []"]]
         .assert_eq(&rendered.join("\n"));
     }
 
@@ -313,9 +313,9 @@ mod tests {
             .map(|fold| super::folding_range(text, &line_index, Folding::Lines, fold))
             .map(|folded| format!("{}..{}", folded.start_line, folded.end_line))
             .collect();
-        expect![[r#"
+        expect![[r"
             0..1
-            3..5"#]]
+            3..5"]]
         .assert_eq(&rendered.join("\n"));
     }
 
@@ -361,11 +361,11 @@ mod tests {
             .flatten()
             .map(|related| format!("{:?} {}", related.location.range, related.message))
             .collect();
-        expect![[r#"
+        expect![[r"
             Range { start: Position { line: 0, character: 13 }, end: Position { line: 0, character: 14 } }
             expected `str`, found `int64`
             note: a literal is an `int64`
-            Range { start: Position { line: 0, character: 7 }, end: Position { line: 0, character: 10 } } the annotation"#]].assert_eq(&format!(
+            Range { start: Position { line: 0, character: 7 }, end: Position { line: 0, character: 10 } } the annotation"]].assert_eq(&format!(
             "{:?}\n{}\n{}",
             converted.range,
             converted.message,

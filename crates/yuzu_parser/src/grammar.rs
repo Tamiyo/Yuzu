@@ -181,9 +181,9 @@ mod tests {
         test_support::check(
             "",
             parse_root,
-            expect![[r#"
+            expect![[r"
             Root@0..0
-        "#]],
+        "]],
         );
     }
 

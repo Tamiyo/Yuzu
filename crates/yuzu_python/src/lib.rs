@@ -18,7 +18,7 @@ pub struct CompileOptions {
     #[pyo3(get)]
     pub debug_substrait: bool,
 
-    /// The engine to compile for; DataFusion when it is `None`.
+    /// The engine to compile for; `DataFusion` when it is `None`.
     #[pyo3(get)]
     pub target: Option<String>,
 }

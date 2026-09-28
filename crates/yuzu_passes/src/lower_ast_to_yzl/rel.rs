@@ -22,7 +22,7 @@ use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 /// A stage item: its alias, its expression, and where it was written.
 type Item<'c> = (Option<&'c str>, Option<ast::Expr>, TextRange);
 
-impl<'c, 'd> AstToYzl<'c, 'd> {
+impl<'c> AstToYzl<'c, '_> {
     /// A pipeline: its source opens the relation every stage reads, and the
     /// relation closes after the last stage.
     pub(super) fn convert_query<'a>(
@@ -30,17 +30,14 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         block: BlockRef<'c, 'a>,
         pipeline: &ast::Pipeline,
     ) -> (Value<'c, 'a>, Row<'c>) {
-        let (mut value, row) = match pipeline.source() {
-            Some(from) => self.convert_from(block, &from),
-            None => {
-                let hole = self.report_and_hole(
-                    block,
-                    pipeline,
-                    "a query is missing its `from`",
-                    QueryType::get(self.context),
-                );
-                (hole, Row::lost())
-            }
+        let (mut value, row) = if let Some(from) = pipeline.source() { self.convert_from(block, &from) } else {
+            let hole = self.report_and_hole(
+                block,
+                pipeline,
+                "a query is missing its `from`",
+                QueryType::get(self.context),
+            );
+            (hole, Row::lost())
         };
 
         self.symbols.enter_relation(row);
@@ -289,12 +286,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         limit: &ast::LimitStage,
     ) -> Value<'c, 'a> {
         let loc = self.location(limit);
-        let count = match limit.count() {
-            Some(count) => self.int_literal(&count),
-            None => {
-                self.reported_by_parser("`limit` is missing its row count");
-                0
-            }
+        let count = if let Some(count) = limit.count() { self.int_literal(&count) } else {
+            self.reported_by_parser("`limit` is missing its row count");
+            0
         };
         let offset = limit.offset().map(|offset| self.int_literal(&offset));
 
@@ -644,12 +638,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
             names.push(name);
 
-            let value = match expr {
-                Some(expr) => self.convert_expr(body, &Locals::new(), expr),
-                None => {
-                    self.reported_by_parser(&format!("{what} is missing its expression"));
-                    self.emit_hole(body, *range, UnresolvedType::get(self.context))
-                }
+            let value = if let Some(expr) = expr { self.convert_expr(body, &Locals::new(), expr) } else {
+                self.reported_by_parser(&format!("{what} is missing its expression"));
+                self.emit_hole(body, *range, UnresolvedType::get(self.context))
             };
 
             values.push(value);
@@ -704,7 +695,7 @@ mod tests {
             }
         "#]]
         .assert_eq(&lowered(
-            r#"
+            r"
 struct Row { a: int64, b: int64 }
 table t = Row
 def f(x: int64) -> int64 { return x }
@@ -714,7 +705,7 @@ from t
 |> extend f(a) + b as e
 |> aggregate sum(e) as s group by b
 |> limit 10 offset 2
-"#,
+",
         ));
     }
 
@@ -753,7 +744,7 @@ from t
             }
         "#]]
         .assert_eq(&lowered(
-            r#"
+            r"
 struct Employee { id: str, dept_id: int64, level: int64, rating: float64 }
 table employees = Employee
 struct Department { id: str, dept_id: int64 }
@@ -765,7 +756,7 @@ from employees as e
 |> where level in [1, 3]
 |> drop rating
 |> distinct
-"#,
+",
         ));
     }
 
@@ -794,7 +785,7 @@ from employees as e
             }
         "#]]
         .assert_eq(&lowered(
-            r#"
+            r"
 struct Row { a: int64, active: bool }
 table t = Row
 
@@ -804,7 +795,7 @@ from base
 |> rename a as renamed
 |> as q
 |> select q.renamed as out
-"#,
+",
         ));
     }
 }

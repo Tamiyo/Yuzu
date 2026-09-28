@@ -1,7 +1,8 @@
 [package]
 name = "yuzu_mlir"
-version = "0.0.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
 
 [dependencies]
 melior = { version = "0.28.2", features = ["ods-dialects"] }
@@ -16,3 +17,6 @@ serde_json = "1"
 
 [dev-dependencies]
 expect-test = "1.5.0"
+
+[lints]
+workspace = true

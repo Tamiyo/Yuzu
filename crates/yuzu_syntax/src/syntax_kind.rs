@@ -162,6 +162,7 @@ impl SyntaxKind {
     /// Whether the kind is trivia: the tokens a reader sees and the grammar
     /// does not. `TokenKind::is_trivia` answers the same question a layer
     /// down, and the two must agree.
+    #[must_use]
     pub fn is_trivia(self) -> bool {
         matches!(
             self,
@@ -169,6 +170,7 @@ impl SyntaxKind {
         )
     }
 
+    #[must_use]
     pub fn is_keyword(self) -> bool {
         matches!(
             self,

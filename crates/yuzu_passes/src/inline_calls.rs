@@ -149,35 +149,32 @@ fn expand<'c, 'a>(
     let mut returned = None;
     let mut copied_calls = Vec::new();
     for op in body.operations() {
-        match op.as_yzl() {
-            Some(YzlOp::Return(_) | YzlOp::Yield(_)) => {
-                returned = op
-                    .try_first_operand()
-                    .and_then(|value| values.get(&value.id()).copied());
+        if let Some(YzlOp::Return(_) | YzlOp::Yield(_)) = op.as_yzl() {
+            returned = op
+                .try_first_operand()
+                .and_then(|value| values.get(&value.id()).copied());
+        } else {
+            if op.regions().next().is_some() {
+                return error(
+                    op.location(),
+                    &format!("`{callee}` has a body this expansion cannot copy"),
+                );
             }
-            _ => {
-                if op.regions().next().is_some() {
-                    return error(
-                        op.location(),
-                        &format!("`{callee}` has a body this expansion cannot copy"),
-                    );
-                }
 
-                let copied = copy(rewriter, op, &values, &types).or_else(|| {
-                    error(
-                        op.location(),
-                        &format!("`{callee}` has a body that did not copy"),
-                    )
-                })?;
-                if expands(copied) {
-                    copied_calls.push(copied);
-                }
+            let copied = copy(rewriter, op, &values, &types).or_else(|| {
+                error(
+                    op.location(),
+                    &format!("`{callee}` has a body that did not copy"),
+                )
+            })?;
+            if expands(copied) {
+                copied_calls.push(copied);
+            }
 
-                if let (Some(result), Some(value)) =
-                    (op.try_first_result(), copied.try_first_result())
-                {
-                    values.insert(result.id(), value);
-                }
+            if let (Some(result), Some(value)) =
+                (op.try_first_result(), copied.try_first_result())
+            {
+                values.insert(result.id(), value);
             }
         }
     }
@@ -345,7 +342,7 @@ mod tests {
     #[test]
     fn a_call_becomes_the_body_it_names() {
         check_simplified(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
@@ -353,7 +350,7 @@ def double(x: int64) -> int64 { return x * 2 }
 
 from t
 |> select double(a) as d
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["a"] : [!yz.int64]
@@ -374,7 +371,7 @@ from t
     #[test]
     fn a_nested_call_expands_too() {
         check_simplified(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
@@ -383,7 +380,7 @@ def quadruple(x: int64) -> int64 { return double(double(x)) }
 
 from t
 |> select quadruple(a) as q
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["a"] : [!yz.int64]
@@ -405,13 +402,13 @@ from t
     #[test]
     fn a_builtin_call_is_left_alone() {
         check_simplified(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
 from t
 |> select a in [1, 2] as p
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["a"] : [!yz.int64]
@@ -434,7 +431,7 @@ from t
     #[test]
     fn a_call_that_never_reduces_exhausts_the_budget() {
         check_simplified(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
@@ -442,8 +439,8 @@ def forever(x: int64) -> int64 { return forever(x) }
 
 from t
 |> select forever(a) as f
-"#,
-            expect![[r#"
+",
+            expect![[r"
                 error: expanding `forever` did not finish within 1000 calls; a function that reaches itself has to reduce to stop
                  --> test.yz:5:41
                   |
@@ -461,14 +458,14 @@ from t
                   |
                 5 | def forever(x: int64) -> int64 { return forever(x) }
                   |                                         ^^^^^^^^^^
-            "#]],
+            "]],
         );
     }
 
     #[test]
     fn a_generic_body_takes_the_types_of_its_call() {
         check_simplified(
-            r#"
+            r"
 struct Row { a: int64, r: float64 }
 table t = Row
 
@@ -476,7 +473,7 @@ def twice[T](x: T) -> T { return x + x }
 
 from t
 |> extend twice(a) as m, twice(r) as n
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["a", "r"] : [!yz.int64, !yz.float64]
@@ -497,7 +494,7 @@ from t
     #[test]
     fn reports_a_trait_method_it_cannot_dispatch() {
         check_simplified(
-            r#"
+            r"
 trait Zero {
     def zero(x: Self) -> Self
 }
@@ -513,8 +510,8 @@ table t = Row
 
 from t
 |> extend shift(a) as z
-"#,
-            expect![[r#"
+",
+            expect![[r"
                 error: `zero` is a trait method, and calling one is not supported yet
                  --> test.yz:10:48
                    |
@@ -526,14 +523,14 @@ from t
                    |
                 10 | def shift[T](x: T) -> T where T: Zero { return zero(x) }
                    |                                                ^^^^^^^
-            "#]],
+            "]],
         );
     }
 
     #[test]
     fn a_scalar_let_is_expanded_and_discarded() {
         check_simplified(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
@@ -541,7 +538,7 @@ let ids: List[int64] = [1, 3]
 
 from t
 |> where a in ids
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["a"] : [!yz.int64]

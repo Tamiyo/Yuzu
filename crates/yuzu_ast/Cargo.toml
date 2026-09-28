@@ -1,7 +1,8 @@
 [package]
 name = "yuzu_ast"
-version = "0.0.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
 
 [dependencies]
 yuzu_syntax = { path = "../yuzu_syntax" }
@@ -10,3 +11,6 @@ yuzu_syntax = { path = "../yuzu_syntax" }
 yuzu_diagnostics = { path = "../yuzu_diagnostics" }
 yuzu_lexer = { path = "../yuzu_lexer" }
 yuzu_parser = { path = "../yuzu_parser" }
+
+[lints]
+workspace = true

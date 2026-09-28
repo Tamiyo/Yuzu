@@ -143,7 +143,7 @@ struct TypeInferrer<'c, 'd> {
     instances: FxHashMap<ValueId, Vec<TypeVar>>,
 }
 
-impl<'c, 'd> TypeInferrer<'c, 'd> {
+impl<'c> TypeInferrer<'c, '_> {
     fn term_of(&mut self, value: Value<'c, '_>) -> Term<'c> {
         let ty = value.r#type();
         if ty != UnresolvedType::get(self.context) {
@@ -816,7 +816,7 @@ mod tests {
     #[test]
     fn infers_columns_calls_and_measures() {
         check(
-            r#"
+            r"
 struct Row { a: int64, b: int64, rating: float64 }
 table t = Row
 
@@ -826,7 +826,7 @@ from t
 |> where a > 10
 |> extend f(a) + b as e
 |> aggregate sum(e) as s, avg(rating) as r group by b
-    "#,
+    ",
             expect![[r#"
                 module {
                   yzl.struct @Row ["a", "b", "rating"] : [!yz.int64, !yz.int64, !yz.float64] {sym_visibility = "private"}
@@ -869,7 +869,7 @@ from t
     #[test]
     fn instantiates_a_generic_call_per_site() {
         check(
-            r#"
+            r"
 trait Numeric {
     def zero(x: Self) -> Self
 }
@@ -889,7 +889,7 @@ table t = Row
 
 from t
 |> extend id(a) as m, id(r) as n
-"#,
+",
             expect![[r#"
                 module {
                   yzl.trait @Numeric {
@@ -932,7 +932,7 @@ from t
     #[test]
     fn an_external_call_takes_its_declared_type() {
         check(
-            r#"
+            r"
 external def median(x: float64) -> float64
 
 struct Row { rating: float64 }
@@ -940,7 +940,7 @@ table t = Row
 
 from t
 |> extend median(rating) as m
-"#,
+",
             expect![[r#"
                 module {
                   yzl.fn @median params ["x"] (!yz.float64) -> !yz.float64 external "median" {
@@ -962,7 +962,7 @@ from t
     #[test]
     fn reports_an_unsatisfied_bound() {
         check(
-            r#"
+            r"
 trait Numeric {
     def zero(x: Self) -> Self
 }
@@ -978,41 +978,41 @@ table t = Row
 
 from t
 |> extend id(name) as n
-"#,
-            expect![[r#"
+",
+            expect![[r"
                 error: `str` does not implement `Numeric`, required by `id`
                  --> test.yz:16:11
                    |
                 16 | |> extend id(name) as n
                    |           ^^^^^^^^
-            "#]],
+            "]],
         );
     }
 
     #[test]
     fn reports_a_comparison_mismatch() {
         check(
-            r#"
+            r"
 struct Row { name: str }
 table t = Row
 
 from t
 |> where name == 1
-    "#,
-            expect![[r#"
+    ",
+            expect![[r"
                 error: expected `str`, found `int64`
                  --> test.yz:6:10
                   |
                 6 | |> where name == 1
                   |          ^^^^^^^^^
-            "#]],
+            "]],
         );
     }
 
     #[test]
     fn reports_a_return_mismatch() {
         check(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
@@ -1020,14 +1020,14 @@ def f(x: int64) -> bool { return x }
 
 from t
 |> extend f(a) as e
-    "#,
-            expect![[r#"
+    ",
+            expect![[r"
                 error: expected `int64`, found `bool`
                  --> test.yz:5:27
                   |
                 5 | def f(x: int64) -> bool { return x }
                   |                           ^^^^^^^^
-            "#]],
+            "]],
         );
     }
 
@@ -1054,13 +1054,13 @@ from t
     #[test]
     fn infers_a_list_and_membership() {
         check(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
 from t
 |> where a in [1, 3]
-"#,
+",
             expect![[r#"
                 module {
                   yzl.struct @Row ["a"] : [!yz.int64] {sym_visibility = "private"}
@@ -1083,7 +1083,7 @@ from t
     #[test]
     fn an_annotated_let_holds_its_body_to_the_annotation() {
         check(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
@@ -1091,21 +1091,21 @@ let ids: List[str] = [1, 3]
 
 from t
 |> where a in ids
-"#,
-            expect![[r#"
+",
+            expect![[r"
                 error: expected `str`, found `int64`
                  --> test.yz:5:1
                   |
                 5 | let ids: List[str] = [1, 3]
                   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-            "#]],
+            "]],
         );
     }
 
     #[test]
     fn a_stage_names_what_it_expected() {
         check(
-            r#"
+            r"
 struct Row { level: int64, name: str }
 table t = Row
 struct Dept { level: int64 }
@@ -1113,21 +1113,21 @@ table depts = Dept
 
 from t
 |> where level
-"#,
-            expect![[r#"
+",
+            expect![[r"
                 error: expected the `where` predicate to be `bool`, found `int64`
                  --> test.yz:8:1
                   |
                 8 | |> where level
                   | ^^^^^^^^^^^^^^
-            "#]],
+            "]],
         );
     }
 
     #[test]
     fn a_join_condition_has_to_be_a_predicate() {
         check(
-            r#"
+            r"
 struct Row { level: int64 }
 table t = Row
 struct Dept { level: int64 }
@@ -1135,41 +1135,41 @@ table depts = Dept
 
 from t as e
 |> inner join depts as d on e.level
-"#,
-            expect![[r#"
+",
+            expect![[r"
                 error: expected the `on` condition to be `bool`, found `int64`
                  --> test.yz:8:1
                   |
                 8 | |> inner join depts as d on e.level
                   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-            "#]],
+            "]],
         );
     }
 
     #[test]
     fn membership_needs_a_list() {
         check(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
 from t
 |> where a in 1
-"#,
-            expect![[r#"
+",
+            expect![[r"
                 error: expected `List[_]`, found `int64`
                  --> test.yz:6:10
                   |
                 6 | |> where a in 1
                   |          ^^^^^^
-            "#]],
+            "]],
         );
     }
 
     #[test]
     fn reports_an_expression_nothing_pinned_down() {
         check(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
@@ -1177,21 +1177,21 @@ let xs = []
 
 from t
 |> where a > 1
-"#,
-            expect![[r#"
+",
+            expect![[r"
                 error: the type of this expression could not be inferred
                  --> test.yz:5:10
                   |
                 5 | let xs = []
                   |          ^^
-            "#]],
+            "]],
         );
     }
 
     #[test]
     fn a_list_takes_the_type_of_its_elements() {
         check(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
@@ -1199,7 +1199,7 @@ let xs = [1, 2]
 
 from t
 |> where a > 1
-"#,
+",
             expect![[r#"
                 module {
                   yzl.struct @Row ["a"] : [!yz.int64] {sym_visibility = "private"}

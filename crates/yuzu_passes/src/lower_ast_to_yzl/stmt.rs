@@ -43,7 +43,7 @@ impl Site {
     }
 }
 
-impl<'c, 'd> AstToYzl<'c, 'd> {
+impl<'c> AstToYzl<'c, '_> {
     pub(super) fn convert_stmt<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
@@ -110,27 +110,21 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
         // An imported struct is held under the module that declared it,
         // whatever an `as` renamed it to here.
-        let row = match self.read_ident(decl.struct_name()) {
-            Some(struct_name) => match self.symbols.struct_symbol(struct_name) {
-                Some(symbol) => symbol,
-                None => {
-                    debug_assert!(
-                        self.diagnostics.has_errors(),
-                        "`{struct_name}` passed the hoist as a struct and is not one now"
-                    );
-                    return;
-                }
-            },
-            None => {
-                let symbol = self
-                    .symbols
-                    .symbol_here(self.symbols.intern(&format!("{name}_row")));
+        let row = if let Some(struct_name) = self.read_ident(decl.struct_name()) { if let Some(symbol) = self.symbols.struct_symbol(struct_name) { symbol } else {
+            debug_assert!(
+                self.diagnostics.has_errors(),
+                "`{struct_name}` passed the hoist as a struct and is not one now"
+            );
+            return;
+        } } else {
+            let symbol = self
+                .symbols
+                .symbol_here(self.symbols.intern(&format!("{name}_row")));
 
-                let loc = self.location(decl);
-                self.emit_struct(block, symbol, decl.inline_fields(), decl.visibility(), loc);
+            let loc = self.location(decl);
+            self.emit_struct(block, symbol, decl.inline_fields(), decl.visibility(), loc);
 
-                symbol
-            }
+            symbol
         };
 
         let name = self.symbols.symbol_here(name);
@@ -205,13 +199,10 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
                 continue;
             };
 
-            let ty = match param.ty() {
-                Some(ty) => self.read_type_annotation(ty),
-                None => {
-                    self.report(&param, "parameter is missing its type");
-                    has_error = true;
-                    continue;
-                }
+            let ty = if let Some(ty) = param.ty() { self.read_type_annotation(ty) } else {
+                self.report(&param, "parameter is missing its type");
+                has_error = true;
+                continue;
             };
 
             param_names.push(name);
@@ -353,23 +344,17 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             return;
         };
 
-        let trait_name = match self.symbols.trait_symbol(trait_name) {
-            Some(symbol) => symbol,
-            None => {
-                self.report(decl, &format!("unknown trait `{trait_name}`"));
-                trait_name
-            }
+        let trait_name = if let Some(symbol) = self.symbols.trait_symbol(trait_name) { symbol } else {
+            self.report(decl, &format!("unknown trait `{trait_name}`"));
+            trait_name
         };
 
-        let target = match self.symbols.struct_symbol(target) {
-            Some(symbol) => symbol,
-            None => {
-                if types::scalar(self.context, target).is_none() {
-                    self.report(decl, &format!("unknown type `{target}`"));
-                }
-
-                target
+        let target = if let Some(symbol) = self.symbols.struct_symbol(target) { symbol } else {
+            if types::scalar(self.context, target).is_none() {
+                self.report(decl, &format!("unknown type `{target}`"));
             }
+
+            target
         };
 
         let region = Region::new();
@@ -658,12 +643,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
             // The struct may be imported, and an import names where it was
             // written rather than repeating it.
-            match self.symbols.kind(declared) {
-                Some(BindingKind::Struct { fields, .. }) => Row::from(fields.clone()),
-                _ => {
-                    self.report(decl, &format!("`{declared}` is not a struct"));
-                    return;
-                }
+            if let Some(BindingKind::Struct { fields, .. }) = self.symbols.kind(declared) { Row::from(fields.clone()) } else {
+                self.report(decl, &format!("`{declared}` is not a struct"));
+                return;
             }
         };
 
@@ -897,12 +879,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
                 // A bound names the trait's symbol, the one its `impl`s are
                 // recorded under: in a module the two are not spelled alike.
-                let trait_ = match self.symbols.trait_symbol(name) {
-                    Some(symbol) => symbol,
-                    None => {
-                        self.report(&trait_ref, &format!("unknown trait `{name}`"));
-                        name
-                    }
+                let trait_ = if let Some(symbol) = self.symbols.trait_symbol(name) { symbol } else {
+                    self.report(&trait_ref, &format!("unknown trait `{name}`"));
+                    name
                 };
 
                 subjects.push(subject);
@@ -1095,14 +1074,14 @@ mod tests {
 
     #[test]
     fn a_file_level_let_cannot_be_mut() {
-        expect![[r#"
+        expect![[r"
             error: a file-level binding cannot be `mut`
              --> test.yz:4:5
               |
             4 | let mut cap = 1
               |     ^^^
               = note: a file-level binding is a constant; move it into a function to change it
-        "#]]
+        "]]
         .assert_eq(&reported(
             "struct Row { a: int64 }\ntable t = Row\n\nlet mut cap = 1\n\nfrom t |> select a + cap as v\n",
         ));
@@ -1110,7 +1089,7 @@ mod tests {
 
     #[test]
     fn a_body_statement_at_the_file_level_is_reported() {
-        expect![[r#"
+        expect![[r"
             error: a return is not a top-level statement
              --> test.yz:4:1
               |
@@ -1122,7 +1101,7 @@ mod tests {
               |
             5 | x = 2
               | ^^^^^
-        "#]]
+        "]]
         .assert_eq(&reported(
             "struct Row { a: int64 }\ntable t = Row\n\nreturn 1\nx = 2\n\nfrom t |> select a as v\n",
         ));
@@ -1130,13 +1109,13 @@ mod tests {
 
     #[test]
     fn an_import_in_a_body_is_reported() {
-        expect![[r#"
+        expect![[r"
             error: this belongs at the top of the file
              --> test.yz:5:3
               |
             5 |   import helpers
               |   ^^^^^^^^^^^^^^
-        "#]]
+        "]]
         .assert_eq(&reported(
             "struct Row { a: int64 }\ntable t = Row\n\ndef f(x: int64) -> int64 {\n  import helpers\n  return x\n}\n\nfrom t |> select f(a) as v\n",
         ));
@@ -1144,14 +1123,14 @@ mod tests {
 
     #[test]
     fn a_module_level_let_cannot_take_a_name_again() {
-        expect![[r#"
+        expect![[r"
             error: the binding `cap` is already defined
              --> test.yz:5:1
               |
             5 | let cap = 2
               | ^^^^^^^^^^^
               = note: also declared at test.yz:4:1
-        "#]]
+        "]]
         .assert_eq(&reported(
             "struct Row { a: int64 }\ntable t = Row\n\nlet cap = 1\nlet cap = 2\n\nfrom t\n|> where a > cap\n",
         ));
@@ -1195,7 +1174,7 @@ mod tests {
             }
         "#]]
         .assert_eq(&lowered(
-            r#"
+            r"
 def f(x: int64) -> int64 {
     let doubled = x * 2
     return doubled + 1
@@ -1206,7 +1185,7 @@ agg def spread(x: int64) -> int64 {
 }
 
 external def upper(s: str) -> str
-"#,
+",
         ));
     }
 
@@ -1275,13 +1254,13 @@ external def upper(s: str) -> str
 
     #[test]
     fn reports_unsupported_constructs() {
-        expect![[r#"
+        expect![[r"
         error: declarations inside functions are not supported yet
          --> test.yz:2:5
           |
         2 |     struct S { a: int64 }
           |     ^^^^^^^^^^^^^^^^^^^^^
-    "#]]
+    "]]
         .assert_eq(&reported(
             "def f(x: int64) -> int64 {\n    struct S { a: int64 }\n    return x\n}\n",
         ));
@@ -1304,27 +1283,27 @@ external def upper(s: str) -> str
 
     #[test]
     fn a_redeclaration_says_where_the_other_one_is() {
-        expect![[r#"
+        expect![[r"
             error: the relation `Row` is already defined
              --> test.yz:3:1
               |
             3 | table Row = Row
               | ^^^^^^^^^^^^^^^
               = note: also declared at test.yz:1:1
-        "#]]
+        "]]
         .assert_eq(&reported("struct Row { a: int64 }\n\ntable Row = Row\n"));
     }
 
     #[test]
     fn a_redeclaration_leaves_the_first_one_standing() {
-        expect![[r#"
+        expect![[r"
             error: the struct `Row` is already defined
              --> test.yz:2:1
               |
             2 | struct Row { b: int64 }
               | ^^^^^^^^^^^^^^^^^^^^^^^
               = note: also declared at test.yz:1:1
-        "#]]
+        "]]
         .assert_eq(&reported(
             "struct Row { a: int64 }\nstruct Row { b: int64 }\ntable t = Row\n\nfrom t\n|> select a as x\n",
         ));
@@ -1332,13 +1311,13 @@ external def upper(s: str) -> str
 
     #[test]
     fn an_import_of_an_unloaded_module_is_reported() {
-        expect![[r#"
+        expect![[r"
             error: `helpers` is not a module this file reads
              --> test.yz:1:21
               |
             1 | from helpers import spread
               |                     ^^^^^^
-        "#]]
+        "]]
         .assert_eq(&reported("from helpers import spread\n"));
     }
 
@@ -1388,7 +1367,7 @@ external def upper(s: str) -> str
 
     #[test]
     fn a_body_is_required_unless_the_target_or_a_trait_supplies_it() {
-        expect![[r#"
+        expect![[r"
             error: an external function cannot have a body
              --> test.yz:1:1
               |
@@ -1400,18 +1379,18 @@ external def upper(s: str) -> str
               |
             2 | def lower(s: str) -> str
               | ^^^^^^^^^^^^^^^^^^^^^^^^
-        "#]]
+        "]]
         .assert_eq(&reported(
             "external def upper(s: str) -> str { return s }\ndef lower(s: str) -> str\n",
         ));
 
-        expect![[r#"
+        expect![[r"
             error: function is missing its body
              --> test.yz:5:23
               |
             5 | impl Show for int64 { def show(x: Self) -> str }
               |                       ^^^^^^^^^^^^^^^^^^^^^^^^
-        "#]]
+        "]]
         .assert_eq(&reported(
             "trait Show {\n    def show(x: Self) -> str\n}\n\nimpl Show for int64 { def show(x: Self) -> str }\n",
         ));
@@ -1419,13 +1398,13 @@ external def upper(s: str) -> str
 
     #[test]
     fn reports_an_unknown_type() {
-        expect![[r#"
+        expect![[r"
             error: unknown type `Nope`
              --> test.yz:1:10
               |
             1 | def f(x: Nope) -> int64 { return 1 }
               |          ^^^^
-        "#]]
+        "]]
         .assert_eq(&reported("def f(x: Nope) -> int64 { return 1 }\n"));
     }
 }

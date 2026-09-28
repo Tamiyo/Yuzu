@@ -1,7 +1,8 @@
 [package]
 name = "yuzu_substrait"
-version = "0.0.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
 
 [dependencies]
 rustc-hash = "2"
@@ -19,3 +20,6 @@ expect-test = "1"
 yuzu_ast = { path = "../yuzu_ast" }
 yuzu_parser = { path = "../yuzu_parser" }
 yuzu_passes = { path = "../yuzu_passes" }
+
+[lints]
+workspace = true

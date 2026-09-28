@@ -39,7 +39,7 @@ pub struct Checked {
     pub syntax: Vec<(SourceId, GreenNode)>,
 }
 
-/// Checks the program `focus` belongs to, for the DataFusion engine.
+/// Checks the program `focus` belongs to, for the `DataFusion` engine.
 ///
 /// The library is read from its files rather than from the cache a compile
 /// uses, so a copy the resolver holds of a library module is the one read.
@@ -140,13 +140,13 @@ mod tests {
             },
             &resolver,
         );
-        expect_test::expect![[r#"
+        expect_test::expect![[r"
             error: unknown type `i64`
              --> main.yz:1:10
               |
             1 | def f(x: i64) -> int64 { return 1 }
               |          ^^^
-        "#]]
+        "]]
         .assert_eq(&rendered(&checked));
     }
 
@@ -157,13 +157,13 @@ mod tests {
             "pub def unused(x: i64) -> int64 { return 1 }\n".to_owned(),
         )]));
         let checked = check(Focus::Module("helpers"), &resolver);
-        expect_test::expect![[r#"
+        expect_test::expect![[r"
             error: unknown type `i64`
              --> helpers.yz:1:19
               |
             1 | pub def unused(x: i64) -> int64 { return 1 }
               |                   ^^^
-        "#]]
+        "]]
         .assert_eq(&rendered(&checked));
     }
 
@@ -174,13 +174,13 @@ mod tests {
             source: "pub external def power(a: i64, b: int64) -> int64\n",
         };
         let checked = check(Focus::Module("yuzu.target.datafusion"), &resolver);
-        expect_test::expect![[r#"
+        expect_test::expect![[r"
             error: unknown type `i64`
              --> yuzu.target.datafusion.yz:1:27
               |
             1 | pub external def power(a: i64, b: int64) -> int64
               |                           ^^^
-        "#]]
+        "]]
         .assert_eq(&rendered(&checked));
     }
 
@@ -204,9 +204,9 @@ mod tests {
 
     #[test]
     fn an_unknown_type_is_reported_once() {
-        expect_test::expect![[r#"
+        expect_test::expect![[r"
             unknown type `i64`
-            unknown type `i64`"#]]
+            unknown type `i64`"]]
         .assert_eq(&check_entry(
             "def f(x: i64) -> int64 { return x + 1 }\nlet q: i64 = 1\n",
         ));
@@ -232,10 +232,10 @@ mod tests {
 
     #[test]
     fn independent_errors_are_each_reported() {
-        expect_test::expect![[r#"
+        expect_test::expect![[r"
             expected expression, found `def`
             expected `str`, found `int64`
-            expected `int64`, found `str`"#]]
+            expected `int64`, found `str`"]]
         .assert_eq(&check_entry(
             "let a = 1 +\ndef f() -> int64 { return \"s\" }\ndef g() -> str { return 1 }\n",
         ));

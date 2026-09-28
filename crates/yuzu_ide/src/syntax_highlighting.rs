@@ -70,6 +70,7 @@ impl HlMod {
 
 impl HlMods {
     /// Whether the set holds `m`.
+    #[must_use]
     pub fn contains(self, m: HlMod) -> bool {
         self.0 & m.mask() != 0
     }
@@ -110,7 +111,7 @@ impl BitOr<HlMod> for Highlight {
 
 pub(crate) fn highlight(root: &SyntaxNode) -> Vec<HlRange> {
     root.descendants_with_tokens()
-        .filter_map(|element| element.into_token())
+        .filter_map(rowan::NodeOrToken::into_token)
         .filter_map(|token| {
             Some(HlRange {
                 range: token.text_range(),
@@ -287,7 +288,7 @@ mod tests {
     #[test]
     fn declarations() {
         check(
-            r#"
+            r"
 pub struct Point { x: float64 }
 table employees = { id: str }
 table staff = Point
@@ -296,8 +297,8 @@ impl Shape for Point { def area(p: Point) -> float64 { return p.x } }
 def classify[T](n: int64) -> List[int64] where T: Shape { let mut total = 0 }
 mod helpers
 import yuzu.std.math as m
-"#,
-            expect![[r#"
+",
+            expect![[r"
                 Point Struct Declaration
                 x Field Declaration
                 float64 Type
@@ -332,14 +333,14 @@ import yuzu.std.math as m
                 yuzu Module
                 std Module
                 math Module
-                m Module Declaration"#]],
+                m Module Declaration"]],
         );
     }
 
     #[test]
     fn queries() {
         check(
-            r#"
+            r"
 from employees e
 |> join departments d using (dept_id)
 |> where e.salary >= max(1) // high
@@ -347,8 +348,8 @@ from employees e
 |> aggregate count(e.id) as n group by d.name as dept
 |> drop n
 |> as summary
-"#,
-            expect![[r#"
+",
+            expect![[r"
                 employees Table
                 e Local Declaration
                 departments Table
@@ -368,7 +369,7 @@ from employees e
                 name Field
                 dept Field Declaration
                 n Field
-                summary Local Declaration"#]],
+                summary Local Declaration"]],
         );
     }
 
@@ -396,13 +397,13 @@ from employees e
                 .to_string()
             })
             .collect();
-        expect![[r#"
+        expect![[r"
             x Parameter
             k Local Mutable
             cap Local
             k Local Mutable
             t Table
-            f Function"#]]
+            f Function"]]
         .assert_eq(&rendered.join("\n"));
     }
 }

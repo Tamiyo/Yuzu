@@ -238,6 +238,7 @@ pub enum TokenKind {
 }
 
 impl TokenKind {
+    #[must_use]
     pub fn is_trivia(self) -> bool {
         matches!(
             self,

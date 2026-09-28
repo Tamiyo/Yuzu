@@ -16,7 +16,7 @@ use crate::lower_ast_to_yzl::symbols::{BindingKind, Callable, FunctionKind, Look
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 use crate::operators;
 
-impl<'c, 'd> AstToYzl<'c, 'd> {
+impl<'c> AstToYzl<'c, '_> {
     pub(super) fn convert_expr<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
@@ -579,16 +579,16 @@ mod tests {
 
     #[test]
     fn a_column_reference_says_what_the_row_carries() {
-        expect![[r#"
+        expect![[r"
             error: column `id` is ambiguous; qualify it with a relation alias
              --> test.yz:9:11
               |
             9 | |> select id
               |           ^^
               = note: the row carries `e.id`, `e.dept_id`, `d.id`, `d.name`
-        "#]]
+        "]]
         .assert_eq(&reported(
-            r#"
+            r"
 struct Employee { id: str, dept_id: int64 }
 table employees = Employee
 struct Department { id: str, name: str }
@@ -597,36 +597,36 @@ table departments = Department
 from employees as e
 |> inner join departments as d on e.dept_id == d.id
 |> select id
-"#,
+",
         ));
     }
 
     #[test]
     fn a_narrowed_column_says_what_is_left() {
-        expect![[r#"
+        expect![[r"
             error: column `level` is no longer in the row: an earlier stage narrowed it away
              --> test.yz:7:10
               |
             7 | |> where level > 1
               |          ^^^^^
               = note: the row carries `id`
-        "#]]
+        "]]
         .assert_eq(&reported(
-            r#"
+            r"
 struct Row { id: str, level: int64 }
 table t = Row
 
 from t
 |> select id
 |> where level > 1
-"#,
+",
         ));
     }
 
     #[test]
     fn an_operator_is_its_op_whatever_its_name_is_bound_to() {
         let module = lowered(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
@@ -635,7 +635,7 @@ let pow = 2
 
 from t
 |> select shift_left(a, 2) as named, a << 2 as shifted, a ** 2 as squared
-"#,
+",
         );
         assert_eq!(
             module.matches("yzl.call @shift_left(").count(),
@@ -657,13 +657,13 @@ from t
                 "struct Row { a: int64 }\ntable t = Row\n\nfrom t\n|> where a >\n",
             )],
         );
-        expect![[r#"
+        expect![[r"
             error: expected expression, found end of input
              --> test.yz:5:13
               |
             5 | |> where a >
               | 
-        "#]]
+        "]]
         .assert_eq(&rendered(&lowered.sources, &lowered.diagnostics));
         assert!(
             lowered

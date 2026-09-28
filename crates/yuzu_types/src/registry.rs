@@ -58,6 +58,7 @@ pub struct Chain {
 }
 
 impl Chain {
+    #[must_use]
     pub fn new(registries: Vec<Box<dyn FunctionRegistry>>) -> Self {
         let mut entries: Vec<FunctionRegistryEntry> = Vec::new();
         for registry in &registries {
@@ -77,6 +78,7 @@ impl FunctionRegistry for Chain {
     }
 }
 
+#[must_use]
 pub fn chain(registries: Vec<Box<dyn FunctionRegistry>>) -> Chain {
     Chain::new(registries)
 }

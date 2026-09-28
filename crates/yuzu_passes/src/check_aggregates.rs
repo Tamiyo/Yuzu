@@ -209,7 +209,7 @@ mod tests {
     #[test]
     fn accepts_aggregates_in_their_places() {
         check(
-            r#"
+            r"
 struct Row { a: int64, rating: float64 }
 table t = Row
 
@@ -219,7 +219,7 @@ agg def spread(x: float64) -> float64 { return max(x) - min(x) }
 from t
 |> where a > 1
 |> aggregate sum(double(a)) as s, spread(rating) as r group by a
-    "#,
+    ",
             expect!["no diagnostics"],
         );
     }
@@ -227,7 +227,7 @@ from t
     #[test]
     fn reports_an_aggregate_outside_an_aggregate_item() {
         check(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
@@ -235,8 +235,8 @@ def double(x: int64) -> int64 { return sum(x) }
 
 from t
 |> where sum(a) > 1
-    "#,
-            expect![[r#"
+    ",
+            expect![[r"
                 error: aggregate function `sum` can only be used in an `aggregate` item
                  --> test.yz:5:40
                   |
@@ -248,14 +248,14 @@ from t
                   |
                 8 | |> where sum(a) > 1
                   |          ^^^^^^
-            "#]],
+            "]],
         );
     }
 
     #[test]
     fn accepts_an_external_agg_fn() {
         check(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
@@ -263,7 +263,7 @@ external agg def median(x: int64) -> float64
 
 from t
 |> aggregate median(a) as m group by a
-"#,
+",
             expect!["no diagnostics"],
         );
     }
@@ -271,7 +271,7 @@ from t
     #[test]
     fn reports_an_aggregate_in_a_join_condition() {
         check(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 struct Other { b: int64 }
@@ -279,41 +279,41 @@ table u = Other
 
 from t
 |> inner join u on sum(a) == b
-"#,
-            expect![[r#"
+",
+            expect![[r"
                 error: aggregate function `sum` can only be used in an `aggregate` item
                  --> test.yz:8:20
                   |
                 8 | |> inner join u on sum(a) == b
                   |                    ^^^^^^
-            "#]],
+            "]],
         );
     }
 
     #[test]
     fn reports_a_nested_aggregate() {
         check(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
 from t
 |> aggregate sum(min(a) + 1) as s group by a
-    "#,
-            expect![[r#"
+    ",
+            expect![[r"
                 error: aggregate function `min` cannot be nested in another aggregate
                  --> test.yz:6:18
                   |
                 6 | |> aggregate sum(min(a) + 1) as s group by a
                   |                  ^^^^^^
-            "#]],
+            "]],
         );
     }
 
     #[test]
     fn reports_an_agg_fn_calling_itself() {
         check(
-            r#"
+            r"
 struct Row { rating: float64 }
 table t = Row
 
@@ -321,21 +321,21 @@ agg def spread(x: float64) -> float64 { return spread(x) }
 
 from t
 |> aggregate spread(rating) as r group by rating
-    "#,
-            expect![[r#"
+    ",
+            expect![[r"
                 error: `spread` is an `agg fn` and cannot call itself
                  --> test.yz:5:48
                   |
                 5 | agg def spread(x: float64) -> float64 { return spread(x) }
                   |                                                ^^^^^^^^^
-            "#]],
+            "]],
         );
     }
 
     #[test]
     fn reports_an_agg_fn_without_an_aggregate() {
         check(
-            r#"
+            r"
 struct Row { rating: float64 }
 table t = Row
 
@@ -343,14 +343,14 @@ agg def spread(x: float64) -> float64 { return x }
 
 from t
 |> aggregate spread(rating) as r group by rating
-    "#,
-            expect![[r#"
+    ",
+            expect![[r"
                 error: an `agg fn` must use an aggregate function
                  --> test.yz:5:1
                   |
                 5 | agg def spread(x: float64) -> float64 { return x }
                   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-            "#]],
+            "]],
         );
     }
 }

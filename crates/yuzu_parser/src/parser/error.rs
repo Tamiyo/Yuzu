@@ -31,7 +31,7 @@ impl From<ParseError> for Diagnostic {
                 let span = Span { source_id, range };
 
                 let description = match found {
-                    Some(kind) => format!("{}", kind),
+                    Some(kind) => format!("{kind}"),
                     None => String::from("end of input"),
                 };
 
@@ -42,11 +42,10 @@ impl From<ParseError> for Diagnostic {
                     .join(", ");
 
                 let message = if expected.len() == 1 {
-                    format!("expected {}, found {}", expected_description, description)
+                    format!("expected {expected_description}, found {description}")
                 } else {
                     format!(
-                        "expected one of {}, found {}",
-                        expected_description, description
+                        "expected one of {expected_description}, found {description}"
                     )
                 };
 

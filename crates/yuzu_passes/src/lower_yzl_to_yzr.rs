@@ -122,7 +122,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
     }
 }
 
-fn op_name<'c>(op: OperationRef<'c, '_>) -> String {
+fn op_name(op: OperationRef<'_, '_>) -> String {
     op.name()
         .as_string_ref()
         .as_str()

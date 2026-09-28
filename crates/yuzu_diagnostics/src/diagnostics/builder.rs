@@ -76,6 +76,7 @@ impl DiagnosticBuilder {
         self
     }
 
+    #[must_use]
     pub fn build(self) -> Diagnostic {
         self.diagnostic
     }

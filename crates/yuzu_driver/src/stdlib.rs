@@ -38,6 +38,7 @@ pub enum Engine {
 }
 
 impl Engine {
+    #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "datafusion" => Some(Engine::DataFusion),
@@ -45,6 +46,7 @@ impl Engine {
         }
     }
 
+    #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             Engine::DataFusion => "datafusion",
@@ -54,6 +56,7 @@ impl Engine {
 
 /// Whether a path belongs to the library. A program's own module cannot
 /// take such a path, so it cannot stand in for a library module.
+#[must_use]
 pub fn reserves(path: &str) -> bool {
     path.split('.').next() == Some(ROOT)
 }

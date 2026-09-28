@@ -28,6 +28,7 @@ pub enum CalleeSource {
 
 impl CalleeSource {
     /// The spelling the attribute carries.
+    #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Fn => "fn",
@@ -39,6 +40,7 @@ impl CalleeSource {
 }
 
 impl CallOp<'_, '_> {
+    #[must_use]
     pub fn callee_source(&self) -> Option<CalleeSource> {
         let attribute = self.operation().attribute("callee_source").ok()?;
         let text = StringAttribute::try_from(attribute)

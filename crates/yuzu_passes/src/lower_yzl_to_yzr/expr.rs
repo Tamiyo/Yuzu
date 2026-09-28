@@ -13,7 +13,7 @@ use yuzu_mlir::ops::yzl::{CallOp, YzlOp};
 
 use crate::lower_yzl_to_yzr::{YzlToYzr, op_name};
 
-impl<'c, 'a> YzlToYzr<'c, 'a> {
+impl<'c> YzlToYzr<'c, '_> {
     /// Copies one expression into `body`, for a region that cannot take the
     /// source's ops as they are: a grouping splits them between two regions.
     pub(super) fn convert_expression<'b>(
@@ -257,13 +257,13 @@ mod tests {
     #[test]
     fn measures_become_aggregate_ops() {
         check_yzr(
-            r#"
+            r"
 struct Row { a: int64, b: int64 }
 table t = Row
 
 from t
 |> aggregate sum(a) as total, count() as n group by b
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["a", "b"] : [!yz.int64, !yz.int64]
@@ -284,14 +284,14 @@ from t
     #[test]
     fn reports_a_missing_piece() {
         check_yzr(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
 from t
 |> where a >
-"#,
-            expect![[r#"
+",
+            expect![[r"
                 error: expected expression, found end of input
                  --> test.yz:6:13
                   |
@@ -303,20 +303,20 @@ from t
                   |
                 6 | |> where a >
                   |          ^^^
-            "#]],
+            "]],
         );
     }
 
     #[test]
     fn a_list_lowers_with_its_type() {
         check_yzr(
-            r#"
+            r"
 struct Row { a: int64 }
 table t = Row
 
 from t
 |> where a in [1, 3]
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["a"] : [!yz.int64]

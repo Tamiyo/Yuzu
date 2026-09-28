@@ -97,12 +97,12 @@ fn builds_yz_ops_programmatically() {
     );
 
     assert!(module.as_operation().verify());
-    expect![[r#"
+    expect![[r"
         module {
           %0 = yz.constant_int 3
           %1 = yz.add %0, %0 : !yz.int64, !yz.int64 -> !yz.int64
         }
-    "#]]
+    "]]
     .assert_eq(&module.as_operation().to_string());
 }
 
@@ -445,8 +445,8 @@ module {
 }
 
 /// melior's generated matching, where it works today: on operations you own.
-/// A walk's borrowed refs cannot use this yet — the generated TryFrom
-/// consumes an owned Operation — which is what yuzu_mlir::ops covers.
+/// A walk's borrowed refs cannot use this yet — the generated `TryFrom`
+/// consumes an owned Operation — which is what `yuzu_mlir::ops` covers.
 #[test]
 fn typed_matching_works_on_owned_operations() {
     use melior::ir::attribute::IntegerAttribute;
@@ -499,7 +499,7 @@ fn borrowed_views_match_and_read_during_walks() {
     let context = yuzu_mlir::context();
     let module = parse(
         &context,
-        r#"
+        r"
 module {
   %0 = yzl.from @t
   %1 = yzl.where %0 {
@@ -508,7 +508,7 @@ module {
   }
   yzl.output %1
 }
-"#,
+",
     )
     .expect("the fixture parses");
 
@@ -710,7 +710,7 @@ fn a_list_and_an_annotated_let_round_trip() {
     let context = yuzu_mlir::context();
     let module = parse(
         &context,
-        r#"
+        r"
 module {
   %0 = yz.constant_int 1
   %1 = yz.constant_int 3
@@ -719,11 +719,11 @@ module {
     yzl.yield %2 : !yz.list<!yz.int64>
   }
 }
-"#,
+",
     )
     .expect("a list parses and verifies");
     assert!(module.as_operation().verify());
-    expect![[r#"
+    expect![[r"
         module {
           %0 = yz.constant_int 1
           %1 = yz.constant_int 3
@@ -732,7 +732,7 @@ module {
             yzl.yield %2 : !yz.list<!yz.int64>
           }
         }
-    "#]]
+    "]]
     .assert_eq(&module.as_operation().to_string());
 }
 

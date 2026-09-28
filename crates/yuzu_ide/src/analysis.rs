@@ -66,6 +66,7 @@ impl AnalysisHost {
     }
 
     /// A snapshot of the files as they are now, for a request to read.
+    #[must_use]
     pub fn analysis(&self) -> Analysis {
         Analysis {
             files: Arc::clone(&self.files),
@@ -86,6 +87,7 @@ pub struct Analysis {
 impl Analysis {
     /// Runs the compiler's checks over the program a file belongs to. `None`
     /// for a file with no path, whose imports cannot be found.
+    #[must_use]
     pub fn check(&self, file_id: FileId) -> Option<Checked> {
         let path = self.paths.get(&file_id)?;
         let file = self.file(file_id)?;
@@ -98,16 +100,19 @@ impl Analysis {
     }
 
     /// A file's text.
+    #[must_use]
     pub fn file_text(&self, file_id: FileId) -> Option<Arc<str>> {
         Some(Arc::clone(&self.file(file_id)?.text))
     }
 
     /// The errors the parse of a file reported.
+    #[must_use]
     pub fn diagnostics(&self, file_id: FileId) -> Option<Arc<[Diagnostic]>> {
         Some(Arc::clone(&self.file(file_id)?.diagnostics))
     }
 
     /// The highlights a file's syntax tree gives, in text order.
+    #[must_use]
     pub fn highlight(&self, file_id: FileId) -> Option<Vec<HlRange>> {
         Some(syntax_highlighting::highlight(
             &self.file(file_id)?.syntax(),
@@ -115,11 +120,13 @@ impl Analysis {
     }
 
     /// A file's declarations, as an outline.
+    #[must_use]
     pub fn file_structure(&self, file_id: FileId) -> Option<Vec<StructureNode>> {
         Some(file_structure::file_structure(&self.file(file_id)?.root()))
     }
 
     /// The ranges of a file that an editor can fold.
+    #[must_use]
     pub fn folding_ranges(&self, file_id: FileId) -> Option<Vec<Fold>> {
         Some(folding_ranges::folding_ranges(
             &self.file(file_id)?.syntax(),
@@ -127,6 +134,7 @@ impl Analysis {
     }
 
     /// The ranges around a position, innermost first.
+    #[must_use]
     pub fn selection_ranges(&self, position: FilePosition) -> Option<Vec<TextRange>> {
         let root = self.file(position.file_id)?.syntax();
         Some(selection_ranges::selection_ranges(&root, position.offset))

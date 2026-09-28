@@ -20,7 +20,7 @@ pub(super) struct Grouping<'c> {
     pub(super) items: Option<(Region<'c>, Vec<Type<'c>>)>,
 }
 
-impl<'c, 'a> YzlToYzr<'c, 'a> {
+impl<'c> YzlToYzr<'c, '_> {
     pub(super) fn convert_region(
         &mut self,
         source: RegionRef<'c, '_>,
@@ -36,13 +36,13 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             // The expressions move into the new block, whose arguments stand
             // in for the old ones; only the yzl ops among them are rewritten.
             let arguments: Vec<Value<'c, '_>> = body.arguments().map(Into::into).collect();
-            if arguments.len() != block.argument_count() {
-                self.report_at(location, "a region's arguments do not match its row");
-            } else {
+            if arguments.len() == block.argument_count() {
                 IrRewriter::new(self.context)
                     .as_rewriter_base()
                     .merge_blocks(block, body, &arguments);
                 produced = self.convert_moved(body);
+            } else {
+                self.report_at(location, "a region's arguments do not match its row");
             }
         }
 
@@ -120,18 +120,15 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             };
 
             let name = call.callee().value();
-            let column = match distinct.get(&(name, arguments.clone())).copied() {
-                Some(column) => column,
-                None => {
-                    self.convert_expression(op, body, &mut row_values, &mut discard);
-                    let Some(&value) = row_values.get(&result.id()) else {
-                        continue;
-                    };
+            let column = if let Some(column) = distinct.get(&(name, arguments.clone())).copied() { column } else {
+                self.convert_expression(op, body, &mut row_values, &mut discard);
+                let Some(&value) = row_values.get(&result.id()) else {
+                    continue;
+                };
 
-                    measured.push(value);
-                    distinct.insert((name, arguments), measured.len() - 1);
-                    measured.len() - 1
-                }
+                measured.push(value);
+                distinct.insert((name, arguments), measured.len() - 1);
+                measured.len() - 1
             };
 
             columns.insert(result.id(), column);
@@ -326,13 +323,13 @@ mod tests {
     #[test]
     fn names_become_block_arguments() {
         check_yzr(
-            r#"
+            r"
 struct Row { a: int64, b: int64 }
 table t = Row
 
 from t
 |> where a > 10
-"#,
+",
             expect![[r#"
                 module {
                   yz.struct @Row ["a", "b"] : [!yz.int64, !yz.int64]
