@@ -5,6 +5,7 @@
 #include <optional>
 
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -276,6 +277,77 @@ mlir::OpFoldResult ShrOp::fold(FoldAdaptor adaptor) {
           return std::nullopt;
         return value >> count;
       });
+}
+
+namespace {
+
+// Whether two constants hold the same value, as the engine compares them:
+// -0.0 equals 0.0, and NaN equals nothing. None when the kinds differ.
+std::optional<bool> sameValue(mlir::Attribute lhs, mlir::Attribute rhs) {
+  if (auto left = llvm::dyn_cast<mlir::IntegerAttr>(lhs))
+    if (auto right = llvm::dyn_cast<mlir::IntegerAttr>(rhs))
+      return left.getInt() == right.getInt();
+  if (auto left = llvm::dyn_cast<mlir::FloatAttr>(lhs))
+    if (auto right = llvm::dyn_cast<mlir::FloatAttr>(rhs))
+      return left.getValueAsDouble() == right.getValueAsDouble();
+  if (auto left = llvm::dyn_cast<mlir::BoolAttr>(lhs))
+    if (auto right = llvm::dyn_cast<mlir::BoolAttr>(rhs))
+      return left.getValue() == right.getValue();
+  if (auto left = llvm::dyn_cast<mlir::StringAttr>(lhs))
+    if (auto right = llvm::dyn_cast<mlir::StringAttr>(rhs))
+      return left.getValue() == right.getValue();
+  return std::nullopt;
+}
+
+// `x in [a, b]` with a constant `x` is decided once an element equals it, or
+// once every element is a constant that does not.
+struct FoldMembership : public mlir::OpRewritePattern<InOp> {
+  using OpRewritePattern<InOp>::OpRewritePattern;
+
+  mlir::LogicalResult
+  matchAndRewrite(InOp op, mlir::PatternRewriter &rewriter) const override {
+    mlir::Attribute value;
+    if (!mlir::matchPattern(op.getValue(), mlir::m_Constant(&value)))
+      return mlir::failure();
+
+    auto list = op.getList().getDefiningOp<ListOp>();
+    if (!list)
+      return mlir::failure();
+
+    bool decided = true;
+    for (mlir::Value element : list.getElements()) {
+      mlir::Attribute constant;
+      if (!mlir::matchPattern(element, mlir::m_Constant(&constant))) {
+        decided = false;
+        continue;
+      }
+
+      std::optional<bool> same = sameValue(value, constant);
+      if (!same) {
+        decided = false;
+        continue;
+      }
+
+      if (*same) {
+        rewriter.replaceOpWithNewOp<ConstantBoolOp>(op, op.getType(),
+                                                    rewriter.getBoolAttr(true));
+        return mlir::success();
+      }
+    }
+
+    if (!decided)
+      return mlir::failure();
+    rewriter.replaceOpWithNewOp<ConstantBoolOp>(op, op.getType(),
+                                                rewriter.getBoolAttr(false));
+    return mlir::success();
+  }
+};
+
+} // namespace
+
+void InOp::getCanonicalizationPatterns(mlir::RewritePatternSet &patterns,
+                                       mlir::MLIRContext *context) {
+  patterns.add<FoldMembership>(context);
 }
 
 mlir::OpFoldResult NegOp::fold(FoldAdaptor adaptor) {

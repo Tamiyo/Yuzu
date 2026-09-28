@@ -414,4 +414,38 @@ from t
             "#]],
         );
     }
+
+    #[test]
+    fn membership_folds_only_when_decided() {
+        check_simplified(
+            r"
+struct Row { a: int64, r: float64 }
+table t = Row
+
+from t
+|> select 2 in [1, 2, 3] as hit, 4 in [1, 2, 3] as miss, a in [1, 2] as open, 2 in [a, 2] as found, 3 in [a, 2] as unknown, -0.0 in [0.0] as zero
+",
+            &expect![[r#"
+                module {
+                  yz.struct @Row ["a", "r"] : [!yz.int64, !yz.float64]
+                  %0 = yzr.table @t : !yz.struct<@Row>
+                  yz.struct @row ["hit", "miss", "open", "found", "unknown", "zero"] : [!yz.bool, !yz.bool, !yz.bool, !yz.bool, !yz.bool, !yz.bool]
+                  %1 = yzr.project %0 {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.float64):
+                    %2 = yz.constant_int 2
+                    %3 = yz.constant_int 1
+                    %4 = yz.constant_int 3
+                    %5 = yz.constant_bool true
+                    %6 = yz.constant_bool false
+                    %7 = yz.list[%3, %2] : (!yz.int64, !yz.int64) -> !yz.list<!yz.int64>
+                    %8 = yz.in %arg0, %7 : !yz.int64, !yz.list<!yz.int64> -> !yz.bool
+                    %9 = yz.list[%arg0, %2] : (!yz.int64, !yz.int64) -> !yz.list<!yz.int64>
+                    %10 = yz.in %4, %9 : !yz.int64, !yz.list<!yz.int64> -> !yz.bool
+                    yzr.yield %5, %6, %8, %5, %10, %5 : !yz.bool, !yz.bool, !yz.bool, !yz.bool, !yz.bool, !yz.bool
+                  } : !yz.struct<@Row> -> !yz.struct<@row>
+                  yzr.output %1 : !yz.struct<@row>
+                }
+            "#]],
+        );
+    }
 }

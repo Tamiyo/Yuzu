@@ -761,7 +761,7 @@ from t
                 %7 = yz.constant_int 1
                 %8 = yz.constant_int 3
                 %9 = yzl.list[%7, %8] : (!yz.int64, !yz.int64) -> !yzl.unresolved
-                %10 = yzl.call @in(%arg2, %9) : (!yzl.unresolved, !yzl.unresolved) -> !yzl.unresolved {callee_source = "builtin"}
+                %10 = yz.in %arg2, %9 : !yzl.unresolved, !yzl.unresolved -> !yzl.unresolved
                 yzl.yield %10 : !yzl.unresolved
               }
               %5 = yzl.drop %4 ["rating"]

@@ -20,16 +20,6 @@ pub(crate) fn of_predicate(predicate: CmpPredicate) -> Func {
     }
 }
 
-/// The function a call to a registry builtin applies. Membership is one of
-/// these, and the caller turns it into a `SingularOrList` rather than a
-/// call, the way Substrait spells it.
-pub(crate) fn of_builtin(callee: &str) -> Option<Func> {
-    Some(match callee {
-        "in" => Func::In,
-        _ => return None,
-    })
-}
-
 /// What a measure calls: where Substrait declares the function, the name it
 /// is declared under, and whether it sees every value or only distinct ones.
 pub(crate) struct Aggregate {

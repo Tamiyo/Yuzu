@@ -235,9 +235,11 @@ impl<'c> AstToYzl<'c, '_> {
                 self.symbols.refer_operator(&operators::SHR);
                 yz::shr(self.context, var, lhs, rhs, loc).into()
             }
-            Some(BinOp::In) => return self.operator(block, binary, "in", &[lhs, rhs], loc),
+            Some(BinOp::In) => yz::r#in(self.context, var, lhs, rhs, loc).into(),
             Some(BinOp::NotIn) => {
-                let contains = self.operator(block, binary, "in", &[lhs, rhs], loc);
+                let contains = block
+                    .append_operation(yz::r#in(self.context, var, lhs, rhs, loc).into())
+                    .first_result();
                 yz::not(self.context, var, contains, loc).into()
             }
             None => {
@@ -550,27 +552,6 @@ impl<'c> AstToYzl<'c, '_> {
         block
             .append_operation(builder.build().into())
             .first_result()
-    }
-
-    fn operator<'a>(
-        &mut self,
-        block: BlockRef<'c, 'a>,
-        node: &impl AstNode,
-        callee: &'c str,
-        operands: &[Value<'c, 'a>],
-        loc: Location<'c>,
-    ) -> Value<'c, 'a> {
-        let Some(callable) = self.symbols.operator(callee, self.registry) else {
-            return self.report_and_hole(
-                block,
-                node,
-                &format!("`{callee}` is not available"),
-                UnresolvedType::get(self.context),
-            );
-        };
-
-        self.check_arity(node, callee, &callable, operands.len());
-        self.call(block, callable, operands, loc)
     }
 
     fn check_arity(

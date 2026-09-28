@@ -1,4 +1,4 @@
-use crate::{AggFunc, BuiltinFunc, Func};
+use crate::{AggFunc, BuiltinFunc};
 
 /// A function the language offers under a name.
 ///
@@ -27,20 +27,12 @@ pub trait FunctionRegistry {
 #[derive(Debug)]
 pub struct Builtins;
 
-const BUILTINS: &[FunctionRegistryEntry] = &[
-    FunctionRegistryEntry {
-        name: "in",
-        func: BuiltinFunc::Scalar(Func::In),
-        min_args: 2,
-        max_args: 2,
-    },
-    FunctionRegistryEntry {
-        name: "count",
-        func: BuiltinFunc::Aggregate(AggFunc::Count),
-        min_args: 0,
-        max_args: 1,
-    },
-];
+const BUILTINS: &[FunctionRegistryEntry] = &[FunctionRegistryEntry {
+    name: "count",
+    func: BuiltinFunc::Aggregate(AggFunc::Count),
+    min_args: 0,
+    max_args: 1,
+}];
 
 impl FunctionRegistry for Builtins {
     fn entries(&self) -> &[FunctionRegistryEntry] {
@@ -122,7 +114,7 @@ mod tests {
     fn chain_adds_new_names() {
         let chained = chain(&[Box::new(Aliases), Box::new(Builtins)]);
         assert!(chained.entries().iter().any(|entry| entry.name == "tally"));
-        assert!(chained.entries().iter().any(|entry| entry.name == "in"));
+        assert!(chained.entries().iter().any(|entry| entry.name == "count"));
     }
 
     #[test]

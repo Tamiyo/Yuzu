@@ -11,11 +11,10 @@ pub(crate) const BOOLEAN_URN: &str = "extension:io.substrait:functions_boolean";
 const AGGREGATE_GENERIC_URN: &str = "extension:io.substrait:functions_aggregate_generic";
 pub(crate) const EXTERNAL_URN: &str = "extension:io.yuzu:external";
 
-/// Map a plan function to its Substrait extension function. Membership is
-/// handled separately (`SingularOrList`); a function with no Substrait
-/// equivalent yet (e.g. `**`) returns none.
-pub(crate) fn function_target(func: Func) -> Option<(&'static str, &'static str)> {
-    let target = match func {
+/// Map a primitive op's function to its Substrait extension function.
+/// Membership is not one: it is a `SingularOrList`.
+pub(crate) fn function_target(func: Func) -> (&'static str, &'static str) {
+    match func {
         Func::Add => (ARITHMETIC_URN, "add"),
         Func::Subtract => (ARITHMETIC_URN, "subtract"),
         Func::Multiply => (ARITHMETIC_URN, "multiply"),
@@ -30,9 +29,7 @@ pub(crate) fn function_target(func: Func) -> Option<(&'static str, &'static str)
         Func::And => (BOOLEAN_URN, "and"),
         Func::Or => (BOOLEAN_URN, "or"),
         Func::Not => (BOOLEAN_URN, "not"),
-        Func::In => return None,
-    };
-    Some(target)
+    }
 }
 
 /// Map a builtin aggregate to its Substrait extension function: `count`, in

@@ -406,20 +406,17 @@ struct Row { a: int64 }
 table t = Row
 
 from t
-|> select a in [1, 2] as p
+|> aggregate count(a) as n
 ",
             &expect![[r#"
                 module {
                   yz.struct @Row ["a"] : [!yz.int64]
                   %0 = yzr.table @t : !yz.struct<@Row>
-                  yz.struct @row ["p"] : [!yz.bool]
-                  %1 = yzr.project %0 {
+                  yz.struct @row ["n"] : [!yz.int64]
+                  %1 = yzr.aggregate %0 keys [] {
                   ^bb0(%arg0: !yz.int64):
-                    %2 = yz.constant_int 1
-                    %3 = yz.constant_int 2
-                    %4 = yz.list[%2, %3] : (!yz.int64, !yz.int64) -> !yz.list<!yz.int64>
-                    %5 = yz.call @in(%arg0, %4) : (!yz.int64, !yz.list<!yz.int64>) -> !yz.bool
-                    yzr.yield %5 : !yz.bool
+                    %2 = yzr.agg "count", %arg0 : !yz.int64 -> !yz.int64
+                    yzr.yield %2 : !yz.int64
                   } : !yz.struct<@Row> -> !yz.struct<@row>
                   yzr.output %1 : !yz.struct<@row>
                 }
@@ -547,7 +544,7 @@ from t
                     %2 = yz.constant_int 1
                     %3 = yz.constant_int 3
                     %4 = yz.list[%2, %3] : (!yz.int64, !yz.int64) -> !yz.list<!yz.int64>
-                    %5 = yz.call @in(%arg0, %4) : (!yz.int64, !yz.list<!yz.int64>) -> !yz.bool
+                    %5 = yz.in %arg0, %4 : !yz.int64, !yz.list<!yz.int64> -> !yz.bool
                     yzr.yield %5 : !yz.bool
                   }
                   yzr.output %1 : !yz.struct<@Row>

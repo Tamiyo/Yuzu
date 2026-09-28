@@ -93,17 +93,11 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
             YzOp::Cmp(compare) => {
                 self.translate_call(op, functions::of_predicate(compare.predicate()), values)
             }
+            YzOp::In(_) => translate_membership(op, values),
             YzOp::Call(call) => {
                 let callee = call.callee().value();
-                let Some(func) = functions::of_builtin(callee) else {
-                    report(op, &format!("`{callee}` has no Substrait mapping yet"));
-                    return None;
-                };
-
-                match func {
-                    Func::In => translate_membership(op, values),
-                    func => self.translate_call(op, func, values),
-                }
+                report(op, &format!("`{callee}` has no Substrait mapping yet"));
+                None
             }
             YzOp::ExternCall(call) => {
                 let callee = call.callee().value();
@@ -132,15 +126,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         func: Func,
         values: &FxHashMap<ValueId, Expression>,
     ) -> Option<Expression> {
-        let Some((urn, base)) = function_target(func) else {
-            let symbol = func.symbol();
-            report(
-                op,
-                &format!("`{symbol}` is not supported by the datafusion target"),
-            );
-            return None;
-        };
-
+        let (urn, base) = function_target(func);
         self.translate_function(op, urn, base, values)
     }
 

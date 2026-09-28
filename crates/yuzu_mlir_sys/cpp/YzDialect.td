@@ -226,6 +226,20 @@ def Yz_OrOp : Yz_Op<"or", [Commutative, Pure]> {
   let hasFolder = 1;
 }
 
+def Yz_InOp : Yz_Op<"in", [Pure]> {
+  let summary = "membership: whether the value is an element of the list";
+  let description = [{
+    Folds when the value is a constant and the list is a `yz.list`: to true
+    when an element equals the value, and to false when every element is a
+    constant that does not.
+  }];
+  let arguments = (ins AnyType:$value, AnyType:$list);
+  let results = (outs Yz_BoolOrUnresolvedType:$result);
+  let assemblyFormat =
+      "$value `,` $list `:` type($value) `,` type($list) `->` type($result) attr-dict";
+  let hasCanonicalizer = 1;
+}
+
 def Yz_NotOp : Yz_Op<"not", [Pure]> {
   let summary = "logical negation";
   let arguments = (ins Yz_BoolOrUnresolvedType:$value);

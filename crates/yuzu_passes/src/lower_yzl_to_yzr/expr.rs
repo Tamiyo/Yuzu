@@ -325,7 +325,7 @@ from t
                     %2 = yz.constant_int 1
                     %3 = yz.constant_int 3
                     %4 = yz.list[%2, %3] : (!yz.int64, !yz.int64) -> !yz.list<!yz.int64>
-                    %5 = yz.call @in(%arg0, %4) : (!yz.int64, !yz.list<!yz.int64>) -> !yz.bool
+                    %5 = yz.in %arg0, %4 : !yz.int64, !yz.list<!yz.int64> -> !yz.bool
                     yzr.yield %5 : !yz.bool
                   }
                   yzr.output %1 : !yz.struct<@Row>

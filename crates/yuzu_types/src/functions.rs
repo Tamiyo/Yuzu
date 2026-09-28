@@ -36,7 +36,6 @@ pub enum Func {
     And,
     Or,
     Not,
-    In,
 }
 
 impl Func {
@@ -57,7 +56,6 @@ impl Func {
             Func::And => "and",
             Func::Or => "or",
             Func::Not => "not",
-            Func::In => "in",
         }
     }
 }

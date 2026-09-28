@@ -23,7 +23,7 @@ use yuzu_mlir::ops::yz::YzOp;
 use yuzu_mlir::ops::yzl::{FnOp, YzlOp};
 use yuzu_mlir::types::{self, BoolType, ErrorType, Int64Type, UnresolvedType};
 use yuzu_mlir::{ListType, ParamType};
-use yuzu_types::{AggFunc, BuiltinFunc, Func, FunctionRegistry};
+use yuzu_types::{AggFunc, BuiltinFunc, FunctionRegistry};
 
 pub fn infer_types<'c>(
     context: &'c Context,
@@ -467,6 +467,14 @@ impl<'c> TypeInferrer<'c, '_> {
                 self.unify(op, rhs, int64);
                 self.unify(op, out, int64);
             }
+            Some(YzOp::In(_)) => {
+                let (value, list) = (self.operand_term(op, 0), self.operand_term(op, 1));
+                let out = self.term_of(op.first_result());
+                let inner = self.fresh();
+                self.unify(op, Term::List(inner), list);
+                self.unify(op, value, Term::Var(inner));
+                self.unify(op, out, boolean);
+            }
             Some(YzOp::Neg(_)) => {
                 let value = self.operand_term(op, 0);
                 let out = self.term_of(op.first_result());
@@ -573,18 +581,10 @@ impl<'c> TypeInferrer<'c, '_> {
         };
 
         let int64 = Term::Concrete(Int64Type::get(self.context));
-        let boolean = Term::Concrete(BoolType::get(self.context));
         let out = self.term_of(op.first_result());
         match entry.func {
             BuiltinFunc::Aggregate(AggFunc::Count) => {
                 self.unify(op, out, int64);
-            }
-            BuiltinFunc::Scalar(Func::In) => {
-                let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
-                let inner = self.fresh();
-                self.unify(op, Term::List(inner), rhs);
-                self.unify(op, lhs, Term::Var(inner));
-                self.unify(op, out, boolean);
             }
             BuiltinFunc::Scalar(_) => {}
         }
@@ -1075,7 +1075,7 @@ from t
                     %2 = yz.constant_int 1
                     %3 = yz.constant_int 3
                     %4 = yzl.list[%2, %3] : (!yz.int64, !yz.int64) -> !yz.list<!yz.int64>
-                    %5 = yzl.call @in(%arg0, %4) : (!yz.int64, !yz.list<!yz.int64>) -> !yz.bool {callee_source = "builtin"}
+                    %5 = yz.in %arg0, %4 : !yz.int64, !yz.list<!yz.int64> -> !yz.bool
                     yzl.yield %5 : !yz.bool
                   }
                   yzl.output %1
