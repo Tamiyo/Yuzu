@@ -10,7 +10,7 @@ use yuzu_ide::{Analysis, Checked, FileId};
 /// How long the checker waits for a newer request before it checks. While
 /// someone types, each request replaces the one before it, so only the text
 /// they stop at is checked.
-const DEBOUNCE: Duration = Duration::from_millis(200);
+const DEBOUNCE: Duration = Duration::from_millis(50);
 
 /// Open documents to check, as a snapshot saw them. `generation` counts the
 /// changes the server has seen, so an answer to an older one can be told

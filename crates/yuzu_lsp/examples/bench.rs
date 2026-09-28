@@ -172,7 +172,7 @@ fn main() {
         println!("{functions} functions, {} lines", text.lines().count());
         println!("  keystroke + semantic tokens    {}", summary(keystrokes));
         println!("  hover                          {}", summary(hovers));
-        println!("  edit to diagnostics (200 ms debounce included)");
+        println!("  edit to diagnostics (debounce included)");
         println!("                                 {}", summary(checks));
 
         client.request(Shutdown::METHOD, ());
