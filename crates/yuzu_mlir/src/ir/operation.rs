@@ -60,9 +60,7 @@ pub trait OperationMutExt<'c: 'a, 'a>: OperationMutLike<'c, 'a> {
 
 impl<'c: 'a, 'a, T: OperationMutLike<'c, 'a>> OperationMutExt<'c, 'a> for T {}
 
-/// Reading an operation as one of our dialects. MLIR spells this
-/// `dyn_cast<AddOp>(op)`; in Rust the conversion belongs on the handle, and
-/// the dialect enum stands in for what a `TypeSwitch` would have matched.
+/// Views an operation as an op of one of Yuzu's dialects, to match on.
 pub trait OperationCast<'c> {
     fn as_yz(&self) -> Option<crate::ops::yz::YzOp<'c, '_>>;
     fn as_yzl(&self) -> Option<crate::ops::yzl::YzlOp<'c, '_>>;

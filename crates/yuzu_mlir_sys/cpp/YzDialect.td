@@ -109,9 +109,9 @@ def Yz_ListOp : Yz_Op<"list", [Pure]> {
 
 // Arithmetic. One op per surface operator, polymorphic over the numeric
 // types the way the language's operators are; folds dispatch on the
-// literal's kind. The constraints also admit !yzl.unresolved — the pre-inference
-// window, the way Mojo's pop ops admit unbound parametrics — so operand
-// types are spelled individually until InferTypes stamps them concrete.
+// literal's kind. The constraints also admit !yzl.unresolved, the type an
+// operand has until InferTypes stamps it concrete, so operand types are
+// spelled individually.
 
 def Yz_NumericType : Type<
     CPred<"::llvm::isa<::yuzu::yz::Int64Type, ::yuzu::yz::Float64Type, "
