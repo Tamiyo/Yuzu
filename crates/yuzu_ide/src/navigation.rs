@@ -202,6 +202,32 @@ from t |> select double(a) + cap + two() as v
     }
 
     #[test]
+    fn a_qualified_call_goes_to_the_function() {
+        check_definition(
+            &PROGRAM
+                .replacen("from helpers import two", "import helpers", 1)
+                .replacen("+ two()", "+ helpers.t$0wo()", 1),
+            &expect![[r#"
+                Some(
+                    "helpers.yz:two",
+                )
+            "#]],
+        );
+    }
+
+    #[test]
+    fn references_include_a_qualified_call() {
+        check_references(
+            &PROGRAM
+                .replacen("from helpers import two", "import helpers", 1)
+                .replacen("+ two()", "+ helpers.t$0wo()", 1),
+            &expect![[r"
+                helpers.yz:two 8..11
+                main.yz:two 159..162"]],
+        );
+    }
+
+    #[test]
     fn references_start_at_the_declaration() {
         check_references(
             &PROGRAM.replacen("let y = x", "let $0y = x", 1),

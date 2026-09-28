@@ -93,13 +93,14 @@ fn nodes_at(root: &SyntaxNode, range: TextRange) -> impl Iterator<Item = SyntaxN
         .take_while(move |node| node.text_range() == range)
 }
 
-/// Where a use spells `name`: a name read, a callee, or the relation of a
-/// `from` or a `join`.
+/// Where a use spells `name`: a name read, a callee bare or qualified by its
+/// module, or the relation of a `from` or a `join`.
 fn used_name(root: &SyntaxNode, range: TextRange, name: &str) -> Option<TextRange> {
     let ident = nodes_at(root, range).find_map(|node| match node.kind() {
         SyntaxKind::IdentExpr => ast::IdentExpr::cast(node)?.name(),
         SyntaxKind::CallExpr => match ast::CallExpr::cast(node)?.callee()? {
             ast::Expr::IdentExpr(callee) => callee.name(),
+            ast::Expr::FieldAccessExpr(callee) => callee.field(),
             _ => None,
         },
         SyntaxKind::FromSource => ast::FromSource::cast(node)?.relation(),
