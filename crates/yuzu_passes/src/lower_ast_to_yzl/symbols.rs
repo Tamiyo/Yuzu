@@ -412,13 +412,17 @@ impl<'c> SymbolTable<'c> {
         self.module
     }
 
-    /// An import names a declaration in a file read earlier, so what it
-    /// names is known by the time this file is walked, and the binding
-    /// itself stands in the import's place from here on.
-    pub(super) fn set_module(&mut self, module: ModulePath<'c>) {
+    /// Makes `module` the current one, with no scope open.
+    pub(super) fn enter_module(&mut self, module: ModulePath<'c>) {
         self.modules.entry(module).or_default();
         self.scopes.clear();
         self.module = module;
+    }
+
+    /// Whether a scope is still open: a block, a function's type
+    /// parameters, or a relation.
+    pub(super) fn has_open_scope(&self) -> bool {
+        !self.scopes.is_empty()
     }
 
     pub(super) fn contains_module(&self, module: ModulePath<'c>) -> bool {
@@ -428,10 +432,10 @@ impl<'c> SymbolTable<'c> {
                 .is_some_and(|library| library.modules.contains_key(&module))
     }
 
-    /// Whether the bound library already holds this file's names.
-    pub(super) fn is_library_module(&self) -> bool {
+    /// Whether the bound library already holds a module's names.
+    pub(super) fn is_library_module(&self, module: ModulePath<'c>) -> bool {
         self.library
-            .is_some_and(|library| library.modules.contains_key(&self.module))
+            .is_some_and(|library| library.modules.contains_key(&module))
     }
 
     /// The names bound so far, as a library later compiles read.
@@ -984,7 +988,7 @@ mod tests {
     #[test]
     fn a_symbol_is_qualified_by_the_module_that_declared_it() {
         let mut symbols = table();
-        symbols.set_module(ModulePath::from_path("helpers"));
+        symbols.enter_module(ModulePath::from_path("helpers"));
         symbols.bind(
             "Row",
             Binding {

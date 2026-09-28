@@ -84,7 +84,7 @@ pub fn bind_library<'c>(
         diagnostics,
     };
 
-    lowerer.bind(files);
+    lowerer.bind_names(files);
     lowerer.symbols.into_library()
 }
 

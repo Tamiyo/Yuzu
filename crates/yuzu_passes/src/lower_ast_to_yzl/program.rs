@@ -65,23 +65,24 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             1,
         ));
 
-        self.bind(files);
+        self.bind_names(files);
 
         let body = module.body();
         let mut on_demand = FxHashMap::default();
         for file in files {
-            self.set_file(file);
-            let mut locals = Locals::new();
-            for stmt in file.root.stmts() {
-                if file.lowering == Lowering::OnDemand
-                    && let Some(name) = self.read_ident(on_demand_name(&stmt))
-                {
-                    on_demand.insert(self.symbols.module().declares(name), (file, stmt));
-                    continue;
-                }
+            self.in_file(file, |this| {
+                let mut locals = Locals::new();
+                for stmt in file.root.stmts() {
+                    if file.lowering == Lowering::OnDemand
+                        && let Some(name) = this.read_ident(on_demand_name(&stmt))
+                    {
+                        on_demand.insert(this.symbols.module().declares(name), (file, stmt));
+                        continue;
+                    }
 
-                self.convert_stmt(body, &mut locals, &stmt);
-            }
+                    this.convert_stmt(body, &mut locals, &stmt);
+                }
+            });
         }
 
         // A declaration lowered on demand may name others in turn.
@@ -93,8 +94,9 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
 
             for at in used {
                 if let Some((file, stmt)) = on_demand.remove(&at) {
-                    self.set_file(file);
-                    self.convert_stmt(body, &mut Locals::new(), &stmt);
+                    self.in_file(file, |this| {
+                        this.convert_stmt(body, &mut Locals::new(), &stmt);
+                    });
                 }
             }
         }
@@ -118,27 +120,47 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         }
     }
 
-    /// Names first, for every file: a reference may point forward. A file
-    /// the bound library already holds is not bound again.
-    pub(super) fn bind(&mut self, files: &[File]) {
+    /// Binds every file's names before any file is lowered.
+    ///
+    /// A reference may name a declaration further on, or in another file. A
+    /// file the bound library already holds is not bound again.
+    pub(super) fn bind_names(&mut self, files: &[File]) {
         for file in files {
-            self.set_file(file);
-            if self.symbols.is_library_module() {
+            let module = self.module_of(file);
+            if self.symbols.is_library_module(module) {
                 continue;
             }
 
-            self.bind_imports(&file.root);
-            self.hoist_declarations(&file.root);
+            self.in_file(file, |this| {
+                this.bind_imports(&file.root);
+                this.hoist_declarations(&file.root);
+            });
         }
     }
 
-    fn set_file(&mut self, file: &File) {
+    /// Runs a walk over one file. This is the only place the current file
+    /// changes: spans, locations and name lookups all follow it. The walk
+    /// starts with no scope open, and closes every scope it opens.
+    fn in_file<T>(&mut self, file: &File, walk: impl FnOnce(&mut Self) -> T) -> T {
         self.source_id = file.source_id;
         self.file = StringAttribute::new(self.context, self.sources.name(file.source_id));
-        self.symbols.set_module(match file.module.as_deref() {
+        let module = self.module_of(file);
+        self.symbols.enter_module(module);
+
+        let result = walk(self);
+        debug_assert!(
+            !self.symbols.has_open_scope(),
+            "the walk over `{}` left a scope open",
+            self.sources.name(file.source_id)
+        );
+        result
+    }
+
+    fn module_of(&mut self, file: &File) -> ModulePath<'c> {
+        match file.module.as_deref() {
             Some(module) => ModulePath::from_path(self.symbols.intern(module)),
             None => ModulePath::entry(),
-        });
+        }
     }
 }
 
