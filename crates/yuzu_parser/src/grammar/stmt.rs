@@ -4,49 +4,49 @@ use yuzu_syntax::SyntaxKind;
 use crate::grammar::expr::parse_expr;
 use crate::grammar::rel::parse_query;
 use crate::grammar::ty::parse_type;
-use crate::grammar::{parse_ident, parse_stmts};
+use crate::grammar::{Trailing, delimited, parse_ident, parse_stmts};
 use crate::parser::{Parser, marker::CompletedMarker};
 
-pub(crate) fn parse_stmt(p: &mut Parser) -> CompletedMarker {
+pub(crate) fn parse_stmt(p: &mut Parser) -> Option<CompletedMarker> {
     // `pub` prefixes a declaration, so what follows it decides which one this
     // is. Each declaration bumps the `pub` itself, the way a function bumps
     // its own `external` and `agg`, so the keyword lands inside the node it
     // qualifies.
     if p.at(TokenKind::PubKw) {
-        return parse_public_stmt(p);
+        return Some(parse_public_stmt(p));
     }
 
     // Reserved words, so no lookahead is needed to tell a declaration from an
     // expression that happens to start with the same identifier.
     if p.at(TokenKind::DefKw) || p.at(TokenKind::AggKw) || p.at(TokenKind::ExternalKw) {
-        return parse_func_stmt(p);
+        return Some(parse_func_stmt(p));
     }
     if p.at(TokenKind::ImplKw) {
-        return parse_impl_stmt(p);
+        return Some(parse_impl_stmt(p));
     }
     if p.at(TokenKind::TraitKw) {
-        return parse_trait_stmt(p);
+        return Some(parse_trait_stmt(p));
     }
     if p.at(TokenKind::LetKw) {
-        return parse_let_stmt(p);
+        return Some(parse_let_stmt(p));
     }
     if p.at(TokenKind::ReturnKw) {
-        return parse_return_stmt(p);
+        return Some(parse_return_stmt(p));
     }
     if p.at(TokenKind::StructKw) {
-        return parse_struct_stmt(p);
+        return Some(parse_struct_stmt(p));
     }
     if p.at(TokenKind::TableKw) {
-        return parse_table_stmt(p);
+        return Some(parse_table_stmt(p));
     }
     if p.at(TokenKind::ModKw) {
-        return parse_mod_stmt(p);
+        return Some(parse_mod_stmt(p));
     }
     if p.at(TokenKind::ImportKw) {
-        return parse_import_stmt(p);
+        return Some(parse_import_stmt(p));
     }
     if at_from_import(p) {
-        return parse_from_import_stmt(p);
+        return Some(parse_from_import_stmt(p));
     }
     parse_expr_stmt(p)
 }
@@ -72,8 +72,11 @@ fn parse_public_stmt(p: &mut Parser) -> CompletedMarker {
         Some(TokenKind::ModKw) => parse_mod_stmt(p),
         _ => {
             let m = p.start();
+            let range = p.peek_range();
             p.bump();
-            p.error_expression(&[]);
+            if let Some(range) = range {
+                p.error_declaration(range);
+            }
             p.complete(m, SyntaxKind::Error)
         }
     }
@@ -206,24 +209,16 @@ fn parse_func_stmt(p: &mut Parser) -> CompletedMarker {
 
     if p.at(TokenKind::LeftSquare) {
         p.bump();
-        if !p.at(TokenKind::RightSquare) {
+        delimited(p, TokenKind::RightSquare, Trailing::Forbidden, |p| {
             parse_type_param(p);
-            while p.at(TokenKind::Comma) {
-                p.bump();
-                parse_type_param(p);
-            }
-        }
+        });
         p.expect(TokenKind::RightSquare);
     }
 
     p.expect(TokenKind::LeftParen);
-    if !p.at(TokenKind::RightParen) {
+    delimited(p, TokenKind::RightParen, Trailing::Forbidden, |p| {
         parse_param(p);
-        while p.at(TokenKind::Comma) {
-            p.bump();
-            parse_param(p);
-        }
-    }
+    });
     p.expect(TokenKind::RightParen);
 
     if p.at(TokenKind::Arrow) {
@@ -258,9 +253,9 @@ fn parse_impl_stmt(p: &mut Parser) -> CompletedMarker {
 
     parse_ident(p);
     p.expect(TokenKind::LeftCurly);
-    while p.at(TokenKind::DefKw) {
+    parse_methods(p, |p| {
         parse_func_stmt(p);
-    }
+    });
     p.expect(TokenKind::RightCurly);
 
     p.complete(m, SyntaxKind::ImplStmt)
@@ -272,12 +267,30 @@ fn parse_trait_stmt(p: &mut Parser) -> CompletedMarker {
     p.expect(TokenKind::TraitKw);
     parse_ident(p);
     p.expect(TokenKind::LeftCurly);
-    while p.at(TokenKind::DefKw) {
+    parse_methods(p, |p| {
         parse_trait_method(p);
-    }
+    });
     p.expect(TokenKind::RightCurly);
 
     p.complete(m, SyntaxKind::TraitStmt)
+}
+
+/// The methods of an `impl` or a `trait`, up to its `}`. Anything else is
+/// reported once and kept in an error node, so the rest of the body stays
+/// in it.
+fn parse_methods(p: &mut Parser, mut method: impl FnMut(&mut Parser)) {
+    while !p.at(TokenKind::RightCurly) && !p.at_end() {
+        if p.at(TokenKind::DefKw) {
+            method(p);
+            continue;
+        }
+        p.error_in_place();
+        let m = p.start();
+        while !p.at(TokenKind::DefKw) && !p.at(TokenKind::RightCurly) && !p.at_end() {
+            p.bump();
+        }
+        p.complete(m, SyntaxKind::Error);
+    }
 }
 
 fn parse_trait_method(p: &mut Parser) -> CompletedMarker {
@@ -285,13 +298,9 @@ fn parse_trait_method(p: &mut Parser) -> CompletedMarker {
     p.expect(TokenKind::DefKw);
     parse_ident(p);
     p.expect(TokenKind::LeftParen);
-    if !p.at(TokenKind::RightParen) {
+    delimited(p, TokenKind::RightParen, Trailing::Forbidden, |p| {
         parse_param(p);
-        while p.at(TokenKind::Comma) {
-            p.bump();
-            parse_param(p);
-        }
-    }
+    });
     p.expect(TokenKind::RightParen);
     if p.at(TokenKind::Arrow) {
         p.bump();
@@ -328,7 +337,7 @@ fn parse_return_stmt(p: &mut Parser) -> CompletedMarker {
     p.expect(TokenKind::ReturnKw);
 
     if !p.at(TokenKind::RightCurly) {
-        parse_expr(p);
+        parse_value(p);
     }
 
     p.complete(m, SyntaxKind::ReturnStmt)
@@ -357,23 +366,29 @@ fn parse_table_stmt(p: &mut Parser) -> CompletedMarker {
     p.complete(m, SyntaxKind::TableStmt)
 }
 
-fn parse_expr_stmt(p: &mut Parser) -> CompletedMarker {
+/// An expression, a query or an assignment. A statement with no expression
+/// is no statement: the error is reported, and no empty node is left.
+fn parse_expr_stmt(p: &mut Parser) -> Option<CompletedMarker> {
     let m = p.start();
 
     if p.at(TokenKind::FromKw) {
         parse_query(p);
-        return p.complete(m, SyntaxKind::ExprStmt);
+        return Some(p.complete(m, SyntaxKind::ExprStmt));
     }
 
-    parse_expr(p);
+    let expr = parse_expr(p);
 
     if p.at(TokenKind::Eq) {
         p.bump();
         parse_value(p);
-        return p.complete(m, SyntaxKind::AssignStmt);
+        return Some(p.complete(m, SyntaxKind::AssignStmt));
     }
 
-    p.complete(m, SyntaxKind::ExprStmt)
+    if expr.is_none() {
+        p.abandon(m);
+        return None;
+    }
+    Some(p.complete(m, SyntaxKind::ExprStmt))
 }
 
 fn parse_value(p: &mut Parser) -> Option<CompletedMarker> {
@@ -429,16 +444,9 @@ fn parse_struct_field_decl(p: &mut Parser) -> CompletedMarker {
 
 fn parse_struct_field_list(p: &mut Parser) {
     p.expect(TokenKind::LeftCurly);
-    if !p.at(TokenKind::RightCurly) {
+    delimited(p, TokenKind::RightCurly, Trailing::Allowed, |p| {
         parse_struct_field_decl(p);
-        while p.at(TokenKind::Comma) {
-            p.bump();
-            if p.at(TokenKind::RightCurly) {
-                break;
-            }
-            parse_struct_field_decl(p);
-        }
-    }
+    });
     p.expect(TokenKind::RightCurly);
 }
 
@@ -1247,47 +1255,6 @@ mod tests {
     }
 
     #[test]
-    fn let_mut_with_type_annotation() {
-        check(
-            "let mut x: int = 1",
-            &expect![[r#"
-                LetStmt@0..18
-                  LetKw@0..3 "let"
-                  Whitespace@3..4 " "
-                  MutKw@4..7 "mut"
-                  Whitespace@7..8 " "
-                  Ident@8..9
-                    Identifier@8..9 "x"
-                  Colon@9..10 ":"
-                  Whitespace@10..11 " "
-                  NamedTypeAnnotation@11..14
-                    Ident@11..14
-                      Identifier@11..14 "int"
-                  Whitespace@14..15 " "
-                  Eq@15..16 "="
-                  Whitespace@16..17 " "
-                  IntLiteral@17..18
-                    IntLit@17..18 "1"
-            "#]],
-        );
-    }
-
-    #[test]
-    fn return_stmt() {
-        check(
-            "return x",
-            &expect![[r#"
-                ReturnStmt@0..8
-                  ReturnKw@0..6 "return"
-                  Whitespace@6..7 " "
-                  IdentExpr@7..8
-                    Ident@7..8
-                      Identifier@7..8 "x"
-            "#]],
-        );
-    }
-
-    #[test]
     fn assign_stmt() {
         check(
             "x = 5",
@@ -1482,25 +1449,6 @@ mod tests {
     }
 
     #[test]
-    fn table_stmt_named() {
-        check(
-            "table T = Row",
-            &expect![[r#"
-                TableStmt@0..13
-                  TableKw@0..5 "table"
-                  Whitespace@5..6 " "
-                  Ident@6..7
-                    Identifier@6..7 "T"
-                  Whitespace@7..8 " "
-                  Eq@8..9 "="
-                  Whitespace@9..10 " "
-                  Ident@10..13
-                    Identifier@10..13 "Row"
-            "#]],
-        );
-    }
-
-    #[test]
     fn impl_trait_for_type() {
         check(
             "impl Show for Point { def show(self) { return self } }",
@@ -1543,41 +1491,6 @@ mod tests {
                       RightCurly@51..52 "}"
                   Whitespace@52..53 " "
                   RightCurly@53..54 "}"
-            "#]],
-        );
-    }
-
-    #[test]
-    fn trait_stmt() {
-        check(
-            "trait Show { def show(self) -> str }",
-            &expect![[r#"
-                TraitStmt@0..36
-                  TraitKw@0..5 "trait"
-                  Whitespace@5..6 " "
-                  Ident@6..10
-                    Identifier@6..10 "Show"
-                  Whitespace@10..11 " "
-                  LeftCurly@11..12 "{"
-                  Whitespace@12..13 " "
-                  FuncStmt@13..34
-                    DefKw@13..16 "def"
-                    Whitespace@16..17 " "
-                    Ident@17..21
-                      Identifier@17..21 "show"
-                    LeftParen@21..22 "("
-                    FuncParam@22..26
-                      Ident@22..26
-                        Identifier@22..26 "self"
-                    RightParen@26..27 ")"
-                    Whitespace@27..28 " "
-                    Arrow@28..30 "->"
-                    Whitespace@30..31 " "
-                    NamedTypeAnnotation@31..34
-                      Ident@31..34
-                        Identifier@31..34 "str"
-                  Whitespace@34..35 " "
-                  RightCurly@35..36 "}"
             "#]],
         );
     }

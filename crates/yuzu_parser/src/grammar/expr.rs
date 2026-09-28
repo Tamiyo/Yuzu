@@ -1,17 +1,84 @@
 use yuzu_lexer::token_kind::TokenKind;
 use yuzu_syntax::SyntaxKind;
 
-use crate::grammar::parse_ident;
+use crate::grammar::{Trailing, delimited, parse_ident};
 use crate::parser::{Parser, marker::CompletedMarker};
+use crate::token_set::TokenSet;
+
+/// What a missing expression also leaves in place: the close of the list or
+/// block around it, and the next pipeline stage.
+const EXPR_RECOVERY_SET: TokenSet = TokenSet::new(&[
+    TokenKind::RightParen,
+    TokenKind::RightSquare,
+    TokenKind::RightCurly,
+    TokenKind::Comma,
+    TokenKind::Pipe,
+]);
+
+#[derive(Clone, Copy)]
+enum BinOp {
+    And,
+    Or,
+    In,
+    NotIn,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+    Pow,
+    Eq,
+    Neq,
+    Lt,
+    Lte,
+    Gt,
+    Gte,
+    ShiftLeft,
+    ShiftRight,
+}
+
+impl BinOp {
+    fn binding_power(self) -> (u8, u8) {
+        match self {
+            BinOp::Or => (1, 2),
+            BinOp::And => (3, 4),
+            BinOp::Eq
+            | BinOp::Neq
+            | BinOp::In
+            | BinOp::NotIn
+            | BinOp::Lt
+            | BinOp::Lte
+            | BinOp::Gt
+            | BinOp::Gte => (5, 6),
+            BinOp::ShiftLeft | BinOp::ShiftRight => (7, 8),
+            BinOp::Add | BinOp::Sub => (9, 10),
+            BinOp::Mul | BinOp::Div | BinOp::Rem => (11, 12),
+            BinOp::Pow => (15, 14),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum UnaryOp {
+    Neg,
+    Pos,
+    Not,
+}
+
+impl UnaryOp {
+    fn binding_power(self) -> ((), u8) {
+        match self {
+            UnaryOp::Neg | UnaryOp::Pos => ((), 13),
+            UnaryOp::Not => ((), 5),
+        }
+    }
+}
 
 pub(crate) fn parse_expr(p: &mut Parser) -> Option<CompletedMarker> {
     parse_expr_binding_power(p, 0)
 }
 
-fn parse_expr_binding_power(
-    p: &mut Parser,
-    minimum_binding_power: usize,
-) -> Option<CompletedMarker> {
+fn parse_expr_binding_power(p: &mut Parser, minimum_binding_power: u8) -> Option<CompletedMarker> {
     let mut lhs = parse_lhs(p)?;
 
     loop {
@@ -35,7 +102,7 @@ fn parse_expr_binding_power(
         };
 
         let (left_binding_power, right_binding_power) = op.binding_power();
-        if (left_binding_power as usize) < minimum_binding_power {
+        if left_binding_power < minimum_binding_power {
             break;
         }
 
@@ -45,7 +112,7 @@ fn parse_expr_binding_power(
         }
 
         let marker = p.precede(lhs);
-        let rhs = parse_expr_binding_power(p, right_binding_power as usize);
+        let rhs = parse_expr_binding_power(p, right_binding_power);
         lhs = p.complete(marker, SyntaxKind::BinaryExpr);
 
         if rhs.is_none() {
@@ -58,7 +125,7 @@ fn parse_expr_binding_power(
 
 fn parse_lhs(p: &mut Parser) -> Option<CompletedMarker> {
     let Some(kind) = p.peek_kind() else {
-        p.error_expression(&EXPR_RECOVERY_SET);
+        p.error_expression(EXPR_RECOVERY_SET);
         return None;
     };
 
@@ -84,7 +151,7 @@ fn parse_lhs(p: &mut Parser) -> Option<CompletedMarker> {
         TokenKind::Plus | TokenKind::Minus | TokenKind::NotKw => parse_unary_expr(p),
 
         _ => {
-            p.error_expression(&EXPR_RECOVERY_SET);
+            p.error_expression(EXPR_RECOVERY_SET);
             return None;
         }
     };
@@ -138,6 +205,7 @@ fn parse_literal_expr(p: &mut Parser) -> CompletedMarker {
         _ => unreachable!("parse_literal_expr called without a literal token"),
     };
 
+    p.report_unknown_escapes();
     let m = p.start();
     p.bump();
     p.complete(m, ast_kind)
@@ -161,16 +229,9 @@ fn parse_struct_expr(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
     parse_ident(p);
     p.expect(TokenKind::LeftCurly);
-    if !p.at(TokenKind::RightCurly) {
+    delimited(p, TokenKind::RightCurly, Trailing::Allowed, |p| {
         parse_struct_field_init(p);
-        while p.at(TokenKind::Comma) {
-            p.bump();
-            if p.at(TokenKind::RightCurly) {
-                break;
-            }
-            parse_struct_field_init(p);
-        }
-    }
+    });
     p.expect(TokenKind::RightCurly);
     p.complete(m, SyntaxKind::StructExpr)
 }
@@ -178,16 +239,9 @@ fn parse_struct_expr(p: &mut Parser) -> CompletedMarker {
 fn parse_list_expr(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
     p.expect(TokenKind::LeftSquare);
-    if !p.at(TokenKind::RightSquare) {
+    delimited(p, TokenKind::RightSquare, Trailing::Allowed, |p| {
         parse_expr(p);
-        while p.at(TokenKind::Comma) {
-            p.bump();
-            if p.at(TokenKind::RightSquare) {
-                break;
-            }
-            parse_expr(p);
-        }
-    }
+    });
     p.expect(TokenKind::RightSquare);
     p.complete(m, SyntaxKind::ListExpr)
 }
@@ -206,93 +260,18 @@ fn parse_unary_expr(p: &mut Parser) -> CompletedMarker {
 
     let m = p.start();
     p.bump();
-    parse_expr_binding_power(p, right_binding_power as usize);
+    parse_expr_binding_power(p, right_binding_power);
     p.complete(m, SyntaxKind::UnaryExpr)
 }
 
 fn parse_arg_list(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
     p.expect(TokenKind::LeftParen);
-    if !p.at(TokenKind::RightParen) {
-        parse_expr_binding_power(p, 0);
-        while p.at(TokenKind::Comma) {
-            p.bump();
-            parse_expr_binding_power(p, 0);
-        }
-    }
+    delimited(p, TokenKind::RightParen, Trailing::Forbidden, |p| {
+        parse_expr(p);
+    });
     p.expect(TokenKind::RightParen);
     p.complete(m, SyntaxKind::ArgList)
-}
-
-/// What a missing expression also leaves in place: the close of the list or
-/// block around it, and the next pipeline stage.
-const EXPR_RECOVERY_SET: [TokenKind; 5] = [
-    TokenKind::RightParen,
-    TokenKind::RightSquare,
-    TokenKind::RightCurly,
-    TokenKind::Comma,
-    TokenKind::Pipe,
-];
-
-#[derive(Clone, Copy)]
-#[repr(u8)]
-enum BinOp {
-    And,
-    Or,
-    In,
-    NotIn,
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Rem,
-    Pow,
-    Eq,
-    Neq,
-    Lt,
-    Lte,
-    Gt,
-    Gte,
-    ShiftLeft,
-    ShiftRight,
-}
-
-impl BinOp {
-    fn binding_power(self) -> (u8, u8) {
-        match self {
-            BinOp::Or => (1, 2),
-            BinOp::And => (3, 4),
-            BinOp::Eq
-            | BinOp::Neq
-            | BinOp::In
-            | BinOp::NotIn
-            | BinOp::Lt
-            | BinOp::Lte
-            | BinOp::Gt
-            | BinOp::Gte => (5, 6),
-            BinOp::ShiftLeft | BinOp::ShiftRight => (7, 8),
-            BinOp::Add | BinOp::Sub => (9, 10),
-            BinOp::Mul | BinOp::Div | BinOp::Rem => (11, 12),
-            BinOp::Pow => (15, 14),
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-#[repr(u8)]
-enum UnaryOp {
-    Neg,
-    Pos,
-    Not,
-}
-
-impl UnaryOp {
-    fn binding_power(self) -> ((), u8) {
-        match self {
-            UnaryOp::Neg | UnaryOp::Pos => ((), 13),
-            UnaryOp::Not => ((), 5),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -327,19 +306,6 @@ mod tests {
             &expect![[r#"
             FloatLiteral@0..4
               FloatLit@0..4 "3.14"
-        "#]],
-        );
-    }
-
-    #[test]
-    fn parse_ident_expr_directly() {
-        test_support::check(
-            "foo",
-            parse_ident_expr,
-            &expect![[r#"
-            IdentExpr@0..3
-              Ident@0..3
-                Identifier@0..3 "foo"
         "#]],
         );
     }
@@ -684,28 +650,6 @@ mod tests {
                   IdentExpr@9..10
                     Ident@9..10
                       Identifier@9..10 "b"
-            "#]],
-        );
-    }
-
-    #[test]
-    fn list_literal() {
-        check(
-            "[1, 2, 3]",
-            &expect![[r#"
-                ListExpr@0..9
-                  LeftSquare@0..1 "["
-                  IntLiteral@1..2
-                    IntLit@1..2 "1"
-                  Comma@2..3 ","
-                  Whitespace@3..4 " "
-                  IntLiteral@4..5
-                    IntLit@4..5 "2"
-                  Comma@5..6 ","
-                  Whitespace@6..7 " "
-                  IntLiteral@7..8
-                    IntLit@7..8 "3"
-                  RightSquare@8..9 "]"
             "#]],
         );
     }

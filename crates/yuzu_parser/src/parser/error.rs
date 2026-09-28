@@ -5,9 +5,11 @@ use yuzu_diagnostics::{
 };
 use yuzu_lexer::token_kind::TokenKind;
 
+use crate::token_set::TokenSet;
+
 pub(crate) enum ParseError {
     ExpectedKind {
-        expected: Vec<TokenKind>,
+        expected: TokenSet,
         found: Option<TokenKind>,
         range: TextRange,
         source_id: SourceId,
@@ -17,58 +19,80 @@ pub(crate) enum ParseError {
         range: TextRange,
         source_id: SourceId,
     },
+    /// `pub` before something that declares nothing.
+    ExpectedDeclaration {
+        range: TextRange,
+        source_id: SourceId,
+    },
+    /// A `\` in a string that starts no escape the language has.
+    UnknownEscape {
+        escape: String,
+        range: TextRange,
+        source_id: SourceId,
+    },
 }
 
 impl From<ParseError> for Diagnostic {
     fn from(val: ParseError) -> Self {
-        match val {
+        let (range, source_id, message) = match val {
             ParseError::ExpectedKind {
                 expected,
                 found,
                 range,
                 source_id,
             } => {
-                let span = Span { source_id, range };
-
                 let description = match found {
-                    Some(kind) => format!("{kind}"),
+                    Some(kind) => describe(kind),
                     None => String::from("end of input"),
                 };
-
-                let expected_description = expected
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(", ");
-
-                let message = if expected.len() == 1 {
+                let expected_description =
+                    expected.iter().map(describe).collect::<Vec<_>>().join(", ");
+                let message = if expected.iter().nth(1).is_none() {
                     format!("expected {expected_description}, found {description}")
                 } else {
                     format!("expected one of {expected_description}, found {description}")
                 };
-
-                DiagnosticBuilder::error(span, message)
-                    .primary_label(span, "")
-                    .build()
+                (range, source_id, message)
             }
             ParseError::ExpectedExpression {
                 found,
                 range,
                 source_id,
             } => {
-                let span = Span { source_id, range };
-                // The token's own text, so the reader sees what is actually
-                // there. Every other path built this and then substituted an
-                // empty string, leaving the message hanging after `found`.
                 let message = match &found {
                     Some(text) => format!("expected expression, found `{text}`"),
                     None => "expected expression, found end of input".to_string(),
                 };
-                DiagnosticBuilder::error(span, message)
-                    .primary_label(span, "")
-                    .build()
+                (range, source_id, message)
             }
-        }
+            ParseError::ExpectedDeclaration { range, source_id } => (
+                range,
+                source_id,
+                "`pub` goes before a declaration".to_owned(),
+            ),
+            ParseError::UnknownEscape {
+                escape,
+                range,
+                source_id,
+            } => (
+                range,
+                source_id,
+                format!("unknown escape `{escape}` in a string"),
+            ),
+        };
+        let span = Span { source_id, range };
+        DiagnosticBuilder::error(span, message)
+            .primary_label(span, "")
+            .build()
+    }
+}
+
+/// A kind as a message names it: a keyword or a symbol as it is spelled.
+fn describe(kind: TokenKind) -> String {
+    if kind.is_keyword() || kind.is_symbol() {
+        format!("`{kind}`")
+    } else {
+        kind.to_string()
     }
 }
 
@@ -82,44 +106,43 @@ mod tests {
         SourceMap::new().add(String::new(), String::new())
     }
 
-    #[test]
-    fn expected_single_kind() {
-        let error = ParseError::ExpectedKind {
-            expected: vec![TokenKind::Plus],
-            found: Some(TokenKind::LetKw),
-            range: TextRange::default(),
-            source_id: source_id(),
-        };
-
+    fn message(error: ParseError) -> String {
         let diagnostic: Diagnostic = error.into();
         assert_eq!(diagnostic.severity, Severity::Error);
-        assert_eq!(diagnostic.message, "expected +, found let");
+        diagnostic.message
     }
 
     #[test]
-    fn expected_one_of_several_kinds() {
+    fn expected_single_kind() {
         let error = ParseError::ExpectedKind {
-            expected: vec![TokenKind::Plus, TokenKind::Minus],
+            expected: TokenSet::new(&[TokenKind::Plus]),
             found: Some(TokenKind::LetKw),
             range: TextRange::default(),
             source_id: source_id(),
         };
+        assert_eq!(message(error), "expected `+`, found `let`");
+    }
 
-        let diagnostic: Diagnostic = error.into();
-        assert_eq!(diagnostic.message, "expected one of +, -, found let");
+    #[test]
+    fn expected_one_of_several_kinds_each_once() {
+        let error = ParseError::ExpectedKind {
+            expected: TokenSet::new(&[TokenKind::Comma, TokenKind::Plus, TokenKind::Comma]),
+            found: Some(TokenKind::Identifier),
+            range: TextRange::default(),
+            source_id: source_id(),
+        };
+        assert_eq!(message(error), "expected one of `+`, `,`, found identifier");
     }
 
     #[test]
     fn expected_kind_at_end_of_input() {
         let error = ParseError::ExpectedKind {
-            expected: vec![TokenKind::Plus],
+            expected: TokenSet::new(&[TokenKind::Plus]),
             found: None,
             range: TextRange::default(),
             source_id: source_id(),
         };
-
-        let diagnostic: Diagnostic = error.into();
-        assert_eq!(diagnostic.message, "expected +, found end of input");
+        assert_eq!(message(error), "expected `+`, found end of input");
     }
 
     #[test]
@@ -129,17 +152,9 @@ mod tests {
             range: TextRange::default(),
             source_id: source_id(),
         };
-
-        let diagnostic: Diagnostic = error.into();
-        assert_eq!(
-            diagnostic.message,
-            "expected expression, found end of input"
-        );
+        assert_eq!(message(error), "expected expression, found end of input");
     }
 
-    /// The token is carried as its own text, so the reader sees what is
-    /// there. Nothing covered this, and the message had been substituting an
-    /// empty string and trailing off after `found`.
     #[test]
     fn expected_expression_names_the_token_it_found() {
         let error = ParseError::ExpectedExpression {
@@ -147,8 +162,6 @@ mod tests {
             range: TextRange::default(),
             source_id: source_id(),
         };
-
-        let diagnostic: Diagnostic = error.into();
-        assert_eq!(diagnostic.message, "expected expression, found `for`");
+        assert_eq!(message(error), "expected expression, found `for`");
     }
 }

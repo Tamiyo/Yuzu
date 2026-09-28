@@ -2,6 +2,7 @@ use yuzu_lexer::token_kind::TokenKind;
 use yuzu_syntax::SyntaxKind;
 
 use crate::parser::{Parser, marker::CompletedMarker};
+use crate::token_set::TokenSet;
 
 mod expr;
 mod rel;
@@ -13,7 +14,7 @@ mod ty;
 /// mistake before it. `agg` and `external` also start one, but a name can
 /// be misspelt as either, and an error that leaves one in place loses the
 /// rest of that statement to it.
-pub(crate) const STMT_RECOVERY_SET: [TokenKind; 11] = [
+pub(crate) const STMT_RECOVERY_SET: TokenSet = TokenSet::new(&[
     TokenKind::DefKw,
     TokenKind::StructKw,
     TokenKind::TableKw,
@@ -25,12 +26,12 @@ pub(crate) const STMT_RECOVERY_SET: [TokenKind; 11] = [
     TokenKind::ReturnKw,
     TokenKind::PubKw,
     TokenKind::FromKw,
-];
+]);
 
 /// What a missing token also leaves in place: a brace, so a body survives
 /// the mistake in front of it.
-pub(crate) const EXPECT_RECOVERY_SET: [TokenKind; 2] =
-    [TokenKind::LeftCurly, TokenKind::RightCurly];
+pub(crate) const EXPECT_RECOVERY_SET: TokenSet =
+    TokenSet::new(&[TokenKind::LeftCurly, TokenKind::RightCurly]);
 
 #[expect(
     clippy::redundant_closure_for_method_calls,
@@ -55,9 +56,59 @@ pub(crate) fn parse_stmts(p: &mut Parser, done: impl Fn(&mut Parser) -> bool) {
     }
 }
 
+/// Whether a bracketed list may end in a comma.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Trailing {
+    Allowed,
+    Forbidden,
+}
+
+/// The closing brackets and `{`. A list stops at any of them, so it never
+/// takes the close of the syntax around it or the body after it.
+const LIST_ENDS: TokenSet = TokenSet::new(&[
+    TokenKind::RightParen,
+    TokenKind::RightSquare,
+    TokenKind::RightCurly,
+    TokenKind::LeftCurly,
+]);
+
+/// The items of a bracketed list, up to the `close` the caller then takes.
+/// A missing comma is reported and the next item still parses, and a token
+/// no item can start is reported and skipped.
+pub(crate) fn delimited(
+    p: &mut Parser,
+    close: TokenKind,
+    trailing: Trailing,
+    mut item: impl FnMut(&mut Parser),
+) {
+    if p.at(close) {
+        return;
+    }
+    loop {
+        let before = p.consumed();
+        item(p);
+        if p.at(TokenKind::Comma) {
+            p.bump();
+            if trailing == Trailing::Allowed && p.at(close) {
+                return;
+            }
+            continue;
+        }
+        let at_end = p.peek_kind().is_none_or(|kind| LIST_ENDS.contains(kind));
+        if p.at(close) || at_end || p.at_recovery_set(TokenSet::EMPTY) {
+            return;
+        }
+        if p.consumed() == before {
+            p.error(TokenSet::EMPTY);
+        } else {
+            p.error_in_place();
+        }
+    }
+}
+
 /// What can follow or close around a name. A missing name leaves these in
 /// place for the syntax after it.
-const NAME_RECOVERY_SET: [TokenKind; 12] = [
+const NAME_RECOVERY_SET: TokenSet = TokenSet::new(&[
     TokenKind::Eq,
     TokenKind::Colon,
     TokenKind::LeftParen,
@@ -70,18 +121,18 @@ const NAME_RECOVERY_SET: [TokenKind; 12] = [
     TokenKind::Dot,
     TokenKind::Arrow,
     TokenKind::Pipe,
-];
+]);
 
 /// What comes right after a name that opens a declaration's syntax: a
 /// keyword before one of these was meant as the name, as in `let from = 1`.
-const NAME_FOLLOWERS: [TokenKind; 6] = [
+const NAME_FOLLOWERS: TokenSet = TokenSet::new(&[
     TokenKind::Eq,
     TokenKind::Colon,
     TokenKind::LeftParen,
     TokenKind::LeftSquare,
     TokenKind::LeftCurly,
     TokenKind::Comma,
-];
+]);
 
 /// An `Ident` holds exactly its identifier, so a token that is no name is
 /// reported and left outside it, and the node is not built.
@@ -95,7 +146,7 @@ pub(crate) fn parse_ident(p: &mut Parser) -> Option<CompletedMarker> {
     if at_misused_name(p) {
         p.error_and_bump();
     } else {
-        p.error(&NAME_RECOVERY_SET);
+        p.error(NAME_RECOVERY_SET);
     }
     None
 }
@@ -104,10 +155,10 @@ pub(crate) fn parse_ident(p: &mut Parser) -> Option<CompletedMarker> {
 fn at_misused_name(p: &mut Parser) -> bool {
     let misplaced = p
         .peek_kind()
-        .is_some_and(|kind| !NAME_RECOVERY_SET.contains(&kind));
+        .is_some_and(|kind| !NAME_RECOVERY_SET.contains(kind));
     let followed = p
         .peek_nth_kind(1)
-        .is_some_and(|next| NAME_FOLLOWERS.contains(&next));
+        .is_some_and(|next| NAME_FOLLOWERS.contains(next));
     misplaced && followed
 }
 
@@ -133,8 +184,8 @@ mod test_support {
         let events = parser.finish();
 
         let mut diagnostics = DiagnosticsEngine::new();
-        let result = TokenSink::new(&tokens, events, &mut diagnostics).finish();
-        let tree = SyntaxNode::new_root(result.green);
+        let green = TokenSink::new(&tokens, events, &mut diagnostics).finish();
+        let tree = SyntaxNode::new_root(green);
 
         expected.assert_eq(&format!("{tree:#?}"));
     }
@@ -159,6 +210,36 @@ mod test_support {
             .collect();
         expected.assert_eq(&format!("{tree:#?}{}", errors.join("\n")));
     }
+
+    /// The nodes, without tokens, and the errors.
+    pub(crate) fn check_outline(input: &str, expected: &Expect) {
+        use std::fmt::Write as _;
+
+        let mut diagnostics = DiagnosticsEngine::new();
+        let source_id = SourceMap::new().add("test".to_owned(), input.to_owned());
+        let tree = crate::parse_text(input, &mut diagnostics, source_id);
+
+        let mut outline = String::new();
+        let mut depth = 0;
+        for event in tree.preorder() {
+            match event {
+                rowan::WalkEvent::Enter(node) => {
+                    writeln!(outline, "{}{:?}", "  ".repeat(depth), node.kind()).unwrap();
+                    depth += 1;
+                }
+                rowan::WalkEvent::Leave(_) => depth -= 1,
+            }
+        }
+        for diagnostic in diagnostics.diagnostics() {
+            writeln!(
+                outline,
+                "{:?} {}",
+                diagnostic.labels[0].span.range, diagnostic.message
+            )
+            .unwrap();
+        }
+        expected.assert_eq(&outline);
+    }
 }
 
 #[cfg(test)]
@@ -167,6 +248,156 @@ mod tests {
 
     use super::{parse_ident, parse_root};
     use crate::grammar::test_support;
+    use crate::grammar::test_support::check_outline;
+
+    #[test]
+    fn a_missing_comma_keeps_the_next_parameter_and_the_body() {
+        check_outline(
+            "def f(a: int64 b: int64) -> int64 { return a }\n",
+            &expect![[r"
+            Root
+              FuncStmt
+                Ident
+                FuncParam
+                  Ident
+                  NamedTypeAnnotation
+                    Ident
+                FuncParam
+                  Ident
+                  NamedTypeAnnotation
+                    Ident
+                NamedTypeAnnotation
+                  Ident
+                BlockStmt
+                  ReturnStmt
+                    IdentExpr
+                      Ident
+            15..16 expected one of `)`, `[`, `,`, found identifier
+        "]],
+        );
+    }
+
+    #[test]
+    fn a_stray_statement_in_an_impl_keeps_the_next_method() {
+        check_outline(
+            "impl T { let x = 1 def g() -> int64 { return 1 } }\nlet y = 2\n",
+            &expect![[r"
+                Root
+                  ImplStmt
+                    Ident
+                    Error
+                    FuncStmt
+                      Ident
+                      NamedTypeAnnotation
+                        Ident
+                      BlockStmt
+                        ReturnStmt
+                          IntLiteral
+                  LetStmt
+                    Ident
+                    IntLiteral
+                9..12 expected one of `}`, `def`, found `let`
+            "]],
+        );
+    }
+
+    #[test]
+    fn a_bare_alias_stays_on_its_line() {
+        check_outline(
+            "let q = from t\ng(1)\n",
+            &expect![[r"
+            Root
+              LetStmt
+                Ident
+                Pipeline
+                  FromSource
+                    Ident
+              ExprStmt
+                CallExpr
+                  IdentExpr
+                    Ident
+                  ArgList
+                    IntLiteral
+        "]],
+        );
+    }
+
+    #[test]
+    fn pub_before_no_declaration_is_reported_at_the_pub() {
+        check_outline(
+            "pub impl T {}\n",
+            &expect![[r"
+            Root
+              Error
+              ImplStmt
+                Ident
+            0..3 `pub` goes before a declaration
+        "]],
+        );
+    }
+
+    #[test]
+    fn a_function_returns_a_query() {
+        check_outline(
+            "def f() -> int64 { return from t }\n",
+            &expect![[r"
+            Root
+              FuncStmt
+                Ident
+                NamedTypeAnnotation
+                  Ident
+                BlockStmt
+                  ReturnStmt
+                    Pipeline
+                      FromSource
+                        Ident
+        "]],
+        );
+    }
+
+    #[test]
+    fn an_unknown_escape_is_reported_where_it_is() {
+        check_outline(
+            "let s = \"a\\qb\\n\"\n",
+            &expect![[r"
+            Root
+              LetStmt
+                Ident
+                StringLiteral
+            10..12 unknown escape `\q` in a string
+        "]],
+        );
+    }
+
+    #[test]
+    fn the_end_of_input_is_after_the_last_token_not_the_comment() {
+        check_outline(
+            "let x =\n// a note\n",
+            &expect![[r"
+            Root
+              LetStmt
+                Ident
+            7..7 expected expression, found end of input
+        "]],
+        );
+    }
+
+    #[test]
+    fn tabs_are_whitespace() {
+        check_outline(
+            "def\tf() -> int64 {\n\treturn 1\n}\n",
+            &expect![[r"
+            Root
+              FuncStmt
+                Ident
+                NamedTypeAnnotation
+                  Ident
+                BlockStmt
+                  ReturnStmt
+                    IntLiteral
+        "]],
+        );
+    }
 
     #[test]
     fn parse_ident_directly() {
@@ -223,7 +454,7 @@ mod tests {
                           Identifier@22..27 "int64"
                     Whitespace@27..28 " "
                     RightCurly@28..29 "}"
-                4..5 expected one of mut, identifier, found ="#]],
+                4..5 expected one of `mut`, identifier, found `=`"#]],
         );
     }
 
@@ -310,7 +541,6 @@ mod tests {
             ")\nlet x = 1",
             &expect![[r#"
                 Root@0..11
-                  ExprStmt@0..0
                   Error@0..1
                     RightParen@0..1 ")"
                   Newline@1..2 "\n"
@@ -345,7 +575,6 @@ mod tests {
                     BlockStmt@8..13
                       LeftCurly@8..9 "{"
                       Whitespace@9..10 " "
-                      ExprStmt@10..10
                       Error@10..11
                         RightParen@10..11 ")"
                       Whitespace@11..12 " "
@@ -386,7 +615,7 @@ mod tests {
                           Identifier@12..17 "int64"
                     Whitespace@17..18 " "
                     RightCurly@18..19 "}"
-                7..8 expected identifier, found {"#]],
+                7..8 expected identifier, found `{`"#]],
         );
     }
 
@@ -422,7 +651,7 @@ mod tests {
                             Identifier@24..25 "x"
                       Whitespace@25..26 " "
                       RightCurly@26..27 "}"
-                15..16 expected one of [, ,, ), found {"#]],
+                15..16 expected one of `)`, `[`, `,`, found `{`"#]],
         );
     }
 
@@ -442,7 +671,7 @@ mod tests {
                     Whitespace@9..10 " "
                     IntLiteral@10..11
                       IntLit@10..11 "1"
-                4..7 expected one of mut, identifier, found def"#]],
+                4..7 expected one of `mut`, identifier, found `def`"#]],
         );
     }
 
@@ -473,7 +702,7 @@ mod tests {
                           IntLit@21..22 "1"
                       Whitespace@22..23 " "
                       RightCurly@23..24 "}"
-                4..7 expected one of mut, identifier, found def"#]],
+                4..7 expected one of `mut`, identifier, found `def`"#]],
         );
     }
 }

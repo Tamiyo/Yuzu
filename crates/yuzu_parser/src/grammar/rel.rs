@@ -2,8 +2,17 @@ use yuzu_lexer::token_kind::TokenKind;
 use yuzu_syntax::SyntaxKind;
 
 use crate::grammar::expr::parse_expr;
-use crate::grammar::parse_ident;
+use crate::grammar::{Trailing, delimited, parse_ident};
 use crate::parser::{Parser, marker::CompletedMarker};
+use crate::token_set::TokenSet;
+
+/// The keywords that name a join's kind.
+const JOIN_TYPES: TokenSet = TokenSet::new(&[
+    TokenKind::InnerKw,
+    TokenKind::LeftKw,
+    TokenKind::RightKw,
+    TokenKind::FullKw,
+]);
 
 /// `from t |> where … |> select …`: the source, then each stage as a sibling
 /// that holds only its own tokens.
@@ -67,7 +76,7 @@ fn parse_from_source(p: &mut Parser) -> CompletedMarker {
     if p.at(TokenKind::AsKw) {
         p.bump();
         parse_ident(p);
-    } else if p.at(TokenKind::Identifier) {
+    } else if p.at(TokenKind::Identifier) && !p.at_line_start() {
         parse_ident(p);
     }
 
@@ -224,19 +233,12 @@ fn parse_aggregate_clause(p: &mut Parser) {
     }
 }
 
-const JOIN_TYPES: [TokenKind; 4] = [
-    TokenKind::InnerKw,
-    TokenKind::LeftKw,
-    TokenKind::RightKw,
-    TokenKind::FullKw,
-];
-
 fn at_join_clause(p: &mut Parser) -> bool {
     p.at(TokenKind::JoinKw) || at_join_type(p)
 }
 
 fn at_join_type(p: &mut Parser) -> bool {
-    JOIN_TYPES.iter().any(|&kind| p.at(kind))
+    p.at_any(JOIN_TYPES)
 }
 
 fn parse_join_clause(p: &mut Parser) {
@@ -249,7 +251,7 @@ fn parse_join_clause(p: &mut Parser) {
     if p.at(TokenKind::AsKw) {
         p.bump();
         parse_ident(p);
-    } else if p.at(TokenKind::Identifier) {
+    } else if p.at(TokenKind::Identifier) && !p.at_line_start() {
         parse_ident(p);
     }
 
@@ -271,15 +273,10 @@ fn parse_join_using(p: &mut Parser) {
     let m = p.start();
     p.expect(TokenKind::UsingKw);
     p.expect(TokenKind::LeftParen);
-    // An empty list is left to lowering to report; parsing an identifier here
-    // would consume the `)` into an error node and name a column after it.
-    if !p.at(TokenKind::RightParen) {
+    // An empty list is left to lowering to report.
+    delimited(p, TokenKind::RightParen, Trailing::Forbidden, |p| {
         parse_ident(p);
-        while p.at(TokenKind::Comma) {
-            p.bump();
-            parse_ident(p);
-        }
-    }
+    });
     p.expect(TokenKind::RightParen);
     p.complete(m, SyntaxKind::JoinUsing);
 }

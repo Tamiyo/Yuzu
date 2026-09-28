@@ -7,16 +7,15 @@ use yuzu_syntax::{SyntaxKind, YuzuLanguage};
 
 use crate::parser::event::Event;
 
-pub(crate) struct Result {
-    pub(crate) green: GreenNode,
-}
-
 pub(crate) struct TokenSink<'t, 'input> {
     builder: GreenNodeBuilder<'t>,
     tokens: &'t [Token<'input>],
     cursor: usize,
     events: Vec<Event>,
     diagnostics: &'t mut DiagnosticsEngine,
+    /// The kinds of the nodes a start opens, reused from one start to the
+    /// next.
+    opening: Vec<SyntaxKind>,
 }
 
 impl<'t, 'input> TokenSink<'t, 'input> {
@@ -31,10 +30,11 @@ impl<'t, 'input> TokenSink<'t, 'input> {
             cursor: 0,
             events,
             diagnostics,
+            opening: Vec::new(),
         }
     }
 
-    pub(crate) fn finish(mut self) -> Result {
+    pub(crate) fn finish(mut self) -> GreenNode {
         let mut depth = 0usize;
         for idx in 0..self.events.len() {
             match mem::replace(&mut self.events[idx], Event::Placeholder) {
@@ -66,13 +66,12 @@ impl<'t, 'input> TokenSink<'t, 'input> {
             }
         }
 
-        Result {
-            green: self.builder.finish(),
-        }
+        self.builder.finish()
     }
 
     fn start(&mut self, idx: usize, kind: SyntaxKind, forward_parent: Option<usize>) -> usize {
-        let mut kinds = vec![kind];
+        self.opening.clear();
+        self.opening.push(kind);
 
         let mut idx = idx;
         let mut forward_parent = forward_parent;
@@ -88,18 +87,17 @@ impl<'t, 'input> TokenSink<'t, 'input> {
                 forward_parent,
             } = mem::replace(&mut self.events[idx], Event::Placeholder)
             {
-                kinds.push(kind);
+                self.opening.push(kind);
                 forward_parent
             } else {
-                unreachable!()
+                unreachable!("a forward parent points at the start of a node")
             };
         }
 
-        let opened = kinds.len();
-        for kind in kinds.into_iter().rev() {
+        for &kind in self.opening.iter().rev() {
             self.builder.start_node(YuzuLanguage::kind_to_raw(kind));
         }
-        opened
+        self.opening.len()
     }
 
     fn token(&mut self) {
@@ -144,8 +142,8 @@ mod tests {
         ];
         let mut diagnostics = DiagnosticsEngine::new();
 
-        let result = TokenSink::new(&tokens, events, &mut diagnostics).finish();
-        let root = SyntaxNode::new_root(result.green);
+        let green = TokenSink::new(&tokens, events, &mut diagnostics).finish();
+        let root = SyntaxNode::new_root(green);
 
         assert_eq!(root.kind(), SyntaxKind::Root);
         assert_eq!(root.text().to_string(), "+");

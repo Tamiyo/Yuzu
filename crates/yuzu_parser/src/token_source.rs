@@ -1,4 +1,4 @@
-use text_size::TextRange;
+use text_size::TextSize;
 use yuzu_lexer::{lexer::Token, token_kind::TokenKind};
 
 pub(crate) struct TokenSource<'t, 'input> {
@@ -49,8 +49,24 @@ impl<'t, 'input> TokenSource<'t, 'input> {
         self.peek_kind_raw().is_some_and(TokenKind::is_trivia)
     }
 
-    pub(crate) fn last_token_range(&self) -> Option<TextRange> {
-        self.tokens.last().map(|Token { range, .. }| *range)
+    /// Where the last token that is not trivia ends: the start when there
+    /// is none.
+    pub(crate) fn end_of_last_token(&self) -> TextSize {
+        self.tokens
+            .iter()
+            .rev()
+            .find(|token| !token.kind.is_trivia())
+            .map_or(TextSize::from(0), |token| token.range.end())
+    }
+
+    /// Whether the trivia before the next token holds a line break.
+    pub(crate) fn newline_before(&mut self) -> bool {
+        self.eat_trivia();
+        self.tokens[..self.cursor]
+            .iter()
+            .rev()
+            .take_while(|token| token.kind.is_trivia())
+            .any(|token| token.kind == TokenKind::Newline)
     }
 
     fn peek_kind_raw(&self) -> Option<TokenKind> {
@@ -109,10 +125,21 @@ mod tests {
     }
 
     #[test]
-    fn last_token_range_is_the_final_token() {
-        let tokens = lex("+ -");
+    fn the_end_is_after_the_last_token_that_is_not_trivia() {
+        let tokens = lex("+ -  // note\n");
         let source = TokenSource::new(&tokens);
 
-        assert_eq!(source.last_token_range(), tokens.last().map(|t| t.range));
+        assert_eq!(source.end_of_last_token(), TextSize::from(3));
+    }
+
+    #[test]
+    fn a_line_break_before_the_next_token_is_seen() {
+        let tokens = lex("a b\n  c");
+        let mut source = TokenSource::new(&tokens);
+
+        source.next_token();
+        assert!(!source.newline_before());
+        source.next_token();
+        assert!(source.newline_before());
     }
 }

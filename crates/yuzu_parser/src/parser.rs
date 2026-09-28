@@ -1,6 +1,6 @@
 use std::mem;
 
-use text_size::TextRange;
+use text_size::{TextRange, TextSize};
 use yuzu_diagnostics::source_map::SourceId;
 use yuzu_lexer::token_kind::TokenKind;
 use yuzu_syntax::SyntaxKind;
@@ -12,6 +12,7 @@ use crate::{
         event::Event,
         marker::{CompletedMarker, Marker},
     },
+    token_set::TokenSet,
     token_source::TokenSource,
 };
 
@@ -22,7 +23,7 @@ pub(crate) mod marker;
 pub(crate) struct Parser<'t, 'input> {
     source: TokenSource<'t, 'input>,
     events: Vec<Event>,
-    expected_kinds: Vec<TokenKind>,
+    expected_kinds: TokenSet,
     source_id: SourceId,
     consumed: usize,
     /// Where the last error was reported. A second error at the same token
@@ -35,7 +36,7 @@ impl<'t, 'input> Parser<'t, 'input> {
         Self {
             source,
             events: Vec::new(),
-            expected_kinds: Vec::new(),
+            expected_kinds: TokenSet::EMPTY,
             source_id,
             consumed: 0,
             last_error_range: None,
@@ -75,14 +76,26 @@ impl<'t, 'input> Parser<'t, 'input> {
         {
             *forward_parent = Some(marker.pos - completed_marker.pos);
         } else {
-            unreachable!();
+            unreachable!("a completed marker points at the start of its node");
         }
 
         marker
     }
 
+    /// Drops a node before it is completed, keeping what it held.
+    pub(crate) fn abandon(&mut self, mut marker: Marker) {
+        marker.defuse();
+        if marker.pos == self.events.len() - 1 {
+            self.events.pop();
+        }
+    }
+
     pub(crate) fn peek_kind(&mut self) -> Option<TokenKind> {
         self.source.peek_kind()
+    }
+
+    pub(crate) fn peek_range(&mut self) -> Option<TextRange> {
+        self.source.peek_token().map(|token| token.range)
     }
 
     pub(crate) fn peek_nth_kind(&mut self, n: usize) -> Option<TokenKind> {
@@ -90,8 +103,19 @@ impl<'t, 'input> Parser<'t, 'input> {
     }
 
     pub(crate) fn at(&mut self, kind: TokenKind) -> bool {
-        self.expected_kinds.push(kind);
+        self.expected_kinds.insert(kind);
         self.peek_kind() == Some(kind)
+    }
+
+    /// Whether the next token is one of `set`.
+    pub(crate) fn at_any(&mut self, set: TokenSet) -> bool {
+        self.expected_kinds = self.expected_kinds.union(set);
+        self.peek_kind().is_some_and(|kind| set.contains(kind))
+    }
+
+    /// Whether a line break comes before the next token.
+    pub(crate) fn at_line_start(&mut self) -> bool {
+        self.source.newline_before()
     }
 
     pub(crate) fn at_end(&mut self) -> bool {
@@ -100,12 +124,12 @@ impl<'t, 'input> Parser<'t, 'input> {
 
     /// Whether an error leaves the next token in place: a statement's start
     /// always, and whatever `set` adds for the error at hand.
-    pub(crate) fn at_recovery_set(&mut self, set: &[TokenKind]) -> bool {
+    pub(crate) fn at_recovery_set(&mut self, set: TokenSet) -> bool {
         self.peek_kind()
-            .is_some_and(|k| set.contains(&k) || STMT_RECOVERY_SET.contains(&k))
+            .is_some_and(|k| set.contains(k) || STMT_RECOVERY_SET.contains(k))
     }
 
-    pub(crate) fn error(&mut self, set: &[TokenKind]) {
+    pub(crate) fn error(&mut self, set: TokenSet) {
         self.report_expected_kind();
         if !self.at_recovery_set(set) && !self.at_end() {
             self.bump_as_error();
@@ -121,24 +145,74 @@ impl<'t, 'input> Parser<'t, 'input> {
         }
     }
 
-    pub(crate) fn error_expression(&mut self, set: &[TokenKind]) {
-        let info = inspect_found_token(&mut self.source);
-        self.expected_kinds.clear();
+    /// Reports what the next token should have been, and leaves it in place
+    /// for the syntax after it.
+    pub(crate) fn error_in_place(&mut self) {
+        self.report_expected_kind();
+    }
+
+    pub(crate) fn error_expression(&mut self, set: TokenSet) {
+        let (found, range) = match self.source.peek_token() {
+            Some(token) => (Some(token.text.to_owned()), token.range),
+            None => (None, self.end_range()),
+        };
+        self.expected_kinds = TokenSet::EMPTY;
 
         let error = ParseError::ExpectedExpression {
-            found: info.text,
-            range: info.range,
+            found,
+            range,
             source_id: self.source_id,
         };
-        self.report(info.range, error);
+        self.report(range, error);
 
         if !self.at_recovery_set(set) && !self.at_end() {
             self.bump_as_error();
         }
     }
 
+    /// Reports `pub` at `range` before something that declares nothing.
+    pub(crate) fn error_declaration(&mut self, range: TextRange) {
+        let error = ParseError::ExpectedDeclaration {
+            range,
+            source_id: self.source_id,
+        };
+        self.report(range, error);
+    }
+
+    /// Reports each escape in the next token, a string, that stands for no
+    /// character.
+    pub(crate) fn report_unknown_escapes(&mut self) {
+        let Some(token) = self.source.peek_token() else {
+            return;
+        };
+        if token.kind != TokenKind::StringLit {
+            return;
+        }
+        let start = token.range.start() + TextSize::of('"');
+        let inner = &token.text[1..token.text.len() - 1];
+        let found: Vec<(TextRange, String)> = yuzu_lexer::escape::unknown_escapes(inner)
+            .map(|(at, escape)| {
+                let at = start + TextSize::try_from(at).expect("a token is shorter than 4 GiB");
+                (TextRange::at(at, TextSize::of(escape)), escape.to_owned())
+            })
+            .collect();
+        for (range, escape) in found {
+            let error = ParseError::UnknownEscape {
+                escape,
+                range,
+                source_id: self.source_id,
+            };
+            self.report(range, error);
+        }
+    }
+
+    /// The token the text ends with, as an empty range after it.
+    fn end_range(&self) -> TextRange {
+        TextRange::empty(self.source.end_of_last_token())
+    }
+
     pub(crate) fn bump(&mut self) {
-        self.expected_kinds.clear();
+        self.expected_kinds = TokenSet::EMPTY;
         self.source.next_token();
         self.events.push(Event::Token);
         self.consumed += 1;
@@ -156,7 +230,7 @@ impl<'t, 'input> Parser<'t, 'input> {
         if self.at(kind) {
             self.bump();
         } else {
-            self.error(&EXPECT_RECOVERY_SET);
+            self.error(EXPECT_RECOVERY_SET);
         }
     }
 
@@ -170,14 +244,17 @@ impl<'t, 'input> Parser<'t, 'input> {
     }
 
     fn report_expected_kind(&mut self) {
-        let info = inspect_found_token(&mut self.source);
+        let (found, range) = match self.source.peek_token() {
+            Some(token) => (Some(token.kind), token.range),
+            None => (None, self.end_range()),
+        };
         let error = ParseError::ExpectedKind {
             expected: mem::take(&mut self.expected_kinds),
-            found: info.kind,
-            range: info.range,
+            found,
+            range,
             source_id: self.source_id,
         };
-        self.report(info.range, error);
+        self.report(range, error);
     }
 
     fn report(&mut self, range: TextRange, error: ParseError) {
@@ -185,33 +262,6 @@ impl<'t, 'input> Parser<'t, 'input> {
             self.last_error_range = Some(range);
             self.events.push(Event::Error { error });
         }
-    }
-}
-
-struct FoundTokenInfo {
-    kind: Option<TokenKind>,
-    text: Option<String>,
-    range: TextRange,
-}
-
-fn inspect_found_token(source: &mut TokenSource) -> FoundTokenInfo {
-    if let Some(token) = source.peek_token() {
-        return FoundTokenInfo {
-            kind: Some(token.kind),
-            text: Some(token.text.to_string()),
-            range: token.range,
-        };
-    }
-
-    let range = match source.last_token_range() {
-        Some(range) => range,
-        None => TextRange::new(0.into(), 0.into()),
-    };
-
-    FoundTokenInfo {
-        kind: None,
-        text: None,
-        range,
     }
 }
 
@@ -251,8 +301,8 @@ mod tests {
         let tokens: Vec<_> = Lexer::new("+").collect();
         let mut p = parser(&tokens);
 
-        assert!(p.at_recovery_set(&[TokenKind::Plus, TokenKind::Minus]));
-        assert!(!p.at_recovery_set(&[TokenKind::Minus]));
+        assert!(p.at_recovery_set(TokenSet::new(&[TokenKind::Plus, TokenKind::Minus])));
+        assert!(!p.at_recovery_set(TokenSet::new(&[TokenKind::Minus])));
     }
 
     #[test]
@@ -327,7 +377,7 @@ mod tests {
         let mut p = parser(&tokens);
 
         p.at(TokenKind::Plus);
-        p.error(&[]);
+        p.error(TokenSet::EMPTY);
 
         let events = p.finish();
         assert!(matches!(events[0], Event::Error { .. }));

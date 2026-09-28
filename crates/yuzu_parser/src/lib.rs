@@ -6,6 +6,7 @@ use crate::{parser::Parser, token_sink::TokenSink, token_source::TokenSource};
 
 mod grammar;
 mod parser;
+mod token_set;
 mod token_sink;
 mod token_source;
 
@@ -30,8 +31,5 @@ pub fn parse(
     grammar::parse_root(&mut parser);
     let events = parser.finish();
 
-    let token_sink = TokenSink::new(tokens, events, diagnostics);
-    let result = token_sink.finish();
-
-    SyntaxNode::new_root(result.green)
+    SyntaxNode::new_root(TokenSink::new(tokens, events, diagnostics).finish())
 }

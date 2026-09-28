@@ -1,7 +1,7 @@
 use yuzu_lexer::token_kind::TokenKind;
 use yuzu_syntax::SyntaxKind;
 
-use crate::grammar::parse_ident;
+use crate::grammar::{Trailing, delimited, parse_ident};
 use crate::parser::{Parser, marker::CompletedMarker};
 
 pub(crate) fn parse_type(p: &mut Parser) -> CompletedMarker {
@@ -18,11 +18,12 @@ fn parse_named_type(p: &mut Parser) -> CompletedMarker {
 
     if p.at(TokenKind::LeftSquare) {
         p.bump();
-        parse_type(p);
-        while p.at(TokenKind::Comma) {
-            p.bump();
+        if p.at(TokenKind::RightSquare) {
             parse_type(p);
         }
+        delimited(p, TokenKind::RightSquare, Trailing::Forbidden, |p| {
+            parse_type(p);
+        });
         p.expect(TokenKind::RightSquare);
     }
 
@@ -34,13 +35,9 @@ fn parse_func_type(p: &mut Parser) -> CompletedMarker {
 
     let params = p.start();
     p.expect(TokenKind::LeftParen);
-    if !p.at(TokenKind::RightParen) {
+    delimited(p, TokenKind::RightParen, Trailing::Forbidden, |p| {
         parse_type(p);
-        while p.at(TokenKind::Comma) {
-            p.bump();
-            parse_type(p);
-        }
-    }
+    });
     p.expect(TokenKind::RightParen);
     p.complete(params, SyntaxKind::FuncTypeAnnotationParams);
 

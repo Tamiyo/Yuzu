@@ -336,6 +336,90 @@ impl TokenKind {
         }
     }
 
+    /// Whether the kind is an operator or a punctuation mark.
+    #[must_use]
+    pub fn is_symbol(self) -> bool {
+        match self {
+            TokenKind::Plus
+            | TokenKind::Minus
+            | TokenKind::Star
+            | TokenKind::StarStar
+            | TokenKind::Slash
+            | TokenKind::Percent
+            | TokenKind::Eq
+            | TokenKind::EqEq
+            | TokenKind::Neq
+            | TokenKind::Lt
+            | TokenKind::Lte
+            | TokenKind::Gt
+            | TokenKind::Gte
+            | TokenKind::Shl
+            | TokenKind::Shr
+            | TokenKind::Arrow
+            | TokenKind::Pipe
+            | TokenKind::Dot
+            | TokenKind::LeftParen
+            | TokenKind::RightParen
+            | TokenKind::LeftCurly
+            | TokenKind::RightCurly
+            | TokenKind::LeftSquare
+            | TokenKind::RightSquare
+            | TokenKind::Comma
+            | TokenKind::Colon => true,
+            TokenKind::AggKw
+            | TokenKind::AggregateKw
+            | TokenKind::AndKw
+            | TokenKind::AsKw
+            | TokenKind::ByKw
+            | TokenKind::DefKw
+            | TokenKind::DistinctKw
+            | TokenKind::DropKw
+            | TokenKind::ExtendKw
+            | TokenKind::ExternalKw
+            | TokenKind::ForKw
+            | TokenKind::FromKw
+            | TokenKind::FullKw
+            | TokenKind::GroupKw
+            | TokenKind::ImplKw
+            | TokenKind::ImportKw
+            | TokenKind::InKw
+            | TokenKind::InnerKw
+            | TokenKind::JoinKw
+            | TokenKind::LeftKw
+            | TokenKind::LetKw
+            | TokenKind::LimitKw
+            | TokenKind::ModKw
+            | TokenKind::MutKw
+            | TokenKind::NotKw
+            | TokenKind::OffsetKw
+            | TokenKind::OnKw
+            | TokenKind::OrKw
+            | TokenKind::PubKw
+            | TokenKind::RenameKw
+            | TokenKind::ReturnKw
+            | TokenKind::RightKw
+            | TokenKind::SelectKw
+            | TokenKind::SetKw
+            | TokenKind::StructKw
+            | TokenKind::TableKw
+            | TokenKind::TraitKw
+            | TokenKind::UsingKw
+            | TokenKind::WhereKw
+            | TokenKind::Identifier
+            | TokenKind::BoolLit
+            | TokenKind::IntLit
+            | TokenKind::FloatLit
+            | TokenKind::HexLit
+            | TokenKind::BinaryLit
+            | TokenKind::StringLit
+            | TokenKind::RawStringLit
+            | TokenKind::Comment
+            | TokenKind::Newline
+            | TokenKind::Whitespace
+            | TokenKind::Error => false,
+        }
+    }
+
     #[must_use]
     pub fn is_trivia(self) -> bool {
         matches!(
