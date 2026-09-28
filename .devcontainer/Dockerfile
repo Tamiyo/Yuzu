@@ -6,8 +6,9 @@ ARG USER_UID=1000
 ARG USER_GID=${USER_UID}
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Base toolchain: a C linker for rustc, protoc for the substrait crate's
-# build script, and Python (headers + venv) for the PyO3 bindings.
+# Base toolchain: a C linker for rustc, protoc and the protobuf well-known
+# types (google/protobuf/*.proto) for the substrait crate's build script,
+# and Python (headers + venv) for the PyO3 bindings.
 RUN apt-get update && apt-get install -y --no-install-recommends \
   build-essential \
   ca-certificates \
@@ -17,6 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   locales \
   pkg-config \
   protobuf-compiler \
+  libprotobuf-dev \
   libzstd-dev \
   zlib1g-dev \
   python3-dev \
