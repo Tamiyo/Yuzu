@@ -71,7 +71,8 @@ impl<'c> AstToYzl<'c, '_> {
         self.bind_names(files);
 
         let body = module.body();
-        let mut on_demand = FxHashMap::default();
+        // A name's overloads are lowered together once a reference names it.
+        let mut on_demand: FxHashMap<_, Vec<_>> = FxHashMap::default();
         for file in files {
             self.in_file(file, |this| {
                 let mut locals = Locals::new();
@@ -79,7 +80,10 @@ impl<'c> AstToYzl<'c, '_> {
                     if file.lowering == Lowering::OnDemand
                         && let Some(name) = this.read_ident(on_demand_name(&stmt))
                     {
-                        on_demand.insert(this.symbols.module().declares(name), (file, stmt));
+                        on_demand
+                            .entry(this.symbols.module().declares(name))
+                            .or_default()
+                            .push((file, stmt));
                         continue;
                     }
 
@@ -96,7 +100,7 @@ impl<'c> AstToYzl<'c, '_> {
             }
 
             for at in used {
-                if let Some((file, stmt)) = on_demand.remove(&at) {
+                for (file, stmt) in on_demand.remove(&at).into_iter().flatten() {
                     self.in_file(file, |this| {
                         this.convert_stmt(body, &mut Locals::new(), &stmt);
                     });
@@ -322,6 +326,74 @@ mod tests {
             module.contains("yzl.call @two()") && !module.contains("yzl.call @yuzu.prelude.two()"),
             "{module}"
         );
+    }
+
+    #[test]
+    fn an_import_brings_the_public_overloads() {
+        expect![[r"
+            error: `f` expects 1 argument(s), found 0
+             --> main.yz:6:31
+              |
+            6 | from t |> select f(a) as one, f() as zero
+              |                               ^^^
+        "]].assert_eq(&reported_program(&[
+            (
+                "helpers.yz",
+                Some("helpers"),
+                "pub def f(x: int64) -> int64 { return x }\ndef f() -> int64 { return 0 }\n",
+            ),
+            (
+                "main.yz",
+                None,
+                "from helpers import f\n\nstruct Row { a: int64 }\ntable t = Row\n\nfrom t |> select f(a) as one, f() as zero\n",
+            ),
+        ]));
+    }
+
+    #[test]
+    fn a_file_function_hides_the_prelude_overloads() {
+        expect![[r"
+            error: `two` expects 1 argument(s), found 0
+             --> main.yz:5:31
+              |
+            5 | from t |> select two(a) as v, two() as w
+              |                               ^^^^^
+        "]].assert_eq(&reported_program(&[
+            (
+                "prelude.yz",
+                Some("yuzu.prelude"),
+                "pub def two() -> int64 { return 2 }\npub def two(x: int64) -> int64 { return x }\n",
+            ),
+            (
+                "main.yz",
+                None,
+                "def two(x: int64) -> int64 { return 20 }\nstruct Row { a: int64 }\ntable t = Row\n\nfrom t |> select two(a) as v, two() as w\n",
+            ),
+        ]));
+    }
+
+    #[test]
+    fn a_function_cannot_overload_an_import() {
+        expect![[r"
+            error: the function `f` is already defined
+             --> main.yz:3:1
+              |
+            3 | def f() -> int64 { return 0 }
+              | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+              = note: also declared at main.yz:1:21
+        "]]
+        .assert_eq(&reported_program(&[
+            (
+                "helpers.yz",
+                Some("helpers"),
+                "pub def f(x: int64) -> int64 { return x }\n",
+            ),
+            (
+                "main.yz",
+                None,
+                "from helpers import f\n\ndef f() -> int64 { return 0 }\n",
+            ),
+        ]));
     }
 
     #[test]

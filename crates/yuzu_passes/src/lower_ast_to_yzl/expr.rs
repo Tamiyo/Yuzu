@@ -358,19 +358,27 @@ impl<'c> AstToYzl<'c, '_> {
             .flat_map(|args| args.args())
             .map(|arg| self.convert_expr(block, locals, &arg))
             .collect();
-        let Some(callable) = self.symbols.callable(callee, self.registry) else {
-            let message = match self.symbols.kind(callee) {
-                Some(BindingKind::Pending) => format!("`{callee}` is bound further down the file"),
-                Some(kind) => format!("`{callee}` is a {kind}, not a function"),
-                None if self.symbols.is_method(callee) => {
-                    format!("`{callee}` is a trait method, and calling one is not supported yet")
+        let given = operands.len();
+        let Some(callable) = self.symbols.callable(callee, given, self.registry) else {
+            let message = if let Some(arities) = self.symbols.arities(callee, self.registry) {
+                arity_mismatch(callee, &arities, given)
+            } else {
+                match self.symbols.kind(callee) {
+                    Some(BindingKind::Pending) => {
+                        format!("`{callee}` is bound further down the file")
+                    }
+                    Some(kind) => format!("`{callee}` is a {kind}, not a function"),
+                    None if self.symbols.is_method(callee) => {
+                        format!(
+                            "`{callee}` is a trait method, and calling one is not supported yet"
+                        )
+                    }
+                    None => format!("unresolved identifier `{callee}`"),
                 }
-                None => format!("unresolved identifier `{callee}`"),
             };
             return self.report_and_hole(block, call, &message, UnresolvedType::get(self.context));
         };
 
-        self.check_arity(call, callee, &callable, operands.len());
         self.call(block, callable, &operands, loc)
     }
 
@@ -420,16 +428,15 @@ impl<'c> AstToYzl<'c, '_> {
             );
         };
 
-        let Some(callable) = self.symbols.callable_in(at) else {
-            return self.report_and_hole(
-                block,
-                call,
-                &format!("`{name}` is a {}, not a function", binding.kind),
-                UnresolvedType::get(self.context),
-            );
+        let given = operands.len();
+        let Some(callable) = self.symbols.callable_in(at, given) else {
+            let message = match self.symbols.arities_in(at) {
+                Some(arities) => arity_mismatch(name, &arities, given),
+                None => format!("`{name}` is a {}, not a function", binding.kind),
+            };
+            return self.report_and_hole(block, call, &message, UnresolvedType::get(self.context));
         };
 
-        self.check_arity(call, name, &callable, operands.len());
         self.call(block, callable, &operands, loc)
     }
 
@@ -553,27 +560,21 @@ impl<'c> AstToYzl<'c, '_> {
             .append_operation(builder.build().into())
             .first_result()
     }
+}
 
-    fn check_arity(
-        &mut self,
-        call: &impl AstNode,
-        callee: &str,
-        callable: &Callable<'c>,
-        given: usize,
-    ) {
-        let (min, max) = (callable.min_args, callable.max_args);
-        if given < min || given > max {
-            let expected = if min == max {
-                format!("{min}")
-            } else {
-                format!("{min} to {max}")
-            };
-            self.report(
-                call,
-                &format!("`{callee}` expects {expected} argument(s), found {given}"),
-            );
+/// The message for a call to a function none of whose overloads takes
+/// `given` arguments.
+fn arity_mismatch(name: &str, arities: &[usize], given: usize) -> String {
+    let expected = match arities {
+        [] => unreachable!("`{name}` has an overload wherever its name is visible"),
+        [only] => only.to_string(),
+        [rest @ .., last] => {
+            let rest: Vec<String> = rest.iter().map(ToString::to_string).collect();
+            format!("{} or {last}", rest.join(", "))
         }
-    }
+    };
+
+    format!("`{name}` expects {expected} argument(s), found {given}")
 }
 
 #[cfg(test)]
@@ -581,6 +582,19 @@ mod tests {
     use expect_test::expect;
 
     use crate::test_support::{lower, lowered, rendered, reported};
+
+    #[test]
+    fn a_call_no_overload_takes_is_reported() {
+        expect![[r"
+            error: `f` expects 1 or 2 argument(s), found 0
+             --> test.yz:7:18
+              |
+            7 | from t |> select f() as v
+              |                  ^^^
+        "]].assert_eq(&reported(
+            "def f(x: int64) -> int64 { return x }\ndef f(x: int64, y: int64) -> int64 { return x }\n\nstruct Row { a: int64 }\ntable t = Row\n\nfrom t |> select f() as v\n",
+        ));
+    }
 
     #[test]
     fn a_column_reference_says_what_the_row_carries() {

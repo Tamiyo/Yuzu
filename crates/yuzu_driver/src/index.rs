@@ -221,14 +221,14 @@ impl<'s> IndexReader<'s> {
     }
 }
 
-/// A symbol's declaration, and its name without the module path that
-/// qualifies it: `helpers.two` is declared as `two`.
+/// A symbol's declaration, and the name it was written under: `helpers.two`
+/// is declared as `two`.
 fn symbol(
     declarations: &FxHashMap<&str, Span>,
     symbol: &str,
 ) -> Option<(Span, String, TargetKind)> {
     let target = *declarations.get(symbol)?;
-    let name = symbol.rsplit('.').next().unwrap_or(symbol).to_owned();
+    let name = yuzu_passes::written_name(symbol).to_owned();
     Some((target, name, TargetKind::Symbol))
 }
 

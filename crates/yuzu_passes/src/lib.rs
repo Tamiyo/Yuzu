@@ -23,10 +23,20 @@ pub use promote_locals::promote_locals;
 pub use remove_dead_symbols::remove_dead_symbols;
 pub use simplify_yzr::simplify_yzr;
 
-/// The name a declaration was written under. Its symbol is qualified by
-/// its module's path, which a message about a program has no reason to show.
-pub(crate) fn written_name(symbol: &str) -> &str {
-    symbol.rsplit_once('.').map_or(symbol, |(_, name)| name)
+/// The name a declaration was written under, as a message shows it.
+///
+/// A symbol is qualified by its module's path, and an overloaded function's
+/// also ends in its parameter count. A name cannot start with a digit, so a
+/// last piece that does is a count.
+#[must_use]
+pub fn written_name(symbol: &str) -> &str {
+    let mut pieces = symbol.rsplit('.');
+    let last = pieces.next().unwrap_or(symbol);
+    if last.starts_with(|c: char| c.is_ascii_digit()) {
+        pieces.next().unwrap_or(last)
+    } else {
+        last
+    }
 }
 
 /// A pass manager for one of the MLIR passes this crate runs. The driver

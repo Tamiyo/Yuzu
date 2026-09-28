@@ -301,4 +301,19 @@ from t |> select double(a) + cap + two() as v
                 main.yz:two 160..163"]],
         );
     }
+
+    #[test]
+    fn each_overload_has_its_own_references() {
+        check_references(
+            r"table t = { a: int64 }
+def f(x: int64) -> int64 { return x }
+def f(x: int64, y: int64) -> int64 { return y }
+from t |> select f(a) + f$0(a, a) + f(a, 1) as v
+",
+            &expect![[r"
+                main.yz:f 65..66
+                main.yz:f 133..134
+                main.yz:f 143..144"]],
+        );
+    }
 }

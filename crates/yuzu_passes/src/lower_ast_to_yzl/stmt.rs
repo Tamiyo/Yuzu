@@ -5,6 +5,7 @@ use melior::ir::r#type::FunctionType;
 use melior::ir::{
     Attribute, Block, BlockLike, BlockRef, Location, Operation, Region, RegionLike, Type, Value,
 };
+use text_size::TextRange;
 use yuzu_ast::ast::Mutability;
 use yuzu_ast::{AstNode, Visibility, ast};
 use yuzu_mlir::attributes::CalleeSource;
@@ -15,17 +16,20 @@ use yuzu_mlir::types::{self, ErrorType, RefType, UnresolvedType};
 use yuzu_mlir::{ListType, ParamType, StructType};
 
 use crate::lower_ast_to_yzl::symbols::{
-    Binding, BindingKind, Declared, FunctionKind, Lookup, ModulePath, Reference, Row,
+    Binding, BindingKind, Declared, FunctionKind, Lookup, Method, ModulePath, Overload, Reference,
+    Row,
 };
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 
 /// Where a `fn` is written, which decides the generics its surroundings
-/// supply and whether it needs a body.
+/// supply, whether it needs a body, and the symbol it is built under. A
+/// method carries the methods of its trait, which say whether its name is
+/// overloaded.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Site {
+enum Site<'m, 'c> {
     AtModule,
-    InTrait,
-    InImpl,
+    InTrait(&'m [Method<'c>]),
+    InImpl(&'m [Method<'c>]),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -34,11 +38,11 @@ enum LocalKind {
     Param,
 }
 
-impl Site {
+impl Site<'_, '_> {
     fn generics(self) -> &'static [&'static str] {
         match self {
             Site::AtModule => &[],
-            Site::InTrait | Site::InImpl => &["Self"],
+            Site::InTrait(_) | Site::InImpl(_) => &["Self"],
         }
     }
 }
@@ -168,7 +172,12 @@ impl<'c> AstToYzl<'c, '_> {
         self.convert_method(block, decl, Site::AtModule);
     }
 
-    fn convert_method<'a>(&mut self, block: BlockRef<'c, 'a>, decl: &ast::FuncStmt, site: Site) {
+    fn convert_method<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        decl: &ast::FuncStmt,
+        site: Site<'_, 'c>,
+    ) {
         let loc = self.location(decl);
 
         let Some(name) = self.read_ident(decl.name()) else {
@@ -178,7 +187,7 @@ impl<'c> AstToYzl<'c, '_> {
 
         match (decl.is_external(), decl.body().is_some()) {
             (true, true) => self.report(decl, "an external function cannot have a body"),
-            (false, false) if site != Site::InTrait => {
+            (false, false) if !matches!(site, Site::InTrait(_)) => {
                 self.report(decl, "function is missing its body");
             }
             _ => {}
@@ -231,12 +240,7 @@ impl<'c> AstToYzl<'c, '_> {
 
         let external_name = decl.is_external().then_some(name);
 
-        // A trait or an implementation is a symbol table of its own, so a
-        // method keeps its bare name.
-        let name = match site {
-            Site::AtModule => self.symbols.symbol_here(name),
-            Site::InTrait | Site::InImpl => name,
-        };
+        let name = self.symbol_in(site, name, param_count);
 
         let body = Region::new();
         if let Some(block) = decl.body() {
@@ -313,8 +317,9 @@ impl<'c> AstToYzl<'c, '_> {
 
         let region = Region::new();
         let body = region.append_block(Block::new(&[]));
-        for method in decl.methods() {
-            self.convert_method(body, &method, Site::InTrait);
+        let methods = self.read_methods(decl.methods());
+        for method in self.check_methods(decl.methods()) {
+            self.convert_method(body, &method, Site::InTrait(&methods));
         }
 
         let name = self.symbols.symbol_here(name);
@@ -350,6 +355,13 @@ impl<'c> AstToYzl<'c, '_> {
             return;
         };
 
+        // A method is overloaded when its trait overloads it, so the two
+        // agree on its symbol.
+        let methods = match self.symbols.kind(trait_name) {
+            Some(BindingKind::Trait { methods }) => methods.clone(),
+            _ => self.read_methods(decl.methods()),
+        };
+
         let trait_name = if let Some(symbol) = self.symbols.trait_symbol(trait_name) {
             symbol
         } else {
@@ -369,8 +381,8 @@ impl<'c> AstToYzl<'c, '_> {
 
         let region = Region::new();
         let body = region.append_block(Block::new(&[]));
-        for method in decl.methods() {
-            self.convert_method(body, &method, Site::InImpl);
+        for method in self.check_methods(decl.methods()) {
+            self.convert_method(body, &method, Site::InImpl(&methods));
         }
 
         block.append_operation(
@@ -669,10 +681,7 @@ impl<'c> AstToYzl<'c, '_> {
             return;
         };
 
-        let methods = decl
-            .methods()
-            .filter_map(|m| self.read_ident(m.name()))
-            .collect();
+        let methods = self.read_methods(decl.methods());
         self.bind_or_report(
             decl,
             name,
@@ -696,14 +705,28 @@ impl<'c> AstToYzl<'c, '_> {
         } else {
             FunctionKind::Scalar
         };
+        let overload = Overload {
+            source,
+            arity: decl.params().count(),
+            text_range: decl.syntax().text_range(),
+            visibility: decl.visibility(),
+        };
+
+        if let Some(Binding {
+            kind: BindingKind::Func { .. },
+            ..
+        }) = self.symbols.binding(name)
+        {
+            self.bind_overload(decl, name, kind, overload);
+            return;
+        }
 
         self.bind_or_report(
             decl,
             name,
             BindingKind::Func {
-                source,
                 kind,
-                arity: decl.params().count(),
+                overloads: vec![overload],
             },
             decl.visibility(),
         );
@@ -824,6 +847,53 @@ impl<'c> AstToYzl<'c, '_> {
         );
     }
 
+    /// Adds a declaration to a function name this module declares already.
+    /// Every overload has the same kind, and each takes a different number
+    /// of arguments, so a call names one overload.
+    fn bind_overload(
+        &mut self,
+        decl: &ast::FuncStmt,
+        name: &'c str,
+        kind: FunctionKind,
+        overload: Overload,
+    ) {
+        let Some(Binding {
+            kind:
+                BindingKind::Func {
+                    kind: declared,
+                    overloads,
+                },
+            ..
+        }) = self.symbols.binding(name)
+        else {
+            unreachable!("`{name}` is bound to a function before an overload is added")
+        };
+
+        let declared = *declared;
+        let first = overloads[0].text_range;
+        let same_arity = overloads
+            .iter()
+            .find(|other| other.arity == overload.arity)
+            .map(|other| other.text_range);
+
+        if declared != kind {
+            let message = format!("every overload of `{name}` must be a {}", declared.name());
+            self.report_duplicate(decl, &message, first);
+            return;
+        }
+
+        if let Some(other) = same_arity {
+            let message = format!(
+                "the function `{name}` with {} parameter(s) is already defined",
+                overload.arity
+            );
+            self.report_duplicate(decl, &message, other);
+            return;
+        }
+
+        self.symbols.add_overload(name, overload);
+    }
+
     /// Binds a name to a place the body has declared.
     fn bind_local<'a>(&mut self, locals: &mut Locals<'c, 'a>, name: &'c str, place: Value<'c, 'a>) {
         self.symbols.bind_local(name, locals.len());
@@ -904,6 +974,51 @@ impl<'c> AstToYzl<'c, '_> {
         }
 
         (subjects, traits)
+    }
+
+    fn read_methods(&self, methods: impl Iterator<Item = ast::FuncStmt>) -> Vec<Method<'c>> {
+        methods
+            .filter_map(|method| {
+                Some(Method {
+                    name: self.read_ident(method.name())?,
+                    arity: method.params().count(),
+                })
+            })
+            .collect()
+    }
+
+    /// The methods of a trait or an implementation, less each one that
+    /// takes as many arguments as an earlier method of its name.
+    fn check_methods(
+        &mut self,
+        methods: impl Iterator<Item = ast::FuncStmt>,
+    ) -> Vec<ast::FuncStmt> {
+        let mut kept = Vec::new();
+        let mut seen: Vec<(Method<'c>, TextRange)> = Vec::new();
+        for decl in methods {
+            // `convert_method` reports a missing name.
+            if let Some(name) = self.read_ident(decl.name()) {
+                let method = Method {
+                    name,
+                    arity: decl.params().count(),
+                };
+
+                if let Some(&(_, other)) = seen.iter().find(|(earlier, _)| *earlier == method) {
+                    let message = format!(
+                        "the method `{name}` with {} parameter(s) is already defined",
+                        method.arity
+                    );
+                    self.report_duplicate(&decl, &message, other);
+                    continue;
+                }
+
+                seen.push((method, decl.syntax().text_range()));
+            }
+
+            kept.push(decl);
+        }
+
+        kept
     }
 
     /// `!yzl.error` for an annotation that names no type, so inference takes
@@ -1062,21 +1177,42 @@ impl<'c> AstToYzl<'c, '_> {
             .expect("a duplicate is checked against a bound name")
             .text_range;
 
-        let other = self.text_at_range(text_range);
+        self.report_duplicate(
+            node,
+            &format!("the {what} `{name}` is already defined"),
+            text_range,
+        );
+    }
+
+    fn report_duplicate(&mut self, node: &impl AstNode, message: &str, other: TextRange) {
+        let other = self.text_at_range(other);
         let diagnostic = self
-            .error_at(
-                node.syntax().text_range(),
-                &format!("the {what} `{name}` is already defined"),
-            )
+            .error_at(node.syntax().text_range(), message)
             .note(format!("also declared at {other}"));
 
         self.diagnostics.emit(diagnostic);
     }
 
+    /// The symbol a function is built under. A trait or an implementation
+    /// is a symbol table of its own, so a method keeps its bare name, with
+    /// its parameter count when its trait overloads it.
+    fn symbol_in(&self, site: Site<'_, 'c>, name: &'c str, arity: usize) -> &'c str {
+        match site {
+            Site::AtModule => self
+                .symbols
+                .function_symbol(self.symbols.module().declares(name), arity),
+            Site::InTrait(methods) | Site::InImpl(methods) => {
+                let overloads = methods.iter().filter(|method| method.name == name);
+                self.symbols
+                    .overload_symbol(name, arity, overloads.count() > 1)
+            }
+        }
+    }
+
     fn is_bound(&self, node: &impl AstNode, name: &str) -> bool {
         self.symbols
             .binding(name)
-            .is_some_and(|binding| binding.text_range == node.syntax().text_range())
+            .is_some_and(|binding| binding.is_declared_at(node.syntax().text_range()))
     }
 }
 
@@ -1306,6 +1442,122 @@ external def upper(s: str) -> str
               = note: also declared at test.yz:1:1
         "]]
         .assert_eq(&reported("struct Row { a: int64 }\n\ntable Row = Row\n"));
+    }
+
+    #[test]
+    fn overloads_are_told_apart_by_their_parameter_count() {
+        expect![[r#"
+            module {
+              yzl.fn @f.1 params ["x"] (!yz.int64) -> !yz.int64 {
+              ^bb0(%arg0: !yzl.unresolved):
+                %2 = yzl.local "x" param
+                yzl.store %2, %arg0 : !yzl.unresolved
+                %3 = yzl.load %2 : !yzl.unresolved
+                yzl.return %3 : !yzl.unresolved
+              } {sym_visibility = "private"}
+              yzl.fn @f.2 params ["x", "y"] (!yz.int64, !yz.int64) -> !yz.int64 {
+              ^bb0(%arg0: !yzl.unresolved, %arg1: !yzl.unresolved):
+                %2 = yzl.local "x" param
+                yzl.store %2, %arg0 : !yzl.unresolved
+                %3 = yzl.local "y" param
+                yzl.store %3, %arg1 : !yzl.unresolved
+                %4 = yzl.load %2 : !yzl.unresolved
+                %5 = yzl.load %3 : !yzl.unresolved
+                %6 = yz.add %4, %5 : !yzl.unresolved, !yzl.unresolved -> !yzl.unresolved
+                yzl.return %6 : !yzl.unresolved
+              } {sym_visibility = "private"}
+              yzl.struct @Row ["a"] : [!yz.int64] {sym_visibility = "private"}
+              yzl.table @t of @Row {sym_visibility = "private"}
+              %0 = yzl.from @t
+              %1 = yzl.select %0 as ["one", "two"] {
+              ^bb0(%arg0: !yzl.unresolved):
+                %2 = yzl.call @f.1(%arg0) : (!yzl.unresolved) -> !yzl.unresolved {callee_source = "fn"}
+                %3 = yzl.call @f.2(%arg0, %arg0) : (!yzl.unresolved, !yzl.unresolved) -> !yzl.unresolved {callee_source = "fn"}
+                yzl.yield %2, %3 : !yzl.unresolved, !yzl.unresolved
+              }
+              yzl.output %1
+            }
+        "#]].assert_eq(&lowered(
+            "def f(x: int64) -> int64 { return x }\ndef f(x: int64, y: int64) -> int64 { return x + y }\n\nstruct Row { a: int64 }\ntable t = Row\n\nfrom t |> select f(a) as one, f(a, a) as two\n",
+        ));
+    }
+
+    #[test]
+    fn an_overload_with_the_same_parameter_count_is_reported() {
+        expect![[r"
+            error: the function `f` with 1 parameter(s) is already defined
+             --> test.yz:2:1
+              |
+            2 | def f(y: int64) -> int64 { return y }
+              | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+              = note: also declared at test.yz:1:1
+        "]]
+        .assert_eq(&reported(
+            "def f(x: int64) -> int64 { return x }\ndef f(y: int64) -> int64 { return y }\n",
+        ));
+    }
+
+    #[test]
+    fn every_overload_has_the_same_kind() {
+        expect![[r"
+            error: every overload of `f` must be a scalar function
+             --> test.yz:2:1
+              |
+            2 | agg def f(x: int64, y: int64) -> int64 { return x }
+              | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+              = note: also declared at test.yz:1:1
+        "]].assert_eq(&reported(
+            "def f(x: int64) -> int64 { return x }\nagg def f(x: int64, y: int64) -> int64 { return x }\n",
+        ));
+    }
+
+    #[test]
+    fn a_trait_method_may_overload() {
+        expect![[r#"
+            module {
+              yzl.trait @Round {
+                yzl.fn @round.1 generics ["Self"] params ["x"] (!yzl.param<"Self">) -> !yzl.param<"Self"> {
+                }
+                yzl.fn @round.2 generics ["Self"] params ["x", "digits"] (!yzl.param<"Self">, !yz.int64) -> !yzl.param<"Self"> {
+                }
+              } {sym_visibility = "private"}
+              yzl.impl @Round for @int64 {
+                yzl.fn @round.1 generics ["Self"] params ["x"] (!yz.int64) -> !yz.int64 {
+                ^bb0(%arg0: !yzl.unresolved):
+                  %0 = yzl.local "x" param
+                  yzl.store %0, %arg0 : !yzl.unresolved
+                  %1 = yzl.load %0 : !yzl.unresolved
+                  yzl.return %1 : !yzl.unresolved
+                }
+                yzl.fn @round.2 generics ["Self"] params ["x", "digits"] (!yz.int64, !yz.int64) -> !yz.int64 {
+                ^bb0(%arg0: !yzl.unresolved, %arg1: !yzl.unresolved):
+                  %0 = yzl.local "x" param
+                  yzl.store %0, %arg0 : !yzl.unresolved
+                  %1 = yzl.local "digits" param
+                  yzl.store %1, %arg1 : !yzl.unresolved
+                  %2 = yzl.load %0 : !yzl.unresolved
+                  yzl.return %2 : !yzl.unresolved
+                }
+              }
+            }
+        "#]].assert_eq(&lowered(
+            "trait Round {\n    def round(x: Self) -> Self\n    def round(x: Self, digits: int64) -> Self\n}\n\nimpl Round for int64 {\n    def round(x: int64) -> int64 { return x }\n    def round(x: int64, digits: int64) -> int64 { return x }\n}\n",
+        ));
+    }
+
+    #[test]
+    fn a_method_with_the_same_parameter_count_is_reported() {
+        expect![[r"
+            error: the method `round` with 1 parameter(s) is already defined
+             --> test.yz:3:5
+              |
+            3 |     def round(y: Self) -> Self
+              |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+              = note: also declared at test.yz:2:5
+        "]]
+        .assert_eq(&reported(
+            "trait Round {\n    def round(x: Self) -> Self\n    def round(y: Self) -> Self\n}\n",
+        ));
     }
 
     #[test]

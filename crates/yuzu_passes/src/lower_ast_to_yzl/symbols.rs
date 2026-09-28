@@ -177,14 +177,15 @@ pub(super) enum BindingKind<'c> {
     Relation {
         row: Row<'c>,
     },
+    /// Every overload has the same kind, and no two take the same number
+    /// of arguments.
     Func {
-        source: CalleeSource,
         kind: FunctionKind,
-        arity: usize,
+        overloads: Vec<Overload>,
     },
     /// The methods are not names of their own: dispatch is not written yet.
     Trait {
-        methods: Vec<&'c str>,
+        methods: Vec<Method<'c>>,
     },
     /// A `let` bound to a value; the inliner expands it where it is used.
     Let,
@@ -200,6 +201,19 @@ pub(super) enum BindingKind<'c> {
     Import {
         from: Declared<'c>,
     },
+}
+
+impl Binding<'_> {
+    /// Whether the declaration at a range is the one bound here, or one of
+    /// its overloads.
+    pub(super) fn is_declared_at(&self, text_range: TextRange) -> bool {
+        match &self.kind {
+            BindingKind::Func { overloads, .. } => overloads
+                .iter()
+                .any(|overload| overload.text_range == text_range),
+            _ => self.text_range == text_range,
+        }
+    }
 }
 
 impl BindingKind<'_> {
@@ -237,13 +251,37 @@ pub(super) enum FunctionKind {
     Aggregate,
 }
 
+impl FunctionKind {
+    /// What a diagnostic calls a function of this kind.
+    pub(super) fn name(self) -> &'static str {
+        match self {
+            FunctionKind::Scalar => "scalar function",
+            FunctionKind::Aggregate => "aggregate function",
+        }
+    }
+}
+
+/// One declaration of a function name, told apart by its parameter count.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) struct Overload {
+    pub(super) source: CalleeSource,
+    pub(super) arity: usize,
+    pub(super) text_range: TextRange,
+    pub(super) visibility: Visibility,
+}
+
+/// A method a trait declares. Methods may overload by parameter count.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) struct Method<'c> {
+    pub(super) name: &'c str,
+    pub(super) arity: usize,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct Callable<'c> {
     pub(super) symbol: &'c str,
     pub(super) source: CalleeSource,
     pub(super) kind: FunctionKind,
-    pub(super) min_args: usize,
-    pub(super) max_args: usize,
 }
 
 impl<'c> Callable<'c> {
@@ -252,8 +290,6 @@ impl<'c> Callable<'c> {
             symbol,
             source: CalleeSource::Const,
             kind: FunctionKind::Scalar,
-            min_args: 0,
-            max_args: 0,
         }
     }
 }
@@ -380,6 +416,32 @@ impl<'c> SymbolTable<'c> {
         }
     }
 
+    /// The symbol of one declaration under a name that may be overloaded.
+    /// MLIR has one symbol per name, so an overloaded one adds its
+    /// parameter count; [`crate::written_name`] removes it again.
+    pub(super) fn overload_symbol(
+        &self,
+        base: &'c str,
+        arity: usize,
+        is_overloaded: bool,
+    ) -> &'c str {
+        if is_overloaded {
+            self.intern(&format!("{base}.{arity}"))
+        } else {
+            base
+        }
+    }
+
+    /// The symbol a function declared at a place is built under, for the
+    /// overload with `arity` parameters.
+    pub(super) fn function_symbol(&self, at: Declared<'c>, arity: usize) -> &'c str {
+        let is_overloaded = matches!(
+            self.find_in(at).map(|(_, binding)| &binding.kind),
+            Some(BindingKind::Func { overloads, .. }) if overloads.len() > 1
+        );
+        self.overload_symbol(self.symbol(at), arity, is_overloaded)
+    }
+
     /// The symbol a reference names, recorded as a use.
     fn refer(&mut self, at: Declared<'c>) -> &'c str {
         self.used.push(at);
@@ -394,7 +456,9 @@ impl<'c> SymbolTable<'c> {
             module: ModulePath::from_path(self.intern(operator.module)),
             name: self.intern(operator.name),
         };
-        let _ = self.callable_in(at);
+        if let Some((at, _)) = self.find_in(at) {
+            self.used.push(at);
+        }
     }
 
     /// The declarations references have named since the last call.
@@ -462,6 +526,25 @@ impl<'c> SymbolTable<'c> {
             .insert(name, binding);
     }
 
+    /// Adds an overload to a function this module declares. The name is
+    /// public once any overload of it is.
+    pub(super) fn add_overload(&mut self, name: &str, overload: Overload) {
+        let binding = self
+            .modules
+            .get_mut(&self.module)
+            .and_then(|declared| declared.get_mut(name))
+            .unwrap_or_else(|| panic!("`{name}` is bound before an overload is added to it"));
+
+        let BindingKind::Func { overloads, .. } = &mut binding.kind else {
+            panic!("`{name}` is a {}, not a function", binding.kind.name());
+        };
+
+        overloads.push(overload);
+        if overload.visibility == Visibility::Public {
+            binding.visibility = Visibility::Public;
+        }
+    }
+
     /// What this file holds under a name, an import left as it is.
     pub(super) fn binding(&self, name: &str) -> Option<&Binding<'c>> {
         self.declared_in(self.module, name)
@@ -519,7 +602,8 @@ impl<'c> SymbolTable<'c> {
             .any(|declared| {
                 matches!(
                     self.find(declared).map(|(_, binding)| &binding.kind),
-                    Some(BindingKind::Trait { methods }) if methods.contains(&name)
+                    Some(BindingKind::Trait { methods })
+                        if methods.iter().any(|method| method.name == name)
                 )
             })
     }
@@ -571,64 +655,91 @@ impl<'c> SymbolTable<'c> {
         Some((self.refer(at), row))
     }
 
+    /// What a call names with `given` arguments: a `let`, the overload of
+    /// a function that takes that many, or a builtin.
     pub(super) fn callable(
         &mut self,
         name: &str,
+        given: usize,
         registry: &dyn FunctionRegistry,
     ) -> Option<Callable<'c>> {
-        if let Some((at, binding)) = self.find(name)
-            && matches!(binding.kind, BindingKind::Let)
-        {
+        let Some((at, binding)) = self.find(name) else {
+            return builtin(name, given, registry);
+        };
+
+        if matches!(binding.kind, BindingKind::Let) {
             return Some(Callable::constant(self.refer(at)));
         }
 
-        self.operator(name, registry)
+        self.callable_in(at, given)
     }
 
-    /// The function declared at a place in another module, as a call names it.
-    pub(super) fn callable_in(&mut self, at: Declared<'c>) -> Option<Callable<'c>> {
+    /// The overload of the function declared at a place that takes `given`
+    /// arguments. A private overload is seen only in its own module.
+    pub(super) fn callable_in(&mut self, at: Declared<'c>, given: usize) -> Option<Callable<'c>> {
         let (at, binding) = self.find_in(at)?;
-        let BindingKind::Func {
-            source,
-            kind,
-            arity,
-        } = binding.kind
-        else {
+        let BindingKind::Func { kind, overloads } = &binding.kind else {
             return None;
         };
 
+        let kind = *kind;
+        let is_overloaded = overloads.len() > 1;
+        let overload = *self
+            .visible(at, overloads)
+            .find(|overload| overload.arity == given)?;
+
+        let symbol = self.refer(at);
         Some(Callable {
-            symbol: self.refer(at),
-            source,
+            symbol: self.overload_symbol(symbol, given, is_overloaded),
+            source: overload.source,
             kind,
-            min_args: arity,
-            max_args: arity,
         })
     }
 
-    /// Like `callable`, except a `let` sharing the name does not stand in.
-    pub(super) fn operator(
-        &mut self,
+    /// The argument counts a function's visible overloads take, least
+    /// first, when a name is a function.
+    pub(super) fn arities(
+        &self,
         name: &str,
         registry: &dyn FunctionRegistry,
-    ) -> Option<Callable<'c>> {
-        if let Some((at, binding)) = self.find(name)
-            && let BindingKind::Func {
-                source,
-                kind,
-                arity,
-            } = binding.kind
-        {
-            return Some(Callable {
-                symbol: self.refer(at),
-                source,
-                kind,
-                min_args: arity,
-                max_args: arity,
-            });
+    ) -> Option<Vec<usize>> {
+        match self.find(name) {
+            Some((at, _)) => self.arities_in(at),
+            None => registry
+                .entries()
+                .iter()
+                .find(|entry| entry.name == name)
+                .map(|entry| (entry.min_args..=entry.max_args).collect()),
         }
+    }
 
-        builtin(name, registry)
+    /// The argument counts the visible overloads of the function declared
+    /// at a place take, least first.
+    pub(super) fn arities_in(&self, at: Declared<'c>) -> Option<Vec<usize>> {
+        let (at, binding) = self.find_in(at)?;
+        let BindingKind::Func { overloads, .. } = &binding.kind else {
+            return None;
+        };
+
+        let mut arities: Vec<usize> = self
+            .visible(at, overloads)
+            .map(|overload| overload.arity)
+            .collect();
+        arities.sort_unstable();
+        Some(arities)
+    }
+
+    /// The overloads of a function declared at a place that this module
+    /// can call.
+    fn visible<'o>(
+        &self,
+        at: Declared<'c>,
+        overloads: &'o [Overload],
+    ) -> impl Iterator<Item = &'o Overload> + use<'o, 'c> {
+        let is_home = at.module == self.module;
+        overloads
+            .iter()
+            .filter(move |overload| is_home || overload.visibility == Visibility::Public)
     }
 
     // --- scopes ---
@@ -813,8 +924,11 @@ impl<'c> SymbolTable<'c> {
     }
 }
 
-fn builtin<'c>(name: &str, registry: &dyn FunctionRegistry) -> Option<Callable<'c>> {
-    let entry = registry.entries().iter().find(|entry| entry.name == name)?;
+fn builtin<'c>(name: &str, given: usize, registry: &dyn FunctionRegistry) -> Option<Callable<'c>> {
+    let entry = registry
+        .entries()
+        .iter()
+        .find(|entry| entry.name == name && (entry.min_args..=entry.max_args).contains(&given))?;
     Some(Callable {
         symbol: entry.name,
         source: CalleeSource::Builtin,
@@ -822,8 +936,6 @@ fn builtin<'c>(name: &str, registry: &dyn FunctionRegistry) -> Option<Callable<'
             yuzu_types::BuiltinFunc::Scalar(_) => FunctionKind::Scalar,
             yuzu_types::BuiltinFunc::Aggregate(_) => FunctionKind::Aggregate,
         },
-        min_args: entry.min_args,
-        max_args: entry.max_args,
     })
 }
 
@@ -834,8 +946,8 @@ mod tests {
     use yuzu_mlir::attributes::CalleeSource;
 
     use super::{
-        Binding, BindingKind, Callable, ColumnLookup, FunctionKind, Lookup, ModulePath, Reference,
-        Row, SymbolTable,
+        Binding, BindingKind, Callable, ColumnLookup, FunctionKind, Lookup, Method, ModulePath,
+        Overload, Reference, Row, SymbolTable,
     };
 
     fn table() -> SymbolTable<'static> {
@@ -880,6 +992,26 @@ mod tests {
             name,
             Binding {
                 kind: BindingKind::Let,
+                text_range: TextRange::default(),
+                visibility: Visibility::Private,
+            },
+        );
+    }
+
+    fn bind_fn(symbols: &mut SymbolTable<'static>, name: &'static str, arities: &[usize]) {
+        let overload = |arity| Overload {
+            source: CalleeSource::Fn,
+            arity,
+            text_range: TextRange::default(),
+            visibility: Visibility::Private,
+        };
+        symbols.bind(
+            name,
+            Binding {
+                kind: BindingKind::Func {
+                    kind: FunctionKind::Scalar,
+                    overloads: arities.iter().copied().map(overload).collect(),
+                },
                 text_range: TextRange::default(),
                 visibility: Visibility::Private,
             },
@@ -1000,30 +1132,22 @@ mod tests {
             "Show",
             Binding {
                 kind: BindingKind::Trait {
-                    methods: vec!["show"],
+                    methods: vec![Method {
+                        name: "show",
+                        arity: 1,
+                    }],
                 },
                 text_range: TextRange::default(),
                 visibility: Visibility::Private,
             },
         );
-        symbols.bind(
-            "f",
-            Binding {
-                kind: BindingKind::Func {
-                    source: CalleeSource::Fn,
-                    kind: FunctionKind::Scalar,
-                    arity: 0,
-                },
-                text_range: TextRange::default(),
-                visibility: Visibility::Private,
-            },
-        );
+        bind_fn(&mut symbols, "f", &[0]);
 
         assert_eq!(symbols.struct_symbol("Row"), Some("helpers.Row"));
         assert_eq!(symbols.trait_symbol("Show"), Some("helpers.Show"));
         assert_eq!(
             symbols
-                .callable("f", &yuzu_types::Builtins)
+                .callable("f", 0, &yuzu_types::Builtins)
                 .map(|callable| callable.symbol),
             Some("helpers.f")
         );
@@ -1035,23 +1159,15 @@ mod tests {
     fn callables() {
         let mut symbols = symbols();
         bind_let(&mut symbols, "cap");
-        symbols.bind(
-            "f",
-            Binding {
-                kind: BindingKind::Func {
-                    source: CalleeSource::Fn,
-                    kind: FunctionKind::Scalar,
-                    arity: 2,
-                },
-                text_range: TextRange::default(),
-                visibility: Visibility::Private,
-            },
-        );
+        bind_fn(&mut symbols, "f", &[2]);
         symbols.bind(
             "Zero",
             Binding {
                 kind: BindingKind::Trait {
-                    methods: vec!["zero"],
+                    methods: vec![Method {
+                        name: "zero",
+                        arity: 0,
+                    }],
                 },
                 text_range: TextRange::default(),
                 visibility: Visibility::Private,
@@ -1061,31 +1177,50 @@ mod tests {
         let registry = &yuzu_types::Builtins;
         assert_eq!(
             symbols
-                .callable("cap", registry)
+                .callable("cap", 0, registry)
                 .map(|callable| callable.source),
             Some(CalleeSource::Const)
         );
         assert_eq!(
-            symbols.callable("f", registry),
+            symbols.callable("f", 2, registry),
             Some(Callable {
                 symbol: "f",
                 source: CalleeSource::Fn,
                 kind: FunctionKind::Scalar,
-                min_args: 2,
-                max_args: 2,
             })
         );
+        assert_eq!(symbols.callable("f", 1, registry), None);
+        assert_eq!(symbols.arities("f", registry), Some(vec![2]));
         assert_eq!(
             symbols
-                .callable("count", registry)
+                .callable("count", 1, registry)
                 .map(|callable| callable.source),
             Some(CalleeSource::Builtin)
         );
 
-        assert_eq!(symbols.callable("zero", registry), None);
+        assert_eq!(symbols.callable("zero", 0, registry), None);
         assert!(symbols.is_method("zero"));
-        assert_eq!(symbols.callable("Zero", registry), None);
+        assert_eq!(symbols.callable("Zero", 0, registry), None);
         assert!(!symbols.is_method("Zero"));
+    }
+
+    #[test]
+    fn a_call_picks_the_overload_that_takes_its_arguments() {
+        let mut symbols = table();
+        symbols.enter_module(ModulePath::from_path("stats"));
+        bind_fn(&mut symbols, "spread", &[2, 1]);
+        let registry = &yuzu_types::Builtins;
+
+        let symbol = |symbols: &mut SymbolTable<'static>, given| {
+            symbols
+                .callable("spread", given, registry)
+                .map(|callable| callable.symbol)
+        };
+        assert_eq!(symbol(&mut symbols, 1), Some("stats.spread.1"));
+        assert_eq!(symbol(&mut symbols, 2), Some("stats.spread.2"));
+        assert_eq!(symbol(&mut symbols, 0), None);
+        assert_eq!(symbols.arities("spread", registry), Some(vec![1, 2]));
+        assert_eq!(crate::written_name("stats.spread.2"), "spread");
     }
 
     #[test]

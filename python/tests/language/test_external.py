@@ -44,6 +44,17 @@ def test_external_scalar_in_a_select():
     assert rows(query) == [(1,)]
 
 
+def test_external_overloads():
+    query = """
+        external def round(x: float64) -> float64
+        external def round(x: float64, digits: int64) -> float64
+        from employees
+        |> where name == "alice"
+        |> select round(2.567) as whole, round(2.567, 2) as cents
+    """
+    assert rows(query) == [(3.0, 2.57)]
+
+
 def test_external_with_a_body_is_rejected():
     query = """
         external def nope(x: int64) -> int64 { return x }
