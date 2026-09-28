@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use text_size::TextSize;
 
-use crate::{Analysis, AnalysisHost, Change, Checked, FileId};
+use crate::{Analysis, AnalysisHost, Change, Checked, FileId, FilePosition};
 
 pub(crate) const FILE: FileId = FileId(0);
 
@@ -50,22 +50,30 @@ pub(crate) fn cursor(fixture: &str) -> (String, TextSize) {
     (fixture.replacen("$0", "", 1), offset)
 }
 
+/// A position in the file a test checks.
+pub(crate) fn at(offset: TextSize) -> FilePosition {
+    FilePosition {
+        file_id: FILE,
+        offset,
+    }
+}
+
 /// `main.yz` checked with `text` open, beside `files` on disk.
-pub(crate) fn checked(files: &[(&str, &str)], text: &str) -> (Tree, PathBuf, Checked) {
+pub(crate) fn checked(files: &[(&str, &str)], text: &str) -> (Tree, Checked) {
     let tree = Tree::new(files);
     let main = tree.0.join("main.yz");
     let mut change = Change::default();
     change.set_file(FILE, Some(text.into()));
-    change.set_path(FILE, Some(main.clone()));
+    change.set_path(FILE, Some(main));
     let mut host = AnalysisHost::default();
     host.apply_change(change);
     let checked = host.analysis().check(FILE).expect("main.yz has a path");
-    (tree, main, checked)
+    (tree, checked)
 }
 
 /// A range as `file:text`, for a test to read.
 pub(crate) fn render(checked: &Checked, path: &Path, range: text_size::TextRange) -> String {
     let file = path.file_name().unwrap().to_string_lossy();
-    let text = checked.file_text(path).unwrap();
+    let text = checked.path_text(path).unwrap();
     format!("{file}:{}", &text[range])
 }

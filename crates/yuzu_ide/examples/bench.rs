@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use text_size::TextSize;
+use text_size::{TextRange, TextSize};
 use yuzu_ide::{AnalysisHost, Change, Checked, FileId, FilePosition};
 
 const FILE: FileId = FileId(0);
@@ -114,24 +114,26 @@ fn main() {
 
         println!(" requests (on a finished check)");
         let checked: Checked = analysis.check(FILE).expect("the file has a path");
-        let use_of_y = offset_of(&text, "return y") + TextSize::from(7);
-        let call = offset_of(&text, "select f0") + TextSize::from(7);
-        report("hover", time(200, || drop(checked.hover(&path, use_of_y))));
+        let at = |offset| FilePosition {
+            file_id: FILE,
+            offset,
+        };
+        let use_of_y = at(offset_of(&text, "return y") + TextSize::from(7));
+        let call = at(offset_of(&text, "select f0") + TextSize::from(7));
+        let whole = TextRange::up_to(TextSize::of(text.as_str()));
+        report("hover", time(200, || drop(checked.hover(use_of_y))));
         report(
             "go to definition",
-            time(200, || drop(checked.goto_definition(&path, call))),
+            time(200, || drop(checked.goto_definition(call))),
         );
-        report(
-            "references",
-            time(200, || drop(checked.references(&path, call))),
-        );
+        report("references", time(200, || drop(checked.references(call))));
         report(
             "highlight uses (whole file)",
-            time(50, || drop(checked.highlight_uses(&path))),
+            time(50, || drop(checked.highlight_uses(FILE))),
         );
         report(
             "inlay hints (whole file)",
-            time(50, || drop(checked.inlay_hints(&path))),
+            time(50, || drop(checked.inlay_hints(FILE, whole))),
         );
         println!();
     }

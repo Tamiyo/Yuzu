@@ -26,7 +26,7 @@ pub use file_structure::{StructureNode, StructureNodeKind};
 pub use folding_ranges::{Fold, FoldKind};
 pub use hover::HoverResult;
 pub use inlay_hints::InlayHint;
-pub use navigation::FileRange;
+pub use navigation::{FileRange, References};
 pub use syntax_highlighting::{Highlight, HlMod, HlMods, HlRange, HlTag};
 
 /// A file the host holds, by the number the server gave it.

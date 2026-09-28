@@ -3,23 +3,23 @@
 //! into the compiler.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Mutex, PoisonError};
 
 use rustc_hash::FxHashMap;
-use text_size::{TextRange, TextSize};
+use text_size::TextRange;
 use yuzu_diagnostics::diagnostics::{Diagnostic, Span};
 use yuzu_diagnostics::source_map::SourceId;
 use yuzu_driver::index::Index;
-use yuzu_driver::modules::{FsResolver, Location, ModuleResolver, ModuleSource, locate};
+use yuzu_driver::modules::{FsResolver, Location, ModuleResolver, ModuleSource};
 use yuzu_driver::{Focus, stdlib};
 use yuzu_syntax::{GreenNode, SyntaxNode};
 
-use crate::HlRange;
-use crate::analysis::ParsedFile;
+use crate::analysis::{ParsedFile, SavedFile};
 use crate::hover::HoverResult;
 use crate::inlay_hints::InlayHint;
-use crate::names::{self, Resolution};
-use crate::navigation::FileRange;
+use crate::names::{self, Resolution, Trees};
+use crate::navigation::{FileRange, References};
+use crate::{FileId, FilePosition, HlRange};
 use crate::{hover, inlay_hints, navigation, syntax_highlighting};
 
 /// What checking a file's program found. Its names are resolved once, when
@@ -27,22 +27,36 @@ use crate::{hover, inlay_hints, navigation, syntax_highlighting};
 #[derive(Debug)]
 pub struct Checked {
     inner: yuzu_driver::Checked,
+    /// The source each open document was read as.
+    files: FxHashMap<FileId, SourceId>,
+    trees: Trees,
     resolutions: Vec<Resolution>,
     /// Each type the index holds, by the span it belongs to.
-    types: FxHashMap<Span, String>,
+    types: FxHashMap<Span, usize>,
 }
 
 impl Checked {
-    fn new(inner: yuzu_driver::Checked) -> Self {
-        let resolutions = names::resolutions(&inner);
+    fn new(inner: yuzu_driver::Checked, documents: &[Document<'_>]) -> Self {
+        let files = documents
+            .iter()
+            .filter_map(|document| {
+                let source = inner.sources.id(&document.saved.path.to_string_lossy())?;
+                Some((document.file_id, source))
+            })
+            .collect();
+        let trees: Trees = inner.syntax.iter().cloned().collect();
+        let resolutions = names::resolutions(&inner.index.references, &trees);
         let types = inner
             .index
             .types
             .iter()
-            .map(|typed| (typed.at, typed.ty.clone()))
+            .enumerate()
+            .map(|(at, typed)| (typed.at, at))
             .collect();
         Checked {
             inner,
+            files,
+            trees,
             resolutions,
             types,
         }
@@ -68,53 +82,60 @@ impl Checked {
         self.inner.sources.text(source)
     }
 
-    /// The text of a file as this check read it.
+    /// An open document's text, as the check read it.
     #[must_use]
-    pub fn file_text(&self, file: &Path) -> Option<&str> {
-        Some(self.text(self.source_of(file)?))
+    pub fn file_text(&self, file_id: FileId) -> Option<&str> {
+        Some(self.text(self.source(file_id)?))
+    }
+
+    /// The text of a file as this check read it, by its path.
+    #[must_use]
+    pub fn path_text(&self, path: &Path) -> Option<&str> {
+        let source = self.inner.sources.id(&path.to_string_lossy())?;
+        Some(self.text(source))
     }
 
     /// Where the name at a position is declared.
     #[must_use]
-    pub fn goto_definition(&self, file: &Path, offset: TextSize) -> Option<FileRange> {
-        navigation::goto_definition(self, self.source_of(file)?, offset)
+    pub fn goto_definition(&self, position: FilePosition) -> Option<FileRange> {
+        navigation::goto_definition(self, self.source(position.file_id)?, position.offset)
     }
 
     /// The declaration of the name at a position, and each use of it.
     #[must_use]
-    pub fn references(&self, file: &Path, offset: TextSize) -> Vec<FileRange> {
-        self.source_of(file)
-            .map(|source| navigation::references(self, source, offset))
+    pub fn references(&self, position: FilePosition) -> References {
+        self.source(position.file_id)
+            .map(|source| navigation::references(self, source, position.offset))
             .unwrap_or_default()
     }
 
     /// The declaration and uses of the name at a position, in its own file.
     #[must_use]
-    pub fn highlight(&self, file: &Path, offset: TextSize) -> Vec<TextRange> {
-        self.source_of(file)
-            .map(|source| navigation::highlight(self, source, offset))
+    pub fn highlight_related(&self, position: FilePosition) -> Vec<TextRange> {
+        self.source(position.file_id)
+            .map(|source| navigation::highlight_related(self, source, position.offset))
             .unwrap_or_default()
     }
 
     /// What hovering at a position shows.
     #[must_use]
-    pub fn hover(&self, file: &Path, offset: TextSize) -> Option<HoverResult> {
-        hover::hover(self, self.source_of(file)?, offset)
+    pub fn hover(&self, position: FilePosition) -> Option<HoverResult> {
+        hover::hover(self, self.source(position.file_id)?, position.offset)
     }
 
     /// Each resolved use in a file, highlighted as its declaration is.
     #[must_use]
-    pub fn highlight_uses(&self, file: &Path) -> Vec<HlRange> {
-        self.source_of(file)
+    pub fn highlight_uses(&self, file_id: FileId) -> Vec<HlRange> {
+        self.source(file_id)
             .map(|source| syntax_highlighting::highlight_uses(self, source))
             .unwrap_or_default()
     }
 
-    /// The type of each `let` in a file that does not write one.
+    /// The type of each `let` in `range` of a file that does not write one.
     #[must_use]
-    pub fn inlay_hints(&self, file: &Path) -> Vec<InlayHint> {
-        self.source_of(file)
-            .map(|source| inlay_hints::inlay_hints(self, source))
+    pub fn inlay_hints(&self, file_id: FileId, range: TextRange) -> Vec<InlayHint> {
+        self.source(file_id)
+            .map(|source| inlay_hints::inlay_hints(self, source, range))
             .unwrap_or_default()
     }
 
@@ -126,31 +147,44 @@ impl Checked {
         &self.resolutions
     }
 
+    /// The name a resolution resolves, as its declaration spells it.
+    pub(crate) fn name(&self, resolution: &Resolution) -> &str {
+        &self.inner.index.references[resolution.reference].name
+    }
+
     /// The tree a source was lowered from.
     pub(crate) fn syntax(&self, source: SourceId) -> Option<SyntaxNode> {
-        names::tree(&self.inner, source)
+        self.trees.get(&source).cloned().map(SyntaxNode::new_root)
     }
 
     /// The type inference gave the syntax at a span, when it gave one.
     pub(crate) fn type_at(&self, at: Span) -> Option<&str> {
-        self.types.get(&at).map(String::as_str)
+        let typed = &self.inner.index.types[*self.types.get(&at)?];
+        Some(&typed.ty)
     }
 
-    fn source_of(&self, file: &Path) -> Option<SourceId> {
-        self.inner.sources.id(&file.to_string_lossy())
+    fn source(&self, file_id: FileId) -> Option<SourceId> {
+        self.files.get(&file_id).copied()
     }
 }
 
-/// `documents` holds each open file by its path.
+/// An open document with a path, as a check reads it.
+pub(crate) struct Document<'a> {
+    pub(crate) file_id: FileId,
+    pub(crate) saved: &'a SavedFile,
+    pub(crate) parsed: &'a ParsedFile,
+}
+
+/// Checks the program `file` belongs to, reading `documents` before the disk.
 pub(crate) fn check(
-    file: &Path,
+    saved: &SavedFile,
     parsed: &ParsedFile,
-    documents: &FxHashMap<PathBuf, Arc<ParsedFile>>,
+    documents: &[Document<'_>],
     disk: &DiskCache,
 ) -> Checked {
-    let overlay = Overlay::new(file, documents, disk);
-    let name = file.to_string_lossy();
-    let focus = match &overlay.location {
+    let overlay = Overlay::new(saved, documents, disk);
+    let name = saved.path.to_string_lossy();
+    let focus = match &saved.location {
         Location::Entry { .. } => Focus::Entry {
             name: &name,
             source: parsed.text(),
@@ -158,72 +192,99 @@ pub(crate) fn check(
         },
         Location::Module { path, .. } => Focus::Module(path),
     };
-    Checked::new(yuzu_driver::check(focus, &overlay))
+    disk.start_check();
+    let checked = Checked::new(yuzu_driver::check(focus, &overlay), documents);
+    disk.finish_check();
+    checked
 }
+
+/// How many checks a file on disk stays cached without being read.
+const KEEP_UNREAD: u64 = 64;
 
 /// Files read from disk, each parsed once for each text it has had. The
 /// host lives on the main thread and checks run on the checker's, so the
-/// cache is behind a lock.
+/// cache is behind a lock. A file no check has read for [`KEEP_UNREAD`]
+/// checks is dropped.
 #[derive(Debug, Default)]
 pub(crate) struct DiskCache {
-    files: Mutex<FxHashMap<PathBuf, CachedFile>>,
+    state: Mutex<DiskState>,
+}
+
+#[derive(Debug, Default)]
+struct DiskState {
+    /// How many checks have started.
+    checks: u64,
+    files: FxHashMap<PathBuf, CachedFile>,
 }
 
 #[derive(Debug)]
 struct CachedFile {
     text: String,
     syntax: Option<GreenNode>,
+    /// The check that last read the file.
+    read_by: u64,
 }
 
 impl DiskCache {
     /// A file's text, and its tree when that text parses without errors.
     fn read(&self, path: &Path) -> Option<(String, Option<GreenNode>)> {
         let text = std::fs::read_to_string(path).ok()?;
-        // A panic while the lock is held leaves each entry whole, so a
-        // poisoned cache still holds only sound entries.
-        let mut files = self.files.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(cached) = files.get(path)
+        let mut state = self.lock();
+        let check = state.checks;
+        if let Some(cached) = state.files.get_mut(path)
             && cached.text == text
         {
+            cached.read_by = check;
             return Some((text, cached.syntax.clone()));
         }
 
         let (tree, errors) = crate::analysis::parse(&text);
         let syntax = errors.is_empty().then(|| tree.green().into_owned());
-        files.insert(
+        state.files.insert(
             path.to_path_buf(),
             CachedFile {
                 text: text.clone(),
                 syntax: syntax.clone(),
+                read_by: check,
             },
         );
         Some((text, syntax))
+    }
+
+    fn start_check(&self) {
+        self.lock().checks += 1;
+    }
+
+    fn finish_check(&self) {
+        let mut state = self.lock();
+        let oldest = state.checks.saturating_sub(KEEP_UNREAD);
+        state.files.retain(|_, cached| cached.read_by >= oldest);
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, DiskState> {
+        // A panic while the lock is held leaves each entry whole, so a
+        // poisoned cache still holds only sound entries.
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
 /// Modules read from the editor's documents first and the disk second.
 struct Overlay<'d> {
-    location: Location,
     files: FsResolver,
-    documents: &'d FxHashMap<PathBuf, Arc<ParsedFile>>,
+    documents: FxHashMap<&'d Path, &'d ParsedFile>,
     disk: &'d DiskCache,
     /// Open library files, by module path.
-    library: FxHashMap<String, (&'d Path, &'d ParsedFile)>,
+    library: FxHashMap<&'d str, (&'d Path, &'d ParsedFile)>,
     /// Where the library's files are, when the file checked is one of them.
     library_files: Option<FsResolver>,
 }
 
 impl<'d> Overlay<'d> {
-    fn new(
-        file: &Path,
-        documents: &'d FxHashMap<PathBuf, Arc<ParsedFile>>,
-        disk: &'d DiskCache,
-    ) -> Self {
-        let location = locate(file);
-        let base = match &location {
+    fn new(saved: &SavedFile, documents: &[Document<'d>], disk: &'d DiskCache) -> Self {
+        let base = match &saved.location {
             Location::Entry { base } | Location::Module { base, .. } => base.clone(),
         };
-        let library_files = match &location {
+        let library_files = match &saved.location {
             Location::Module { path, .. } if stdlib::reserves(path) => {
                 Some(FsResolver { base: base.clone() })
             }
@@ -232,18 +293,21 @@ impl<'d> Overlay<'d> {
 
         let library = documents
             .iter()
-            .filter_map(|(path, parsed)| match locate(path) {
-                Location::Module { path: module, .. } if stdlib::reserves(&module) => {
-                    Some((module, (path.as_path(), parsed.as_ref())))
-                }
+            .filter_map(|document| match &document.saved.location {
+                Location::Module { path, .. } if stdlib::reserves(path) => Some((
+                    path.as_str(),
+                    (document.saved.path.as_path(), document.parsed),
+                )),
                 Location::Module { .. } | Location::Entry { .. } => None,
             })
             .collect();
 
         Overlay {
-            location,
             files: FsResolver { base },
-            documents,
+            documents: documents
+                .iter()
+                .map(|document| (document.saved.path.as_path(), document.parsed))
+                .collect(),
             disk,
             library,
             library_files,
@@ -253,7 +317,7 @@ impl<'d> Overlay<'d> {
     /// The first candidate an open document or a file on disk holds.
     fn read(&self, candidates: [PathBuf; 2]) -> Option<ModuleSource> {
         candidates.into_iter().find_map(|file| {
-            let (source, syntax) = match self.documents.get(&file) {
+            let (source, syntax) = match self.documents.get(file.as_path()) {
                 Some(parsed) => (parsed.text().to_owned(), parsed.clean_tree().cloned()),
                 None => self.disk.read(&file)?,
             };
@@ -292,7 +356,7 @@ mod tests {
     use crate::test_support::Tree;
     use crate::{AnalysisHost, Change, FileId};
 
-    fn check(open: &[(&Path, &str)], file: usize, expected: &Expect) {
+    fn check(open: &[(&Path, &str)], expected: &Expect) {
         let mut change = Change::default();
         for (at, (path, text)) in open.iter().enumerate() {
             let file_id = FileId(u32::try_from(at).unwrap());
@@ -302,10 +366,7 @@ mod tests {
         let mut host = AnalysisHost::default();
         host.apply_change(change);
 
-        let checked = host
-            .analysis()
-            .check(FileId(u32::try_from(file).unwrap()))
-            .unwrap();
+        let checked = host.analysis().check(FileId(0)).unwrap();
         let rendered: Vec<String> = checked
             .diagnostics()
             .iter()
@@ -327,7 +388,6 @@ mod tests {
         let main = tree.0.join("main.yz");
         check(
             &[(&main, "import helpers\nlet x: str = 1\n")],
-            0,
             &expect![[r"
                 helpers.yz 17..20 unknown type `i64`
                 main.yz 15..29 expected `str`, found `int64`"]],
@@ -343,7 +403,6 @@ mod tests {
         let util = tree.0.join("app/util.yz");
         check(
             &[(&util, "def unused(x: i64) -> int64 { return 1 }\n")],
-            0,
             &expect!["util.yz 14..17 unknown type `i64`"],
         );
     }
@@ -361,7 +420,6 @@ mod tests {
                 (&main, "import helpers\n"),
                 (&helpers, "pub def two() -> float32 { return 2 }\n"),
             ],
-            0,
             &expect!["helpers.yz 17..24 unknown type `float32`"],
         );
     }
@@ -377,7 +435,6 @@ mod tests {
             .replacen("int64", "i64", 1);
         check(
             &[(&datafusion, &text)],
-            0,
             &expect!["datafusion.yz 74..77 unknown type `i64`"],
         );
     }
@@ -406,5 +463,28 @@ mod tests {
         std::fs::write(&helpers, "pub def = 1\n").unwrap();
         let (_, broken) = cache.read(&helpers).unwrap();
         assert!(broken.is_none(), "a tree with errors is not handed on");
+    }
+
+    #[test]
+    fn a_file_no_check_reads_is_dropped() {
+        let tree = Tree::new(&[("helpers.yz", "pub def two() -> int64 { return 2 }\n")]);
+        let cache = super::DiskCache::default();
+        cache.start_check();
+        cache.read(&tree.0.join("helpers.yz")).unwrap();
+        cache.finish_check();
+
+        for _ in 0..super::KEEP_UNREAD {
+            cache.start_check();
+            cache.finish_check();
+        }
+        assert_eq!(
+            cache.lock().files.len(),
+            1,
+            "a file stays for the kept checks"
+        );
+
+        cache.start_check();
+        cache.finish_check();
+        assert!(cache.lock().files.is_empty(), "then it is dropped");
     }
 }

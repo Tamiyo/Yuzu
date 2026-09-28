@@ -15,6 +15,14 @@ pub struct FileRange {
     pub range: TextRange,
 }
 
+/// A name's declaration and its uses. A declaration or a use in a file with
+/// no path, such as a library module built into the compiler, is left out.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct References {
+    pub declaration: Option<FileRange>,
+    pub uses: Vec<FileRange>,
+}
+
 pub(crate) fn goto_definition(
     checked: &Checked,
     source: SourceId,
@@ -24,20 +32,30 @@ pub(crate) fn goto_definition(
     file_range(checked, resolution.declared)
 }
 
-/// The declaration and each use, the declaration first. A use in a file
-/// with no path, such as a library module built into the compiler, is left
-/// out.
-pub(crate) fn references(checked: &Checked, source: SourceId, offset: TextSize) -> Vec<FileRange> {
-    names(checked, source, offset)
-        .into_iter()
-        .filter_map(|name| file_range(checked, name))
-        .collect()
+pub(crate) fn references(checked: &Checked, source: SourceId, offset: TextSize) -> References {
+    let Some((declared, uses)) = names(checked, source, offset) else {
+        return References::default();
+    };
+    References {
+        declaration: file_range(checked, declared),
+        uses: uses
+            .into_iter()
+            .filter_map(|name| file_range(checked, name))
+            .collect(),
+    }
 }
 
 /// The declaration and uses in the file the position is in.
-pub(crate) fn highlight(checked: &Checked, source: SourceId, offset: TextSize) -> Vec<TextRange> {
-    names(checked, source, offset)
-        .into_iter()
+pub(crate) fn highlight_related(
+    checked: &Checked,
+    source: SourceId,
+    offset: TextSize,
+) -> Vec<TextRange> {
+    let Some((declared, uses)) = names(checked, source, offset) else {
+        return Vec::new();
+    };
+    std::iter::once(declared)
+        .chain(uses)
         .filter(|name| name.source == source)
         .map(|name| name.range)
         .collect()
@@ -61,19 +79,18 @@ pub(crate) fn resolution_at(
         })
 }
 
-fn names(checked: &Checked, source: SourceId, offset: TextSize) -> Vec<Name> {
+/// The declaration of the name at a position, and each of its uses.
+fn names(checked: &Checked, source: SourceId, offset: TextSize) -> Option<(Name, Vec<Name>)> {
     let resolutions = checked.resolutions();
-    let Some(at) = resolution_at(resolutions, source, offset) else {
-        return Vec::new();
-    };
+    let at = resolution_at(resolutions, source, offset)?;
 
-    let mut names = vec![at.declared];
+    let mut uses: Vec<Name> = Vec::new();
     for resolution in resolutions {
-        if resolution.declared == at.declared && !names.contains(&resolution.used) {
-            names.push(resolution.used);
+        if resolution.declared == at.declared && !uses.contains(&resolution.used) {
+            uses.push(resolution.used);
         }
     }
-    names
+    Some((at.declared, uses))
 }
 
 fn file_range(checked: &Checked, name: Name) -> Option<FileRange> {
@@ -89,25 +106,27 @@ mod tests {
 
     use text_size::TextRange;
 
-    use crate::test_support::{checked, cursor, render};
+    use crate::test_support::{at, checked, cursor, render};
 
     const HELPERS: (&str, &str) = ("helpers.yz", "pub def two() -> int64 { return 2 }\n");
 
     fn check_definition(fixture: &str, expected: &Expect) {
         let (text, offset) = cursor(fixture);
-        let (_tree, main, checked) = checked(&[HELPERS], &text);
+        let (_tree, checked) = checked(&[HELPERS], &text);
         let rendered = checked
-            .goto_definition(&main, offset)
+            .goto_definition(at(offset))
             .map(|target| render(&checked, &target.path, target.range));
         expected.assert_debug_eq(&rendered);
     }
 
     fn check_references(fixture: &str, expected: &Expect) {
         let (text, offset) = cursor(fixture);
-        let (_tree, main, checked) = checked(&[HELPERS], &text);
-        let rendered: Vec<String> = checked
-            .references(&main, offset)
+        let (_tree, checked) = checked(&[HELPERS], &text);
+        let references = checked.references(at(offset));
+        let rendered: Vec<String> = references
+            .declaration
             .iter()
+            .chain(&references.uses)
             .map(|found| {
                 format!(
                     "{} {:?}",
@@ -170,10 +189,10 @@ from t |> select double(a) + cap + two() as v
         check_definition(
             &PROGRAM.replacen("+ cap", "+ $0cap", 1),
             &expect![[r#"
-            Some(
-                "main.yz:cap",
-            )
-        "#]],
+                Some(
+                    "main.yz:cap",
+                )
+            "#]],
         );
     }
 
@@ -182,10 +201,10 @@ from t |> select double(a) + cap + two() as v
         check_definition(
             &PROGRAM.replacen("from t", "from $0t", 1),
             &expect![[r#"
-            Some(
-                "main.yz:t",
-            )
-        "#]],
+                Some(
+                    "main.yz:t",
+                )
+            "#]],
         );
     }
 
@@ -228,6 +247,20 @@ from t |> select double(a) + cap + two() as v
     }
 
     #[test]
+    fn a_declaration_in_the_built_in_library_is_left_out() {
+        let (text, offset) = cursor("table t = { a: int64 }\nfrom t |> aggregate s$0um(a) as s\n");
+        let (_tree, checked) = checked(&[], &text);
+        let references = checked.references(at(offset));
+        assert_eq!(references.declaration, None);
+        let uses: Vec<&str> = references
+            .uses
+            .iter()
+            .map(|found| &text[found.range])
+            .collect();
+        assert_eq!(uses, ["sum"]);
+    }
+
+    #[test]
     fn references_start_at_the_declaration() {
         check_references(
             &PROGRAM.replacen("let y = x", "let $0y = x", 1),
@@ -240,9 +273,9 @@ from t |> select double(a) + cap + two() as v
     #[test]
     fn a_parameter_named_like_its_function_goes_to_the_parameter() {
         let (text, offset) = cursor("def f(f: int64) -> int64 {\n    return $0f\n}\n");
-        let (_tree, main, checked) = checked(&[], &text);
+        let (_tree, checked) = checked(&[], &text);
         let target = checked
-            .goto_definition(&main, offset)
+            .goto_definition(at(offset))
             .map(|target| target.range);
         assert_eq!(target, Some(TextRange::new(6.into(), 7.into())));
     }
@@ -250,9 +283,9 @@ from t |> select double(a) + cap + two() as v
     #[test]
     fn highlight_stays_in_the_file() {
         let (text, offset) = cursor(&PROGRAM.replacen("+ cap", "+ $0cap", 1));
-        let (_tree, main, checked) = checked(&[HELPERS], &text);
+        let (_tree, checked) = checked(&[HELPERS], &text);
         let rendered: Vec<&str> = checked
-            .highlight(&main, offset)
+            .highlight_related(at(offset))
             .iter()
             .map(|&range| &text[range])
             .collect();

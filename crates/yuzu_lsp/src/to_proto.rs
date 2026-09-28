@@ -1,12 +1,15 @@
 //! Analysis answers to protocol types. Every offset here comes from the
 //! analysis of the same text the line index was built from.
 
+use std::path::PathBuf;
+
 use line_index::WideEncoding;
 use lsp_types::{
     DiagnosticRelatedInformation, DiagnosticSeverity, DocumentSymbol, FoldingRange,
     FoldingRangeKind, Location, NumberOrString, Position, Range, SelectionRange, SemanticTokens,
     SymbolKind, Url,
 };
+use rustc_hash::FxHashMap;
 use text_size::{TextRange, TextSize};
 use yuzu_diagnostics::diagnostics::{Diagnostic, LabelStyle, Severity};
 use yuzu_diagnostics::source_map::SourceId;
@@ -37,18 +40,33 @@ pub(crate) fn range(line_index: &LineIndex, range: TextRange) -> Range {
     )
 }
 
-/// A range in a file a check read, measured in the text the check read.
-pub(crate) fn location(
-    checked: &Checked,
-    target: &FileRange,
+/// Ranges in the files a check read, as protocol locations. Each file's
+/// line index is built once, from the text the check read.
+pub(crate) struct Locations<'c> {
+    checked: &'c Checked,
     encoding: PositionEncoding,
-) -> Option<Location> {
-    let text = checked.file_text(&target.path)?;
-    let line_index = LineIndex::new(text, encoding);
-    Some(Location::new(
-        Url::from_file_path(&target.path).ok()?,
-        range(&line_index, target.range),
-    ))
+    files: FxHashMap<PathBuf, (Url, LineIndex)>,
+}
+
+impl<'c> Locations<'c> {
+    pub(crate) fn new(checked: &'c Checked, encoding: PositionEncoding) -> Self {
+        Self {
+            checked,
+            encoding,
+            files: FxHashMap::default(),
+        }
+    }
+
+    pub(crate) fn location(&mut self, target: &FileRange) -> Option<Location> {
+        if !self.files.contains_key(&target.path) {
+            let text = self.checked.path_text(&target.path)?;
+            let url = Url::from_file_path(&target.path).ok()?;
+            let line_index = LineIndex::new(text, self.encoding);
+            self.files.insert(target.path.clone(), (url, line_index));
+        }
+        let (url, line_index) = &self.files[&target.path];
+        Some(Location::new(url.clone(), range(line_index, target.range)))
+    }
 }
 
 /// The diagnostic and the file its primary label is in. `file` gives the URL

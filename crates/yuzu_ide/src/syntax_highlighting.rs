@@ -12,7 +12,7 @@ use yuzu_diagnostics::source_map::SourceId;
 use yuzu_syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
 
 use crate::Checked;
-use crate::names::declaring;
+use crate::names::DeclarationKind;
 
 /// A range of text, and its highlight.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -127,25 +127,20 @@ pub(crate) fn highlight_uses(checked: &Checked, source: SourceId) -> Vec<HlRange
         .resolutions()
         .iter()
         .filter(|resolution| resolution.used.source == source)
-        .filter_map(|resolution| {
-            let root = checked.syntax(resolution.declared.source)?;
-            let declaring = declaring(&root, resolution.declared.range)?;
-            let highlight = match declaring.kind() {
-                SyntaxKind::FuncParam => HlTag::Parameter.into(),
-                SyntaxKind::LetStmt => match ast::LetStmt::cast(declaring)?.mutability() {
-                    Mutability::Mutable => HlTag::Local | HlMod::Mutable,
-                    Mutability::Immutable => HlTag::Local.into(),
-                },
-                SyntaxKind::FuncStmt => HlTag::Function.into(),
-                SyntaxKind::TableStmt => HlTag::Table.into(),
-                SyntaxKind::StructStmt => HlTag::Struct.into(),
-                SyntaxKind::TraitStmt => HlTag::Trait.into(),
-                _ => return None,
+        .map(|resolution| {
+            let highlight = match resolution.kind {
+                DeclarationKind::Parameter => HlTag::Parameter.into(),
+                DeclarationKind::Let(Mutability::Mutable) => HlTag::Local | HlMod::Mutable,
+                DeclarationKind::Let(Mutability::Immutable) => HlTag::Local.into(),
+                DeclarationKind::Function => HlTag::Function.into(),
+                DeclarationKind::Table => HlTag::Table.into(),
+                DeclarationKind::Struct => HlTag::Struct.into(),
+                DeclarationKind::Trait => HlTag::Trait.into(),
             };
-            Some(HlRange {
+            HlRange {
                 range: resolution.used.range,
                 highlight,
-            })
+            }
         })
         .collect()
 }
@@ -182,7 +177,7 @@ fn highlight_name(token: &SyntaxToken) -> Option<Highlight> {
         SyntaxKind::TraitRef => HlTag::Trait.into(),
         SyntaxKind::StructStmt => HlTag::Struct | HlMod::Declaration,
         SyntaxKind::ImplStmt | SyntaxKind::NamedTypeAnnotation => HlTag::Type.into(),
-        SyntaxKind::TableStmt if names(&parent, &ident, ast::TableStmt::name) => {
+        SyntaxKind::TableStmt if is_named_by(&parent, &ident, ast::TableStmt::name) => {
             HlTag::Table | HlMod::Declaration
         }
         SyntaxKind::StructExpr | SyntaxKind::TableStmt => HlTag::Struct.into(),
@@ -190,25 +185,25 @@ fn highlight_name(token: &SyntaxToken) -> Option<Highlight> {
         SyntaxKind::ModStmt | SyntaxKind::ImportStmt => HlTag::Module | HlMod::Declaration,
         SyntaxKind::ModulePath => HlTag::Module.into(),
         SyntaxKind::IdentExpr if is_callee(&parent) => HlTag::Function.into(),
-        SyntaxKind::FromSource if names(&parent, &ident, ast::FromSource::relation) => {
+        SyntaxKind::FromSource if is_named_by(&parent, &ident, ast::FromSource::relation) => {
             HlTag::Table.into()
         }
-        SyntaxKind::JoinStage if names(&parent, &ident, ast::JoinStage::relation) => {
+        SyntaxKind::JoinStage if is_named_by(&parent, &ident, ast::JoinStage::relation) => {
             HlTag::Table.into()
         }
         SyntaxKind::FromSource | SyntaxKind::JoinStage | SyntaxKind::AliasStage => {
             HlTag::Local | HlMod::Declaration
         }
-        SyntaxKind::RenameItem if names(&parent, &ident, ast::RenameItem::qualifier) => {
+        SyntaxKind::RenameItem if is_named_by(&parent, &ident, ast::RenameItem::qualifier) => {
             HlTag::Local.into()
         }
-        SyntaxKind::GroupByItem if names(&parent, &ident, ast::GroupByItem::qualifier) => {
+        SyntaxKind::GroupByItem if is_named_by(&parent, &ident, ast::GroupByItem::qualifier) => {
             HlTag::Local.into()
         }
-        SyntaxKind::RenameItem if names(&parent, &ident, ast::RenameItem::to) => {
+        SyntaxKind::RenameItem if is_named_by(&parent, &ident, ast::RenameItem::to) => {
             HlTag::Field | HlMod::Declaration
         }
-        SyntaxKind::GroupByItem if names(&parent, &ident, ast::GroupByItem::alias) => {
+        SyntaxKind::GroupByItem if is_named_by(&parent, &ident, ast::GroupByItem::alias) => {
             HlTag::Field | HlMod::Declaration
         }
         SyntaxKind::StructField | SyntaxKind::SelectItem | SyntaxKind::AggregateItem => {
@@ -243,7 +238,7 @@ fn is_callee(ident_expr: &SyntaxNode) -> bool {
 }
 
 /// Whether `accessor` names this identifier in the node that holds it.
-fn names<N: AstNode>(
+fn is_named_by<N: AstNode>(
     parent: &SyntaxNode,
     ident: &Ident,
     accessor: impl Fn(&N) -> Option<Ident>,
@@ -377,9 +372,9 @@ from employees e
     #[test]
     fn resolved_uses_take_their_declarations_highlight() {
         let text = "table t = { a: int64 }\nlet cap = 10\ndef f(x: int64) -> int64 {\n    let mut k = x\n    k = k + cap\n    return k\n}\nfrom t |> select f(a) as v\n";
-        let (_tree, main, checked) = crate::test_support::checked(&[], text);
+        let (_tree, checked) = crate::test_support::checked(&[], text);
         let rendered: Vec<String> = checked
-            .highlight_uses(&main)
+            .highlight_uses(crate::test_support::FILE)
             .iter()
             .map(|range| {
                 let mods: Vec<String> = range

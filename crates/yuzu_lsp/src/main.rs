@@ -1,5 +1,7 @@
 //! `yuzu-lsp`: the language server over stdio.
 
+use std::backtrace::BacktraceStatus;
+use std::error::Error;
 use std::process::ExitCode;
 
 use lsp_server::Connection;
@@ -13,12 +15,25 @@ fn main() -> ExitCode {
     match (result, joined) {
         (Ok(()), Ok(())) => ExitCode::SUCCESS,
         (Err(error), _) => {
-            eprintln!("yuzu-lsp: {error}");
+            report(&error);
+            if error.backtrace().status() == BacktraceStatus::Captured {
+                eprintln!("{}", error.backtrace());
+            }
             ExitCode::FAILURE
         }
         (Ok(()), Err(error)) => {
-            eprintln!("yuzu-lsp: {error}");
+            report(&error);
             ExitCode::FAILURE
         }
+    }
+}
+
+/// Prints an error and each error that caused it.
+fn report(error: &dyn Error) {
+    eprintln!("yuzu-lsp: {error}");
+    let mut source = error.source();
+    while let Some(cause) = source {
+        eprintln!("  caused by: {cause}");
+        source = cause.source();
     }
 }

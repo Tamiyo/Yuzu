@@ -1,10 +1,13 @@
 //! What the server offers, and what it reads from what the client offers.
 
+use lsp_types::notification::{DidChangeWatchedFiles, Notification as _};
 use lsp_types::{
-    ClientCapabilities, FoldingRangeProviderCapability, HoverProviderCapability, OneOf,
-    PositionEncodingKind, SelectionRangeProviderCapability, SemanticTokensFullOptions,
-    SemanticTokensLegend, SemanticTokensOptions, SemanticTokensServerCapabilities,
-    ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind,
+    ClientCapabilities, DidChangeWatchedFilesRegistrationOptions, FileSystemWatcher,
+    FoldingRangeProviderCapability, GlobPattern, HoverProviderCapability, OneOf,
+    PositionEncodingKind, Registration, SelectionRangeProviderCapability,
+    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions,
+    SemanticTokensServerCapabilities, ServerCapabilities, TextDocumentSyncCapability,
+    TextDocumentSyncKind,
 };
 
 use crate::line_index::PositionEncoding;
@@ -85,28 +88,56 @@ pub(crate) enum Refresh {
 }
 
 pub(crate) fn semantic_tokens_refresh(client: &ClientCapabilities) -> Refresh {
-    let supported = client
-        .workspace
-        .as_ref()
-        .and_then(|workspace| workspace.semantic_tokens.as_ref())
-        .and_then(|semantic_tokens| semantic_tokens.refresh_support);
+    refresh(
+        client
+            .workspace
+            .as_ref()
+            .and_then(|workspace| workspace.semantic_tokens.as_ref())
+            .and_then(|semantic_tokens| semantic_tokens.refresh_support),
+    )
+}
 
+pub(crate) fn inlay_hint_refresh(client: &ClientCapabilities) -> Refresh {
+    refresh(
+        client
+            .workspace
+            .as_ref()
+            .and_then(|workspace| workspace.inlay_hint.as_ref())
+            .and_then(|inlay_hint| inlay_hint.refresh_support),
+    )
+}
+
+fn refresh(supported: Option<bool>) -> Refresh {
     match supported {
         Some(true) => Refresh::Supported,
         Some(false) | None => Refresh::Unsupported,
     }
 }
 
-pub(crate) fn inlay_hint_refresh(client: &ClientCapabilities) -> Refresh {
-    let supported = client
+/// Whether the client lets the server ask it to watch files.
+pub(crate) fn watches_files(client: &ClientCapabilities) -> bool {
+    client
         .workspace
         .as_ref()
-        .and_then(|workspace| workspace.inlay_hint.as_ref())
-        .and_then(|inlay_hint| inlay_hint.refresh_support);
+        .and_then(|workspace| workspace.did_change_watched_files.as_ref())
+        .and_then(|watched| watched.dynamic_registration)
+        .unwrap_or(false)
+}
 
-    match supported {
-        Some(true) => Refresh::Supported,
-        Some(false) | None => Refresh::Unsupported,
+/// The registration that asks the client to report changes to Yuzu files.
+pub(crate) fn watched_files_registration() -> Registration {
+    let options = DidChangeWatchedFilesRegistrationOptions {
+        watchers: vec![FileSystemWatcher {
+            glob_pattern: GlobPattern::String("**/*.yz".to_owned()),
+            kind: None,
+        }],
+    };
+    Registration {
+        id: "yuzu-watched-files".to_owned(),
+        method: DidChangeWatchedFiles::METHOD.to_owned(),
+        register_options: Some(
+            serde_json::to_value(options).expect("registration options serialize"),
+        ),
     }
 }
 

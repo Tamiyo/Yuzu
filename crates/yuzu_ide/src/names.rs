@@ -3,12 +3,13 @@
 //! and what kind of declaration it names, so a use of a parameter finds the
 //! parameter and not the function around it.
 
+use rustc_hash::FxHashMap;
 use text_size::TextRange;
-use yuzu_ast::{self as ast, AstNode};
+use yuzu_ast::{self as ast, AstNode, Mutability};
 use yuzu_diagnostics::diagnostics::Span;
 use yuzu_diagnostics::source_map::SourceId;
-use yuzu_driver::index::TargetKind;
-use yuzu_syntax::{SyntaxKind, SyntaxNode};
+use yuzu_driver::index::{Reference, TargetKind};
+use yuzu_syntax::{GreenNode, SyntaxKind, SyntaxNode};
 
 /// A name's place in one of a check's sources.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -20,41 +21,49 @@ pub(crate) struct Name {
 /// A use of a name, and the declaration it names.
 #[derive(Clone, Debug)]
 pub(crate) struct Resolution {
-    pub(crate) name: String,
+    /// The reference in the index this resolution narrows.
+    pub(crate) reference: usize,
     pub(crate) used: Name,
     pub(crate) declared: Name,
     /// The whole declaration, as the index gives it.
     pub(crate) declaration: Span,
+    pub(crate) kind: DeclarationKind,
 }
 
-/// The tree a check lowered a source from.
-pub(crate) fn tree(checked: &yuzu_driver::Checked, source: SourceId) -> Option<SyntaxNode> {
-    checked
-        .syntax
-        .iter()
-        .find(|(id, _)| *id == source)
-        .map(|(_, green)| SyntaxNode::new_root(green.clone()))
+/// What a resolved name is declared as.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DeclarationKind {
+    Parameter,
+    Let(Mutability),
+    Function,
+    Table,
+    Struct,
+    Trait,
 }
 
-pub(crate) fn resolutions(checked: &yuzu_driver::Checked) -> Vec<Resolution> {
-    checked
-        .index
-        .references
+/// The tree of each source a check lowered.
+pub(crate) type Trees = FxHashMap<SourceId, GreenNode>;
+
+pub(crate) fn resolutions(references: &[Reference], trees: &Trees) -> Vec<Resolution> {
+    let root = |source: SourceId| trees.get(&source).cloned().map(SyntaxNode::new_root);
+    references
         .iter()
-        .filter_map(|reference| {
+        .enumerate()
+        .filter_map(|(at, reference)| {
             let used = used_name(
-                &tree(checked, reference.at.source_id)?,
+                &root(reference.at.source_id)?,
                 reference.at.range,
                 &reference.name,
             )?;
+            let declared_root = root(reference.target.source_id)?;
             let declared = declared_name(
-                &tree(checked, reference.target.source_id)?,
+                &declared_root,
                 reference.target.range,
                 &reference.name,
                 reference.kind,
             )?;
             Some(Resolution {
-                name: reference.name.clone(),
+                reference: at,
                 used: Name {
                     source: reference.at.source_id,
                     range: used,
@@ -64,6 +73,7 @@ pub(crate) fn resolutions(checked: &yuzu_driver::Checked) -> Vec<Resolution> {
                     range: declared,
                 },
                 declaration: reference.target,
+                kind: declaration_kind(&declaring(&declared_root, declared)?)?,
             })
         })
         .collect()
@@ -101,7 +111,14 @@ fn used_name(root: &SyntaxNode, range: TextRange, name: &str) -> Option<TextRang
         SyntaxKind::CallExpr => match ast::CallExpr::cast(node)?.callee()? {
             ast::Expr::IdentExpr(callee) => callee.name(),
             ast::Expr::FieldAccessExpr(callee) => callee.field(),
-            _ => None,
+            ast::Expr::CallExpr(_)
+            | ast::Expr::StructExpr(_)
+            | ast::Expr::ListExpr(_)
+            | ast::Expr::BinaryExpr(_)
+            | ast::Expr::UnaryExpr(_)
+            | ast::Expr::ParenExpr(_)
+            | ast::Expr::Literal(_)
+            | ast::Expr::Pipeline(_) => None,
         },
         SyntaxKind::FromSource => ast::FromSource::cast(node)?.relation(),
         SyntaxKind::JoinStage => ast::JoinStage::cast(node)?.relation(),
@@ -129,4 +146,22 @@ fn declared_name(
     }?;
     let token = ident.token()?;
     (token.text() == name).then(|| token.text_range())
+}
+
+fn declaration_kind(declaring: &SyntaxNode) -> Option<DeclarationKind> {
+    let kind = match declaring.kind() {
+        SyntaxKind::FuncParam => DeclarationKind::Parameter,
+        SyntaxKind::LetStmt => {
+            DeclarationKind::Let(ast::LetStmt::cast(declaring.clone())?.mutability())
+        }
+        SyntaxKind::FuncStmt => DeclarationKind::Function,
+        SyntaxKind::TableStmt => DeclarationKind::Table,
+        SyntaxKind::StructStmt => DeclarationKind::Struct,
+        SyntaxKind::TraitStmt => DeclarationKind::Trait,
+        other => {
+            debug_assert!(false, "the index names a declaration in a {other:?}");
+            return None;
+        }
+    };
+    Some(kind)
 }

@@ -8,7 +8,7 @@ use lsp_types::notification::{
 };
 use lsp_types::request::{
     DocumentSymbolRequest, GotoDefinition, HoverRequest, Initialize, InlayHintRequest,
-    SemanticTokensFullRequest, Shutdown,
+    RegisterCapability, Request as _, SelectionRangeRequest, SemanticTokensFullRequest, Shutdown,
 };
 use lsp_types::{
     ClientCapabilities, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
@@ -127,6 +127,26 @@ impl Client {
             .join()
             .expect("the server thread does not panic")
             .expect("the server exits cleanly");
+    }
+}
+
+/// A directory of files for a test, removed on drop.
+struct TempDir(std::path::PathBuf);
+
+impl TempDir {
+    fn new(files: &[(&str, &str)]) -> Self {
+        let root = std::env::temp_dir().join(format!("yuzu-lsp-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        for (name, text) in files {
+            std::fs::write(root.join(name), text).unwrap();
+        }
+        TempDir(root)
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
     }
 }
 
@@ -319,13 +339,8 @@ fn a_semantic_error_is_published() {
 
 #[test]
 fn an_error_in_an_imported_file_is_published_for_that_file() {
-    let root = std::env::temp_dir().join(format!("yuzu-lsp-{}", std::process::id()));
-    std::fs::create_dir_all(&root).unwrap();
-    std::fs::write(
-        root.join("helpers.yz"),
-        "pub def two() -> i64 { return 2 }\n",
-    )
-    .unwrap();
+    let dir = TempDir::new(&[("helpers.yz", "pub def two() -> i64 { return 2 }\n")]);
+    let root = &dir.0;
 
     let client = Client::start(ClientCapabilities::default());
     client.open_at(
@@ -337,7 +352,50 @@ fn an_error_in_an_imported_file_is_published_for_that_file() {
     assert_eq!(params.version, None);
     check_diagnostics(&params, &expect!["0:17-0:20 unknown type `i64`"]);
     client.shutdown();
-    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn a_position_past_the_end_of_its_line_is_its_end() {
+    let mut client = Client::start(ClientCapabilities::default());
+    client.open("let a = 1\nlet b = 2");
+    let ranges = client
+        .request::<SelectionRangeRequest>(lsp_types::SelectionRangeParams {
+            text_document: document(),
+            positions: vec![Position::new(0, 99), Position::new(1, 99)],
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        })
+        .expect("the server answers for each position");
+    let starts: Vec<Position> = ranges.iter().map(|range| range.range.end).collect();
+    assert_eq!(starts, [Position::new(0, 9), Position::new(1, 9)]);
+    client.shutdown();
+}
+
+#[test]
+fn the_server_asks_to_watch_yuzu_files() {
+    let capabilities = ClientCapabilities {
+        workspace: Some(lsp_types::WorkspaceClientCapabilities {
+            did_change_watched_files: Some(lsp_types::DidChangeWatchedFilesClientCapabilities {
+                dynamic_registration: Some(true),
+                relative_pattern_support: None,
+            }),
+            ..lsp_types::WorkspaceClientCapabilities::default()
+        }),
+        ..ClientCapabilities::default()
+    };
+    let client = Client::start(capabilities);
+    let registration = loop {
+        if let Message::Request(request) = client.receive()
+            && request.method == RegisterCapability::METHOD
+        {
+            break request;
+        }
+    };
+    let params: lsp_types::RegistrationParams =
+        serde_json::from_value(registration.params).unwrap();
+    expect![[r#"[{"id":"yuzu-watched-files","method":"workspace/didChangeWatchedFiles","registerOptions":{"watchers":[{"globPattern":"**/*.yz"}]}}]"#]]
+        .assert_eq(&serde_json::to_string(&params.registrations).unwrap());
+    client.shutdown();
 }
 
 const CHECKED: &str = "def double(x: int64) -> int64 {\n    let y = x * 2\n    return y\n}\n";

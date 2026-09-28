@@ -66,9 +66,10 @@ fn describe(checked: &Checked, resolution: &Resolution) -> Option<String> {
                 Mutability::Mutable => "mut ",
                 Mutability::Immutable => "",
             };
+            let name = checked.name(resolution);
             match written.as_deref().or(ty) {
-                Some(ty) => format!("let {mutable}{}: {ty}", resolution.name),
-                None => format!("let {mutable}{}", resolution.name),
+                Some(ty) => format!("let {mutable}{name}: {ty}"),
+                None => format!("let {mutable}{name}"),
             }
         }
         SyntaxKind::FuncStmt => file_structure::header(&ast::FuncStmt::cast(declaration)?),
@@ -85,12 +86,12 @@ fn code(text: &str) -> String {
 mod tests {
     use expect_test::{Expect, expect};
 
-    use crate::test_support::{checked, cursor};
+    use crate::test_support::{at, checked, cursor};
 
     fn check(fixture: &str, expected: &Expect) {
         let (text, offset) = cursor(fixture);
-        let (_tree, main, checked) = checked(&[], &text);
-        let hover = checked.hover(&main, offset);
+        let (_tree, checked) = checked(&[], &text);
+        let hover = checked.hover(at(offset));
         let rendered = hover.map(|hover| format!("{} {}", &text[hover.range], hover.markup));
         expected.assert_debug_eq(&rendered);
     }
@@ -145,10 +146,10 @@ from t |> select double(1) + cap as v
         check(
             &PROGRAM.replacen("* 2", "* $02", 1),
             &expect![[r#"
-            Some(
-                "2 ```yuzu\nint64\n```",
-            )
-        "#]],
+                Some(
+                    "2 ```yuzu\nint64\n```",
+                )
+            "#]],
         );
     }
 

@@ -3,7 +3,7 @@
 //! left out, since there is nothing to fold.
 
 use text_size::TextRange;
-use yuzu_syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
+use yuzu_syntax::{SyntaxKind, SyntaxNode};
 
 /// A range an editor can fold, and what it holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -21,7 +21,7 @@ pub enum FoldKind {
     Imports,
 }
 
-pub(crate) fn folding_ranges(root: &SyntaxNode) -> Vec<Fold> {
+pub(crate) fn folding_ranges(root: &SyntaxNode, text: &str) -> Vec<Fold> {
     let mut folds = Vec::new();
     for node in root.descendants() {
         if let Some(fold) = fold_node(&node) {
@@ -31,9 +31,6 @@ pub(crate) fn folding_ranges(root: &SyntaxNode) -> Vec<Fold> {
     fold_comments(root, &mut folds);
     fold_imports(root, &mut folds);
 
-    // A slice of the root's `SyntaxText` walks the file's tokens from the
-    // start, so the text is taken once and sliced as a string.
-    let text = root.text().to_string();
     folds.retain(|fold| text[fold.range].contains('\n'));
     folds.sort_by_key(|fold| fold.range.start());
     folds
@@ -56,16 +53,14 @@ fn fold_node(node: &SyntaxNode) -> Option<Fold> {
 
 /// From a node's own `{` to its own `}`.
 fn braces(node: &SyntaxNode) -> Option<TextRange> {
-    let tokens: Vec<SyntaxToken> = node
-        .children_with_tokens()
-        .filter_map(rowan::NodeOrToken::into_token)
-        .collect();
-    let open = tokens
-        .iter()
-        .find(|token| token.kind() == SyntaxKind::LeftCurly)?;
-    let close = tokens
-        .iter()
-        .rfind(|token| token.kind() == SyntaxKind::RightCurly)?;
+    let tokens = || {
+        node.children_with_tokens()
+            .filter_map(rowan::NodeOrToken::into_token)
+    };
+    let open = tokens().find(|token| token.kind() == SyntaxKind::LeftCurly)?;
+    let close = tokens()
+        .filter(|token| token.kind() == SyntaxKind::RightCurly)
+        .last()?;
     Some(TextRange::new(
         open.text_range().start(),
         close.text_range().end(),

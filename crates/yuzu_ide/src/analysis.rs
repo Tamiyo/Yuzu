@@ -9,12 +9,13 @@ use yuzu_ast::{AstNode, Root};
 use yuzu_diagnostics::diagnostics::Diagnostic;
 use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
 use yuzu_diagnostics::source_map::SourceMap;
+use yuzu_driver::modules::{Location, locate};
 use yuzu_syntax::{GreenNode, SyntaxNode};
 
-use crate::check::DiskCache;
+use crate::check::{self, DiskCache, Document};
 use crate::{
-    Checked, FileId, FilePosition, Fold, HlRange, StructureNode, check, file_structure,
-    folding_ranges, selection_ranges, syntax_highlighting,
+    Checked, FileId, FilePosition, Fold, HlRange, StructureNode, file_structure, folding_ranges,
+    selection_ranges, syntax_highlighting,
 };
 
 /// New texts and paths for some files. `None` removes a file's text, or
@@ -41,7 +42,7 @@ impl Change {
 #[derive(Debug, Default)]
 pub struct AnalysisHost {
     files: Arc<FxHashMap<FileId, Arc<ParsedFile>>>,
-    paths: Arc<FxHashMap<FileId, PathBuf>>,
+    paths: Arc<FxHashMap<FileId, SavedFile>>,
     disk: Arc<DiskCache>,
 }
 
@@ -56,10 +57,13 @@ impl AnalysisHost {
             };
         }
 
+        if change.paths.is_empty() {
+            return;
+        }
         let paths = Arc::make_mut(&mut self.paths);
         for (file_id, path) in change.paths {
             match path {
-                Some(path) => paths.insert(file_id, path),
+                Some(path) => paths.insert(file_id, SavedFile::new(path)),
                 None => paths.remove(&file_id),
             };
         }
@@ -80,7 +84,7 @@ impl AnalysisHost {
 #[derive(Debug)]
 pub struct Analysis {
     files: Arc<FxHashMap<FileId, Arc<ParsedFile>>>,
-    paths: Arc<FxHashMap<FileId, PathBuf>>,
+    paths: Arc<FxHashMap<FileId, SavedFile>>,
     disk: Arc<DiskCache>,
 }
 
@@ -89,14 +93,20 @@ impl Analysis {
     /// for a file with no path, whose imports cannot be found.
     #[must_use]
     pub fn check(&self, file_id: FileId) -> Option<Checked> {
-        let path = self.paths.get(&file_id)?;
+        let saved = self.paths.get(&file_id)?;
         let file = self.file(file_id)?;
-        let documents = self
+        let documents: Vec<Document<'_>> = self
             .paths
             .iter()
-            .filter_map(|(id, path)| Some((path.clone(), Arc::clone(self.files.get(id)?))))
+            .filter_map(|(&file_id, saved)| {
+                Some(Document {
+                    file_id,
+                    saved,
+                    parsed: self.file(file_id)?,
+                })
+            })
             .collect();
-        Some(check::check(path, file, &documents, &self.disk))
+        Some(check::check(saved, file, &documents, &self.disk))
     }
 
     /// A file's text.
@@ -105,9 +115,9 @@ impl Analysis {
         Some(Arc::clone(&self.file(file_id)?.text))
     }
 
-    /// The errors the parse of a file reported.
+    /// The errors the parse of a file reported. Every label is in that file.
     #[must_use]
-    pub fn diagnostics(&self, file_id: FileId) -> Option<Arc<[Diagnostic]>> {
+    pub fn syntax_diagnostics(&self, file_id: FileId) -> Option<Arc<[Diagnostic]>> {
         Some(Arc::clone(&self.file(file_id)?.diagnostics))
     }
 
@@ -128,9 +138,8 @@ impl Analysis {
     /// The ranges of a file that an editor can fold.
     #[must_use]
     pub fn folding_ranges(&self, file_id: FileId) -> Option<Vec<Fold>> {
-        Some(folding_ranges::folding_ranges(
-            &self.file(file_id)?.syntax(),
-        ))
+        let file = self.file(file_id)?;
+        Some(folding_ranges::folding_ranges(&file.syntax(), file.text()))
     }
 
     /// The ranges around a position, innermost first.
@@ -142,6 +151,20 @@ impl Analysis {
 
     fn file(&self, file_id: FileId) -> Option<&ParsedFile> {
         self.files.get(&file_id).map(Arc::as_ref)
+    }
+}
+
+/// A file's path, and where the path puts it in its program.
+#[derive(Clone, Debug)]
+pub(crate) struct SavedFile {
+    pub(crate) path: PathBuf,
+    pub(crate) location: Location,
+}
+
+impl SavedFile {
+    fn new(path: PathBuf) -> Self {
+        let location = locate(&path);
+        Self { path, location }
     }
 }
 

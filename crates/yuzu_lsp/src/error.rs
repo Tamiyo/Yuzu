@@ -1,6 +1,6 @@
 //! Why [`run`](crate::run) returns before the client asks the server to exit.
 
-use std::backtrace::{Backtrace, BacktraceStatus};
+use std::backtrace::Backtrace;
 use std::error::Error;
 use std::fmt;
 
@@ -18,6 +18,7 @@ enum Kind {
     Protocol(ProtocolError),
     InitializeParams(serde_json::Error),
     Disconnected,
+    Checker(std::io::Error),
 }
 
 impl RunError {
@@ -36,6 +37,16 @@ impl RunError {
         matches!(self.kind, Kind::Disconnected)
     }
 
+    /// The system could not start the thread that runs the checks.
+    pub fn is_checker(&self) -> bool {
+        matches!(self.kind, Kind::Checker(_))
+    }
+
+    /// Where the error was made, when backtraces are enabled.
+    pub fn backtrace(&self) -> &Backtrace {
+        &self.backtrace
+    }
+
     pub(crate) fn protocol(error: ProtocolError) -> Self {
         Self::new(Kind::Protocol(error))
     }
@@ -48,6 +59,10 @@ impl RunError {
         Self::new(Kind::Disconnected)
     }
 
+    pub(crate) fn checker(error: std::io::Error) -> Self {
+        Self::new(Kind::Checker(error))
+    }
+
     fn new(kind: Kind) -> Self {
         Self {
             kind,
@@ -58,17 +73,12 @@ impl RunError {
 
 impl fmt::Display for RunError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.kind {
-            Kind::Protocol(error) => write!(f, "the connection broke the protocol: {error}")?,
-            Kind::InitializeParams(error) => {
-                write!(f, "the initialize params did not parse: {error}")?;
-            }
-            Kind::Disconnected => f.write_str("the client disconnected")?,
-        }
-        if self.backtrace.status() == BacktraceStatus::Captured {
-            write!(f, "\n{}", self.backtrace)?;
-        }
-        Ok(())
+        f.write_str(match &self.kind {
+            Kind::Protocol(_) => "the connection broke the protocol",
+            Kind::InitializeParams(_) => "the initialize params did not parse",
+            Kind::Disconnected => "the client disconnected",
+            Kind::Checker(_) => "the checker thread did not start",
+        })
     }
 }
 
@@ -77,6 +87,7 @@ impl Error for RunError {
         match &self.kind {
             Kind::Protocol(error) => Some(error),
             Kind::InitializeParams(error) => Some(error),
+            Kind::Checker(error) => Some(error),
             Kind::Disconnected => None,
         }
     }

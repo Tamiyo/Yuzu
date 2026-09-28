@@ -16,6 +16,7 @@ mod handlers;
 mod line_index;
 mod main_loop;
 mod semantic_tokens;
+mod text_shift;
 mod to_proto;
 
 pub use error::RunError;

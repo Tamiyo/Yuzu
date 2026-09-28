@@ -6,13 +6,15 @@ use lsp_types::{
     FoldingRange, FoldingRangeParams, GotoDefinitionParams, GotoDefinitionResponse, Hover,
     HoverContents, HoverParams, InlayHint, InlayHintKind, InlayHintLabel, InlayHintParams,
     Location, MarkupContent, MarkupKind, ReferenceParams, SelectionRange, SelectionRangeParams,
-    SemanticTokensParams, SemanticTokensResult,
+    SemanticTokensParams, SemanticTokensResult, TextDocumentPositionParams,
 };
 use rustc_hash::FxHashSet;
-use text_size::TextRange;
-use yuzu_ide::FilePosition;
+use text_size::{TextRange, TextSize};
+use yuzu_ide::{Checked, FilePosition, HlRange};
 
+use crate::documents::Document;
 use crate::global_state::GlobalState;
+use crate::to_proto::Locations;
 use crate::{from_proto, to_proto};
 
 pub(crate) fn document_symbol(
@@ -34,7 +36,7 @@ pub(crate) fn folding_range(
     let ranges = folds
         .into_iter()
         .map(|fold| {
-            to_proto::folding_range(&document.text, &document.line_index, state.folding(), fold)
+            to_proto::folding_range(&document.text, &document.line_index, state.folding, fold)
         })
         .collect();
     Some(ranges)
@@ -57,6 +59,9 @@ pub(crate) fn selection_range(
         .collect()
 }
 
+/// The syntax's highlights, with each resolved use highlighted as its
+/// declaration. The uses come from the last check, carried over to the
+/// text the document has now.
 pub(crate) fn semantic_tokens_full(
     state: &GlobalState,
     params: &SemanticTokensParams,
@@ -64,8 +69,17 @@ pub(crate) fn semantic_tokens_full(
     let url = &params.text_document.uri;
     let (file_id, document) = state.document(url)?;
     let mut highlights = state.analysis().highlight(file_id)?;
-    if let Some((_, path, checked)) = state.checked_document(url) {
-        let uses = checked.highlight_uses(path);
+    if let Some((file_id, _, checked, shift)) = state.last_check(url) {
+        let uses: Vec<HlRange> = checked
+            .highlight_uses(file_id)
+            .into_iter()
+            .filter_map(|used| {
+                Some(HlRange {
+                    range: shift.map(used.range)?,
+                    highlight: used.highlight,
+                })
+            })
+            .collect();
         let resolved: FxHashSet<TextRange> = uses.iter().map(|used| used.range).collect();
         highlights.retain(|syntax| !resolved.contains(&syntax.range));
         highlights.extend(uses);
@@ -79,37 +93,35 @@ pub(crate) fn goto_definition(
     state: &GlobalState,
     params: &GotoDefinitionParams,
 ) -> Option<GotoDefinitionResponse> {
-    let position = &params.text_document_position_params;
-    let (document, path, checked) = state.checked_document(&position.text_document.uri)?;
-    let offset = from_proto::offset(&document.line_index, position.position)?;
-    let target = checked.goto_definition(path, offset)?;
-    let location = to_proto::location(checked, &target, state.encoding())?;
+    let (_, checked, position) = checked_position(state, &params.text_document_position_params)?;
+    let target = checked.goto_definition(position)?;
+    let location = Locations::new(checked, state.encoding).location(&target)?;
     Some(GotoDefinitionResponse::Scalar(location))
 }
 
 pub(crate) fn references(state: &GlobalState, params: &ReferenceParams) -> Option<Vec<Location>> {
-    let position = &params.text_document_position;
-    let (document, path, checked) = state.checked_document(&position.text_document.uri)?;
-    let offset = from_proto::offset(&document.line_index, position.position)?;
-    let skip = usize::from(!params.context.include_declaration);
-    let locations = checked
-        .references(path, offset)
+    let (_, checked, position) = checked_position(state, &params.text_document_position)?;
+    let references = checked.references(position);
+    let declaration = references
+        .declaration
+        .filter(|_| params.context.include_declaration);
+    let mut locations = Locations::new(checked, state.encoding);
+    let found = declaration
         .iter()
-        .skip(skip)
-        .filter_map(|found| to_proto::location(checked, found, state.encoding()))
+        .chain(&references.uses)
+        .filter_map(|found| locations.location(found))
         .collect();
-    Some(locations)
+    Some(found)
 }
 
 pub(crate) fn document_highlight(
     state: &GlobalState,
     params: &DocumentHighlightParams,
 ) -> Option<Vec<DocumentHighlight>> {
-    let position = &params.text_document_position_params;
-    let (document, path, checked) = state.checked_document(&position.text_document.uri)?;
-    let offset = from_proto::offset(&document.line_index, position.position)?;
+    let (document, checked, position) =
+        checked_position(state, &params.text_document_position_params)?;
     let highlights = checked
-        .highlight(path, offset)
+        .highlight_related(position)
         .into_iter()
         .map(|range| DocumentHighlight {
             range: to_proto::range(&document.line_index, range),
@@ -120,10 +132,9 @@ pub(crate) fn document_highlight(
 }
 
 pub(crate) fn hover(state: &GlobalState, params: &HoverParams) -> Option<Hover> {
-    let position = &params.text_document_position_params;
-    let (document, path, checked) = state.checked_document(&position.text_document.uri)?;
-    let offset = from_proto::offset(&document.line_index, position.position)?;
-    let hover = checked.hover(path, offset)?;
+    let (document, checked, position) =
+        checked_position(state, &params.text_document_position_params)?;
+    let hover = checked.hover(position)?;
     Some(Hover {
         contents: HoverContents::Markup(MarkupContent {
             kind: MarkupKind::Markdown,
@@ -133,21 +144,45 @@ pub(crate) fn hover(state: &GlobalState, params: &HoverParams) -> Option<Hover> 
     })
 }
 
+/// The hints of the last check in the requested range, carried over to the
+/// text the document has now.
 pub(crate) fn inlay_hint(state: &GlobalState, params: &InlayHintParams) -> Option<Vec<InlayHint>> {
-    let (document, path, checked) = state.checked_document(&params.text_document.uri)?;
+    let (file_id, document, checked, shift) = state.last_check(&params.text_document.uri)?;
+    let requested = from_proto::text_range(&document.line_index, params.range)?;
+    let checked_text = TextRange::up_to(TextSize::of(checked.file_text(file_id)?));
     let hints = checked
-        .inlay_hints(path)
+        .inlay_hints(file_id, checked_text)
         .into_iter()
-        .map(|hint| InlayHint {
-            position: to_proto::position(&document.line_index, hint.offset),
-            label: InlayHintLabel::String(hint.label),
-            kind: Some(InlayHintKind::TYPE),
-            text_edits: None,
-            tooltip: None,
-            padding_left: None,
-            padding_right: None,
-            data: None,
+        .filter_map(|hint| {
+            let offset = shift.map(TextRange::empty(hint.offset))?.start();
+            requested
+                .contains_inclusive(offset)
+                .then(|| inlay_hint_at(document, offset, hint.label))
         })
         .collect();
     Some(hints)
+}
+
+fn inlay_hint_at(document: &Document, offset: TextSize, label: String) -> InlayHint {
+    InlayHint {
+        position: to_proto::position(&document.line_index, offset),
+        label: InlayHintLabel::String(label),
+        kind: Some(InlayHintKind::TYPE),
+        text_edits: None,
+        tooltip: None,
+        padding_left: None,
+        padding_right: None,
+        data: None,
+    }
+}
+
+/// The document a position is in, its check while that check read the text
+/// the document has now, and the position as an offset in it.
+fn checked_position<'s>(
+    state: &'s GlobalState,
+    params: &TextDocumentPositionParams,
+) -> Option<(&'s Document, &'s Checked, FilePosition)> {
+    let (file_id, document, checked) = state.fresh_check(&params.text_document.uri)?;
+    let offset = from_proto::offset(&document.line_index, params.position)?;
+    Some((document, checked, FilePosition { file_id, offset }))
 }

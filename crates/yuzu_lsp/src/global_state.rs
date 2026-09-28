@@ -1,13 +1,10 @@
 //! The server's state: the open documents, the analysis, the checker, and
 //! what the client said it supports.
 
-use std::path::Path;
-use std::sync::Arc;
-
 use lsp_server::{Connection, Message, Notification, Request, RequestId};
 use lsp_types::notification::LogMessage;
 use lsp_types::{LogMessageParams, MessageType, Url};
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use serde::Serialize;
 use yuzu_ide::{Analysis, AnalysisHost, Checked, FileId};
 
@@ -16,6 +13,7 @@ use crate::capabilities::{Folding, Refresh};
 use crate::checker::{CheckRequest, Checker};
 use crate::documents::Document;
 use crate::line_index::PositionEncoding;
+use crate::text_shift::TextShift;
 
 pub(crate) struct GlobalState<'c> {
     pub(crate) connection: &'c Connection,
@@ -25,18 +23,16 @@ pub(crate) struct GlobalState<'c> {
     pub(crate) encoding: PositionEncoding,
     pub(crate) folding: Folding,
     pub(crate) checker: Checker,
-    /// How many changes the server has seen. A check answers the one it was
-    /// asked after, and is dropped once a newer change has come.
-    pub(crate) generation: u64,
-    /// The files that are not open and got diagnostics from the last check,
-    /// so the next check can clear the ones it no longer reports.
-    pub(crate) published: FxHashSet<Url>,
     /// Each open document's last check, and the version of the text it read.
-    pub(crate) checks: FxHashMap<FileId, (i32, Arc<Checked>)>,
-    /// Whether the client asks for inlay hints again when told to.
-    pub(crate) inlay_hints: Refresh,
-    /// Whether the client asks for semantic tokens again when told to.
-    pub(crate) semantic_tokens: Refresh,
+    pub(crate) checks: FxHashMap<FileId, (i32, Checked)>,
+    /// What each open document's last check found in files that are not
+    /// open, by the file's URL.
+    pub(crate) closed_diagnostics: FxHashMap<FileId, FxHashMap<Url, Vec<lsp_types::Diagnostic>>>,
+    /// The version of each document whose check panicked. It is not checked
+    /// again until its text changes.
+    pub(crate) failed: FxHashMap<FileId, i32>,
+    pub(crate) inlay_hint_refresh: Refresh,
+    pub(crate) semantic_tokens_refresh: Refresh,
     /// The id of the next request the server sends the client.
     pub(crate) next_request: i32,
 }
@@ -76,26 +72,31 @@ impl GlobalState<'_> {
         })
     }
 
-    /// Asks the checker for every open document with a path. A change to one
-    /// file can change what another reports, so each is checked again.
-    pub(crate) fn request_check(&mut self) -> Result<(), RunError> {
-        self.generation += 1;
-        let files = self
+    /// Asks the checker for every open document with a path, `first` before
+    /// the rest. A change to one file can change what another reports, so
+    /// each is checked again. A checker that stopped is started again.
+    pub(crate) fn request_check(&mut self, first: Option<FileId>) -> Result<(), RunError> {
+        let mut files: Vec<(FileId, i32)> = self
             .documents
             .iter()
             .filter(|(_, document)| document.path.is_some())
+            .filter(|(file_id, document)| self.failed.get(file_id) != Some(&document.version))
             .map(|(&file_id, document)| (file_id, document.version))
             .collect();
+        files.sort_by_key(|&(file_id, _)| (Some(file_id) != first, file_id.0));
+
         let request = CheckRequest {
-            generation: self.generation,
             analysis: self.analysis(),
             files,
         };
-        if self.checker.request(request) {
-            Ok(())
-        } else {
-            self.log_error("the checker stopped; only syntax errors are shown".to_owned())
+        if let Err(stopped) = self.checker.request(request) {
+            self.log_error(format!(
+                "the checker stopped ({stopped:?}); it starts again"
+            ))?;
+            self.checker = Checker::spawn()?;
+            return self.request_check(first);
         }
+        Ok(())
     }
 
     pub(crate) fn file_id(&mut self, url: &Url) -> FileId {
@@ -112,21 +113,25 @@ impl GlobalState<'_> {
         Some((file_id, self.documents.get(&file_id)?))
     }
 
-    pub(crate) fn folding(&self) -> Folding {
-        self.folding
+    pub(crate) fn is_open(&self, url: &Url) -> bool {
+        self.document(url).is_some()
     }
 
-    pub(crate) fn encoding(&self) -> PositionEncoding {
-        self.encoding
-    }
-
-    /// An open document, its path and its last check, while that check read
-    /// the text the document has now. An answer from an older check would
-    /// point at offsets that have moved.
-    pub(crate) fn checked_document(&self, url: &Url) -> Option<(&Document, &Path, &Checked)> {
+    /// An open document and its last check, while that check read the text
+    /// the document has now. An answer from an older check would point at
+    /// offsets that have moved.
+    pub(crate) fn fresh_check(&self, url: &Url) -> Option<(FileId, &Document, &Checked)> {
         let (file_id, document) = self.document(url)?;
-        let path = document.path.as_deref()?;
         let (version, checked) = self.checks.get(&file_id)?;
-        (*version == document.version).then_some((document, path, checked.as_ref()))
+        (*version == document.version).then_some((file_id, document, checked))
+    }
+
+    /// An open document, its last check, and how the text that check read
+    /// maps onto the document's text now.
+    pub(crate) fn last_check(&self, url: &Url) -> Option<(FileId, &Document, &Checked, TextShift)> {
+        let (file_id, document) = self.document(url)?;
+        let (_, checked) = self.checks.get(&file_id)?;
+        let shift = TextShift::between(checked.file_text(file_id)?, &document.text);
+        Some((file_id, document, checked, shift))
     }
 }

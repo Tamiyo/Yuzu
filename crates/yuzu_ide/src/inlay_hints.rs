@@ -1,6 +1,6 @@
 //! The type inference gave each `let` the program wrote without one.
 
-use text_size::TextSize;
+use text_size::{TextRange, TextSize};
 use yuzu_ast::{self as ast, AstNode};
 use yuzu_diagnostics::diagnostics::Span;
 use yuzu_diagnostics::source_map::SourceId;
@@ -15,11 +15,12 @@ pub struct InlayHint {
     pub label: String,
 }
 
-pub(crate) fn inlay_hints(checked: &Checked, source: SourceId) -> Vec<InlayHint> {
+pub(crate) fn inlay_hints(checked: &Checked, source: SourceId, range: TextRange) -> Vec<InlayHint> {
     let Some(root) = checked.syntax(source) else {
         return Vec::new();
     };
     root.descendants()
+        .filter(|node| node.text_range().intersect(range).is_some())
         .filter_map(ast::LetStmt::cast)
         .filter(|binding| binding.type_annotation().is_none())
         .filter_map(|binding| {
@@ -40,14 +41,17 @@ pub(crate) fn inlay_hints(checked: &Checked, source: SourceId) -> Vec<InlayHint>
 mod tests {
     use expect_test::expect;
 
-    use crate::test_support::checked;
+    use text_size::{TextRange, TextSize};
+
+    use crate::test_support::{FILE, checked};
 
     #[test]
     fn a_let_without_a_type_gets_one() {
         let text = "let cap = 10\nlet named: int64 = 1\ndef f() -> float64 {\n    let half = 0.5\n    return half\n}\n";
-        let (_tree, main, checked) = checked(&[], text);
+        let (_tree, checked) = checked(&[], text);
+        let whole = TextRange::up_to(TextSize::of(text));
         let rendered: Vec<String> = checked
-            .inlay_hints(&main)
+            .inlay_hints(FILE, whole)
             .iter()
             .map(|hint| {
                 format!(

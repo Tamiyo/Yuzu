@@ -32,22 +32,13 @@ fn pick_token(tokens: TokenAtOffset<SyntaxToken>) -> Option<SyntaxToken> {
 #[cfg(test)]
 mod tests {
     use expect_test::{Expect, expect};
-    use text_size::TextSize;
 
-    use crate::FilePosition;
-    use crate::test_support::{FILE, analysis};
+    use crate::test_support::{analysis, at, cursor};
 
-    fn check(text: &str, expected: &Expect) {
-        let offset = text
-            .find("$0")
-            .expect("the fixture marks the position with $0");
-        let text = text.replacen("$0", "", 1);
-        let position = FilePosition {
-            file_id: FILE,
-            offset: TextSize::try_from(offset).expect("a fixture is shorter than 4 GiB"),
-        };
+    fn check(fixture: &str, expected: &Expect) {
+        let (text, offset) = cursor(fixture);
         let rendered: Vec<&str> = analysis(&text)
-            .selection_ranges(position)
+            .selection_ranges(at(offset))
             .unwrap()
             .iter()
             .map(|&range| &text[range])

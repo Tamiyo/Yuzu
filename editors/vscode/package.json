@@ -15,6 +15,15 @@
   "activationEvents": [
     "onLanguage:yuzu"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In an untrusted workspace the language server is not taken from the workspace's build or settings.",
+      "restrictedConfigurations": [
+        "yuzu.server.path"
+      ]
+    }
+  },
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./"
@@ -54,7 +63,8 @@
         "yuzu.server.path": {
           "type": "string",
           "default": "",
-          "description": "Path to the yuzu-lsp binary. When empty, the extension uses target/debug/yuzu-lsp in the workspace, then yuzu-lsp on the PATH."
+          "description": "Path to the yuzu-lsp binary. When empty, the extension uses the newer of target/debug and target/release in a trusted workspace, then yuzu-lsp on the PATH.",
+          "scope": "machine-overridable"
         },
         "yuzu.trace.server": {
           "type": "string",

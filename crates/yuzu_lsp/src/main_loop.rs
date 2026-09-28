@@ -1,24 +1,27 @@
 //! The loop that feeds the server messages until the client shuts it down,
 //! and the dispatch of each request and notification to its handler.
 
-use crossbeam_channel::select;
+use std::panic::{self, AssertUnwindSafe};
+
+use crossbeam_channel::{RecvError, select};
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, Response};
 use lsp_types::notification::{
-    DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Notification as _,
+    DidChangeTextDocument, DidChangeWatchedFiles, DidCloseTextDocument, DidOpenTextDocument,
+    Notification as _,
 };
 use lsp_types::request::{
     DocumentHighlightRequest, DocumentSymbolRequest, FoldingRangeRequest, GotoDefinition,
-    HoverRequest, InlayHintRequest, References, Request as _, SelectionRangeRequest,
-    SemanticTokensFullRequest,
+    HoverRequest, InlayHintRequest, References, RegisterCapability, Request as _,
+    SelectionRangeRequest, SemanticTokensFullRequest,
 };
-use lsp_types::{InitializeParams, InitializeResult, ServerInfo};
-use rustc_hash::{FxHashMap, FxHashSet};
+use lsp_types::{InitializeParams, InitializeResult, RegistrationParams, ServerInfo};
+use rustc_hash::FxHashMap;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use yuzu_ide::AnalysisHost;
 
-use crate::capabilities::{self};
-use crate::checker::Checker;
+use crate::capabilities;
+use crate::checker::{CheckResult, Checker, panic_message};
 use crate::global_state::GlobalState;
 use crate::{RunError, handlers};
 
@@ -27,8 +30,9 @@ use crate::{RunError, handlers};
 ///
 /// # Errors
 ///
-/// When the handshake fails, when the initialize params do not parse, or
-/// when the client goes away without asking the server to shut down.
+/// When the handshake fails, when the initialize params do not parse, when
+/// the checker thread cannot start, or when the client goes away without
+/// asking the server to shut down.
 ///
 /// # Panics
 ///
@@ -51,8 +55,6 @@ pub fn run(connection: &Connection) -> Result<(), RunError> {
         .initialize_finish(id, result)
         .map_err(RunError::protocol)?;
 
-    let checker = Checker::spawn();
-    let mut checks = checker.results().clone();
     let mut state = GlobalState {
         connection,
         host: AnalysisHost::default(),
@@ -60,15 +62,21 @@ pub fn run(connection: &Connection) -> Result<(), RunError> {
         file_ids: FxHashMap::default(),
         encoding,
         folding: capabilities::folding(&params.capabilities),
-        checker,
-        generation: 0,
-        published: FxHashSet::default(),
+        checker: Checker::spawn()?,
         checks: FxHashMap::default(),
-        inlay_hints: capabilities::inlay_hint_refresh(&params.capabilities),
-        semantic_tokens: capabilities::semantic_tokens_refresh(&params.capabilities),
+        closed_diagnostics: FxHashMap::default(),
+        failed: FxHashMap::default(),
+        inlay_hint_refresh: capabilities::inlay_hint_refresh(&params.capabilities),
+        semantic_tokens_refresh: capabilities::semantic_tokens_refresh(&params.capabilities),
         next_request: 0,
     };
+    if capabilities::watches_files(&params.capabilities) {
+        state.send_request::<RegisterCapability>(RegistrationParams {
+            registrations: vec![capabilities::watched_files_registration()],
+        })?;
+    }
     loop {
+        let checks = state.checker.results().clone();
         select! {
             recv(connection.receiver) -> message => {
                 let Ok(message) = message else {
@@ -90,15 +98,19 @@ pub fn run(connection: &Connection) -> Result<(), RunError> {
                     Message::Response(_) => {}
                 }
             }
-            recv(checks) -> result => if let Ok(result) = result { state.on_checked(result)? } else {
-                checks = crossbeam_channel::never();
-                state.log_error("the checker stopped; only syntax errors are shown".to_owned())?;
-            },
+            recv(checks) -> result => state.on_check_result(result)?,
         }
     }
 }
 
 impl GlobalState<'_> {
+    fn on_check_result(&mut self, result: Result<CheckResult, RecvError>) -> Result<(), RunError> {
+        match result {
+            Ok(result) => self.on_checked(result),
+            Err(RecvError) => self.on_checker_lost(),
+        }
+    }
+
     fn on_request(&mut self, request: Request) -> Result<(), RunError> {
         let response = match request.method.as_str() {
             DocumentSymbolRequest::METHOD => {
@@ -144,22 +156,40 @@ impl GlobalState<'_> {
             DidCloseTextDocument::METHOD => {
                 self.notify::<DidCloseTextDocument>(notification, Self::on_did_close)
             }
+            DidChangeWatchedFiles::METHOD => self
+                .notify::<DidChangeWatchedFiles>(notification, Self::on_did_change_watched_files),
             _ => Ok(()),
         }
     }
 
+    /// Answers a request. A handler that panics answers with an error, and
+    /// the server goes on.
     fn respond<R>(&self, request: Request, handler: fn(&Self, &R::Params) -> R::Result) -> Response
     where
         R: lsp_types::request::Request,
         R::Params: DeserializeOwned,
         R::Result: Serialize,
     {
-        match serde_json::from_value(request.params) {
-            Ok(params) => Response::new_ok(request.id, handler(self, &params)),
-            Err(error) => Response::new_err(
+        let params: R::Params = match serde_json::from_value(request.params) {
+            Ok(params) => params,
+            Err(error) => {
+                return Response::new_err(
+                    request.id,
+                    ErrorCode::InvalidParams as i32,
+                    format!("invalid {} params: {error}", R::METHOD),
+                );
+            }
+        };
+        match panic::catch_unwind(AssertUnwindSafe(|| handler(self, &params))) {
+            Ok(result) => Response::new_ok(request.id, result),
+            Err(payload) => Response::new_err(
                 request.id,
-                ErrorCode::InvalidParams as i32,
-                format!("invalid {} params: {error}", R::METHOD),
+                ErrorCode::InternalError as i32,
+                format!(
+                    "{} panicked: {}",
+                    R::METHOD,
+                    panic_message(payload.as_ref())
+                ),
             ),
         }
     }
