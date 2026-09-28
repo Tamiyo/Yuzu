@@ -17,18 +17,33 @@ pub struct CompileOptions {
 
     #[pyo3(get)]
     pub debug_substrait: bool,
+
+    /// The engine to compile for; DataFusion when it is `None`.
+    #[pyo3(get)]
+    pub target: Option<String>,
 }
 
 #[gen_stub_pymethods]
 #[pymethods]
 impl CompileOptions {
     #[new]
-    #[pyo3(signature = (debug_yzl = false, debug_yzr = false, debug_substrait = false))]
-    fn new(debug_yzl: bool, debug_yzr: bool, debug_substrait: bool) -> Self {
+    #[pyo3(signature = (
+        debug_yzl = false,
+        debug_yzr = false,
+        debug_substrait = false,
+        target = None,
+    ))]
+    fn new(
+        debug_yzl: bool,
+        debug_yzr: bool,
+        debug_substrait: bool,
+        target: Option<String>,
+    ) -> Self {
         Self {
             debug_yzl,
             debug_yzr,
             debug_substrait,
+            target,
         }
     }
 }
@@ -39,7 +54,7 @@ impl From<&CompileOptions> for yuzu_driver::CompileOptions {
             debug_yzl: options.debug_yzl,
             debug_yzr: options.debug_yzr,
             debug_substrait: options.debug_substrait,
-            target: None,
+            target: options.target.clone(),
         }
     }
 }

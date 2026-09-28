@@ -1,6 +1,7 @@
 """The standard library, which every program can import."""
 
-from support import rows
+import yuzu
+from support import SCHEMA, rows
 
 
 def test_the_engine_constant_names_the_target():
@@ -21,3 +22,18 @@ def test_an_engine_function_can_be_called_by_its_own_name():
         |> select power(level, 3) as cube
     """
     assert rows(query) == [(27,)]
+
+
+def test_the_engine_can_be_named():
+    options = yuzu.CompileOptions(target="datafusion")
+    assert yuzu.compile(SCHEMA + "from employees", options)
+
+
+def test_an_engine_the_compiler_does_not_know_is_reported():
+    options = yuzu.CompileOptions(target="postgres")
+    try:
+        yuzu.compile(SCHEMA + "from employees", options)
+    except ValueError as failure:
+        assert "`postgres` is not a supported engine" in str(failure)
+    else:
+        raise AssertionError("postgres compiled")
