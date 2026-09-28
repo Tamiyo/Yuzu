@@ -70,7 +70,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
             ast::Literal::BoolLiteral(boolean) => yz::constant_bool(
                 self.context,
                 BoolType::get(self.context),
-                BoolAttribute::new(self.context, boolean.value().unwrap_or_default()).into(),
+                BoolAttribute::new(self.context, boolean.value().unwrap_or_default()),
                 loc,
             )
             .into(),

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
-    let llvm = PathBuf::from(env::var("MLIR_SYS_220_PREFIX").expect("MLIR_SYS_220_PREFIX is set"));
+    let llvm = PathBuf::from(env::var("MLIR_SYS_230_PREFIX").expect("MLIR_SYS_230_PREFIX is set"));
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let tblgen = llvm.join("bin/mlir-tblgen");
     let include = llvm.join("include");

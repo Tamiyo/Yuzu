@@ -399,7 +399,7 @@ yzr.yield %p : !yz.bool
     .expect("the filters parse and verify");
 
     let pass_manager = melior::pass::PassManager::new(&context);
-    pass_manager.add_pass(melior::pass::transform::create_canonicalizer());
+    pass_manager.add_pass(melior::pass::transform::create_canonicalizer_pass());
     pass_manager
         .run(&mut module)
         .expect("canonicalization succeeds");

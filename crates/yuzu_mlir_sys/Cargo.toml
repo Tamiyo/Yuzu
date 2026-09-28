@@ -5,7 +5,7 @@ edition = "2024"
 links = "yuzu_dialects"
 
 [dependencies]
-mlir-sys = "220"
+mlir-sys = "230"
 
 [build-dependencies]
 cc = "1"

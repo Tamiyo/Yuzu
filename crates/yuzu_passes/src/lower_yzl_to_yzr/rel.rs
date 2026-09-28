@@ -278,7 +278,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                     ty,
                     input,
                     grouping.measures,
-                    DenseI64ArrayAttribute::new(self.context, &indices).into(),
+                    DenseI64ArrayAttribute::new(self.context, &indices),
                     op.location(),
                 )
                 .into(),
@@ -382,7 +382,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                 ty,
                 input,
                 region,
-                DenseI64ArrayAttribute::new(self.context, &keys).into(),
+                DenseI64ArrayAttribute::new(self.context, &keys),
                 op.location(),
             )
             .into(),

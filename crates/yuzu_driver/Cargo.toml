@@ -9,7 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-melior = { version = "0.27.6", features = ["ods-dialects"] }
+melior = { version = "0.28.2", features = ["ods-dialects"] }
 rustc-hash = "2"
 
 yuzu_ast = { path = "../yuzu_ast" }

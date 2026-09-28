@@ -44,7 +44,7 @@ pub fn legalize_operators(context: &Context, module: &mut Module) {
     discard_implementations(&rewriter, module);
 
     let passes = crate::pass_manager(context);
-    passes.add_pass(transform::create_canonicalizer());
+    passes.add_pass(transform::create_canonicalizer_pass());
     passes
         .run(module)
         .expect("canonicalization runs on any module the lowering builds");

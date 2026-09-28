@@ -4,7 +4,7 @@ use melior::pass::transform;
 
 pub fn remove_dead_symbols(context: &Context, module: &mut Module) {
     let passes = crate::pass_manager(context);
-    passes.add_pass(transform::create_symbol_dce());
+    passes.add_pass(transform::create_symbol_dce_pass());
 
     passes
         .run(module)

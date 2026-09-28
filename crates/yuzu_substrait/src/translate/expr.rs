@@ -76,10 +76,9 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
             YzOp::ConstantFloat(constant) => {
                 Some(literal(LiteralType::Fp64(constant.value().value())))
             }
-            // A bare `BoolAttr` has no typed reader of its own.
-            YzOp::ConstantBool(constant) => Some(literal(LiteralType::Boolean(
-                constant.value().to_string() == "true",
-            ))),
+            YzOp::ConstantBool(constant) => {
+                Some(literal(LiteralType::Boolean(constant.value().value())))
+            }
             YzOp::ConstantStr(constant) => Some(literal(LiteralType::String(
                 constant.value().value().to_string(),
             ))),

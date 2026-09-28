@@ -128,7 +128,7 @@ struct Op {
 }
 
 fn main() {
-    let llvm = PathBuf::from(env::var("MLIR_SYS_220_PREFIX").expect("MLIR_SYS_220_PREFIX is set"));
+    let llvm = PathBuf::from(env::var("MLIR_SYS_230_PREFIX").expect("MLIR_SYS_230_PREFIX is set"));
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let cpp = manifest.join("../yuzu_mlir_sys/cpp");
@@ -163,7 +163,7 @@ fn main() {
     }
 
     println!("cargo:rerun-if-changed={}", cpp.display());
-    println!("cargo:rerun-if-env-changed=MLIR_SYS_220_PREFIX");
+    println!("cargo:rerun-if-env-changed=MLIR_SYS_230_PREFIX");
     fs::write(out.join("ops.rs"), generated).expect("the generated ops file writes");
 }
 
