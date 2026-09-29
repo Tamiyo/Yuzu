@@ -233,8 +233,8 @@ mod tests {
     fn independent_errors_are_each_reported() {
         expect_test::expect![[r"
             expected expression, found `def`
-            expected `str`, found `int64`
-            expected `int64`, found `str`"]]
+            expected `int64`, found `str`
+            expected `str`, found `int64`"]]
         .assert_eq(&check_entry(
             "let a = 1 +\ndef f() -> int64 { return \"s\" }\ndef g() -> str { return 1 }\n",
         ));
