@@ -11,7 +11,9 @@ use yuzu_mlir::attributes::CalleeSource;
 use yuzu_mlir::ir::attribute::array::ArrayAttributeExt;
 use yuzu_mlir::ir::operation::{OperationExt, OperationMutExt};
 use yuzu_mlir::ods::yzl;
-use yuzu_mlir::types::{self, ErrorType, ListType, ParamType, RefType, StructType, UnresolvedType};
+use yuzu_mlir::types::{
+    self, ErrorType, ListType, ParamType, RefType, StructType, UnitType, UnresolvedType,
+};
 
 use crate::lower_ast_to_yzl::symbols::{
     Binding, BindingKind, Declared, Field, FunctionKind, Lookup, Method, ModulePath, Overload,
@@ -241,9 +243,10 @@ impl<'c> AstToYzl<'c, '_> {
             return None;
         }
 
+        // A function that declares no result returns unit.
         let result = match decl.result() {
             Some(result) => self.read_type_annotation(result),
-            None => UnresolvedType::new(self.context).into(),
+            None => UnitType::new(self.context).into(),
         };
 
         let body = Region::new();

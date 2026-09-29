@@ -9,7 +9,7 @@ mod yzl;
 use melior::Context;
 use melior::ir::Type;
 
-pub use yz::{BoolType, Float64Type, Int64Type, ListType, StrType, StructType};
+pub use yz::{BoolType, Float64Type, Int64Type, ListType, StrType, StructType, UnitType};
 pub use yzl::{ErrorType, ParamType, QueryType, RefType, UnresolvedType};
 
 /// A scalar type: how source spells it, the lookup returning it, and the
@@ -79,6 +79,10 @@ pub fn name(ty: Type<'_>) -> String {
         return param.name().to_string();
     }
 
+    if UnitType::from_type(ty).is_some() {
+        return "unit".to_owned();
+    }
+
     match scalar_name(ty) {
         Some(scalar) => scalar.to_string(),
         None => ty.to_string(),
@@ -91,12 +95,13 @@ mod tests {
     use melior::ir::Type;
 
     use super::{
-        BoolType, ErrorType, Float64Type, Int64Type, QueryType, RefType, StrType, UnresolvedType,
+        BoolType, ErrorType, Float64Type, Int64Type, QueryType, RefType, StrType, UnitType,
+        UnresolvedType,
     };
 
     type Singleton = (fn(&Context) -> Type<'_>, fn(Type<'_>) -> bool);
 
-    const SINGLETONS: [Singleton; 7] = [
+    const SINGLETONS: [Singleton; 8] = [
         (
             |context| Int64Type::new(context).into(),
             |ty| Int64Type::from_type(ty).is_some(),
@@ -112,6 +117,10 @@ mod tests {
         (
             |context| StrType::new(context).into(),
             |ty| StrType::from_type(ty).is_some(),
+        ),
+        (
+            |context| UnitType::new(context).into(),
+            |ty| UnitType::from_type(ty).is_some(),
         ),
         (
             |context| UnresolvedType::new(context).into(),

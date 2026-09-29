@@ -20,7 +20,7 @@ use yuzu_mlir::ir::value::{ValueExt, ValueId, op_result};
 use yuzu_mlir::ops::yz::YzOp;
 use yuzu_mlir::ops::yzl::{FnOp, YzlOp};
 use yuzu_mlir::types::{
-    self, BoolType, ErrorType, Int64Type, ListType, ParamType, RefType, UnresolvedType,
+    self, BoolType, ErrorType, Int64Type, ListType, ParamType, RefType, UnitType, UnresolvedType,
 };
 
 pub fn infer_types<'c>(context: &'c Context, module: &mut Module<'c>) {
@@ -693,13 +693,16 @@ impl<'c> TypeInferrer<'c, '_> {
             .collect()
     }
 
+    /// A `return` with no value returns unit.
     fn unify_returns(&mut self, op: OperationRef<'c, '_>, ret: Type<'c>) {
         if let Some(terminator) = op.body_terminator()
             && matches!(terminator.as_yzl(), Some(YzlOp::Return(_)))
-            && let Some(value) = terminator.try_first_operand()
         {
-            let term = self.term_of(value);
-            self.unify(terminator, term, Term::Concrete(ret));
+            let term = match terminator.try_first_operand() {
+                Some(value) => self.term_of(value),
+                None => Term::Concrete(UnitType::new(self.context).into()),
+            };
+            self.unify(terminator, Term::Concrete(ret), term);
         }
     }
 
@@ -1179,7 +1182,7 @@ from t
 |> extend f(a) as e
     ",
             &expect![[r"
-                error: expected `int64`, found `bool`
+                error: expected `bool`, found `int64`
                  --> test.yz:5:27
                   |
                 5 | def f(x: int64) -> bool { return x }
@@ -1232,6 +1235,42 @@ from t
                   yzl.output %1
                 }
             "#]],
+        );
+    }
+
+    #[test]
+    fn a_function_without_a_result_type_returns_unit() {
+        check(
+            r"
+def f(x: int64) {
+    return x
+}
+",
+            &expect![[r"
+                error: expected `unit`, found `int64`
+                 --> test.yz:3:5
+                  |
+                3 |     return x
+                  |     ^^^^^^^^
+            "]],
+        );
+    }
+
+    #[test]
+    fn a_bare_return_returns_unit() {
+        check(
+            r"
+def f(x: int64) -> int64 {
+    return
+}
+",
+            &expect![[r"
+                error: expected `int64`, found `unit`
+                 --> test.yz:3:5
+                  |
+                3 |     return
+                  |     ^^^^^^
+            "]],
         );
     }
 

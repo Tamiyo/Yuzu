@@ -259,7 +259,7 @@ fn document_symbols_nest_fields_under_their_struct() {
 #[test]
 fn semantic_tokens_are_sent_relative_to_the_one_before() {
     let mut client = Client::start(ClientCapabilities::default());
-    client.open("def f(x: int64) {\n    return x\n}\n");
+    client.open("def f(x: int64) -> int64 {\n    return x\n}\n");
 
     let result = client.request::<SemanticTokensFullRequest>(SemanticTokensParams {
         text_document: document(),
@@ -288,6 +288,7 @@ fn semantic_tokens_are_sent_relative_to_the_one_before() {
         +0 +4 len 1 type 9 mods 1
         +0 +2 len 1 type 10 mods 1
         +0 +3 len 5 type 12 mods 0
+        +0 +10 len 5 type 12 mods 0
         +1 +4 len 6 type 0 mods 0"]]
     .assert_eq(&rendered.join("\n"));
     client.shutdown();

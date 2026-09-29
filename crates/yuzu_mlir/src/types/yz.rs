@@ -117,6 +117,34 @@ impl<'c> From<StrType<'c>> for Type<'c> {
     }
 }
 
+/// `!yz.unit`: what a function returns when it declares no result.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct UnitType<'c>(Type<'c>);
+
+impl<'c> UnitType<'c> {
+    #[must_use]
+    pub fn new(context: &'c Context) -> Self {
+        // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
+        unsafe {
+            Self(Type::from_raw(yuzu_mlir_sys::yzuUnitTypeGet(
+                context.to_raw(),
+            )))
+        }
+    }
+
+    #[must_use]
+    pub fn from_type(ty: Type<'c>) -> Option<Self> {
+        // SAFETY: `ty` is a live type; the query only reads it.
+        unsafe { yuzu_mlir_sys::yzuTypeIsUnitType(ty.to_raw()) }.then_some(Self(ty))
+    }
+}
+
+impl<'c> From<UnitType<'c>> for Type<'c> {
+    fn from(ty: UnitType<'c>) -> Self {
+        ty.0
+    }
+}
+
 /// `!yz.list<inner>`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ListType<'c>(Type<'c>);

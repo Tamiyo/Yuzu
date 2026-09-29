@@ -37,6 +37,13 @@ def Yz_StrType : Yz_Type<"Str", "str"> {
   let summary = "string";
 }
 
+def Yz_UnitType : Yz_Type<"Unit", "unit"> {
+  let summary = "what a function returns when it declares no result";
+  let description = [{
+    It holds no value, so no column, parameter or field has it.
+  }];
+}
+
 def Yz_StructType : Yz_Type<"Struct", "struct"> {
   let summary = "a declared struct, by name — the declaration is the identity";
   let description = [{

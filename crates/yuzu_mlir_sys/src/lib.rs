@@ -21,6 +21,8 @@ unsafe extern "C" {
     pub fn yzuTypeIsBoolType(ty: MlirType) -> bool;
     pub fn yzuStrTypeGet(ctx: MlirContext) -> MlirType;
     pub fn yzuTypeIsStrType(ty: MlirType) -> bool;
+    pub fn yzuUnitTypeGet(ctx: MlirContext) -> MlirType;
+    pub fn yzuTypeIsUnitType(ty: MlirType) -> bool;
     pub fn yzuUnresolvedTypeGet(ctx: MlirContext) -> MlirType;
     pub fn yzuTypeIsUnresolvedType(ty: MlirType) -> bool;
     pub fn yzuErrorTypeGet(ctx: MlirContext) -> MlirType;
