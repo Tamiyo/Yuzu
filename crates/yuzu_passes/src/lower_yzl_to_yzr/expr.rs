@@ -3,13 +3,13 @@ use melior::ir::attribute::{FlatSymbolRefAttribute, StringAttribute};
 use melior::ir::operation::{OperationBuilder, OperationLike, OperationRef};
 use melior::ir::{Attribute, BlockLike, BlockRef, Identifier, Operation, Type, Value, ValueLike};
 use rustc_hash::FxHashMap;
-use yuzu_mlir::ListType;
 use yuzu_mlir::attributes::CalleeSource;
 use yuzu_mlir::ir::block::BlockExt;
 use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
 use yuzu_mlir::ir::value::{ValueExt, ValueId};
 use yuzu_mlir::ods::{yz, yzr};
 use yuzu_mlir::ops::yzl::{CallOp, YzlOp};
+use yuzu_mlir::types::ListType;
 
 use crate::lower_yzl_to_yzr::{YzlToYzr, op_name, report};
 

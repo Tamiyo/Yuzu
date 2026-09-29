@@ -1,9 +1,8 @@
 //! The type inference gave each `let` the program wrote without one.
 
 use text_size::{TextRange, TextSize};
-use yuzu_ast::{self as ast, AstNode};
-use yuzu_diagnostics::diagnostics::Span;
-use yuzu_diagnostics::source_map::SourceId;
+use yuzu_ast::ast::{self, AstNode};
+use yuzu_diagnostics::{SourceId, Span};
 
 use crate::Checked;
 

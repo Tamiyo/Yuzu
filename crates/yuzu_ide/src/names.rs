@@ -5,9 +5,8 @@
 
 use rustc_hash::FxHashMap;
 use text_size::TextRange;
-use yuzu_ast::{self as ast, AstNode, Mutability};
-use yuzu_diagnostics::diagnostics::Span;
-use yuzu_diagnostics::source_map::SourceId;
+use yuzu_ast::ast::{self, AstNode, Mutability};
+use yuzu_diagnostics::{SourceId, Span};
 use yuzu_driver::index::{Reference, TargetKind};
 use yuzu_syntax::{GreenNode, SyntaxKind, SyntaxNode};
 

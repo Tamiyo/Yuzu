@@ -11,12 +11,9 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use yuzu_ast::AstNode;
 use yuzu_ast::ast;
-use yuzu_diagnostics::diagnostics::Span;
-use yuzu_diagnostics::diagnostics::builder::DiagnosticBuilder;
-use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
-use yuzu_diagnostics::source_map::{SourceId, SourceMap};
+use yuzu_ast::ast::AstNode;
+use yuzu_diagnostics::{DiagnosticBuilder, DiagnosticsEngine, SourceId, SourceMap, Span};
 use yuzu_passes::{File, Lowering};
 use yuzu_syntax::{GreenNode, SyntaxNode};
 
@@ -30,10 +27,30 @@ pub(crate) struct Submodule {
     public: bool,
 }
 
+/// Where a source came from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Origin {
+    /// A file, read from this path.
+    File(PathBuf),
+    /// A source with no file, by the name a diagnostic shows for it: a
+    /// library module built into the compiler, or a text held in memory.
+    Named(String),
+}
+
+impl Origin {
+    /// Adds a source from this origin to `sources`.
+    pub(crate) fn add_to(self, sources: &mut SourceMap, text: Arc<str>) -> SourceId {
+        match self {
+            Origin::File(path) => sources.add_file(&path, text),
+            Origin::Named(name) => sources.add(name, text),
+        }
+    }
+}
+
 /// A module's source, and the name to show for it in a diagnostic.
 #[derive(Debug)]
 pub struct ModuleSource {
-    pub name: String,
+    pub origin: Origin,
     /// Shared, so a text held elsewhere is not copied.
     pub source: Arc<str>,
     /// A tree the resolver parsed from `source` before, without errors, so
@@ -139,7 +156,7 @@ impl ModuleResolver for FsResolver {
             Err(error) => return Err(Unreadable::new(file, error)),
         };
         Ok(Some(ModuleSource {
-            name: file.display().to_string(),
+            origin: Origin::File(file),
             source: source.into(),
             syntax: None,
         }))
@@ -153,7 +170,7 @@ pub struct MapResolver(pub HashMap<String, String>);
 impl ModuleResolver for MapResolver {
     fn resolve(&self, path: &str) -> Result<Option<ModuleSource>, Unreadable> {
         Ok(self.0.get(path).map(|source| ModuleSource {
-            name: format!("{path}.yz"),
+            origin: Origin::Named(format!("{path}.yz")),
             source: source.as_str().into(),
             syntax: None,
         }))
@@ -431,7 +448,7 @@ impl Loader<'_> {
             }
         };
 
-        let source_id = self.sources.add(module.name, module.source);
+        let source_id = module.origin.add_to(self.sources, module.source);
         let root = self.read_syntax(source_id, module.syntax);
         self.submodules.insert(path.to_string(), submodules(&root));
         self.loading.push(path.to_string());
@@ -499,7 +516,7 @@ fn submodules(root: &ast::Root) -> Vec<Submodule> {
         .filter_map(|stmt| match stmt {
             ast::Stmt::ModStmt(decl) => Some(Submodule {
                 name: decl.name()?.token()?.text().to_owned(),
-                public: decl.visibility() == yuzu_ast::Visibility::Public,
+                public: decl.visibility() == yuzu_ast::ast::Visibility::Public,
             }),
             _ => None,
         })

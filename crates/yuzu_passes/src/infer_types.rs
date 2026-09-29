@@ -19,8 +19,9 @@ use yuzu_mlir::ir::region::RegionExt;
 use yuzu_mlir::ir::value::{ValueExt, ValueId, op_result};
 use yuzu_mlir::ops::yz::YzOp;
 use yuzu_mlir::ops::yzl::{FnOp, YzlOp};
-use yuzu_mlir::types::{self, BoolType, ErrorType, Int64Type, RefType, UnresolvedType};
-use yuzu_mlir::{ListType, ParamType};
+use yuzu_mlir::types::{
+    self, BoolType, ErrorType, Int64Type, ListType, ParamType, RefType, UnresolvedType,
+};
 
 pub fn infer_types<'c>(context: &'c Context, module: &mut Module<'c>) {
     let declared = Declarations::of(module.body());
@@ -309,7 +310,7 @@ impl<'c> TypeInferrer<'c, '_> {
 
     fn display(&mut self, term: Term<'c>) -> String {
         match self.shallow(term) {
-            Term::Concrete(ty) => types::name(self.context, ty),
+            Term::Concrete(ty) => types::name(ty),
             Term::Var(_) => "_".to_string(),
             Term::List(inner) => format!("List[{}]", self.display(Term::Var(inner))),
         }
@@ -621,7 +622,7 @@ impl<'c> TypeInferrer<'c, '_> {
                 continue;
             }
 
-            let name = types::name(self.context, resolved);
+            let name = types::name(resolved);
             let implemented = if let Some(param) = ParamType::from_type(resolved) {
                 self.is_bounded(bound.caller, param.name(), bound.trait_)
             } else {

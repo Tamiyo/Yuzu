@@ -2,14 +2,12 @@
 //! and checked through `check_aggregates`, with every diagnostic kept and no
 //! plan made.
 
-use yuzu_diagnostics::diagnostics::Diagnostic;
-use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
-use yuzu_diagnostics::source_map::{SourceId, SourceMap};
+use yuzu_diagnostics::{Diagnostic, DiagnosticsEngine, SourceId, SourceMap};
 use yuzu_syntax::GreenNode;
 
 use crate::compile::{in_thread_context, lower_and_check};
 use crate::index::{Index, IndexReader};
-use crate::modules::{self, ModuleResolver};
+use crate::modules::{self, ModuleResolver, Origin};
 use crate::stdlib::Engine;
 
 /// The file a check asks about.
@@ -18,7 +16,7 @@ pub enum Focus<'a> {
     /// A file that is no module: the program starts there. `syntax` is a
     /// tree parsed from `source` before, without errors, when there is one.
     Entry {
-        name: &'a str,
+        origin: &'a Origin,
         source: &'a str,
         syntax: Option<&'a GreenNode>,
     },
@@ -44,18 +42,19 @@ pub struct Checked {
 /// The library is read from its files rather than from the cache a compile
 /// uses, so a copy the resolver holds of a library module is the one read.
 pub fn check(focus: Focus<'_>, resolver: &dyn ModuleResolver) -> Checked {
-    let (name, source, syntax, module) = match focus {
+    let made_up = Origin::Named("<check>".to_owned());
+    let (origin, source, syntax, module) = match focus {
         Focus::Entry {
-            name,
+            origin,
             source,
             syntax,
-        } => (name, source, syntax.cloned(), None),
-        Focus::Module(path) => ("<check>", "", None, Some(path)),
+        } => (origin, source, syntax.cloned(), None),
+        Focus::Module(path) => (&made_up, "", None, Some(path)),
     };
 
     let mut sources = SourceMap::new();
     let mut diagnostics = DiagnosticsEngine::new();
-    let entry = sources.add(name.to_owned(), source.to_owned());
+    let entry = origin.clone().add_to(&mut sources, source.into());
     let modules::Loaded { files, trees, .. } = modules::load_program(
         modules::EntryFile {
             source: entry,
@@ -95,10 +94,10 @@ pub fn check(focus: Focus<'_>, resolver: &dyn ModuleResolver) -> Checked {
 mod tests {
     use std::collections::HashMap;
 
-    use yuzu_diagnostics::diagnostics::printer::DiagnosticPrinter;
+    use yuzu_diagnostics::DiagnosticPrinter;
 
     use super::{Checked, Focus, check};
-    use crate::modules::{MapResolver, ModuleResolver, ModuleSource, Unreadable};
+    use crate::modules::{MapResolver, ModuleResolver, ModuleSource, Origin, Unreadable};
 
     struct LibraryCopy {
         path: &'static str,
@@ -112,7 +111,7 @@ mod tests {
 
         fn resolve_library(&self, path: &str) -> Result<Option<ModuleSource>, Unreadable> {
             Ok((path == self.path).then(|| ModuleSource {
-                name: format!("{path}.yz"),
+                origin: Origin::Named(format!("{path}.yz")),
                 source: self.source.into(),
                 syntax: None,
             }))
@@ -134,7 +133,7 @@ mod tests {
         let resolver = MapResolver(HashMap::new());
         let checked = check(
             Focus::Entry {
-                name: "main.yz",
+                origin: &Origin::Named("main.yz".to_owned()),
                 source: "def f(x: i64) -> int64 { return 1 }\n",
                 syntax: None,
             },
@@ -188,7 +187,7 @@ mod tests {
         let resolver = MapResolver(HashMap::new());
         let checked = check(
             Focus::Entry {
-                name: "main.yz",
+                origin: &Origin::Named("main.yz".to_owned()),
                 source,
                 syntax: None,
             },

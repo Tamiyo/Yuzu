@@ -7,9 +7,6 @@ pub mod ods;
 pub mod ops;
 pub mod types;
 
-pub use ir::symbol_table::SymbolTable;
-pub use types::{ListType, ParamType, StructType};
-
 /// A context without a thread pool.
 ///
 /// A module holds one query and its library, so handing the verifier's and the passes' work to other threads

@@ -10,12 +10,11 @@ use std::sync::{Arc, OnceLock};
 
 use melior::Context;
 
-use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
-use yuzu_diagnostics::source_map::SourceMap;
+use yuzu_diagnostics::{DiagnosticsEngine, SourceMap};
 use yuzu_passes::{BoundLibrary, File};
 use yuzu_syntax::GreenNode;
 
-use crate::modules::{self, Loaded, MapResolver, ModuleSource, Submodule};
+use crate::modules::{self, Loaded, MapResolver, ModuleSource, Origin, Submodule};
 
 /// One library file: its module path, the name a diagnostic shows for it,
 /// and its text.
@@ -90,7 +89,7 @@ pub fn is_library_path(path: &str) -> bool {
 pub(crate) fn resolve(path: &str, engine: Engine) -> Option<ModuleSource> {
     if path == ENGINE_MODULE {
         return Some(ModuleSource {
-            name: format!("<{ENGINE_MODULE}>"),
+            origin: Origin::Named(format!("<{ENGINE_MODULE}>")),
             source: format!("pub let ENGINE = \"{engine}\"\n").into(),
             syntax: None,
         });
@@ -100,7 +99,7 @@ pub(crate) fn resolve(path: &str, engine: Engine) -> Option<ModuleSource> {
         .iter()
         .find(|module| module.path == path)
         .map(|module| ModuleSource {
-            name: module.name.to_string(),
+            origin: Origin::Named(module.name.to_owned()),
             source: Arc::clone(&texts()[path]),
             syntax: trees().get(path).cloned(),
         })
@@ -236,8 +235,7 @@ mod tests {
     use std::fmt::Write;
 
     use melior::ir::operation::OperationLike;
-    use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
-    use yuzu_diagnostics::source_map::SourceMap;
+    use yuzu_diagnostics::{DiagnosticsEngine, SourceMap};
     use yuzu_passes::Lowering;
 
     use super::{Engine, MODULES, trees};

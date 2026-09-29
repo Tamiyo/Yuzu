@@ -3,10 +3,7 @@
 use std::fmt;
 
 use melior::ir::operation::OperationLike;
-use yuzu_diagnostics::diagnostics::Diagnostic;
-use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
-use yuzu_diagnostics::diagnostics::printer::DiagnosticPrinter;
-use yuzu_diagnostics::source_map::{SourceId, SourceMap};
+use yuzu_diagnostics::{Diagnostic, DiagnosticPrinter, DiagnosticsEngine, SourceId, SourceMap};
 use yuzu_substrait::Plan;
 
 use crate::index::IndexReader;

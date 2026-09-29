@@ -2,7 +2,7 @@
 //! parent by index, so the list is flat and the parent comes first.
 
 use text_size::TextRange;
-use yuzu_ast::{self as ast, AstNode};
+use yuzu_ast::ast::{self, AstNode};
 use yuzu_syntax::SyntaxNode;
 
 /// A declaration in an outline.

@@ -9,8 +9,7 @@ use melior::Context;
 use melior::ir::operation::{OperationLike, OperationRef};
 use melior::ir::{Module, Type, Value, ValueLike};
 use rustc_hash::FxHashMap;
-use yuzu_diagnostics::diagnostics::Span;
-use yuzu_diagnostics::source_map::SourceMap;
+use yuzu_diagnostics::{SourceMap, Span};
 use yuzu_mlir::diagnostics::span;
 use yuzu_mlir::ir::block::BlockExt;
 use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
@@ -177,7 +176,7 @@ impl<'s> IndexReader<'s> {
         {
             self.index.types.push(Typed {
                 at,
-                ty: types::name(context, ty),
+                ty: types::name(ty),
             });
         }
 
@@ -241,9 +240,9 @@ fn last_yield<'c>(op: OperationRef<'c, '_>) -> Option<Type<'c>> {
 #[cfg(test)]
 mod tests {
     use expect_test::{Expect, expect};
-    use yuzu_diagnostics::diagnostics::Span;
+    use yuzu_diagnostics::Span;
 
-    use crate::modules::MapResolver;
+    use crate::modules::{MapResolver, Origin};
     use crate::{Focus, check};
 
     fn check_index(source: &str, expected: &Expect) {
@@ -259,7 +258,7 @@ mod tests {
         );
         let checked = check(
             Focus::Entry {
-                name: "main.yz",
+                origin: &Origin::Named("main.yz".to_owned()),
                 source,
                 syntax: None,
             },

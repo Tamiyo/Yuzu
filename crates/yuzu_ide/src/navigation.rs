@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use text_size::{TextRange, TextSize};
-use yuzu_diagnostics::source_map::SourceId;
+use yuzu_diagnostics::SourceId;
 
 use crate::Checked;
 use crate::names::{Name, Resolution};

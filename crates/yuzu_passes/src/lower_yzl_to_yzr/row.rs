@@ -7,9 +7,10 @@ use melior::ir::{Attribute, BlockRef, Location, Type};
 use yuzu_mlir::diagnostics::emit_error;
 use yuzu_mlir::ir::block::BlockExt;
 use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
+use yuzu_mlir::ir::symbol_table::SymbolTable;
 use yuzu_mlir::ods::{yz, yzr};
 use yuzu_mlir::ops::yzl::YzlOp;
-use yuzu_mlir::{StructType, SymbolTable};
+use yuzu_mlir::types::StructType;
 
 use crate::lower_yzl_to_yzr::{Column, Row, Stage, YzlToYzr, struct_fields};
 

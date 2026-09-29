@@ -7,8 +7,8 @@
 use std::ops::BitOr;
 
 use text_size::TextRange;
-use yuzu_ast::{self as ast, AstNode, Ident, Mutability};
-use yuzu_diagnostics::source_map::SourceId;
+use yuzu_ast::ast::{self, AstNode, Ident, Mutability};
+use yuzu_diagnostics::SourceId;
 use yuzu_syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
 
 use crate::Checked;

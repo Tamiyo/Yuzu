@@ -11,8 +11,7 @@ use lsp_types::{
 };
 use rustc_hash::FxHashMap;
 use text_size::{TextRange, TextSize};
-use yuzu_diagnostics::diagnostics::{Diagnostic, LabelStyle, Severity};
-use yuzu_diagnostics::source_map::SourceId;
+use yuzu_diagnostics::{Diagnostic, LabelStyle, Severity, SourceId};
 use yuzu_ide::{Checked, FileRange, Fold, FoldKind, HlRange, StructureNode, StructureNodeKind};
 
 use crate::capabilities::Folding;
@@ -270,9 +269,7 @@ mod tests {
     use expect_test::expect;
     use lsp_types::Url;
     use text_size::TextRange;
-    use yuzu_diagnostics::diagnostics::Span;
-    use yuzu_diagnostics::diagnostics::builder::DiagnosticBuilder;
-    use yuzu_diagnostics::source_map::SourceMap;
+    use yuzu_diagnostics::{DiagnosticBuilder, SourceMap, Span};
     use yuzu_ide::{Fold, FoldKind, StructureNode, StructureNodeKind};
 
     use crate::capabilities::Folding;

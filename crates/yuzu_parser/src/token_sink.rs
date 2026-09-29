@@ -1,7 +1,7 @@
 use std::mem;
 
 use rowan::{GreenNode, GreenNodeBuilder, Language};
-use yuzu_diagnostics::diagnostics::{Diagnostic, engine::DiagnosticsEngine};
+use yuzu_diagnostics::{Diagnostic, DiagnosticsEngine};
 use yuzu_lexer::{lexer::Token, token_kind::TokenKind};
 use yuzu_syntax::{SyntaxKind, YuzuLanguage};
 
@@ -123,7 +123,7 @@ impl<'t, 'input> TokenSink<'t, 'input> {
 mod tests {
     use super::*;
     use text_size::TextRange;
-    use yuzu_diagnostics::source_map::SourceMap;
+    use yuzu_diagnostics::SourceMap;
     use yuzu_lexer::lexer::Lexer;
     use yuzu_syntax::SyntaxNode;
 

@@ -2,11 +2,9 @@ use expect_test::Expect;
 use melior::Context;
 use melior::ir::Module;
 use melior::ir::operation::OperationLike;
-use yuzu_ast::AstNode;
 use yuzu_ast::ast;
-use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
-use yuzu_diagnostics::diagnostics::printer::DiagnosticPrinter;
-use yuzu_diagnostics::source_map::{SourceId, SourceMap};
+use yuzu_ast::ast::AstNode;
+use yuzu_diagnostics::{DiagnosticPrinter, DiagnosticsEngine, SourceId, SourceMap};
 
 use crate::{File, Lowering};
 

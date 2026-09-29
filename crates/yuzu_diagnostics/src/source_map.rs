@@ -1,4 +1,5 @@
 use std::fmt;
+use std::path::Path;
 use std::sync::Arc;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -15,6 +16,8 @@ pub struct LineCol {
 #[derive(Clone)]
 struct Entry {
     name: Arc<str>,
+    /// The file the text was read from. `None` for a source with no file.
+    path: Option<Arc<Path>>,
     text: Arc<str>,
     line_starts: Arc<[usize]>,
 }
@@ -46,13 +49,23 @@ impl SourceMap {
         }
     }
 
-    /// Adds a source, and returns its id. A text already held as an
-    /// `Arc<str>` is shared, not copied.
+    /// Adds a source that has no file, and returns its id. A text already
+    /// held as an `Arc<str>` is shared, not copied.
     pub fn add(&mut self, name: impl Into<Arc<str>>, text: impl Into<Arc<str>>) -> SourceId {
-        let text: Arc<str> = text.into();
+        self.push(name.into(), None, text.into())
+    }
+
+    /// Adds a source read from a file, named by its path, and returns its id.
+    pub fn add_file(&mut self, path: &Path, text: impl Into<Arc<str>>) -> SourceId {
+        let name = path.display().to_string().into();
+        self.push(name, Some(path.into()), text.into())
+    }
+
+    fn push(&mut self, name: Arc<str>, path: Option<Arc<Path>>, text: Arc<str>) -> SourceId {
         let line_starts = index_lines(&text).into();
         self.entries.push(Entry {
-            name: name.into(),
+            name,
+            path,
             text,
             line_starts,
         });
@@ -85,6 +98,22 @@ impl SourceMap {
     #[must_use]
     pub fn name(&self, source_id: SourceId) -> &str {
         &self.entries[source_id.0 - 1].name
+    }
+
+    /// The file a source was read from. `None` for a source with no file.
+    #[must_use]
+    pub fn path(&self, source_id: SourceId) -> Option<&Path> {
+        self.entries[source_id.0 - 1].path.as_deref()
+    }
+
+    /// The source read from a file.
+    #[must_use]
+    pub fn file_id(&self, path: &Path) -> Option<SourceId> {
+        let index = self
+            .entries
+            .iter()
+            .position(|entry| entry.path.as_deref() == Some(path))?;
+        Some(SourceId(index + 1))
     }
 
     /// The source added under a name. Positions that reach the compiler from
@@ -152,7 +181,22 @@ fn index_lines(text: &str) -> Vec<usize> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::SourceMap;
+
+    #[test]
+    fn only_a_file_has_a_path() {
+        let mut sources = SourceMap::new();
+        let file = Path::new("/work/main.yz");
+        let read = sources.add_file(file, "from t\n");
+        let named = sources.add("<yuzu.engine>", "");
+        assert_eq!(sources.name(read), "/work/main.yz");
+        assert_eq!(sources.path(read), Some(file));
+        assert_eq!(sources.path(named), None);
+        assert_eq!(sources.file_id(file), Some(read));
+        assert_eq!(sources.file_id(Path::new("<yuzu.engine>")), None);
+    }
 
     #[test]
     fn an_extended_source_keeps_its_id() {

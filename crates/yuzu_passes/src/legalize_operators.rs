@@ -12,9 +12,10 @@ use yuzu_mlir::diagnostics::emit_error;
 use yuzu_mlir::ir::block::BlockExt;
 use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
 use yuzu_mlir::ir::region::RegionExt;
+use yuzu_mlir::ir::symbol_table::SymbolTable;
 use yuzu_mlir::ir::value::{ValueExt, ValueId};
 use yuzu_mlir::ops::yz::YzOp;
-use yuzu_mlir::{ParamType, SymbolTable};
+use yuzu_mlir::types::ParamType;
 
 use crate::inline_calls::copy;
 use crate::operators::{OPERATORS, Operator};

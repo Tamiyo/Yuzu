@@ -6,14 +6,12 @@ use melior::ir::{
     Attribute, Block, BlockLike, BlockRef, Location, Operation, Region, RegionLike, Type, Value,
 };
 use text_size::TextRange;
-use yuzu_ast::ast::Mutability;
-use yuzu_ast::{AstNode, Visibility, ast};
+use yuzu_ast::ast::{self, AstNode, Mutability, Visibility};
 use yuzu_mlir::attributes::CalleeSource;
 use yuzu_mlir::ir::attribute::array::ArrayAttributeExt;
 use yuzu_mlir::ir::operation::{OperationExt, OperationMutExt};
 use yuzu_mlir::ods::yzl;
-use yuzu_mlir::types::{self, ErrorType, RefType, UnresolvedType};
-use yuzu_mlir::{ListType, ParamType, StructType};
+use yuzu_mlir::types::{self, ErrorType, ListType, ParamType, RefType, StructType, UnresolvedType};
 
 use crate::lower_ast_to_yzl::symbols::{
     Binding, BindingKind, Declared, FunctionKind, Lookup, Method, ModulePath, Overload, Reference,

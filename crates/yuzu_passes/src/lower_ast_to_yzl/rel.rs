@@ -7,7 +7,7 @@ use melior::ir::attribute::{
 use melior::ir::r#type::IntegerType;
 use melior::ir::{Block, BlockLike, BlockRef, Location, Region, RegionLike, Value};
 use text_size::TextRange;
-use yuzu_ast::{AstNode, ast};
+use yuzu_ast::ast::{self, AstNode};
 use yuzu_mlir::attributes::JoinKind;
 use yuzu_mlir::ir::attribute::array::ArrayAttributeExt;
 use yuzu_mlir::ir::operation::OperationExt;

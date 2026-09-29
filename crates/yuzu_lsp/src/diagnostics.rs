@@ -4,7 +4,7 @@ use lsp_types::notification::PublishDiagnostics;
 use lsp_types::request::{InlayHintRefreshRequest, SemanticTokensRefresh};
 use lsp_types::{PublishDiagnosticsParams, Url};
 use rustc_hash::{FxHashMap, FxHashSet};
-use yuzu_diagnostics::source_map::SourceId;
+use yuzu_diagnostics::SourceId;
 use yuzu_ide::{Checked, FileId};
 
 use crate::capabilities::Refresh;

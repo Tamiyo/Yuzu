@@ -1096,7 +1096,7 @@ impl StringLiteral {
     /// The literal's text, with its escapes replaced; a raw string's text as
     /// written. A new `String` for each call.
     #[must_use]
-    pub fn value(&self) -> Option<String> {
+    pub fn to_value(&self) -> Option<String> {
         let token = self.0.first_token()?;
         let text = token.text();
         if token.kind() == SyntaxKind::RawStringLit {
@@ -1111,7 +1111,7 @@ impl StringLiteral {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use yuzu_diagnostics::{diagnostics::engine::DiagnosticsEngine, source_map::SourceMap};
+    use yuzu_diagnostics::{DiagnosticsEngine, SourceMap};
 
     fn parsed(input: &str) -> SyntaxNode {
         let mut diagnostics = DiagnosticsEngine::new();

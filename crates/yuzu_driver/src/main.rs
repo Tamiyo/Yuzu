@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
-use yuzu_diagnostics::diagnostics::printer::DiagnosticPrinter;
+use yuzu_diagnostics::DiagnosticPrinter;
 use yuzu_driver::modules::{FsResolver, base_of};
 use yuzu_driver::stdlib::Engine;
 use yuzu_driver::{CompileOptions, compile};

@@ -1,8 +1,8 @@
 //! What hovering shows: a name's declaration, or an expression's type.
 
 use text_size::{TextRange, TextSize};
-use yuzu_ast::{self as ast, AstNode, Mutability};
-use yuzu_diagnostics::source_map::SourceId;
+use yuzu_ast::ast::{self, AstNode, Mutability};
+use yuzu_diagnostics::SourceId;
 use yuzu_syntax::SyntaxKind;
 
 use crate::Checked;

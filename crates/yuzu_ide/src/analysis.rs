@@ -5,10 +5,8 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 use text_size::TextRange;
-use yuzu_ast::{AstNode, Root};
-use yuzu_diagnostics::diagnostics::Diagnostic;
-use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
-use yuzu_diagnostics::source_map::SourceMap;
+use yuzu_ast::ast::{AstNode, Root};
+use yuzu_diagnostics::{Diagnostic, DiagnosticsEngine, SourceMap};
 use yuzu_driver::modules::{Location, locate};
 use yuzu_syntax::{GreenNode, SyntaxNode};
 

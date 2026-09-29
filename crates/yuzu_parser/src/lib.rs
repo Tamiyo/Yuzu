@@ -1,4 +1,4 @@
-use yuzu_diagnostics::{diagnostics::engine::DiagnosticsEngine, source_map::SourceId};
+use yuzu_diagnostics::{DiagnosticsEngine, SourceId};
 use yuzu_lexer::lexer::{Lexer, Token};
 use yuzu_syntax::SyntaxNode;
 

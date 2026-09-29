@@ -5,7 +5,7 @@ use melior::ir::attribute::{
     BoolAttribute, FlatSymbolRefAttribute, FloatAttribute, IntegerAttribute, StringAttribute,
 };
 use melior::ir::{Attribute, BlockLike, BlockRef, Location, Type, Value};
-use yuzu_ast::{AstNode, BinOp, UnaryOp, ast};
+use yuzu_ast::ast::{self, AstNode, BinOp, UnaryOp};
 use yuzu_mlir::attributes::CmpPredicate;
 use yuzu_mlir::ir::attribute::integer::IntegerAttributeExt;
 use yuzu_mlir::ir::operation::OperationExt;
@@ -86,7 +86,7 @@ impl<'c> AstToYzl<'c, '_> {
             ast::Literal::StringLiteral(string) => yz::constant_str(
                 self.context,
                 StrType::get(self.context),
-                StringAttribute::new(self.context, &string.value().unwrap_or_default()),
+                StringAttribute::new(self.context, &string.to_value().unwrap_or_default()),
                 loc,
             )
             .into(),

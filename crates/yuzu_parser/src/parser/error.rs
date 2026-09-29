@@ -1,8 +1,5 @@
 use text_size::TextRange;
-use yuzu_diagnostics::{
-    diagnostics::{Diagnostic, Span, builder::DiagnosticBuilder},
-    source_map::SourceId,
-};
+use yuzu_diagnostics::{Diagnostic, DiagnosticBuilder, SourceId, Span};
 use yuzu_lexer::token_kind::TokenKind;
 
 use crate::token_set::TokenSet;
@@ -99,8 +96,7 @@ fn describe(kind: TokenKind) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use yuzu_diagnostics::diagnostics::Severity;
-    use yuzu_diagnostics::source_map::SourceMap;
+    use yuzu_diagnostics::{Severity, SourceMap};
 
     fn source_id() -> SourceId {
         SourceMap::new().add(String::new(), String::new())

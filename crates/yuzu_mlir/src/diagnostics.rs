@@ -12,10 +12,7 @@ use melior::Context;
 use melior::diagnostic::{Diagnostic, DiagnosticHandlerId, DiagnosticSeverity};
 use melior::ir::Location;
 use text_size::{TextRange, TextSize};
-use yuzu_diagnostics::diagnostics::builder::DiagnosticBuilder;
-use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
-use yuzu_diagnostics::diagnostics::{Severity, Span};
-use yuzu_diagnostics::source_map::SourceMap;
+use yuzu_diagnostics::{DiagnosticBuilder, DiagnosticsEngine, Severity, SourceMap, Span};
 
 /// Emits an error against a location, into whichever handler is attached.
 ///
@@ -181,9 +178,7 @@ fn span_of(sources: &SourceMap, position: Option<&Position>) -> Option<Span> {
 mod tests {
     use expect_test::expect;
     use melior::ir::Location;
-    use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
-    use yuzu_diagnostics::diagnostics::printer::DiagnosticPrinter;
-    use yuzu_diagnostics::source_map::SourceMap;
+    use yuzu_diagnostics::{DiagnosticPrinter, DiagnosticsEngine, SourceMap};
 
     use super::{capture, emit_error};
 

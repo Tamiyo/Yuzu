@@ -7,10 +7,11 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use rustc_hash::FxHashMap;
 use text_size::TextRange;
-use yuzu_diagnostics::diagnostics::{Diagnostic, Span};
-use yuzu_diagnostics::source_map::SourceId;
+use yuzu_diagnostics::{Diagnostic, SourceId, Span};
 use yuzu_driver::index::Index;
-use yuzu_driver::modules::{FsResolver, Location, ModuleResolver, ModuleSource, Unreadable};
+use yuzu_driver::modules::{
+    FsResolver, Location, ModuleResolver, ModuleSource, Origin, Unreadable,
+};
 use yuzu_driver::{Focus, stdlib};
 use yuzu_syntax::{GreenNode, SyntaxNode};
 
@@ -40,7 +41,7 @@ impl Checked {
         let files = documents
             .iter()
             .filter_map(|document| {
-                let source = inner.sources.id(&document.saved.path.to_string_lossy())?;
+                let source = inner.sources.file_id(&document.saved.path)?;
                 Some((document.file_id, source))
             })
             .collect();
@@ -72,8 +73,7 @@ impl Checked {
     /// into the compiler, and for the entry a module's check makes up.
     #[must_use]
     pub fn path(&self, source: SourceId) -> Option<&Path> {
-        let path = Path::new(self.inner.sources.name(source));
-        path.is_absolute().then_some(path)
+        self.inner.sources.path(source)
     }
 
     /// A source's text, as the check read it.
@@ -91,7 +91,7 @@ impl Checked {
     /// The text of a file as this check read it, by its path.
     #[must_use]
     pub fn path_text(&self, path: &Path) -> Option<&str> {
-        let source = self.inner.sources.id(&path.to_string_lossy())?;
+        let source = self.inner.sources.file_id(path)?;
         Some(self.text(source))
     }
 
@@ -183,10 +183,10 @@ pub(crate) fn check(
     disk: &DiskCache,
 ) -> Checked {
     let overlay = Overlay::new(saved, documents, disk);
-    let name = saved.path.to_string_lossy();
+    let origin = Origin::File(saved.path.clone());
     let focus = match &saved.location {
         Location::Entry { .. } => Focus::Entry {
-            name: &name,
+            origin: &origin,
             source: parsed.text(),
             syntax: parsed.clean_tree(),
         },
@@ -329,7 +329,7 @@ impl<'d> Overlay<'d> {
                 continue;
             };
             return Ok(Some(ModuleSource {
-                name: file.to_string_lossy().into_owned(),
+                origin: Origin::File(file),
                 source,
                 syntax,
             }));
@@ -346,7 +346,7 @@ impl ModuleResolver for Overlay<'_> {
     fn resolve_library(&self, path: &str) -> Result<Option<ModuleSource>, Unreadable> {
         if let Some((file, parsed)) = self.library.get(path) {
             return Ok(Some(ModuleSource {
-                name: file.to_string_lossy().into_owned(),
+                origin: Origin::File(file.to_path_buf()),
                 source: parsed.shared_text(),
                 syntax: parsed.clean_tree().cloned(),
             }));

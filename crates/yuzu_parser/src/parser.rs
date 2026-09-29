@@ -1,7 +1,7 @@
 use std::mem;
 
 use text_size::{TextRange, TextSize};
-use yuzu_diagnostics::source_map::SourceId;
+use yuzu_diagnostics::SourceId;
 use yuzu_lexer::token_kind::TokenKind;
 use yuzu_syntax::SyntaxKind;
 
@@ -268,7 +268,7 @@ impl<'t, 'input> Parser<'t, 'input> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use yuzu_diagnostics::source_map::SourceMap;
+    use yuzu_diagnostics::SourceMap;
     use yuzu_lexer::lexer::{Lexer, Token};
 
     fn source_id() -> SourceId {

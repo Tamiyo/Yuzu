@@ -1,10 +1,9 @@
 //! Every query the end-to-end suites compile must lower cleanly and verify.
 
 use melior::ir::operation::OperationLike;
-use yuzu_ast::AstNode;
 use yuzu_ast::ast;
-use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
-use yuzu_diagnostics::source_map::SourceMap;
+use yuzu_ast::ast::AstNode;
+use yuzu_diagnostics::{DiagnosticsEngine, SourceMap};
 use yuzu_passes::{File, Lowering, lower_ast_to_yzl};
 
 const CORPUS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../python/tests");

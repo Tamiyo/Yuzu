@@ -165,8 +165,7 @@ fn at_misused_name(p: &mut Parser) -> bool {
 #[cfg(test)]
 mod test_support {
     use expect_test::Expect;
-    use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
-    use yuzu_diagnostics::source_map::SourceMap;
+    use yuzu_diagnostics::{DiagnosticsEngine, SourceMap};
     use yuzu_lexer::lexer::{Lexer, Token};
     use yuzu_syntax::SyntaxNode;
 

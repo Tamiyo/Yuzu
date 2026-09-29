@@ -9,11 +9,11 @@ use melior::ir::operation::{Operation, OperationLike, OperationRef};
 use melior::ir::{BlockLike, BlockRef, Module, Type, Value};
 use melior::{Context, IrRewriter};
 use rustc_hash::FxHashMap;
-use yuzu_mlir::SymbolTable;
 use yuzu_mlir::diagnostics::emit_error;
 use yuzu_mlir::ir::attribute::array::ArrayAttributeExt;
 use yuzu_mlir::ir::block::BlockExt;
 use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
+use yuzu_mlir::ir::symbol_table::SymbolTable;
 use yuzu_mlir::ir::value::{ValueExt, ValueId};
 use yuzu_mlir::ops::yzl::StructOp;
 

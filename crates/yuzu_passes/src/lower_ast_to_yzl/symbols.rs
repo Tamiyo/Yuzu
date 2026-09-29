@@ -10,7 +10,7 @@ use melior::Context;
 use melior::ir::attribute::StringAttribute;
 use rustc_hash::FxHashMap;
 use text_size::TextRange;
-use yuzu_ast::Visibility;
+use yuzu_ast::ast::Visibility;
 use yuzu_mlir::attributes::CalleeSource;
 
 use crate::operators::Operator;
@@ -953,7 +953,7 @@ impl<'c> SymbolTable<'c> {
 #[cfg(test)]
 mod tests {
     use text_size::TextRange;
-    use yuzu_ast::Visibility;
+    use yuzu_ast::ast::Visibility;
     use yuzu_mlir::attributes::CalleeSource;
 
     use super::{

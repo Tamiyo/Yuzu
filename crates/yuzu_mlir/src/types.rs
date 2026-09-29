@@ -11,30 +11,52 @@ use melior::ir::Type;
 pub use yz::{BoolType, Float64Type, Int64Type, ListType, StrType, StructType};
 pub use yzl::{ErrorType, ParamType, QueryType, RefType, UnresolvedType};
 
-/// A scalar type's spelling in source, and the lookup returning it.
-type Scalar = (&'static str, fn(&Context) -> Type<'_>);
+/// A scalar type: how source spells it, the lookup returning it, and the
+/// test for it.
+struct Scalar {
+    spelling: &'static str,
+    get: fn(&Context) -> Type<'_>,
+    is: fn(Type<'_>) -> bool,
+}
 
 const SCALARS: [Scalar; 4] = [
-    ("int64", Int64Type::get),
-    ("float64", Float64Type::get),
-    ("bool", BoolType::get),
-    ("str", StrType::get),
+    Scalar {
+        spelling: "int64",
+        get: Int64Type::get,
+        is: Int64Type::is,
+    },
+    Scalar {
+        spelling: "float64",
+        get: Float64Type::get,
+        is: Float64Type::is,
+    },
+    Scalar {
+        spelling: "bool",
+        get: BoolType::get,
+        is: BoolType::is,
+    },
+    Scalar {
+        spelling: "str",
+        get: StrType::get,
+        is: StrType::is,
+    },
 ];
 
 /// The scalar type a name stands for, when it names one.
+#[must_use]
 pub fn scalar<'c>(context: &'c Context, name: &str) -> Option<Type<'c>> {
     SCALARS
         .iter()
-        .find(|(spelling, _)| *spelling == name)
-        .map(|(_, get)| get(context))
+        .find(|scalar| scalar.spelling == name)
+        .map(|scalar| (scalar.get)(context))
 }
 
 /// How source spells a scalar type, when it is one.
-pub fn scalar_name(context: &Context, ty: Type<'_>) -> Option<&'static str> {
+fn scalar_name(ty: Type<'_>) -> Option<&'static str> {
     SCALARS
         .iter()
-        .find(|(_, get)| get(context) == ty)
-        .map(|(spelling, _)| *spelling)
+        .find(|scalar| (scalar.is)(ty))
+        .map(|scalar| scalar.spelling)
 }
 
 /// How a type is written in source, for a diagnostic.
@@ -43,9 +65,9 @@ pub fn scalar_name(context: &Context, ty: Type<'_>) -> Option<&'static str> {
 /// `!yz.list<!yz.int64>`. The MLIR spelling is the fallback, so a type with no source syntax still
 /// prints as something.
 #[must_use]
-pub fn name(context: &Context, ty: Type<'_>) -> String {
+pub fn name(ty: Type<'_>) -> String {
     if let Some(list) = ListType::from_type(ty) {
-        return format!("List[{}]", name(context, list.inner()));
+        return format!("List[{}]", name(list.inner()));
     }
 
     if let Some(declaration) = StructType::from_type(ty) {
@@ -56,7 +78,7 @@ pub fn name(context: &Context, ty: Type<'_>) -> String {
         return param.name().to_string();
     }
 
-    match scalar_name(context, ty) {
+    match scalar_name(ty) {
         Some(scalar) => scalar.to_string(),
         None => ty.to_string(),
     }

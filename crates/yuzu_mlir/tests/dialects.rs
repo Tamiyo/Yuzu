@@ -897,10 +897,10 @@ module {
 fn list_type_view() {
     let context = yuzu_mlir::context();
     let int64 = Int64Type::get(&context);
-    let list = yuzu_mlir::ListType::new(&context, int64);
+    let list = yuzu_mlir::types::ListType::new(&context, int64);
 
     assert_eq!(list.inner(), int64);
     assert_eq!(Type::from(list).to_string(), "!yz.list<!yz.int64>");
-    assert!(yuzu_mlir::ListType::from_type(int64).is_none());
-    assert!(yuzu_mlir::ListType::from_type(list.into()).is_some());
+    assert!(yuzu_mlir::types::ListType::from_type(int64).is_none());
+    assert!(yuzu_mlir::types::ListType::from_type(list.into()).is_some());
 }

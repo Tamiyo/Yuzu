@@ -13,15 +13,15 @@ use melior::ir::{Location, Module, Type, Value, ValueLike};
 use rustc_hash::{FxHashMap, FxHashSet};
 use substrait::proto::{PlanRel, Rel, RelRoot, plan_rel};
 use substrait::version;
-use yuzu_mlir::StructType;
-use yuzu_mlir::SymbolTable;
 use yuzu_mlir::diagnostics::emit_error;
 use yuzu_mlir::ir::attribute::array::ArrayAttributeExt;
 use yuzu_mlir::ir::block::BlockExt;
 use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
+use yuzu_mlir::ir::symbol_table::SymbolTable;
 use yuzu_mlir::ir::value::{ValueId, op_result};
 use yuzu_mlir::ops::yz::YzOp;
 use yuzu_mlir::ops::yzr::YzrOp;
+use yuzu_mlir::types::StructType;
 
 use crate::Plan;
 use crate::extensions::Extensions;
@@ -158,11 +158,9 @@ fn report(op: OperationRef<'_, '_>, message: &str) {
 #[cfg(test)]
 pub(crate) mod test_support {
     use expect_test::Expect;
-    use yuzu_ast::AstNode;
     use yuzu_ast::ast;
-    use yuzu_diagnostics::diagnostics::engine::DiagnosticsEngine;
-    use yuzu_diagnostics::diagnostics::printer::DiagnosticPrinter;
-    use yuzu_diagnostics::source_map::SourceMap;
+    use yuzu_ast::ast::AstNode;
+    use yuzu_diagnostics::{DiagnosticPrinter, DiagnosticsEngine, SourceMap};
 
     pub(crate) const TABLE: &str = "struct Row { a: int64, b: int64 }\ntable t = Row\n";
 

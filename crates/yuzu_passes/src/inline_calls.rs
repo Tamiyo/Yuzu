@@ -19,10 +19,10 @@ use yuzu_mlir::ir::attribute::array::ArrayAttributeExt;
 use yuzu_mlir::ir::block::BlockExt;
 use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
 use yuzu_mlir::ir::region::RegionExt;
+use yuzu_mlir::ir::symbol_table::SymbolTable;
 use yuzu_mlir::ir::value::{ValueExt, ValueId};
 use yuzu_mlir::ops::yzl::{CallOp, ConstOp, FnOp, YzlOp};
-use yuzu_mlir::types::QueryType;
-use yuzu_mlir::{ListType, ParamType, SymbolTable};
+use yuzu_mlir::types::{ListType, ParamType, QueryType};
 
 use crate::operators::Operator;
 use crate::written_name;
