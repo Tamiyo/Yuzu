@@ -29,14 +29,21 @@ use crate::operators::{OPERATORS, Operator};
 pub fn legalize_operators(context: &Context, module: &mut Module) {
     let rewriter = IrRewriter::new(context);
     let rewriter = rewriter.as_rewriter_base();
-    let symbols = SymbolTable::new(module);
+    let mut operators = Vec::new();
+    collect_operators(module.body(), &mut operators);
 
+    // The module comes in simplified, so with no copy to fold there is
+    // nothing for canonicalization to do.
+    if operators.is_empty() {
+        discard_implementations(rewriter, module);
+        return;
+    }
+
+    let symbols = SymbolTable::new(module);
     let implementations: Vec<Option<OperationRef>> = OPERATORS
         .iter()
         .map(|operator| symbols.lookup(&operator.to_symbol()))
         .collect();
-    let mut operators = Vec::new();
-    collect_operators(module.body(), &mut operators);
     for (op, operator) in operators {
         let index = OPERATORS
             .iter()
