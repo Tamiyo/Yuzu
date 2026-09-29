@@ -71,7 +71,8 @@ impl<'c> AstToYzl<'c, '_> {
         self.bind_names(files);
 
         let body = module.body();
-        // A name's overloads are lowered together once a reference names it.
+        // Each declaration waits under its name, with its parameter count when
+        // it is a function, for a reference to name it.
         let mut on_demand: FxHashMap<_, Vec<_>> = FxHashMap::default();
         for file in files {
             self.in_file(file, |this| {
@@ -80,10 +81,14 @@ impl<'c> AstToYzl<'c, '_> {
                     if file.lowering == Lowering::OnDemand
                         && let Some(name) = this.read_ident(on_demand_name(&stmt))
                     {
+                        let arity = match &stmt {
+                            ast::Stmt::FuncStmt(decl) => Some(decl.params().count()),
+                            _ => None,
+                        };
                         on_demand
                             .entry(this.symbols.module().declares(name))
                             .or_default()
-                            .push((file, stmt));
+                            .push((file, stmt, arity));
                         continue;
                     }
 
@@ -99,8 +104,18 @@ impl<'c> AstToYzl<'c, '_> {
                 break;
             }
 
-            for at in used {
-                for (file, stmt) in on_demand.remove(&at).into_iter().flatten() {
+            // A call lowers only the overload it calls; any other reference
+            // lowers everything under the name.
+            for used in used {
+                let Some(waiting) = on_demand.get_mut(&used.at) else {
+                    continue;
+                };
+                let named: Vec<_> = waiting
+                    .extract_if(.., |(_, _, arity)| {
+                        used.arity.is_none() || arity.is_none() || *arity == used.arity
+                    })
+                    .collect();
+                for (file, stmt, _) in named {
                     self.in_file(file, |this| {
                         this.convert_stmt(body, &mut Locals::new(), &stmt);
                     });
@@ -510,5 +525,14 @@ mod tests {
                 "from b import f\nstruct Row { a: int64 }\ntable t = Row\nfrom t |> select f(a) as v\n",
             ),
         ]));
+    }
+
+    #[test]
+    fn a_call_lowers_only_the_overload_it_calls() {
+        let module = crate::test_support::lowered(
+            "struct Row { a: int64 }\ntable t = Row\n\nfrom t |> aggregate count() as n\n",
+        );
+        assert!(module.contains("@yuzu.prelude.count.0"), "{module}");
+        assert!(!module.contains("@yuzu.prelude.count.1"), "{module}");
     }
 }

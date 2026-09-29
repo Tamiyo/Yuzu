@@ -461,7 +461,15 @@ pub(super) struct SymbolTable<'c> {
     scopes: Vec<Scope<'c>>,
     /// The declarations a reference has named since the lowering last
     /// asked, so the library's can be lowered on demand.
-    used: Vec<Declared<'c>>,
+    used: Vec<Use<'c>>,
+}
+
+/// A declaration a reference named, with the number of arguments when the
+/// reference is a call, which picks one overload of a function.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) struct Use<'c> {
+    pub(super) at: Declared<'c>,
+    pub(super) arity: Option<usize>,
 }
 
 impl<'c> SymbolTable<'c> {
@@ -526,7 +534,17 @@ impl<'c> SymbolTable<'c> {
 
     /// The symbol a reference names, recorded as a use.
     fn refer(&mut self, at: Declared<'c>) -> &'c str {
-        self.used.push(at);
+        self.used.push(Use { at, arity: None });
+        self.symbol(at)
+    }
+
+    /// The symbol a call names, recorded as a use of the overload that takes
+    /// `arity` arguments.
+    fn refer_call(&mut self, at: Declared<'c>, arity: usize) -> &'c str {
+        self.used.push(Use {
+            at,
+            arity: Some(arity),
+        });
         self.symbol(at)
     }
 
@@ -539,12 +557,12 @@ impl<'c> SymbolTable<'c> {
             name: self.intern(operator.name),
         };
         if let Some((at, _)) = self.find_in(at) {
-            self.used.push(at);
+            self.used.push(Use { at, arity: None });
         }
     }
 
     /// The declarations references have named since the last call.
-    pub(super) fn take_used(&mut self) -> Vec<Declared<'c>> {
+    pub(super) fn take_used(&mut self) -> Vec<Use<'c>> {
         std::mem::take(&mut self.used)
     }
 
@@ -782,7 +800,7 @@ impl<'c> SymbolTable<'c> {
             .visible(at, overloads)
             .find(|overload| overload.arity == given)?;
 
-        let symbol = self.refer(at);
+        let symbol = self.refer_call(at, given);
         Some(Callable {
             symbol: self.overload_symbol(symbol, given, is_overloaded),
             source: overload.source,
