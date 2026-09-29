@@ -2360,6 +2360,7 @@ dependencies = [
  "yuzu_ast",
  "yuzu_diagnostics",
  "yuzu_driver",
+ "yuzu_lexer",
  "yuzu_parser",
  "yuzu_syntax",
 ]

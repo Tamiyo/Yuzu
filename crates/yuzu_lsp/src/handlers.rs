@@ -1,13 +1,16 @@
 //! One function for each request. A request about a document the client has
 //! not opened gets `None`, which the protocol sends as `null`.
 
+use std::collections::HashMap;
+
 use lsp_types::{
     DocumentHighlight, DocumentHighlightParams, DocumentSymbolParams, DocumentSymbolResponse,
     FoldingRange, FoldingRangeParams, GotoDefinitionParams, GotoDefinitionResponse, Hover,
     HoverContents, HoverParams, InlayHint, InlayHintKind, InlayHintLabel, InlayHintParams,
-    Location, MarkupContent, MarkupKind, ParameterInformation, ParameterLabel, ReferenceParams,
-    SelectionRange, SelectionRangeParams, SemanticTokensParams, SemanticTokensResult,
-    SignatureHelp, SignatureHelpParams, SignatureInformation, TextDocumentPositionParams,
+    Location, MarkupContent, MarkupKind, ParameterInformation, ParameterLabel,
+    PrepareRenameResponse, ReferenceParams, RenameParams, SelectionRange, SelectionRangeParams,
+    SemanticTokensParams, SemanticTokensResult, SignatureHelp, SignatureHelpParams,
+    SignatureInformation, TextDocumentPositionParams, TextEdit, Url, WorkspaceEdit,
 };
 use rustc_hash::FxHashSet;
 use text_size::{TextRange, TextSize};
@@ -145,6 +148,51 @@ pub(crate) fn hover(state: &GlobalState, params: &HoverParams) -> Option<Hover> 
         range: Some(to_proto::range(&document.line_index, hover.range)),
     })
 }
+
+/// The name a rename at a position would change.
+pub(crate) fn prepare_rename(
+    state: &GlobalState,
+    params: &TextDocumentPositionParams,
+) -> Result<Option<PrepareRenameResponse>, String> {
+    let (document, checked, position) = checked_position(state, params).ok_or(NOT_CHECKED)?;
+    let range = checked
+        .prepare_rename(position)
+        .map_err(|error| error.to_string())?;
+    Ok(Some(PrepareRenameResponse::Range(to_proto::range(
+        &document.line_index,
+        range,
+    ))))
+}
+
+/// Writes the new name over the declaration and each use that spells it.
+pub(crate) fn rename(
+    state: &GlobalState,
+    params: &RenameParams,
+) -> Result<Option<WorkspaceEdit>, String> {
+    let (_, checked, position) =
+        checked_position(state, &params.text_document_position).ok_or(NOT_CHECKED)?;
+    let edits = checked
+        .rename(position, &params.new_name)
+        .map_err(|error| error.to_string())?;
+    let mut locations = Locations::new(checked, state.encoding);
+    let mut changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
+    for edit in &edits {
+        let location = locations
+            .location(edit)
+            .ok_or_else(|| format!("`{}` cannot be read", edit.path.display()))?;
+        changes.entry(location.uri).or_default().push(TextEdit {
+            range: location.range,
+            new_text: params.new_name.clone(),
+        });
+    }
+    Ok(Some(WorkspaceEdit {
+        changes: Some(changes),
+        ..WorkspaceEdit::default()
+    }))
+}
+
+/// Why a request that changes files is refused before the check catches up.
+const NOT_CHECKED: &str = "the file is not checked since its last change; try again";
 
 /// The overloads of the function a call names. The call is found in the
 /// text the document has now, and its function's name is carried back to

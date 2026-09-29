@@ -20,8 +20,8 @@ use crate::hover::HoverResult;
 use crate::inlay_hints::InlayHint;
 use crate::names::{self, Resolution, Trees};
 use crate::navigation::{FileRange, References};
-use crate::{CallSite, FileId, FilePosition, HlRange, SignatureHelp};
-use crate::{hover, inlay_hints, navigation, signature_help, syntax_highlighting};
+use crate::{CallSite, FileId, FilePosition, HlRange, RenameError, SignatureHelp};
+use crate::{hover, inlay_hints, navigation, rename, signature_help, syntax_highlighting};
 
 /// What checking a file's program found. Its names are resolved once, when
 /// the check is made on the checker thread, so a request only looks them up.
@@ -106,6 +106,32 @@ impl Checked {
     #[must_use]
     pub fn signature_help(&self, file_id: FileId, site: CallSite) -> Option<SignatureHelp> {
         signature_help::signature_help(self, self.source(file_id)?, site)
+    }
+
+    /// The range of the name a rename at a position would change.
+    ///
+    /// # Errors
+    ///
+    /// When the position is on no name that can be renamed.
+    pub fn prepare_rename(&self, position: FilePosition) -> Result<TextRange, RenameError> {
+        let source = self.source(position.file_id).ok_or(RenameError::NoName)?;
+        rename::prepare_rename(self, source, position.offset)
+    }
+
+    /// Each range to write `new_name` over, to rename the name at a
+    /// position.
+    ///
+    /// # Errors
+    ///
+    /// When the position is on no name that can be renamed, `new_name` is
+    /// not one identifier, or a file to change cannot be written.
+    pub fn rename(
+        &self,
+        position: FilePosition,
+        new_name: &str,
+    ) -> Result<Vec<FileRange>, RenameError> {
+        let source = self.source(position.file_id).ok_or(RenameError::NoName)?;
+        rename::rename(self, source, position.offset, new_name)
     }
 
     /// The declaration of the name at a position, and each use of it.

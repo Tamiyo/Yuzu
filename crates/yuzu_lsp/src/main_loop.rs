@@ -12,8 +12,8 @@ use lsp_types::notification::{
 };
 use lsp_types::request::{
     DocumentHighlightRequest, DocumentSymbolRequest, FoldingRangeRequest, GotoDefinition,
-    HoverRequest, InlayHintRequest, References, RegisterCapability, Request as _,
-    SelectionRangeRequest, SemanticTokensFullRequest, SignatureHelpRequest,
+    HoverRequest, InlayHintRequest, PrepareRenameRequest, References, RegisterCapability, Rename,
+    Request as _, SelectionRangeRequest, SemanticTokensFullRequest, SignatureHelpRequest,
 };
 use lsp_types::{InitializeParams, InitializeResult, RegistrationParams, ServerInfo};
 use rustc_hash::FxHashMap;
@@ -154,6 +154,10 @@ impl GlobalState<'_> {
             SignatureHelpRequest::METHOD => {
                 self.respond::<SignatureHelpRequest>(request, handlers::signature_help)
             }
+            PrepareRenameRequest::METHOD => {
+                self.respond_or_fail::<PrepareRenameRequest>(request, handlers::prepare_rename)
+            }
+            Rename::METHOD => self.respond_or_fail::<Rename>(request, handlers::rename),
             InlayHintRequest::METHOD => {
                 self.respond::<InlayHintRequest>(request, handlers::inlay_hint)
             }
@@ -191,6 +195,21 @@ impl GlobalState<'_> {
         R::Params: DeserializeOwned,
         R::Result: Serialize,
     {
+        self.respond_or_fail::<R>(request, |state, params| Ok(handler(state, params)))
+    }
+
+    /// As [`Self::respond`], for a handler that can refuse: its reason goes
+    /// back to the client as the request's error.
+    fn respond_or_fail<R>(
+        &self,
+        request: Request,
+        handler: impl FnOnce(&Self, &R::Params) -> Result<R::Result, String>,
+    ) -> Response
+    where
+        R: lsp_types::request::Request,
+        R::Params: DeserializeOwned,
+        R::Result: Serialize,
+    {
         let params: R::Params = match serde_json::from_value(request.params) {
             Ok(params) => params,
             Err(error) => {
@@ -202,7 +221,10 @@ impl GlobalState<'_> {
             }
         };
         match panic::catch_unwind(AssertUnwindSafe(|| handler(self, &params))) {
-            Ok(result) => Response::new_ok(request.id, result),
+            Ok(Ok(result)) => Response::new_ok(request.id, result),
+            Ok(Err(reason)) => {
+                Response::new_err(request.id, ErrorCode::RequestFailed as i32, reason)
+            }
             Err(payload) => Response::new_err(
                 request.id,
                 ErrorCode::InternalError as i32,
