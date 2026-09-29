@@ -228,21 +228,58 @@ impl Binding<'_> {
 }
 
 impl BindingKind<'_> {
+    /// What the binding declares, without its data.
+    pub(super) fn declaration_kind(&self) -> DeclarationKind {
+        match self {
+            BindingKind::Struct { .. } => DeclarationKind::Struct,
+            BindingKind::Relation { .. } => DeclarationKind::Relation,
+            BindingKind::Func { .. } => DeclarationKind::Function,
+            BindingKind::Trait { .. } => DeclarationKind::Trait,
+            BindingKind::Let | BindingKind::Pending => DeclarationKind::Binding,
+            BindingKind::Module { .. } => DeclarationKind::Module,
+            BindingKind::Import { .. } => DeclarationKind::Import,
+        }
+    }
+
     /// The word a diagnostic uses for it.
     pub(super) fn name(&self) -> &'static str {
-        match self {
-            BindingKind::Struct { .. } => "struct",
-            BindingKind::Relation { .. } => "relation",
-            BindingKind::Func { .. } => "function",
-            BindingKind::Trait { .. } => "trait",
-            BindingKind::Let | BindingKind::Pending => "binding",
-            BindingKind::Module { .. } => "module",
-            BindingKind::Import { .. } => "import",
-        }
+        self.declaration_kind().name()
     }
 }
 
 impl fmt::Display for BindingKind<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+/// What a declaration is, for a diagnostic.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum DeclarationKind {
+    Struct,
+    Relation,
+    Function,
+    Trait,
+    Binding,
+    Module,
+    Import,
+}
+
+impl DeclarationKind {
+    pub(super) fn name(self) -> &'static str {
+        match self {
+            DeclarationKind::Struct => "struct",
+            DeclarationKind::Relation => "relation",
+            DeclarationKind::Function => "function",
+            DeclarationKind::Trait => "trait",
+            DeclarationKind::Binding => "binding",
+            DeclarationKind::Module => "module",
+            DeclarationKind::Import => "import",
+        }
+    }
+}
+
+impl fmt::Display for DeclarationKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.name())
     }
@@ -310,7 +347,7 @@ pub(super) enum Lookup<'c> {
     Let(&'c str),
     Ambiguous,
     NarrowedAway,
-    NotAValue(&'static str),
+    NotAValue(DeclarationKind),
     /// A `let` further down the file: a name the file declares, not yet
     /// bound where it is read.
     NotYet,
@@ -874,7 +911,7 @@ impl<'c> SymbolTable<'c> {
             | BindingKind::Func { .. }
             | BindingKind::Trait { .. }
             | BindingKind::Module { .. }
-            | BindingKind::Import { .. }) => return Lookup::NotAValue(kind.name()),
+            | BindingKind::Import { .. }) => return Lookup::NotAValue(kind.declaration_kind()),
         }
 
         Lookup::Let(self.refer(at))
@@ -957,8 +994,8 @@ mod tests {
     use yuzu_mlir::attributes::CalleeSource;
 
     use super::{
-        Binding, BindingKind, Callable, ColumnLookup, FunctionKind, Lookup, Method, ModulePath,
-        Overload, Reference, Row, SymbolTable,
+        Binding, BindingKind, Callable, ColumnLookup, DeclarationKind, FunctionKind, Lookup,
+        Method, ModulePath, Overload, Reference, Row, SymbolTable,
     };
 
     fn table() -> SymbolTable<'static> {
@@ -1123,8 +1160,14 @@ mod tests {
     fn a_declaration_that_is_not_a_value_says_so() {
         let mut symbols = symbols();
 
-        assert_eq!(symbols.lookup(bare("t")), Lookup::NotAValue("relation"));
-        assert_eq!(symbols.lookup(bare("Row")), Lookup::NotAValue("struct"));
+        assert_eq!(
+            symbols.lookup(bare("t")),
+            Lookup::NotAValue(DeclarationKind::Relation)
+        );
+        assert_eq!(
+            symbols.lookup(bare("Row")),
+            Lookup::NotAValue(DeclarationKind::Struct)
+        );
     }
 
     #[test]
