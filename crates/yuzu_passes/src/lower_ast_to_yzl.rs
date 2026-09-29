@@ -226,6 +226,16 @@ impl<'c> AstToYzl<'c, '_> {
         });
     }
 
+    /// Tells the listener that the name at `used` names what `declared`
+    /// declares, under the same name: a column.
+    fn record_declared(&mut self, used: TextRange, name: &str, declared: Span) {
+        self.listener.on_name(NameUse {
+            used: self.span(used),
+            spelling: name,
+            target: NameTarget::Declaration { at: declared, name },
+        });
+    }
+
     /// Tells the listener that the name at `used` names a local of this file.
     fn record_local(&mut self, used: TextRange, name: &str, declared: TextRange) {
         self.listener.on_name(NameUse {

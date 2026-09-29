@@ -39,6 +39,8 @@ pub(crate) enum DeclarationKind {
     Trait,
     /// A module, whose declaration is its file.
     Module,
+    /// A column: a struct's field, or a stage's item that names one.
+    Column,
 }
 
 /// The tree of each source a check lowered.
@@ -99,11 +101,15 @@ fn nodes_at(root: &SyntaxNode, range: TextRange) -> impl Iterator<Item = SyntaxN
         .take_while(move |node| node.text_range() == range)
 }
 
-/// Where a declaration spells `name`: its own `Ident`.
+/// Where a declaration spells `name`: the one of its own `Ident`s that
+/// does, as `group by b as c` holds two.
 fn declared_name(root: &SyntaxNode, range: TextRange, name: &str) -> Option<TextRange> {
-    let declaration = node_at(root, range)?;
-    let token = declaration.children().find_map(ast::Ident::cast)?.token()?;
-    (token.text() == name).then(|| token.text_range())
+    node_at(root, range)?
+        .children()
+        .filter_map(ast::Ident::cast)
+        .filter_map(|ident| ident.token())
+        .find(|token| token.text() == name)
+        .map(|token| token.text_range())
 }
 
 fn declaration_kind(declaring: &SyntaxNode) -> Option<DeclarationKind> {
@@ -116,6 +122,11 @@ fn declaration_kind(declaring: &SyntaxNode) -> Option<DeclarationKind> {
         SyntaxKind::TableStmt => DeclarationKind::Table,
         SyntaxKind::StructStmt => DeclarationKind::Struct,
         SyntaxKind::TraitStmt => DeclarationKind::Trait,
+        SyntaxKind::StructField
+        | SyntaxKind::SelectItem
+        | SyntaxKind::AggregateItem
+        | SyntaxKind::GroupByItem
+        | SyntaxKind::RenameItem => DeclarationKind::Column,
         other => {
             debug_assert!(false, "the index names a declaration in a {other:?}");
             return None;

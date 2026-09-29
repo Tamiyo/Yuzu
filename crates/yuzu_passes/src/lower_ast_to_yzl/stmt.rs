@@ -14,8 +14,8 @@ use yuzu_mlir::ods::yzl;
 use yuzu_mlir::types::{self, ErrorType, ListType, ParamType, RefType, StructType, UnresolvedType};
 
 use crate::lower_ast_to_yzl::symbols::{
-    Binding, BindingKind, Declared, FunctionKind, Lookup, Method, ModulePath, Overload, Reference,
-    Row, Target,
+    Binding, BindingKind, Declared, Field, FunctionKind, Lookup, Method, ModulePath, Overload,
+    Reference, Row, Target,
 };
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 
@@ -665,10 +665,7 @@ impl<'c> AstToYzl<'c, '_> {
             return;
         };
 
-        let fields = decl
-            .fields()
-            .filter_map(|f| self.read_ident(f.name()))
-            .collect();
+        let fields = self.read_field_names(decl.fields());
         self.bind_or_report(
             decl,
             name,
@@ -683,11 +680,7 @@ impl<'c> AstToYzl<'c, '_> {
         };
 
         let row = if decl.inline_fields().next().is_some() {
-            Row::from(
-                decl.inline_fields()
-                    .filter_map(|field| self.read_ident(field.name()))
-                    .collect::<Vec<_>>(),
-            )
+            Row::from(self.read_field_names(decl.inline_fields()))
         } else {
             let Some(declared) = self.read_ident(decl.struct_name()) else {
                 return;
@@ -704,6 +697,18 @@ impl<'c> AstToYzl<'c, '_> {
         };
 
         self.bind_or_report(decl, name, BindingKind::Relation { row }, decl.visibility());
+    }
+
+    /// Each field's name, and the field that declares it.
+    fn read_field_names(&self, fields: impl Iterator<Item = ast::StructField>) -> Vec<Field<'c>> {
+        fields
+            .filter_map(|field| {
+                Some(Field {
+                    name: self.read_ident(field.name())?,
+                    declared: Some(self.span(field.syntax().text_range())),
+                })
+            })
+            .collect()
     }
 
     fn hoist_trait(&mut self, decl: &ast::TraitStmt) {
@@ -1150,7 +1155,7 @@ impl<'c> AstToYzl<'c, '_> {
                 return Some(slot);
             }
             Lookup::Lost => return None,
-            Lookup::Column(_) | Lookup::Ambiguous | Lookup::NarrowedAway => {
+            Lookup::Column { .. } | Lookup::Ambiguous | Lookup::NarrowedAway => {
                 format!("`{name}` is a column; `set` is how a query writes one")
             }
             Lookup::Let(..) => {

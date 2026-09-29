@@ -188,4 +188,16 @@ from t |> select double(1) + cap as v
         "#]]
         .assert_debug_eq(&rendered);
     }
+
+    #[test]
+    fn a_column_shows_its_field() {
+        check(
+            "table t = { a: int64 }\nfrom t |> where $0a > 1\n",
+            &expect![[r#"
+                Some(
+                    "a ```yuzu\na: int64\n```",
+                )
+            "#]],
+        );
+    }
 }

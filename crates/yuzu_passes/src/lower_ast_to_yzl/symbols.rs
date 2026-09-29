@@ -11,6 +11,7 @@ use melior::ir::attribute::StringAttribute;
 use rustc_hash::FxHashMap;
 use text_size::TextRange;
 use yuzu_ast::ast::Visibility;
+use yuzu_diagnostics::Span;
 use yuzu_mlir::attributes::CalleeSource;
 use yuzu_mlir::ir::attribute::string;
 
@@ -49,6 +50,15 @@ impl fmt::Display for Reference<'_> {
 struct Column<'c> {
     qualifier: Option<&'c str>,
     name: &'c str,
+    declared: Option<Span>,
+}
+
+/// A column's name, and the syntax that named it: a struct's field, or a
+/// stage's item. A column nothing names, as `column0`, has none.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) struct Field<'c> {
+    pub(super) name: &'c str,
+    pub(super) declared: Option<Span>,
 }
 
 impl<'c> Column<'c> {
@@ -133,6 +143,11 @@ impl<'c> Row<'c> {
         self.columns.iter().map(|column| column.name)
     }
 
+    /// The syntax that named the column at `index`.
+    pub(super) fn declared(&self, index: usize) -> Option<Span> {
+        self.columns[index].declared
+    }
+
     pub(super) fn references(&self) -> impl Iterator<Item = Reference<'c>> + use<'_, 'c> {
         self.columns.iter().map(Column::reference)
     }
@@ -161,8 +176,10 @@ impl<'c> Row<'c> {
     }
 
     /// Renames a column, and hands back its old name.
-    pub(super) fn rename(&mut self, index: usize, name: &'c str) -> &'c str {
-        let old = std::mem::replace(&mut self.columns[index].name, name);
+    pub(super) fn rename(&mut self, index: usize, field: Field<'c>) -> &'c str {
+        let column = &mut self.columns[index];
+        column.declared = field.declared;
+        let old = std::mem::replace(&mut column.name, field.name);
         self.index();
         old
     }
@@ -183,13 +200,14 @@ impl<'c> Row<'c> {
     }
 }
 
-impl<'c> From<Vec<&'c str>> for Row<'c> {
-    fn from(names: Vec<&'c str>) -> Self {
-        let columns = names
+impl<'c> From<Vec<Field<'c>>> for Row<'c> {
+    fn from(fields: Vec<Field<'c>>) -> Self {
+        let columns = fields
             .into_iter()
-            .map(|name| Column {
+            .map(|field| Column {
                 qualifier: None,
-                name,
+                name: field.name,
+                declared: field.declared,
             })
             .collect();
         Self::from_columns(columns, Schema::Known)
@@ -206,7 +224,7 @@ pub(super) struct Binding<'c> {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(super) enum BindingKind<'c> {
     Struct {
-        fields: Vec<&'c str>,
+        fields: Vec<Field<'c>>,
     },
     /// A table, or a `let` bound to a query: what `from` and `join` name.
     Relation {
@@ -384,7 +402,10 @@ pub(super) struct Target<'c> {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(super) enum Lookup<'c> {
-    Column(usize),
+    Column {
+        index: usize,
+        declared: Option<Span>,
+    },
     Local {
         slot: usize,
         declared: TextRange,
@@ -960,7 +981,12 @@ impl<'c> SymbolTable<'c> {
                 Scope::TypeParams { .. } => {}
                 Scope::Relation { row, narrowed } => {
                     match row.column(reference) {
-                        ColumnLookup::Unique(index) => return Lookup::Column(index),
+                        ColumnLookup::Unique(index) => {
+                            return Lookup::Column {
+                                index,
+                                declared: row.declared(index),
+                            };
+                        }
                         ColumnLookup::Ambiguous => return Lookup::Ambiguous,
                         ColumnLookup::Lost => return Lookup::Lost,
                         ColumnLookup::Absent if narrowed.contains(&reference.name) => {
@@ -1057,14 +1083,14 @@ impl<'c> SymbolTable<'c> {
         self.row_mut().qualify(alias);
     }
 
-    pub(super) fn replace(&mut self, names: Vec<&'c str>) {
-        self.replace_row(Row::from(names));
+    pub(super) fn replace(&mut self, fields: Vec<Field<'c>>) {
+        self.replace_row(Row::from(fields));
     }
 
     /// Adds columns; every column already there stays, so none is narrowed
     /// away.
-    pub(super) fn extend(&mut self, names: Vec<&'c str>) {
-        self.row_mut().append(Row::from(names));
+    pub(super) fn extend(&mut self, fields: Vec<Field<'c>>) {
+        self.row_mut().append(Row::from(fields));
     }
 
     pub(super) fn remove(&mut self, index: usize) {
@@ -1072,7 +1098,7 @@ impl<'c> SymbolTable<'c> {
         self.narrow(name);
     }
 
-    pub(super) fn rename(&mut self, renames: &[(usize, &'c str)]) {
+    pub(super) fn rename(&mut self, renames: &[(usize, Field<'c>)]) {
         let old: Vec<&'c str> = renames
             .iter()
             .map(|&(index, to)| self.row_mut().rename(index, to))
@@ -1094,9 +1120,19 @@ mod tests {
     use yuzu_mlir::attributes::CalleeSource;
 
     use super::{
-        Binding, BindingKind, ColumnLookup, DeclarationKind, FunctionKind, Lookup, Method,
+        Binding, BindingKind, ColumnLookup, DeclarationKind, Field, FunctionKind, Lookup, Method,
         ModulePath, Overload, Reference, Row, SymbolTable,
     };
+
+    fn named(names: &[&'static str]) -> Vec<Field<'static>> {
+        names
+            .iter()
+            .map(|&name| Field {
+                name,
+                declared: None,
+            })
+            .collect()
+    }
 
     fn table() -> SymbolTable<'static> {
         SymbolTable::new(Box::leak(Box::new(yuzu_mlir::context())), None)
@@ -1108,26 +1144,22 @@ mod tests {
             "Row",
             Binding {
                 kind: BindingKind::Struct {
-                    fields: vec!["id", "dept_id"],
+                    fields: named(&["id", "dept_id"]),
                 },
                 text_range: TextRange::default(),
                 visibility: Visibility::Private,
             },
         );
-        bind_relation(&mut symbols, "t", vec!["id", "dept_id"]);
+        bind_relation(&mut symbols, "t", &["id", "dept_id"]);
         symbols
     }
 
-    fn bind_relation(
-        symbols: &mut SymbolTable<'static>,
-        name: &'static str,
-        row: Vec<&'static str>,
-    ) {
+    fn bind_relation(symbols: &mut SymbolTable<'static>, name: &'static str, row: &[&'static str]) {
         symbols.bind(
             name,
             Binding {
                 kind: BindingKind::Relation {
-                    row: Row::from(row),
+                    row: Row::from(named(row)),
                 },
                 text_range: TextRange::default(),
                 visibility: Visibility::Private,
@@ -1189,14 +1221,20 @@ mod tests {
         let mut symbols = symbols();
         open_relation(&mut symbols, "t");
 
-        assert_eq!(symbols.lookup(bare("dept_id")), Lookup::Column(1));
+        assert_eq!(
+            symbols.lookup(bare("dept_id")),
+            Lookup::Column {
+                index: 1,
+                declared: None
+            }
+        );
         assert_eq!(symbols.lookup(bare("nope")), Lookup::Unknown);
     }
 
     #[test]
     fn a_qualifier_picks_between_same_named_columns() {
         let mut symbols = symbols();
-        bind_relation(&mut symbols, "depts", vec!["id"]);
+        bind_relation(&mut symbols, "depts", &["id"]);
         open_relation(&mut symbols, "t");
         symbols.alias("a");
         let (_, rhs, _) = symbols
@@ -1205,8 +1243,20 @@ mod tests {
         symbols.concat(rhs);
 
         assert_eq!(symbols.lookup(bare("id")), Lookup::Ambiguous);
-        assert_eq!(symbols.lookup(qualified("a", "id")), Lookup::Column(0));
-        assert_eq!(symbols.lookup(qualified("d", "id")), Lookup::Column(2));
+        assert_eq!(
+            symbols.lookup(qualified("a", "id")),
+            Lookup::Column {
+                index: 0,
+                declared: None
+            }
+        );
+        assert_eq!(
+            symbols.lookup(qualified("d", "id")),
+            Lookup::Column {
+                index: 2,
+                declared: None
+            }
+        );
     }
 
     #[test]
@@ -1216,7 +1266,13 @@ mod tests {
         symbols.remove(0);
 
         assert_eq!(symbols.lookup(bare("id")), Lookup::NarrowedAway);
-        assert_eq!(symbols.lookup(bare("dept_id")), Lookup::Column(0));
+        assert_eq!(
+            symbols.lookup(bare("dept_id")),
+            Lookup::Column {
+                index: 0,
+                declared: None
+            }
+        );
     }
 
     #[test]
@@ -1255,7 +1311,13 @@ mod tests {
         symbols.close();
         assert!(matches!(symbols.lookup(bare("cap")), Lookup::Let("cap", _)));
         open_relation(&mut symbols, "t");
-        assert_eq!(symbols.lookup(bare("id")), Lookup::Column(0));
+        assert_eq!(
+            symbols.lookup(bare("id")),
+            Lookup::Column {
+                index: 0,
+                declared: None
+            }
+        );
     }
 
     #[test]
@@ -1268,7 +1330,13 @@ mod tests {
         symbols.bind_local("local", 1, TextRange::default());
         open_relation(&mut symbols, "t");
 
-        assert_eq!(symbols.lookup(bare("id")), Lookup::Column(0));
+        assert_eq!(
+            symbols.lookup(bare("id")),
+            Lookup::Column {
+                index: 0,
+                declared: None
+            }
+        );
         assert_eq!(symbols.lookup(bare("x")), Lookup::Unknown);
         assert_eq!(symbols.lookup(bare("local")), Lookup::Unknown);
         assert!(matches!(symbols.lookup(bare("cap")), Lookup::Let("cap", _)));
@@ -1295,7 +1363,9 @@ mod tests {
         symbols.bind(
             "Row",
             Binding {
-                kind: BindingKind::Struct { fields: vec!["a"] },
+                kind: BindingKind::Struct {
+                    fields: named(&["a"]),
+                },
                 text_range: TextRange::default(),
                 visibility: Visibility::Private,
             },
@@ -1391,17 +1461,29 @@ mod tests {
         let mut symbols = symbols();
         open_relation(&mut symbols, "t");
         assert_eq!(symbols.column(bare("dept_id")), ColumnLookup::Unique(1));
-        symbols.replace(vec!["dept_id", "n"]);
+        symbols.replace(named(&["dept_id", "n"]));
 
-        assert_eq!(symbols.lookup(bare("dept_id")), Lookup::Column(0));
-        assert_eq!(symbols.lookup(bare("n")), Lookup::Column(1));
+        assert_eq!(
+            symbols.lookup(bare("dept_id")),
+            Lookup::Column {
+                index: 0,
+                declared: None
+            }
+        );
+        assert_eq!(
+            symbols.lookup(bare("n")),
+            Lookup::Column {
+                index: 1,
+                declared: None
+            }
+        );
         assert_eq!(symbols.lookup(bare("id")), Lookup::NarrowedAway);
     }
 
     #[test]
     fn join_concatenates_both_rows() {
         let mut symbols = symbols();
-        bind_relation(&mut symbols, "depts", vec!["dept_id"]);
+        bind_relation(&mut symbols, "depts", &["dept_id"]);
         open_relation(&mut symbols, "t");
         let (_, rhs, _) = symbols.relation("depts", None).expect("depts is bound");
         symbols.concat(rhs);

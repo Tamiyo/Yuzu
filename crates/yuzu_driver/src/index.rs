@@ -284,6 +284,7 @@ from t |> select double(a) + cap as v
                 use "x" -> "x: int64"
                 use "y" -> "let y = x * 2"
                 use "t" -> "table t = { a: int64 }"
+                use "a" -> "a: int64"
                 use "double" -> "def double(x: int64) -> int64 {"
                 use "cap" -> "let cap = 10"
                 type "let cap = 10": int64
@@ -311,6 +312,9 @@ from t |> join u on a == b |> select a + two() as v
                 use "two" -> helpers.yz: "pub def two() -> int64 { return 2 }"
                 use "t" -> "table t = { a: int64 }"
                 use "u" -> "table u = { b: int64 }"
+                use "a" -> "a: int64"
+                use "b" -> "b: int64"
+                use "a" -> "a: int64"
                 use "two" -> helpers.yz: "pub def two() -> int64 { return 2 }"
                 type "a == b": bool
                 type "two()": int64

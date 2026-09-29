@@ -408,4 +408,64 @@ from t |> select f(a) + f$0(a, a) + f(a, 1) as v
             "#]],
         );
     }
+
+    #[test]
+    fn a_column_goes_to_its_field() {
+        check_definition(
+            "struct Row { a: int64 }\ntable t = Row\nfrom t |> where $0a > 1\n",
+            &expect![[r#"
+                Some(
+                    "main.yz:a",
+                )
+            "#]],
+        );
+    }
+
+    #[test]
+    fn a_column_an_item_named_goes_to_the_item() {
+        check_definition(
+            "table t = { a: int64 }\nfrom t |> select a + 1 as v |> where $0v > 1\n",
+            &expect![[r#"
+                Some(
+                    "main.yz:v",
+                )
+            "#]],
+        );
+    }
+
+    #[test]
+    fn a_renamed_column_goes_to_the_rename() {
+        check_definition(
+            "table t = { a: int64 }\nfrom t |> rename a as b |> where $0b > 1\n",
+            &expect![[r#"
+                Some(
+                    "main.yz:b",
+                )
+            "#]],
+        );
+    }
+
+    #[test]
+    fn a_group_key_alias_goes_to_the_key() {
+        check_definition(
+            "table t = { a: int64, b: int64 }\nfrom t |> aggregate sum(a) as total group by b as k |> where $0k > 1\n",
+            &expect![[r#"
+                Some(
+                    "main.yz:k",
+                )
+            "#]],
+        );
+    }
+
+    #[test]
+    fn a_column_a_select_passes_on_keeps_its_field() {
+        check_definition(
+            "table t = { a: int64 }\nfrom t |> select a |> where $0a > 1\n",
+            &expect![[r#"
+                Some(
+                    "main.yz:a",
+                )
+            "#]],
+        );
+    }
 }

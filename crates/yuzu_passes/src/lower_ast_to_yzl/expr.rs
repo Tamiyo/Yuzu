@@ -6,6 +6,7 @@ use melior::ir::attribute::{
     StringAttribute,
 };
 use melior::ir::{Attribute, BlockLike, BlockRef, Location, Type, Value};
+use text_size::TextRange;
 use yuzu_ast::ast::{self, AstNode, BinOp, UnaryOp};
 use yuzu_mlir::attributes::CmpPredicate;
 use yuzu_mlir::ir::attribute::integer::IntegerAttributeExt;
@@ -112,7 +113,15 @@ impl<'c> AstToYzl<'c, '_> {
         };
 
         let loc = self.location(ident);
-        self.convert_reference(block, locals, ident, Reference::unqualified(name), loc)
+        let used = ident.syntax().text_range();
+        self.convert_reference(
+            block,
+            locals,
+            ident,
+            used,
+            Reference::unqualified(name),
+            loc,
+        )
     }
 
     /// `t.a` is a qualified column reference, not a load.
@@ -159,7 +168,11 @@ impl<'c> AstToYzl<'c, '_> {
             qualifier: Some(base),
             name: field,
         };
-        self.convert_reference(block, locals, access, reference, loc)
+        let used = access.field().map_or_else(
+            || access.syntax().text_range(),
+            |field| field.syntax().text_range(),
+        );
+        self.convert_reference(block, locals, access, used, reference, loc)
     }
 
     fn convert_binary<'a>(
@@ -598,19 +611,23 @@ impl<'c> AstToYzl<'c, '_> {
         block: BlockRef<'c, 'a>,
         locals: &Locals<'c, 'a>,
         node: &impl AstNode,
+        used: TextRange,
         reference: Reference<'_>,
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         let name = reference.name;
         let message = match self.symbols.lookup(reference) {
-            Lookup::Column(index) => {
+            Lookup::Column { index, declared } => {
+                if let Some(declared) = declared {
+                    self.record_declared(used, name, declared);
+                }
                 return block
                     .argument(index)
                     .expect("the scope answered from the row this block was built for")
                     .into();
             }
             Lookup::Local { slot, declared } => {
-                self.record_local(node.syntax().text_range(), name, declared);
+                self.record_local(used, name, declared);
                 let load = yzl::load(
                     self.context,
                     UnresolvedType::new(self.context).into(),
@@ -620,7 +637,7 @@ impl<'c> AstToYzl<'c, '_> {
                 return block.append_operation(load.into()).first_result();
             }
             Lookup::Let(symbol, target) => {
-                self.record(node.syntax().text_range(), name, target);
+                self.record(used, name, target);
                 return self.emit_call(block, Callable::constant(symbol, target), &[], loc);
             }
             Lookup::Lost => {

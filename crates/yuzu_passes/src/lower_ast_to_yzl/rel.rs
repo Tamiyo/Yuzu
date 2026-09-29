@@ -14,7 +14,7 @@ use yuzu_mlir::ir::operation::OperationExt;
 use yuzu_mlir::ods::yzl;
 use yuzu_mlir::types::{QueryType, UnresolvedType};
 
-use crate::lower_ast_to_yzl::symbols::{ColumnLookup, Reference, Row};
+use crate::lower_ast_to_yzl::symbols::{ColumnLookup, Field, Reference, Row};
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 
 /// A stage item as the source wrote it.
@@ -174,9 +174,9 @@ impl<'c> AstToYzl<'c, '_> {
                 range: item.syntax().text_range(),
             })
             .collect::<Vec<_>>();
-        let (names, region) = self.convert_items(&items, "select item", loc);
-        let columns = ArrayAttribute::from_strings(self.context, &names);
-        self.symbols.replace(names);
+        let (fields, region) = self.convert_items(&items, "select item", loc);
+        let columns = ArrayAttribute::from_strings(self.context, field_names(&fields));
+        self.symbols.replace(fields);
         block
             .append_operation(
                 yzl::select(
@@ -207,9 +207,9 @@ impl<'c> AstToYzl<'c, '_> {
                 range: item.syntax().text_range(),
             })
             .collect::<Vec<_>>();
-        let (names, region) = self.convert_items(&items, "extend item", loc);
-        let columns = ArrayAttribute::from_strings(self.context, &names);
-        self.symbols.extend(names);
+        let (fields, region) = self.convert_items(&items, "extend item", loc);
+        let columns = ArrayAttribute::from_strings(self.context, field_names(&fields));
+        self.symbols.extend(fields);
         block
             .append_operation(
                 yzl::extend(
@@ -233,10 +233,13 @@ impl<'c> AstToYzl<'c, '_> {
     ) -> Value<'c, 'a> {
         let loc = self.location(agg);
         let mut keys: Vec<usize> = Vec::new();
-        let mut key_names: Vec<&'c str> = Vec::new();
+        let mut key_fields: Vec<Field<'c>> = Vec::new();
         for item in agg.group_by().into_iter().flat_map(|group| group.items()) {
-            let Some(column) = self.read_ident(item.column()) else {
+            let Some(written) = item.column() else {
                 self.assert_syntax_error("group by key is missing its column");
+                continue;
+            };
+            let Some(column) = self.read_ident(Some(written.clone())) else {
                 continue;
             };
 
@@ -246,9 +249,19 @@ impl<'c> AstToYzl<'c, '_> {
                 qualifier,
                 name: column,
             };
-            if let Some(index) = self.resolve_column(&item, "group key", reference) {
+            let used = written.syntax().text_range();
+            if let Some(index) = self.resolve_column(&item, used, "group key", reference) {
                 keys.push(index);
-                key_names.push(self.read_ident(item.alias()).unwrap_or(column));
+                key_fields.push(match self.read_ident(item.alias()) {
+                    Some(alias) => Field {
+                        name: alias,
+                        declared: Some(self.span(item.syntax().text_range())),
+                    },
+                    None => Field {
+                        name: column,
+                        declared: self.symbols.row().declared(index),
+                    },
+                });
             }
         }
 
@@ -260,11 +273,11 @@ impl<'c> AstToYzl<'c, '_> {
                 range: item.syntax().text_range(),
             })
             .collect::<Vec<_>>();
-        let (names, region) = self.convert_items(&items, "aggregate item", loc);
-        let group_by = ArrayAttribute::from_strings(self.context, &key_names);
-        let measures = ArrayAttribute::from_strings(self.context, &names);
-        key_names.extend(names);
-        self.symbols.replace(key_names);
+        let (fields, region) = self.convert_items(&items, "aggregate item", loc);
+        let group_by = ArrayAttribute::from_strings(self.context, field_names(&key_fields));
+        let measures = ArrayAttribute::from_strings(self.context, field_names(&fields));
+        key_fields.extend(fields);
+        self.symbols.replace(key_fields);
 
         let op = yzl::AggregateOperationBuilder::new(self.context, loc)
             .result(QueryType::new(self.context).into())
@@ -331,8 +344,16 @@ impl<'c> AstToYzl<'c, '_> {
                 qualifier,
                 name: old,
             };
-            if let Some(index) = self.resolve_column(&item, "column", reference) {
-                renames.push((index, new));
+            let used = item.column().map_or_else(
+                || item.syntax().text_range(),
+                |column| column.syntax().text_range(),
+            );
+            if let Some(index) = self.resolve_column(&item, used, "column", reference) {
+                let field = Field {
+                    name: new,
+                    declared: Some(self.span(item.syntax().text_range())),
+                };
+                renames.push((index, field));
                 from.push(reference.to_string());
                 to.push(new);
             }
@@ -471,12 +492,17 @@ impl<'c> AstToYzl<'c, '_> {
         let mut columns: Vec<usize> = Vec::new();
         let mut items = Vec::new();
         for item in set.items() {
-            let Some(name) = self.read_ident(item.column()) else {
+            let Some(written) = item.column() else {
                 self.assert_syntax_error("set item is missing its column");
                 continue;
             };
+            let Some(name) = self.read_ident(Some(written.clone())) else {
+                continue;
+            };
 
-            let Some(index) = self.resolve_column(&item, "column", Reference::unqualified(name))
+            let used = written.syntax().text_range();
+            let Some(index) =
+                self.resolve_column(&item, used, "column", Reference::unqualified(name))
             else {
                 continue;
             };
@@ -489,12 +515,15 @@ impl<'c> AstToYzl<'c, '_> {
             });
         }
 
-        let (names, region) = self.convert_items(&items, "set item", loc);
+        let (fields, region) = self.convert_items(&items, "set item", loc);
         let op = yzl::SetOperationBuilder::new(self.context, loc)
             .result(QueryType::new(self.context).into())
             .input(input)
             .body(region)
-            .names(ArrayAttribute::from_strings(self.context, &names))
+            .names(ArrayAttribute::from_strings(
+                self.context,
+                field_names(&fields),
+            ))
             .set_cols(ArrayAttribute::from_indices(self.context, columns))
             .build();
         block.append_operation(op.into()).first_result()
@@ -534,8 +563,9 @@ impl<'c> AstToYzl<'c, '_> {
                 continue;
             };
 
+            let used = column.syntax().text_range();
             if let Some(index) =
-                self.resolve_column(&column, "column", Reference::unqualified(name))
+                self.resolve_column(&column, used, "column", Reference::unqualified(name))
             {
                 self.symbols.remove(index);
                 names.push(name);
@@ -562,21 +592,47 @@ impl<'c> AstToYzl<'c, '_> {
         items: &[Item<'c>],
         what: &str,
         loc: Location<'c>,
-    ) -> (Vec<&'c str>, Region<'c>) {
+    ) -> (Vec<Field<'c>>, Region<'c>) {
         let region = Region::new();
         let body = self.stage_block(&region, loc);
-        let mut names = Vec::new();
+        let mut fields = Vec::new();
         let mut values = Vec::new();
         for (index, Item { alias, expr, range }) in items.iter().enumerate() {
-            let name = alias
-                .or_else(|| match expr {
-                    Some(ast::Expr::IdentExpr(ident)) => self.read_ident(ident.name()),
-                    Some(ast::Expr::FieldAccessExpr(access)) => self.read_ident(access.field()),
-                    _ => None,
-                })
-                .unwrap_or_else(|| self.symbols.intern_fmt(format_args!("column{index}")));
+            // An item that reads a column as it is keeps the column's name,
+            // and where the column was named.
+            let read = match expr {
+                Some(ast::Expr::IdentExpr(ident)) => {
+                    self.read_ident(ident.name()).map(Reference::unqualified)
+                }
+                Some(ast::Expr::FieldAccessExpr(access)) => {
+                    let qualifier = match access.base() {
+                        Some(ast::Expr::IdentExpr(base)) => self.read_ident(base.name()),
+                        _ => None,
+                    };
+                    self.read_ident(access.field())
+                        .map(|name| Reference { qualifier, name })
+                }
+                _ => None,
+            };
+            let field = match (alias, read) {
+                (Some(alias), _) => Field {
+                    name: alias,
+                    declared: Some(self.span(*range)),
+                },
+                (None, Some(read)) => Field {
+                    name: read.name,
+                    declared: match self.symbols.column(read) {
+                        ColumnLookup::Unique(at) => self.symbols.row().declared(at),
+                        ColumnLookup::Ambiguous | ColumnLookup::Absent | ColumnLookup::Lost => None,
+                    },
+                },
+                (None, None) => Field {
+                    name: self.symbols.intern_fmt(format_args!("column{index}")),
+                    declared: None,
+                },
+            };
 
-            names.push(name);
+            fields.push(field);
 
             let value = if let Some(expr) = expr {
                 self.convert_expr(body, &Locals::new(), expr)
@@ -589,7 +645,7 @@ impl<'c> AstToYzl<'c, '_> {
         }
 
         body.append_operation(yzl::r#yield(self.context, &values, loc).into());
-        (names, region)
+        (fields, region)
     }
 
     fn read_limit_count(&mut self, expr: &ast::Expr) -> i64 {
@@ -632,14 +688,21 @@ impl<'c> AstToYzl<'c, '_> {
         region.append_block(Block::new(&arguments))
     }
 
+    /// The column `reference` names, which `used` writes.
     fn resolve_column(
         &mut self,
         node: &impl AstNode,
+        used: TextRange,
         what: &str,
         reference: Reference<'_>,
     ) -> Option<usize> {
         let message = match self.symbols.column(reference) {
-            ColumnLookup::Unique(index) => return Some(index),
+            ColumnLookup::Unique(index) => {
+                if let Some(declared) = self.symbols.row().declared(index) {
+                    self.record_declared(used, reference.name, declared);
+                }
+                return Some(index);
+            }
             ColumnLookup::Lost => return None,
             ColumnLookup::Ambiguous => {
                 format!("{what} `{reference}` is ambiguous; qualify it with a relation alias")
@@ -653,6 +716,10 @@ impl<'c> AstToYzl<'c, '_> {
         self.report_unresolved(node, &message);
         None
     }
+}
+
+fn field_names<'f, 'c>(fields: &'f [Field<'c>]) -> impl Iterator<Item = &'c str> + use<'f, 'c> {
+    fields.iter().map(|field| field.name)
 }
 
 #[cfg(test)]

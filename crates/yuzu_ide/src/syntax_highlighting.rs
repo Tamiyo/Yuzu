@@ -137,6 +137,7 @@ pub(crate) fn highlight_uses(checked: &Checked, source: SourceId) -> Vec<HlRange
                 DeclarationKind::Struct => HlTag::Struct.into(),
                 DeclarationKind::Trait => HlTag::Trait.into(),
                 DeclarationKind::Module => HlTag::Module.into(),
+                DeclarationKind::Column => HlTag::Field.into(),
             };
             HlRange {
                 range: resolution.used.range,
@@ -401,6 +402,7 @@ from employees e
             cap Local
             k Local Mutable
             t Table
+            a Field
             f Function"]]
         .assert_eq(&rendered.join("\n"));
     }
