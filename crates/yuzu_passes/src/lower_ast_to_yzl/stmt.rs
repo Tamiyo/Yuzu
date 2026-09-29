@@ -260,7 +260,14 @@ impl<'c> AstToYzl<'c, '_> {
                         .expect("the entry block has one argument per parameter")
                         .into();
 
-                    let place = this.emit_local(entry, name, LocalKind::Param, argument, loc);
+                    let place = this.emit_local(
+                        entry,
+                        name,
+                        LocalKind::Param,
+                        param_types[index],
+                        argument,
+                        loc,
+                    );
                     this.bind_local(&mut locals, name, place);
                 }
 
@@ -419,16 +426,13 @@ impl<'c> AstToYzl<'c, '_> {
         };
 
         if self.symbols.is_in_body() {
-            if let Some(annotation) = decl.type_annotation() {
-                self.report(
-                    &annotation,
-                    "a type annotation on a local binding is not supported yet",
-                );
-            }
-
+            let element = match decl.type_annotation() {
+                Some(annotation) => self.read_type_annotation(annotation),
+                None => UnresolvedType::get(self.context),
+            };
             let kind = LocalKind::Let(decl.mutability());
             let value = self.convert_expr(block, locals, &expr);
-            let place = self.emit_local(block, name, kind, value, loc);
+            let place = self.emit_local(block, name, kind, element, value, loc);
             self.bind_local(locals, name, place);
             return;
         }
@@ -1092,16 +1096,19 @@ impl<'c> AstToYzl<'c, '_> {
     }
 
     /// Declares a place for a local variable and stores its first value.
+    /// `element` is the type the place holds: what the program wrote, or
+    /// `!yzl.unresolved` for inference.
     fn emit_local<'a>(
         &self,
         block: BlockRef<'c, 'a>,
         name: &str,
         kind: LocalKind,
+        element: Type<'c>,
         value: Value<'c, 'a>,
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         let builder = yzl::LocalOperationBuilder::new(self.context, loc)
-            .place(RefType::get(self.context))
+            .place(RefType::new(self.context, element).into())
             .var_name(StringAttribute::new(self.context, name));
 
         let builder = match kind {
@@ -1313,20 +1320,6 @@ mod tests {
     }
 
     #[test]
-    fn an_annotated_local_binding_is_reported() {
-        expect![[r"
-            error: a type annotation on a local binding is not supported yet
-             --> test.yz:2:10
-              |
-            2 |   let y: str = x
-              |          ^^^
-        "]]
-        .assert_eq(&reported(
-            "def f(x: int64) -> int64 {\n  let y: str = x\n  return y\n}\n",
-        ));
-    }
-
-    #[test]
     fn an_implementation_of_an_unknown_trait_is_not_built() {
         let context = yuzu_mlir::context();
         let lowered = lower(
@@ -1387,25 +1380,25 @@ mod tests {
             module {
               yzl.fn @f params ["x"] (!yz.int64) -> !yz.int64 {
               ^bb0(%arg0: !yzl.unresolved):
-                %0 = yzl.local "x" param
-                yzl.store %0, %arg0 : !yzl.unresolved
-                %1 = yzl.load %0 : !yzl.unresolved
+                %0 = yzl.local "x" param : !yzl.ref<!yz.int64>
+                yzl.store %0, %arg0 : !yzl.ref<!yz.int64>, !yzl.unresolved
+                %1 = yzl.load %0 : !yzl.ref<!yz.int64> -> !yzl.unresolved
                 %2 = yz.constant_int 2
                 %3 = yz.mul %1, %2 : !yzl.unresolved, !yz.int64 -> !yzl.unresolved
-                %4 = yzl.local "doubled"
-                yzl.store %4, %3 : !yzl.unresolved
-                %5 = yzl.load %4 : !yzl.unresolved
+                %4 = yzl.local "doubled" : !yzl.ref<!yzl.unresolved>
+                yzl.store %4, %3 : !yzl.ref<!yzl.unresolved>, !yzl.unresolved
+                %5 = yzl.load %4 : !yzl.ref<!yzl.unresolved> -> !yzl.unresolved
                 %6 = yz.constant_int 1
                 %7 = yz.add %5, %6 : !yzl.unresolved, !yz.int64 -> !yzl.unresolved
                 yzl.return %7 : !yzl.unresolved
               } {sym_visibility = "private"}
               yzl.fn @spread params ["x"] (!yz.int64) -> !yz.int64 agg {
               ^bb0(%arg0: !yzl.unresolved):
-                %0 = yzl.local "x" param
-                yzl.store %0, %arg0 : !yzl.unresolved
-                %1 = yzl.load %0 : !yzl.unresolved
+                %0 = yzl.local "x" param : !yzl.ref<!yz.int64>
+                yzl.store %0, %arg0 : !yzl.ref<!yz.int64>, !yzl.unresolved
+                %1 = yzl.load %0 : !yzl.ref<!yz.int64> -> !yzl.unresolved
                 %2 = yzl.call @yuzu.prelude.max(%1) : (!yzl.unresolved) -> !yzl.unresolved {callee_source = "external", is_agg}
-                %3 = yzl.load %0 : !yzl.unresolved
+                %3 = yzl.load %0 : !yzl.ref<!yz.int64> -> !yzl.unresolved
                 %4 = yzl.call @yuzu.prelude.min(%3) : (!yzl.unresolved) -> !yzl.unresolved {callee_source = "external", is_agg}
                 %5 = yz.sub %2, %4 : !yzl.unresolved, !yzl.unresolved -> !yzl.unresolved
                 yzl.return %5 : !yzl.unresolved
@@ -1442,17 +1435,17 @@ external def upper(s: str) -> str
               yzl.table @t of @Row {sym_visibility = "private"}
               yzl.fn @f params ["x"] (!yz.int64) -> !yz.int64 {
               ^bb0(%arg0: !yzl.unresolved):
-                %1 = yzl.local "x" param
-                yzl.store %1, %arg0 : !yzl.unresolved
-                %2 = yzl.load %1 : !yzl.unresolved
+                %1 = yzl.local "x" param : !yzl.ref<!yz.int64>
+                yzl.store %1, %arg0 : !yzl.ref<!yz.int64>, !yzl.unresolved
+                %2 = yzl.load %1 : !yzl.ref<!yz.int64> -> !yzl.unresolved
                 %3 = yz.constant_int 1
                 %4 = yz.add %2, %3 : !yzl.unresolved, !yz.int64 -> !yzl.unresolved
-                %5 = yzl.load %1 : !yzl.unresolved
+                %5 = yzl.load %1 : !yzl.ref<!yz.int64> -> !yzl.unresolved
                 %6 = yz.constant_int 2
                 %7 = yz.mul %5, %6 : !yzl.unresolved, !yz.int64 -> !yzl.unresolved
-                %8 = yzl.local "y"
-                yzl.store %8, %7 : !yzl.unresolved
-                %9 = yzl.load %8 : !yzl.unresolved
+                %8 = yzl.local "y" : !yzl.ref<!yzl.unresolved>
+                yzl.store %8, %7 : !yzl.ref<!yzl.unresolved>, !yzl.unresolved
+                %9 = yzl.load %8 : !yzl.ref<!yzl.unresolved> -> !yzl.unresolved
                 yzl.return %9 : !yzl.unresolved
               } {sym_visibility = "private"}
               %0 = yzl.from @t
@@ -1474,21 +1467,21 @@ external def upper(s: str) -> str
               yzl.impl @Add for @int64 {
                 yzl.fn @add generics ["Self"] params ["x", "y"] (!yz.int64, !yz.int64) -> !yz.int64 {
                 ^bb0(%arg0: !yzl.unresolved, %arg1: !yzl.unresolved):
-                  %0 = yzl.local "x" param
-                  yzl.store %0, %arg0 : !yzl.unresolved
-                  %1 = yzl.local "y" param
-                  yzl.store %1, %arg1 : !yzl.unresolved
-                  %2 = yzl.load %0 : !yzl.unresolved
-                  %3 = yzl.load %1 : !yzl.unresolved
+                  %0 = yzl.local "x" param : !yzl.ref<!yz.int64>
+                  yzl.store %0, %arg0 : !yzl.ref<!yz.int64>, !yzl.unresolved
+                  %1 = yzl.local "y" param : !yzl.ref<!yz.int64>
+                  yzl.store %1, %arg1 : !yzl.ref<!yz.int64>, !yzl.unresolved
+                  %2 = yzl.load %0 : !yzl.ref<!yz.int64> -> !yzl.unresolved
+                  %3 = yzl.load %1 : !yzl.ref<!yz.int64> -> !yzl.unresolved
                   %4 = yz.add %2, %3 : !yzl.unresolved, !yzl.unresolved -> !yzl.unresolved
                   yzl.return %4 : !yzl.unresolved
                 }
               }
               yzl.fn @id generics ["T"] where ["T"] : [@Add] params ["x"] (!yzl.param<"T">) -> !yzl.param<"T"> {
               ^bb0(%arg0: !yzl.unresolved):
-                %0 = yzl.local "x" param
-                yzl.store %0, %arg0 : !yzl.unresolved
-                %1 = yzl.load %0 : !yzl.unresolved
+                %0 = yzl.local "x" param : !yzl.ref<!yzl.param<"T">>
+                yzl.store %0, %arg0 : !yzl.ref<!yzl.param<"T">>, !yzl.unresolved
+                %1 = yzl.load %0 : !yzl.ref<!yzl.param<"T">> -> !yzl.unresolved
                 yzl.return %1 : !yzl.unresolved
               } {sym_visibility = "private"}
             }
@@ -1545,19 +1538,19 @@ external def upper(s: str) -> str
             module {
               yzl.fn @f.1 params ["x"] (!yz.int64) -> !yz.int64 {
               ^bb0(%arg0: !yzl.unresolved):
-                %2 = yzl.local "x" param
-                yzl.store %2, %arg0 : !yzl.unresolved
-                %3 = yzl.load %2 : !yzl.unresolved
+                %2 = yzl.local "x" param : !yzl.ref<!yz.int64>
+                yzl.store %2, %arg0 : !yzl.ref<!yz.int64>, !yzl.unresolved
+                %3 = yzl.load %2 : !yzl.ref<!yz.int64> -> !yzl.unresolved
                 yzl.return %3 : !yzl.unresolved
               } {sym_visibility = "private"}
               yzl.fn @f.2 params ["x", "y"] (!yz.int64, !yz.int64) -> !yz.int64 {
               ^bb0(%arg0: !yzl.unresolved, %arg1: !yzl.unresolved):
-                %2 = yzl.local "x" param
-                yzl.store %2, %arg0 : !yzl.unresolved
-                %3 = yzl.local "y" param
-                yzl.store %3, %arg1 : !yzl.unresolved
-                %4 = yzl.load %2 : !yzl.unresolved
-                %5 = yzl.load %3 : !yzl.unresolved
+                %2 = yzl.local "x" param : !yzl.ref<!yz.int64>
+                yzl.store %2, %arg0 : !yzl.ref<!yz.int64>, !yzl.unresolved
+                %3 = yzl.local "y" param : !yzl.ref<!yz.int64>
+                yzl.store %3, %arg1 : !yzl.ref<!yz.int64>, !yzl.unresolved
+                %4 = yzl.load %2 : !yzl.ref<!yz.int64> -> !yzl.unresolved
+                %5 = yzl.load %3 : !yzl.ref<!yz.int64> -> !yzl.unresolved
                 %6 = yz.add %4, %5 : !yzl.unresolved, !yzl.unresolved -> !yzl.unresolved
                 yzl.return %6 : !yzl.unresolved
               } {sym_visibility = "private"}
@@ -1619,18 +1612,18 @@ external def upper(s: str) -> str
               yzl.impl @Round for @int64 {
                 yzl.fn @round.1 generics ["Self"] params ["x"] (!yz.int64) -> !yz.int64 {
                 ^bb0(%arg0: !yzl.unresolved):
-                  %0 = yzl.local "x" param
-                  yzl.store %0, %arg0 : !yzl.unresolved
-                  %1 = yzl.load %0 : !yzl.unresolved
+                  %0 = yzl.local "x" param : !yzl.ref<!yz.int64>
+                  yzl.store %0, %arg0 : !yzl.ref<!yz.int64>, !yzl.unresolved
+                  %1 = yzl.load %0 : !yzl.ref<!yz.int64> -> !yzl.unresolved
                   yzl.return %1 : !yzl.unresolved
                 }
                 yzl.fn @round.2 generics ["Self"] params ["x", "digits"] (!yz.int64, !yz.int64) -> !yz.int64 {
                 ^bb0(%arg0: !yzl.unresolved, %arg1: !yzl.unresolved):
-                  %0 = yzl.local "x" param
-                  yzl.store %0, %arg0 : !yzl.unresolved
-                  %1 = yzl.local "digits" param
-                  yzl.store %1, %arg1 : !yzl.unresolved
-                  %2 = yzl.load %0 : !yzl.unresolved
+                  %0 = yzl.local "x" param : !yzl.ref<!yz.int64>
+                  yzl.store %0, %arg0 : !yzl.ref<!yz.int64>, !yzl.unresolved
+                  %1 = yzl.local "digits" param : !yzl.ref<!yz.int64>
+                  yzl.store %1, %arg1 : !yzl.ref<!yz.int64>, !yzl.unresolved
+                  %2 = yzl.load %0 : !yzl.ref<!yz.int64> -> !yzl.unresolved
                   yzl.return %2 : !yzl.unresolved
                 }
               }

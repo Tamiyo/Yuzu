@@ -58,7 +58,7 @@ mlir::LogicalResult FnOp::verify() {
 namespace yuzu::yzl {
 
 llvm::SmallVector<mlir::MemorySlot> LocalOp::getPromotableSlots() {
-  return {mlir::MemorySlot{getPlace(), UnresolvedType::get(getContext())}};
+  return {mlir::MemorySlot{getPlace(), getPlace().getType().getElement()}};
 }
 
 // Only a load before any store reads this. The frontend stores every place

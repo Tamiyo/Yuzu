@@ -200,8 +200,8 @@ pub(crate) mod test_support {
 
         yuzu_mlir::diagnostics::capture(&context, &sources, &mut diagnostics, || {
             yuzu_passes::check_mutability(&module);
-            yuzu_passes::promote_locals(&context, &mut module);
             yuzu_passes::infer_types(&context, &mut module);
+            yuzu_passes::promote_locals(&context, &mut module);
             yuzu_passes::check_aggregates(&module);
             yuzu_passes::inline_calls(&context, &mut module);
             yuzu_passes::lower_yzl_to_yzr(&context, &mut module);

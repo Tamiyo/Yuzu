@@ -250,12 +250,12 @@ fn locals_round_trip() {
 module {
   yzl.fn @f params ["x"] (!yz.int64) -> !yz.int64 {
   ^bb0(%arg: !yzl.unresolved):
-%x = yzl.local "x" param
-%y = yzl.local "y" mut
-yzl.store %x, %arg : !yzl.unresolved
-%a = yzl.load %x : !yzl.unresolved
-yzl.store %y, %a : !yzl.unresolved
-%b = yzl.load %y : !yzl.unresolved
+%x = yzl.local "x" param : !yzl.ref<!yz.int64>
+%y = yzl.local "y" mut : !yzl.ref<!yzl.unresolved>
+yzl.store %x, %arg : !yzl.ref<!yz.int64>, !yzl.unresolved
+%a = yzl.load %x : !yzl.ref<!yz.int64> -> !yzl.unresolved
+yzl.store %y, %a : !yzl.ref<!yzl.unresolved>, !yzl.unresolved
+%b = yzl.load %y : !yzl.ref<!yzl.unresolved> -> !yzl.unresolved
 yzl.return %b : !yzl.unresolved
   }
 }
@@ -266,12 +266,12 @@ yzl.return %b : !yzl.unresolved
         module {
           yzl.fn @f params ["x"] (!yz.int64) -> !yz.int64 {
           ^bb0(%arg0: !yzl.unresolved):
-            %0 = yzl.local "x" param
-            %1 = yzl.local "y" mut
-            yzl.store %0, %arg0 : !yzl.unresolved
-            %2 = yzl.load %0 : !yzl.unresolved
-            yzl.store %1, %2 : !yzl.unresolved
-            %3 = yzl.load %1 : !yzl.unresolved
+            %0 = yzl.local "x" param : !yzl.ref<!yz.int64>
+            %1 = yzl.local "y" mut : !yzl.ref<!yzl.unresolved>
+            yzl.store %0, %arg0 : !yzl.ref<!yz.int64>, !yzl.unresolved
+            %2 = yzl.load %0 : !yzl.ref<!yz.int64> -> !yzl.unresolved
+            yzl.store %1, %2 : !yzl.ref<!yzl.unresolved>, !yzl.unresolved
+            %3 = yzl.load %1 : !yzl.ref<!yzl.unresolved> -> !yzl.unresolved
             yzl.return %3 : !yzl.unresolved
           }
         }

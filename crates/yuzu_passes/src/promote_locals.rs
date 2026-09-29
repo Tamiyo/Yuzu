@@ -33,18 +33,18 @@ mod tests {
             r#"
 module {
   yzl.fn @f params ["x"] (!yz.int64) -> !yz.int64 {
-  ^bb0(%arg: !yzl.unresolved):
-    %x = yzl.local "x" param
-    %y = yzl.local "y" mut
-    yzl.store %x, %arg : !yzl.unresolved
-    %a = yzl.load %x : !yzl.unresolved
-    yzl.store %y, %a : !yzl.unresolved
-    %b = yzl.load %y : !yzl.unresolved
+  ^bb0(%arg: !yz.int64):
+    %x = yzl.local "x" param : !yzl.ref<!yz.int64>
+    %y = yzl.local "y" mut : !yzl.ref<!yz.int64>
+    yzl.store %x, %arg : !yzl.ref<!yz.int64>, !yz.int64
+    %a = yzl.load %x : !yzl.ref<!yz.int64> -> !yz.int64
+    yzl.store %y, %a : !yzl.ref<!yz.int64>, !yz.int64
+    %b = yzl.load %y : !yzl.ref<!yz.int64> -> !yz.int64
     %two = yz.constant_int 2
-    %c = yz.mul %b, %two : !yzl.unresolved, !yz.int64 -> !yzl.unresolved
-    yzl.store %y, %c : !yzl.unresolved
-    %d = yzl.load %y : !yzl.unresolved
-    yzl.return %d : !yzl.unresolved
+    %c = yz.mul %b, %two : !yz.int64, !yz.int64 -> !yz.int64
+    yzl.store %y, %c : !yzl.ref<!yz.int64>, !yz.int64
+    %d = yzl.load %y : !yzl.ref<!yz.int64> -> !yz.int64
+    yzl.return %d : !yz.int64
   }
 }
 "#,
@@ -56,10 +56,10 @@ module {
         expect![[r#"
             module {
               yzl.fn @f params ["x"] (!yz.int64) -> !yz.int64 {
-              ^bb0(%arg0: !yzl.unresolved):
+              ^bb0(%arg0: !yz.int64):
                 %0 = yz.constant_int 2
-                %1 = yz.mul %arg0, %0 : !yzl.unresolved, !yz.int64 -> !yzl.unresolved
-                yzl.return %1 : !yzl.unresolved
+                %1 = yz.mul %arg0, %0 : !yz.int64, !yz.int64 -> !yz.int64
+                yzl.return %1 : !yz.int64
               }
             }
         "#]]

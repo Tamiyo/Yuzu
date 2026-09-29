@@ -677,9 +677,9 @@ from t
               yzl.table @t of @Row {sym_visibility = "private"}
               yzl.fn @f params ["x"] (!yz.int64) -> !yz.int64 {
               ^bb0(%arg0: !yzl.unresolved):
-                %5 = yzl.local "x" param
-                yzl.store %5, %arg0 : !yzl.unresolved
-                %6 = yzl.load %5 : !yzl.unresolved
+                %5 = yzl.local "x" param : !yzl.ref<!yz.int64>
+                yzl.store %5, %arg0 : !yzl.ref<!yz.int64>, !yzl.unresolved
+                %6 = yzl.load %5 : !yzl.ref<!yz.int64> -> !yzl.unresolved
                 yzl.return %6 : !yzl.unresolved
               } {sym_visibility = "private"}
               %0 = yzl.from @t
@@ -726,8 +726,8 @@ from t
         check(
             "struct Row { a: int64, b: str }\ntable t = Row\nfrom t |> set zz = 1, b = \"x\"\n",
             |context, module| {
-                crate::promote_locals(context, module);
                 crate::infer_types(context, module);
+                crate::promote_locals(context, module);
                 String::new()
             },
             &expect![[r#"

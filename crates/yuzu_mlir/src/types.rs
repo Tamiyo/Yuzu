@@ -73,14 +73,13 @@ mod tests {
 
     type Singleton = (fn(&Context) -> Type<'_>, fn(Type<'_>) -> bool);
 
-    const SINGLETONS: [Singleton; 8] = [
+    const SINGLETONS: [Singleton; 7] = [
         (Int64Type::get, Int64Type::is),
         (Float64Type::get, Float64Type::is),
         (BoolType::get, BoolType::is),
         (StrType::get, StrType::is),
         (UnresolvedType::get, UnresolvedType::is),
         (QueryType::get, QueryType::is),
-        (RefType::get, RefType::is),
         (ErrorType::get, ErrorType::is),
     ];
 
@@ -93,5 +92,16 @@ mod tests {
                 assert_eq!(is(ty), row == column, "{ty} against predicate {column}");
             }
         }
+    }
+
+    #[test]
+    fn a_place_holds_its_element_type() {
+        let context = crate::context();
+        let element = Int64Type::get(&context);
+        let place: Type = RefType::new(&context, element).into();
+        assert_eq!(place.to_string(), "!yzl.ref<!yz.int64>");
+        let place = RefType::from_type(place).expect("a place is a ref");
+        assert_eq!(place.element(), element);
+        assert!(RefType::from_type(element).is_none());
     }
 }

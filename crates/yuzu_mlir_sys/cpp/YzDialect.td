@@ -113,27 +113,31 @@ def Yz_ListOp : Yz_Op<"list", [Pure]> {
 // Arithmetic. One op per surface operator, polymorphic over the numeric
 // types the way the language's operators are; folds dispatch on the
 // literal's kind. The constraints also admit !yzl.unresolved, the type an
-// operand has until InferTypes stamps it concrete, so operand types are
-// spelled individually.
+// operand has until InferTypes stamps it concrete, !yzl.param, the type an
+// operand of a generic body has until InlineCalls substitutes the call's
+// types, and !yzl.error, the type InferTypes stamps on a value an error left
+// behind, so operand types are spelled individually.
 
 def Yz_NumericType : Type<
     CPred<"::llvm::isa<::yuzu::yz::Int64Type, ::yuzu::yz::Float64Type, "
-          "::yuzu::yzl::UnresolvedType>($_self)">,
-    "numeric or !yzl.unresolved">;
+          "::yuzu::yzl::UnresolvedType, ::yuzu::yzl::ParamType, ::yuzu::yzl::ErrorType>($_self)">,
+    "numeric, !yzl.unresolved, !yzl.param or !yzl.error">;
 
 def Yz_IntegerType : Type<
-    CPred<"::llvm::isa<::yuzu::yz::Int64Type, ::yuzu::yzl::UnresolvedType>($_self)">,
-    "!yz.int64 or !yzl.unresolved">;
+    CPred<"::llvm::isa<::yuzu::yz::Int64Type, ::yuzu::yzl::UnresolvedType, "
+          "::yuzu::yzl::ParamType, ::yuzu::yzl::ErrorType>($_self)">,
+    "!yz.int64, !yzl.unresolved, !yzl.param or !yzl.error">;
 
 def Yz_ScalarOrUnresolvedType : Type<
     CPred<"::llvm::isa<::yuzu::yz::Int64Type, ::yuzu::yz::Float64Type, "
-          "::yuzu::yz::BoolType, ::yuzu::yz::StrType, ::yuzu::yzl::UnresolvedType>"
-          "($_self)">,
-    "a scalar or !yzl.unresolved">;
+          "::yuzu::yz::BoolType, ::yuzu::yz::StrType, ::yuzu::yzl::UnresolvedType, "
+          "::yuzu::yzl::ParamType, ::yuzu::yzl::ErrorType>($_self)">,
+    "a scalar, !yzl.unresolved, !yzl.param or !yzl.error">;
 
 def Yz_BoolOrUnresolvedType : Type<
-    CPred<"::llvm::isa<::yuzu::yz::BoolType, ::yuzu::yzl::UnresolvedType>($_self)">,
-    "!yz.bool or !yzl.unresolved">;
+    CPred<"::llvm::isa<::yuzu::yz::BoolType, ::yuzu::yzl::UnresolvedType, "
+          "::yuzu::yzl::ParamType, ::yuzu::yzl::ErrorType>($_self)">,
+    "!yz.bool, !yzl.unresolved, !yzl.param or !yzl.error">;
 
 class Yz_ArithBinaryOp<string mnemonic, list<Trait> traits = []>
     : Yz_Op<mnemonic, traits # [Pure]> {

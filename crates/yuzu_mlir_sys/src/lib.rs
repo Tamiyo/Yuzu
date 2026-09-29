@@ -27,8 +27,9 @@ unsafe extern "C" {
     pub fn yzuTypeIsErrorType(ty: MlirType) -> bool;
     pub fn yzuQueryTypeGet(ctx: MlirContext) -> MlirType;
     pub fn yzuTypeIsQueryType(ty: MlirType) -> bool;
-    pub fn yzuRefTypeGet(ctx: MlirContext) -> MlirType;
+    pub fn yzuRefTypeGet(ctx: MlirContext, element: MlirType) -> MlirType;
     pub fn yzuTypeIsRefType(ty: MlirType) -> bool;
+    pub fn yzuRefTypeElement(ty: MlirType) -> MlirType;
 
     pub fn yzuFileLineColRangeGet(
         filename: MlirAttribute,

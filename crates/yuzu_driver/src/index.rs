@@ -227,7 +227,7 @@ fn symbol(
 fn is_shown(context: &Context, ty: Type<'_>) -> bool {
     ty != UnresolvedType::get(context)
         && ty != QueryType::get(context)
-        && ty != RefType::get(context)
+        && RefType::from_type(ty).is_none()
         && !ErrorType::is(ty)
 }
 

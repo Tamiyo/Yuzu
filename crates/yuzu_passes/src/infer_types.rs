@@ -21,7 +21,7 @@ use yuzu_mlir::ir::region::RegionExt;
 use yuzu_mlir::ir::value::{ValueExt, ValueId};
 use yuzu_mlir::ops::yz::YzOp;
 use yuzu_mlir::ops::yzl::{FnOp, YzlOp};
-use yuzu_mlir::types::{self, BoolType, ErrorType, Int64Type, UnresolvedType};
+use yuzu_mlir::types::{self, BoolType, ErrorType, Int64Type, RefType, UnresolvedType};
 use yuzu_mlir::{ListType, ParamType};
 
 pub fn infer_types<'c>(context: &'c Context, module: &mut Module<'c>) {
@@ -167,6 +167,26 @@ impl<'c> TypeInferrer<'c, '_> {
         }
 
         let key = value.id();
+        if let Some(&var) = self.vars.get(&key) {
+            return Term::Var(var);
+        }
+
+        let var = self.fresh();
+        self.vars.insert(key, var);
+        Term::Var(var)
+    }
+
+    /// The type of the value a place holds: its annotation, or a variable
+    /// for the place.
+    fn place_term(&mut self, place: Value<'c, '_>) -> Term<'c> {
+        let element = RefType::from_type(place.r#type())
+            .expect("a verified load or store reads a place")
+            .element();
+        if element != UnresolvedType::get(self.context) {
+            return Term::Concrete(element);
+        }
+
+        let key = place.id();
         if let Some(&var) = self.vars.get(&key) {
             return Term::Var(var);
         }
@@ -380,6 +400,16 @@ impl<'c> TypeInferrer<'c, '_> {
                 }
 
                 self.bindings.insert(name, row);
+            }
+            Some(YzlOp::Store(store)) => {
+                let place = self.place_term(store.place());
+                let value = self.term_of(store.value());
+                self.unify(op, place, value);
+            }
+            Some(YzlOp::Load(load)) => {
+                let place = self.place_term(load.place());
+                let result = self.term_of(op.first_result());
+                self.unify(op, place, result);
             }
             Some(YzlOp::List(_)) => {
                 let inner = self.fresh();
@@ -695,6 +725,14 @@ impl<'c> TypeInferrer<'c, '_> {
                 continue;
             };
 
+            if matches!(op.as_yzl(), Some(YzlOp::Local(_))) {
+                let term = self.place_term(result);
+                if let Some(element) = self.resolve(term) {
+                    result.set_type(RefType::new(self.context, element).into());
+                }
+                continue;
+            }
+
             let term = self.term_of(result);
             match self.resolve(term) {
                 Some(ty) => result.set_type(ty),
@@ -803,8 +841,8 @@ mod tests {
         test_support::check(
             source,
             |context, module| {
-                crate::promote_locals(context, module);
                 infer_types(context, module);
+                crate::promote_locals(context, module);
                 module.as_operation().to_string()
             },
             expected,
@@ -1063,6 +1101,49 @@ from t
                 6 | def loose[T](x: T) -> T { return id(x) }
                   |                                  ^^^^^
             "]],
+        );
+    }
+
+    #[test]
+    fn a_local_is_held_to_its_annotation() {
+        check(
+            "def f(x: int64) -> str {\n  let y: str = x\n  return y\n}\n",
+            &expect![[r"
+                error: expected `str`, found `int64`
+                 --> test.yz:2:3
+                  |
+                2 |   let y: str = x
+                  |   ^^^^^^^^^^^^^^
+            "]],
+        );
+    }
+
+    #[test]
+    fn a_local_takes_the_type_of_its_value() {
+        test_support::check(
+            "def f(x: int64) -> int64 {\n  let mut y = x\n  y = y + 1\n  return y\n}\n",
+            |context, module| {
+                infer_types(context, module);
+                module.as_operation().to_string()
+            },
+            &expect![[r#"
+                module {
+                  yzl.fn @f params ["x"] (!yz.int64) -> !yz.int64 {
+                  ^bb0(%arg0: !yz.int64):
+                    %0 = yzl.local "x" param : !yzl.ref<!yz.int64>
+                    yzl.store %0, %arg0 : !yzl.ref<!yz.int64>, !yz.int64
+                    %1 = yzl.load %0 : !yzl.ref<!yz.int64> -> !yz.int64
+                    %2 = yzl.local "y" mut : !yzl.ref<!yz.int64>
+                    yzl.store %2, %1 : !yzl.ref<!yz.int64>, !yz.int64
+                    %3 = yzl.load %2 : !yzl.ref<!yz.int64> -> !yz.int64
+                    %4 = yz.constant_int 1
+                    %5 = yz.add %3, %4 : !yz.int64, !yz.int64 -> !yz.int64
+                    yzl.store %2, %5 : !yzl.ref<!yz.int64>, !yz.int64
+                    %6 = yzl.load %2 : !yzl.ref<!yz.int64> -> !yz.int64
+                    yzl.return %6 : !yz.int64
+                  } {sym_visibility = "private"}
+                }
+            "#]],
         );
     }
 

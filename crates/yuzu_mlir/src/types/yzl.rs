@@ -59,21 +59,39 @@ impl QueryType {
     }
 }
 
-/// `!yzl.ref`, a place that holds the value of a local variable.
+/// `!yzl.ref<element>`, a place that holds the value of a local variable.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct RefType;
+pub struct RefType<'c>(Type<'c>);
 
-impl RefType {
+impl<'c> RefType<'c> {
     #[must_use]
-    pub fn get(context: &Context) -> Type<'_> {
-        // SAFETY: the context is live for the returned lifetime and the type is uniqued in it.
-        unsafe { Type::from_raw(yuzu_mlir_sys::yzuRefTypeGet(context.to_raw())) }
+    pub fn new(context: &'c Context, element: Type<'c>) -> Self {
+        // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
+        unsafe {
+            Self(Type::from_raw(yuzu_mlir_sys::yzuRefTypeGet(
+                context.to_raw(),
+                element.to_raw(),
+            )))
+        }
     }
 
     #[must_use]
-    pub fn is(ty: Type<'_>) -> bool {
+    pub fn from_type(ty: Type<'c>) -> Option<Self> {
         // SAFETY: `ty` is a live type; the query only reads it.
-        unsafe { yuzu_mlir_sys::yzuTypeIsRefType(ty.to_raw()) }
+        unsafe { yuzu_mlir_sys::yzuTypeIsRefType(ty.to_raw()) }.then_some(Self(ty))
+    }
+
+    /// The type of the value the place holds.
+    #[must_use]
+    pub fn element(&self) -> Type<'c> {
+        // SAFETY: the element is a parameter of a uniqued type, so it lives as long as the context.
+        unsafe { Type::from_raw(yuzu_mlir_sys::yzuRefTypeElement(self.0.to_raw())) }
+    }
+}
+
+impl<'c> From<RefType<'c>> for Type<'c> {
+    fn from(ty: RefType<'c>) -> Self {
+        ty.0
     }
 }
 

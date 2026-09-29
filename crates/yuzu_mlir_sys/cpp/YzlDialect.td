@@ -42,8 +42,12 @@ def Yzl_RefType : Yzl_Type<"Ref", "ref"> {
   let summary = "a place that holds the value of a local variable";
   let description = [{
     What `yzl.local` gives, and what `yzl.load` and `yzl.store` read and
-    write. Every place is removed by `mem2reg` before inference runs.
+    write. `element` is the type of the value the place holds: the local's
+    annotation, or `!yzl.unresolved` until inference resolves it. Every
+    place is removed by `mem2reg` after inference.
   }];
+  let parameters = (ins "::mlir::Type":$element);
+  let assemblyFormat = "`<` $element `>`";
 }
 
 def Yzl_ParamType : Yzl_Type<"Param", "param"> {
@@ -268,7 +272,8 @@ def Yzl_LocalOp : Yzl_Op<"local",
   }];
   let arguments = (ins StrAttr:$var_name, UnitAttr:$is_mut, UnitAttr:$is_param);
   let results = (outs Yzl_RefType:$place);
-  let assemblyFormat = "$var_name (`mut` $is_mut^)? (`param` $is_param^)? attr-dict";
+  let assemblyFormat =
+      "$var_name (`mut` $is_mut^)? (`param` $is_param^)? attr-dict `:` qualified(type($place))";
 }
 
 def Yzl_LoadOp : Yzl_Op<"load",
@@ -277,7 +282,7 @@ def Yzl_LoadOp : Yzl_Op<"load",
   let summary = "the value a place holds";
   let arguments = (ins Yzl_RefType:$place);
   let results = (outs AnyType:$result);
-  let assemblyFormat = "$place attr-dict `:` type($result)";
+  let assemblyFormat = "$place attr-dict `:` qualified(type($place)) `->` type($result)";
 }
 
 def Yzl_StoreOp : Yzl_Op<"store",
@@ -285,7 +290,7 @@ def Yzl_StoreOp : Yzl_Op<"store",
      DeclareOpInterfaceMethods<PromotableMemOpInterface>]> {
   let summary = "gives a place a new value";
   let arguments = (ins Yzl_RefType:$place, AnyType:$value);
-  let assemblyFormat = "$place `,` $value attr-dict `:` type($value)";
+  let assemblyFormat = "$place `,` $value attr-dict `:` qualified(type($place)) `,` type($value)";
 }
 
 def Yzl_OutputOp : Yzl_Op<"output"> {

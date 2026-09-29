@@ -58,6 +58,18 @@ extern "C" MlirType yzuListTypeInner(MlirType type) {
   return wrap(llvm::cast<yuzu::yz::ListType>(unwrap(type)).getInner());
 }
 
+extern "C" MlirType yzuRefTypeGet(MlirContext ctx, MlirType element) {
+  return wrap(yuzu::yzl::RefType::get(unwrap(ctx), unwrap(element)));
+}
+
+extern "C" bool yzuTypeIsRefType(MlirType type) {
+  return llvm::isa<yuzu::yzl::RefType>(unwrap(type));
+}
+
+extern "C" MlirType yzuRefTypeElement(MlirType type) {
+  return wrap(llvm::cast<yuzu::yzl::RefType>(unwrap(type)).getElement());
+}
+
 // The types that carry no parameters. MLIR uniques types in the context, so
 // each of these is a lookup returning the same pointer every time.
 #define YZU_SINGLETON_TYPE(getter, predicate, cls)                             \
@@ -76,7 +88,6 @@ YZU_SINGLETON_TYPE(yzuUnresolvedTypeGet, yzuTypeIsUnresolvedType,
                    yuzu::yzl::UnresolvedType)
 YZU_SINGLETON_TYPE(yzuErrorTypeGet, yzuTypeIsErrorType, yuzu::yzl::ErrorType)
 YZU_SINGLETON_TYPE(yzuQueryTypeGet, yzuTypeIsQueryType, yuzu::yzl::QueryType)
-YZU_SINGLETON_TYPE(yzuRefTypeGet, yzuTypeIsRefType, yuzu::yzl::RefType)
 
 #undef YZU_SINGLETON_TYPE
 

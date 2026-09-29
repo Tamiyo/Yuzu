@@ -215,8 +215,8 @@ pub(crate) fn lower_and_check<'c>(
 
     yuzu_mlir::diagnostics::capture(context, sources, diagnostics, || {
         yuzu_passes::check_mutability(&module);
-        yuzu_passes::promote_locals(context, &mut module);
         yuzu_passes::infer_types(context, &mut module);
+        yuzu_passes::promote_locals(context, &mut module);
     });
     if let Some(reader) = index {
         reader.read_inferred(context, &module);

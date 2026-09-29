@@ -116,8 +116,8 @@ pub(crate) fn check_yzr(source: &str, expected: &Expect) {
     check(
         source,
         |context, module| {
-            crate::promote_locals(context, module);
             crate::infer_types(context, module);
+            crate::promote_locals(context, module);
             crate::lower_yzl_to_yzr(context, module);
             module.as_operation().to_string()
         },
@@ -140,8 +140,8 @@ pub(crate) fn check_simplified(source: &str, expected: &Expect) {
     let groups: [Group; 3] = [
         |context, module| {
             crate::check_mutability(module);
-            crate::promote_locals(context, module);
             crate::infer_types(context, module);
+            crate::promote_locals(context, module);
             crate::check_aggregates(module);
         },
         |context, module| {
