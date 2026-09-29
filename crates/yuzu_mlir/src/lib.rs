@@ -5,6 +5,7 @@ pub mod diagnostics;
 pub mod ir;
 pub mod ods;
 pub mod ops;
+pub mod rewrite;
 pub mod types;
 
 /// A context without a thread pool.

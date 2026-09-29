@@ -370,7 +370,7 @@ yzr.yield %n : !yz.int64
 #[test]
 fn the_canonicalizer_keeps_its_folding_inside_the_region() {
     let context = yuzu_mlir::context();
-    let mut module = parse(
+    let module = parse(
         &context,
         r#"
 module {
@@ -398,11 +398,7 @@ yzr.yield %p : !yz.bool
     )
     .expect("the filters parse and verify");
 
-    let pass_manager = melior::pass::PassManager::new(&context);
-    pass_manager.add_pass(melior::pass::transform::create_canonicalizer_pass());
-    pass_manager
-        .run(&mut module)
-        .expect("canonicalization succeeds");
+    yuzu_mlir::rewrite::canonicalize(&context, &module).expect("canonicalization settles");
 
     expect![[r#"
         module {
@@ -446,12 +442,8 @@ module {
 
 fn canonicalized(source: &str) -> String {
     let context = yuzu_mlir::context();
-    let mut module = parse(&context, source).expect("the module parses and verifies");
-    let pass_manager = melior::pass::PassManager::new(&context);
-    pass_manager.add_pass(melior::pass::transform::create_canonicalizer_pass());
-    pass_manager
-        .run(&mut module)
-        .expect("canonicalization succeeds");
+    let module = parse(&context, source).expect("the module parses and verifies");
+    yuzu_mlir::rewrite::canonicalize(&context, &module).expect("canonicalization settles");
     module.as_operation().to_string()
 }
 

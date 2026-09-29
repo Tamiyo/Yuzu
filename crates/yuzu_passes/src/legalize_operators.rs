@@ -5,7 +5,6 @@
 
 use melior::ir::operation::{OperationLike, OperationRef};
 use melior::ir::{BlockLike, Module, RegionLike, Type, Value, ValueLike};
-use melior::pass::transform;
 use melior::{Context, IrRewriter, RewriterBase};
 use rustc_hash::FxHashMap;
 use yuzu_mlir::diagnostics::emit_error;
@@ -66,11 +65,8 @@ pub fn legalize_operators(context: &Context, module: &mut Module) {
     drop(symbols);
     discard_implementations(rewriter, module);
 
-    let passes = crate::pass_manager(context);
-    passes.add_pass(transform::create_canonicalizer_pass());
-    passes
-        .run(module)
-        .expect("canonicalization runs on any module the lowering builds");
+    yuzu_mlir::rewrite::canonicalize(context, module)
+        .expect("canonicalization settles on any module the lowering builds");
 }
 
 /// The operators in every region, outside the implementations themselves.

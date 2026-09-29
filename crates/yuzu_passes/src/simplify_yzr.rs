@@ -1,4 +1,5 @@
-//! MLIR's canonicalizer and CSE; the `yz` ops declare their own folders.
+//! The dialects' canonicalization, then MLIR's CSE. The `yz` ops declare
+//! their own folders, and `yuzu_mlir::rewrite` their patterns.
 //! Stage regions are `IsolatedFromAbove`, so what a fold leaves behind stays
 //! inside the region that becomes a Substrait expression.
 
@@ -6,20 +7,21 @@ use melior::Context;
 use melior::ir::Module;
 use melior::pass::transform;
 
-/// Runs MLIR's canonicalizer and CSE over the module.
+/// Canonicalizes the module, then runs MLIR's CSE over it.
 ///
 /// # Panics
 ///
-/// Panics if either pass fails, which it does not on any module the lowering
-/// builds.
+/// Panics if either step fails, which neither does on any module the
+/// lowering builds.
 pub fn simplify_yzr(context: &Context, module: &mut Module) {
-    let passes = crate::pass_manager(context);
-    passes.add_pass(transform::create_canonicalizer_pass());
-    passes.add_pass(transform::create_cse_pass());
+    yuzu_mlir::rewrite::canonicalize(context, module)
+        .expect("canonicalization settles on any module the lowering builds");
 
+    let passes = crate::pass_manager(context);
+    passes.add_pass(transform::create_cse_pass());
     passes
         .run(module)
-        .expect("canonicalization runs on any module the lowering builds");
+        .expect("CSE runs on any module the lowering builds");
 }
 
 #[cfg(test)]
