@@ -72,6 +72,10 @@ impl<'c> Column<'c> {
 #[derive(Clone, Default, PartialEq, Eq, Debug)]
 pub(super) struct Row<'c> {
     columns: Vec<Column<'c>>,
+    /// The first position of each name, so a lookup does not scan the row.
+    first: FxHashMap<&'c str, usize>,
+    /// For each position, the next position with the same name.
+    next: Vec<Option<usize>>,
     schema: Schema,
 }
 
@@ -88,8 +92,32 @@ impl<'c> Row<'c> {
     /// The row of a relation an error left behind.
     pub(super) fn lost() -> Self {
         Self {
-            columns: Vec::new(),
             schema: Schema::Lost,
+            ..Self::default()
+        }
+    }
+
+    fn from_columns(columns: Vec<Column<'c>>, schema: Schema) -> Self {
+        let mut row = Self {
+            columns,
+            first: FxHashMap::default(),
+            next: Vec::new(),
+            schema,
+        };
+        row.index();
+        row
+    }
+
+    /// Rebuilds the positions of each name after the columns change.
+    fn index(&mut self) {
+        self.first.clear();
+        self.first.reserve(self.columns.len());
+        self.next.clear();
+        self.next.resize(self.columns.len(), None);
+        for (at, column) in self.columns.iter().enumerate().rev() {
+            if let Some(later) = self.first.insert(column.name, at) {
+                self.next[at] = Some(later);
+            }
         }
     }
 
@@ -110,14 +138,12 @@ impl<'c> Row<'c> {
     }
 
     pub(super) fn column(&self, reference: Reference<'_>) -> ColumnLookup {
-        let mut matches = self
-            .columns
-            .iter()
-            .enumerate()
-            .filter(|(_, column)| column.matches(reference));
+        let same_name =
+            std::iter::successors(self.first.get(reference.name).copied(), |&at| self.next[at]);
+        let mut matches = same_name.filter(|&at| self.columns[at].matches(reference));
 
         match (matches.next(), matches.next(), self.schema) {
-            (Some((index, _)), None, _) => ColumnLookup::Unique(index),
+            (Some(index), None, _) => ColumnLookup::Unique(index),
             (Some(_), Some(_), _) => ColumnLookup::Ambiguous,
             (None, _, Schema::Known) => ColumnLookup::Absent,
             (None, _, Schema::Lost) => ColumnLookup::Lost,
@@ -136,12 +162,16 @@ impl<'c> Row<'c> {
 
     /// Renames a column, and hands back its old name.
     pub(super) fn rename(&mut self, index: usize, name: &'c str) -> &'c str {
-        std::mem::replace(&mut self.columns[index].name, name)
+        let old = std::mem::replace(&mut self.columns[index].name, name);
+        self.index();
+        old
     }
 
     /// Removes a column, and hands back its name.
     pub(super) fn remove(&mut self, index: usize) -> &'c str {
-        self.columns.remove(index).name
+        let removed = self.columns.remove(index).name;
+        self.index();
+        removed
     }
 
     pub(super) fn append(&mut self, other: Row<'c>) {
@@ -149,21 +179,20 @@ impl<'c> Row<'c> {
         if other.schema == Schema::Lost {
             self.schema = Schema::Lost;
         }
+        self.index();
     }
 }
 
 impl<'c> From<Vec<&'c str>> for Row<'c> {
     fn from(names: Vec<&'c str>) -> Self {
-        Self {
-            columns: names
-                .into_iter()
-                .map(|name| Column {
-                    qualifier: None,
-                    name,
-                })
-                .collect(),
-            schema: Schema::Known,
-        }
+        let columns = names
+            .into_iter()
+            .map(|name| Column {
+                qualifier: None,
+                name,
+            })
+            .collect();
+        Self::from_columns(columns, Schema::Known)
     }
 }
 
