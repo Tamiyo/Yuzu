@@ -635,7 +635,7 @@ fn typed_matching_works_on_owned_operations() {
     let location = Location::unknown(&context);
     let operation: melior::ir::operation::Operation = yz::constant_int(
         &context,
-        Int64Type::get(&context),
+        Int64Type::new(&context).into(),
         IntegerAttribute::new(melior::ir::r#type::IntegerType::new(&context, 64).into(), 7),
         location,
     )
@@ -798,7 +798,7 @@ module {
         OperationBuilder::new("yzl.join", location)
             .add_attributes(&attributes)
             .add_regions([Region::new()])
-            .add_results(&[QueryType::get(&context)])
+            .add_results(&[QueryType::new(&context).into()])
             .build()
             .expect("the join builds")
     };
@@ -847,7 +847,7 @@ fn borrowed_views_reject_foreign_operations() {
     let location = Location::unknown(&context);
     let operation: melior::ir::operation::Operation = yz::constant_int(
         &context,
-        Int64Type::get(&context),
+        Int64Type::new(&context).into(),
         IntegerAttribute::new(melior::ir::r#type::IntegerType::new(&context, 64).into(), 7),
         location,
     )
@@ -896,7 +896,7 @@ module {
 #[test]
 fn list_type_view() {
     let context = yuzu_mlir::context();
-    let int64 = Int64Type::get(&context);
+    let int64 = Int64Type::new(&context).into();
     let list = yuzu_mlir::types::ListType::new(&context, int64);
 
     assert_eq!(list.inner(), int64);

@@ -4,6 +4,7 @@ use melior::ir::operation::{OperationLike, OperationRef};
 use melior::ir::r#type::FunctionType;
 use melior::ir::{Block, BlockLike, Region, RegionLike, Value};
 use yuzu_mlir::ir::attribute::array::ArrayAttributeExt;
+use yuzu_mlir::ir::attribute::string;
 use yuzu_mlir::ir::block::BlockExt;
 use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
 use yuzu_mlir::ir::symbol_table::SymbolTable;
@@ -265,13 +266,14 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         let names: Vec<&str> = stage.names().strings().collect();
         let mut grouped = carried.clone();
         match &grouping.items {
-            Some(_) => grouped.extend(
-                grouping
-                    .measure_types
-                    .iter()
-                    .enumerate()
-                    .map(|(index, &ty)| (self.intern(&format!("measure{index}")), ty)),
-            ),
+            Some(_) => grouped.extend(grouping.measure_types.iter().enumerate().map(
+                |(index, &ty)| {
+                    (
+                        string::intern_fmt(self.context, format_args!("measure{index}")),
+                        ty,
+                    )
+                },
+            )),
             None => grouped.extend(
                 names
                     .iter()
@@ -543,7 +545,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             let equal = body.append_operation(
                 yz::cmp(
                     self.context,
-                    BoolType::get(self.context),
+                    BoolType::new(self.context).into(),
                     body.argument(left)
                         .expect("the left column is in range")
                         .into(),
@@ -561,7 +563,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                     .append_operation(
                         yz::and(
                             self.context,
-                            BoolType::get(self.context),
+                            BoolType::new(self.context).into(),
                             previous,
                             equal.first_result(),
                             location,

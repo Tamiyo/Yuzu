@@ -56,7 +56,6 @@ pub fn translate<'c>(context: &'c Context, module: &Module<'c>) -> Option<Plan> 
         .try_first_operand()
         .expect("a verified yzr.output has its query");
     let mut translator = Translator {
-        context,
         symbols: &symbols,
         shared: shared_relations(module),
         translated: FxHashMap::default(),
@@ -107,7 +106,6 @@ fn shared_relations(module: &Module<'_>) -> FxHashSet<ValueId> {
 }
 
 struct Translator<'c, 'a, 's> {
-    context: &'c Context,
     symbols: &'s SymbolTable<'c, 'a>,
     /// The relations more than one stage reads.
     shared: FxHashSet<ValueId>,

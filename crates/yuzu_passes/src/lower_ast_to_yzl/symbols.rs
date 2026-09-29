@@ -12,6 +12,7 @@ use rustc_hash::FxHashMap;
 use text_size::TextRange;
 use yuzu_ast::ast::Visibility;
 use yuzu_mlir::attributes::CalleeSource;
+use yuzu_mlir::ir::attribute::string;
 
 use crate::operators::Operator;
 
@@ -453,12 +454,17 @@ impl<'c> SymbolTable<'c> {
         StringAttribute::new(self.context, text).value()
     }
 
+    /// A formatted name as the context holds it, formatted on the stack.
+    pub(super) fn intern_fmt(&self, args: fmt::Arguments<'_>) -> &'c str {
+        string::intern_fmt(self.context, args)
+    }
+
     /// The name a declaration's op is built under. MLIR has one namespace
     /// for the whole program, so the module qualifies it. A qualified name
-    /// is formatted and interned on each call.
+    /// is interned on each call.
     pub(super) fn symbol(&self, at: Declared<'c>) -> &'c str {
         match at.module.0 {
-            Some(path) => self.intern(&format!("{path}.{}", at.name)),
+            Some(path) => self.intern_fmt(format_args!("{path}.{}", at.name)),
             None => at.name,
         }
     }
@@ -473,7 +479,7 @@ impl<'c> SymbolTable<'c> {
         is_overloaded: bool,
     ) -> &'c str {
         if is_overloaded {
-            self.intern(&format!("{base}.{arity}"))
+            self.intern_fmt(format_args!("{base}.{arity}"))
         } else {
             base
         }

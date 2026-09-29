@@ -7,55 +7,85 @@ use melior::ir::{Type, TypeLike};
 
 /// `!yzl.unresolved`, the unification variable.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct UnresolvedType;
+pub struct UnresolvedType<'c>(Type<'c>);
 
-impl UnresolvedType {
+impl<'c> UnresolvedType<'c> {
     #[must_use]
-    pub fn get(context: &Context) -> Type<'_> {
-        // SAFETY: the context is live for the returned lifetime and the type is uniqued in it.
-        unsafe { Type::from_raw(yuzu_mlir_sys::yzuUnresolvedTypeGet(context.to_raw())) }
+    pub fn new(context: &'c Context) -> Self {
+        // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
+        unsafe {
+            Self(Type::from_raw(yuzu_mlir_sys::yzuUnresolvedTypeGet(
+                context.to_raw(),
+            )))
+        }
     }
 
     #[must_use]
-    pub fn is(ty: Type<'_>) -> bool {
+    pub fn from_type(ty: Type<'c>) -> Option<Self> {
         // SAFETY: `ty` is a live type; the query only reads it.
-        unsafe { yuzu_mlir_sys::yzuTypeIsUnresolvedType(ty.to_raw()) }
+        unsafe { yuzu_mlir_sys::yzuTypeIsUnresolvedType(ty.to_raw()) }.then_some(Self(ty))
+    }
+}
+
+impl<'c> From<UnresolvedType<'c>> for Type<'c> {
+    fn from(ty: UnresolvedType<'c>) -> Self {
+        ty.0
     }
 }
 
 /// `!yzl.error`, the type of a value an error left behind.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct ErrorType;
+pub struct ErrorType<'c>(Type<'c>);
 
-impl ErrorType {
+impl<'c> ErrorType<'c> {
     #[must_use]
-    pub fn get(context: &Context) -> Type<'_> {
-        // SAFETY: the context is live for the returned lifetime and the type is uniqued in it.
-        unsafe { Type::from_raw(yuzu_mlir_sys::yzuErrorTypeGet(context.to_raw())) }
+    pub fn new(context: &'c Context) -> Self {
+        // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
+        unsafe {
+            Self(Type::from_raw(yuzu_mlir_sys::yzuErrorTypeGet(
+                context.to_raw(),
+            )))
+        }
     }
 
     #[must_use]
-    pub fn is(ty: Type<'_>) -> bool {
+    pub fn from_type(ty: Type<'c>) -> Option<Self> {
         // SAFETY: `ty` is a live type; the query only reads it.
-        unsafe { yuzu_mlir_sys::yzuTypeIsErrorType(ty.to_raw()) }
+        unsafe { yuzu_mlir_sys::yzuTypeIsErrorType(ty.to_raw()) }.then_some(Self(ty))
+    }
+}
+
+impl<'c> From<ErrorType<'c>> for Type<'c> {
+    fn from(ty: ErrorType<'c>) -> Self {
+        ty.0
     }
 }
 
 /// `!yzl.query`, a relation before its schema is known.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct QueryType;
+pub struct QueryType<'c>(Type<'c>);
 
-impl QueryType {
+impl<'c> QueryType<'c> {
     #[must_use]
-    pub fn get(context: &Context) -> Type<'_> {
-        // SAFETY: the context is live for the returned lifetime and the type is uniqued in it.
-        unsafe { Type::from_raw(yuzu_mlir_sys::yzuQueryTypeGet(context.to_raw())) }
+    pub fn new(context: &'c Context) -> Self {
+        // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
+        unsafe {
+            Self(Type::from_raw(yuzu_mlir_sys::yzuQueryTypeGet(
+                context.to_raw(),
+            )))
+        }
     }
 
     #[must_use]
-    pub fn is(ty: Type<'_>) -> bool {
+    pub fn from_type(ty: Type<'c>) -> Option<Self> {
         // SAFETY: `ty` is a live type; the query only reads it.
-        unsafe { yuzu_mlir_sys::yzuTypeIsQueryType(ty.to_raw()) }
+        unsafe { yuzu_mlir_sys::yzuTypeIsQueryType(ty.to_raw()) }.then_some(Self(ty))
+    }
+}
+
+impl<'c> From<QueryType<'c>> for Type<'c> {
+    fn from(ty: QueryType<'c>) -> Self {
+        ty.0
     }
 }
 

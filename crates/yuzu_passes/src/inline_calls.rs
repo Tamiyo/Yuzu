@@ -53,7 +53,7 @@ pub fn inline_calls(context: &Context, module: &mut Module) {
         pending.extend(copied);
     }
 
-    discard_declarations(context, rewriter, module.body());
+    discard_declarations(rewriter, module.body());
 }
 
 fn collect_calls<'c, 'a>(block: BlockRef<'c, 'a>, out: &mut Vec<OperationRef<'c, 'a>>) {
@@ -337,13 +337,13 @@ pub(crate) fn substitute<'c>(
 /// An external function stays too: it has no body to expand, and the yzr
 /// lowering reads the engine's name from it. So does an operator's
 /// implementation, which `legalize_operators` copies in after the folds.
-fn discard_declarations(context: &Context, rewriter: RewriterBase, block: BlockRef) {
+fn discard_declarations(rewriter: RewriterBase, block: BlockRef) {
     let mut declarations = Vec::new();
     for op in block.operations() {
         let discard = match op.as_yzl() {
             Some(YzlOp::Fn(function)) => !function.is_external() && !implements_operator(function),
             Some(YzlOp::Trait(_) | YzlOp::Impl(_)) => true,
-            Some(YzlOp::Const(binding)) => !binds_query(context, binding),
+            Some(YzlOp::Const(binding)) => !binds_query(binding),
             _ => false,
         };
         if discard {
@@ -360,12 +360,12 @@ fn implements_operator(function: FnOp) -> bool {
     Operator::implemented_by(function.sym_name().value()).is_some()
 }
 
-fn binds_query(context: &Context, binding: ConstOp) -> bool {
+fn binds_query(binding: ConstOp) -> bool {
     binding
         .operation()
         .body_terminator()
         .and_then(|yielded| yielded.try_first_operand())
-        .is_some_and(|value| value.r#type() == QueryType::get(context))
+        .is_some_and(|value| QueryType::from_type(value.r#type()).is_some())
 }
 
 fn error<T>(location: Location, message: &str) -> Option<T> {

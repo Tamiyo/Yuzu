@@ -118,7 +118,7 @@ impl<'c> AstToYzl<'c, '_> {
         } else {
             let symbol = self
                 .symbols
-                .symbol_here(self.symbols.intern(&format!("{name}_row")));
+                .symbol_here(self.symbols.intern_fmt(format_args!("{name}_row")));
 
             let loc = self.location(decl);
             let fields = self.read_fields(decl.inline_fields());
@@ -233,7 +233,7 @@ impl<'c> AstToYzl<'c, '_> {
 
         let result = match decl.result() {
             Some(result) => self.read_type_annotation(result),
-            None => UnresolvedType::get(self.context),
+            None => UnresolvedType::new(self.context).into(),
         };
 
         let signature = FunctionType::new(self.context, &param_types, &[result]);
@@ -246,7 +246,7 @@ impl<'c> AstToYzl<'c, '_> {
 
         let body = Region::new();
         if let Some(block) = decl.body() {
-            let ty = UnresolvedType::get(self.context);
+            let ty = UnresolvedType::new(self.context).into();
             let arguments = vec![(ty, loc); param_names.len()];
             let entry = body.append_block(Block::new(&arguments));
 
@@ -426,7 +426,7 @@ impl<'c> AstToYzl<'c, '_> {
         if self.symbols.is_in_body() {
             let element = match decl.type_annotation() {
                 Some(annotation) => self.read_type_annotation(annotation),
-                None => UnresolvedType::get(self.context),
+                None => UnresolvedType::new(self.context).into(),
             };
             let kind = LocalKind::Let(decl.mutability());
             let value = self.convert_expr(block, locals, &expr);
@@ -1046,13 +1046,13 @@ impl<'c> AstToYzl<'c, '_> {
             ast::TypeAnnotation::NamedTypeAnnotation(named) => named,
             ast::TypeAnnotation::FuncTypeAnnotation(func) => {
                 self.report(&func, "function types are not supported yet");
-                return ErrorType::get(self.context);
+                return ErrorType::new(self.context).into();
             }
         };
 
         let Some(name) = self.read_ident(named.name()) else {
             self.reported_by_parser("type is missing its name");
-            return ErrorType::get(self.context);
+            return ErrorType::new(self.context).into();
         };
 
         if self.symbols.is_type_param(name) {
@@ -1063,7 +1063,7 @@ impl<'c> AstToYzl<'c, '_> {
             let mut args = named.args();
             let (Some(inner), None) = (args.next(), args.next()) else {
                 self.report(&named, "`List` takes exactly one type argument");
-                return ErrorType::get(self.context);
+                return ErrorType::new(self.context).into();
             };
 
             let inner = self.read_type_annotation(inner);
@@ -1079,7 +1079,7 @@ impl<'c> AstToYzl<'c, '_> {
         }
 
         self.report(&named, &format!("unknown type `{name}`"));
-        ErrorType::get(self.context)
+        ErrorType::new(self.context).into()
     }
 
     fn read_path(&self, path: &ast::ModulePath) -> &'c str {

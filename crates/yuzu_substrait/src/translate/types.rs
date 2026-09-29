@@ -1,6 +1,5 @@
 //! Yuzu's types as Substrait's.
 
-use melior::Context;
 use melior::ir::Type;
 use substrait::proto::{
     Type as SubstraitType,
@@ -12,8 +11,8 @@ use crate::proto::nullable;
 
 /// The code a Substrait function signature names this type by, as in
 /// `add:i64_i64`. `None` for a type no signature can carry.
-pub(crate) fn type_code(context: &Context, ty: Type<'_>) -> Option<&'static str> {
-    Some(match kind(context, ty)? {
+pub(crate) fn type_code(ty: Type<'_>) -> Option<&'static str> {
+    Some(match kind(ty)? {
         Kind::I64(_) => "i64",
         Kind::Fp64(_) => "fp64",
         Kind::Bool(_) => "bool",
@@ -24,29 +23,29 @@ pub(crate) fn type_code(context: &Context, ty: Type<'_>) -> Option<&'static str>
 
 /// `None` for a type Substrait has no equivalent for; the caller reports it
 /// against the op that produced it.
-pub(crate) fn emit_type(context: &Context, ty: Type<'_>) -> Option<SubstraitType> {
+pub(crate) fn emit_type(ty: Type<'_>) -> Option<SubstraitType> {
     Some(SubstraitType {
-        kind: Some(kind(context, ty)?),
+        kind: Some(kind(ty)?),
     })
 }
 
-fn kind(context: &Context, ty: Type<'_>) -> Option<Kind> {
-    let kind = if ty == Int64Type::get(context) {
+fn kind(ty: Type<'_>) -> Option<Kind> {
+    let kind = if Int64Type::from_type(ty).is_some() {
         Kind::I64(r#type::I64 {
             nullability: nullable(),
             ..Default::default()
         })
-    } else if ty == Float64Type::get(context) {
+    } else if Float64Type::from_type(ty).is_some() {
         Kind::Fp64(r#type::Fp64 {
             nullability: nullable(),
             ..Default::default()
         })
-    } else if ty == BoolType::get(context) {
+    } else if BoolType::from_type(ty).is_some() {
         Kind::Bool(r#type::Boolean {
             nullability: nullable(),
             ..Default::default()
         })
-    } else if ty == StrType::get(context) {
+    } else if StrType::from_type(ty).is_some() {
         Kind::String(r#type::String {
             nullability: nullable(),
             ..Default::default()

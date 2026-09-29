@@ -5,7 +5,6 @@
 //! a load of its place; types are read after inference. An op's location is
 //! the range the lowering made it from, so both are keyed by source range.
 
-use melior::Context;
 use melior::ir::operation::{OperationLike, OperationRef};
 use melior::ir::{Module, Type, Value, ValueLike};
 use rustc_hash::FxHashMap;
@@ -94,9 +93,9 @@ impl<'s> IndexReader<'s> {
     }
 
     /// Types, from the module as inference left it.
-    pub(crate) fn read_inferred(&mut self, context: &Context, module: &Module<'_>) {
+    pub(crate) fn read_inferred(&mut self, module: &Module<'_>) {
         for op in module.body().operations() {
-            self.read_types(context, op);
+            self.read_types(op);
         }
 
         let types: FxHashMap<Span, &str> = self
@@ -165,13 +164,13 @@ impl<'s> IndexReader<'s> {
         self.initializers.entry(declaration).or_insert(initializer);
     }
 
-    fn read_types(&mut self, context: &Context, op: OperationRef<'_, '_>) {
+    fn read_types(&mut self, op: OperationRef<'_, '_>) {
         let ty = match op.as_yzl() {
             Some(YzlOp::Const(_)) => last_yield(op),
             _ => op.try_first_result().map(|result| result.r#type()),
         };
 
-        if let Some(ty) = ty.filter(|&ty| is_shown(context, ty))
+        if let Some(ty) = ty.filter(|&ty| is_shown(ty))
             && let Some(at) = span(self.sources, op.location())
         {
             self.index.types.push(Typed {
@@ -183,7 +182,7 @@ impl<'s> IndexReader<'s> {
         for region in op.regions() {
             for block in region.blocks() {
                 for inner in block.operations() {
-                    self.read_types(context, inner);
+                    self.read_types(inner);
                 }
             }
         }
@@ -224,11 +223,11 @@ fn symbol(
 
 /// A type worth showing a reader: one inference settled, of a value the
 /// program wrote. A place, a relation and an error are none of these.
-fn is_shown(context: &Context, ty: Type<'_>) -> bool {
-    ty != UnresolvedType::get(context)
-        && ty != QueryType::get(context)
+fn is_shown(ty: Type<'_>) -> bool {
+    UnresolvedType::from_type(ty).is_none()
+        && QueryType::from_type(ty).is_none()
         && RefType::from_type(ty).is_none()
-        && !ErrorType::is(ty)
+        && ErrorType::from_type(ty).is_none()
 }
 
 /// The type a `let` yields: what the last op of its region returns.

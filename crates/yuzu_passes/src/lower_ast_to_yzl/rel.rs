@@ -39,7 +39,7 @@ impl<'c> AstToYzl<'c, '_> {
                 block,
                 pipeline,
                 "a query is missing its `from`",
-                QueryType::get(self.context),
+                QueryType::new(self.context).into(),
             );
             (hole, Row::lost())
         };
@@ -87,7 +87,7 @@ impl<'c> AstToYzl<'c, '_> {
                 block,
                 from,
                 "`from` is missing its relation",
-                QueryType::get(self.context),
+                QueryType::new(self.context).into(),
             );
             return (hole, Row::lost());
         };
@@ -97,7 +97,7 @@ impl<'c> AstToYzl<'c, '_> {
                 block,
                 from,
                 &format!("`{source}` is not a relation"),
-                QueryType::get(self.context),
+                QueryType::new(self.context).into(),
             );
             return (hole, Row::lost());
         };
@@ -106,7 +106,7 @@ impl<'c> AstToYzl<'c, '_> {
             .append_operation(
                 yzl::from(
                     self.context,
-                    QueryType::get(self.context),
+                    QueryType::new(self.context).into(),
                     FlatSymbolRefAttribute::new(self.context, symbol),
                     loc,
                 )
@@ -136,7 +136,7 @@ impl<'c> AstToYzl<'c, '_> {
                 body,
                 where_,
                 "`where` is missing its predicate",
-                UnresolvedType::get(self.context),
+                UnresolvedType::new(self.context).into(),
             ),
         };
 
@@ -146,7 +146,7 @@ impl<'c> AstToYzl<'c, '_> {
             .append_operation(
                 yzl::r#where(
                     self.context,
-                    QueryType::get(self.context),
+                    QueryType::new(self.context).into(),
                     input,
                     region,
                     loc,
@@ -178,7 +178,7 @@ impl<'c> AstToYzl<'c, '_> {
             .append_operation(
                 yzl::select(
                     self.context,
-                    QueryType::get(self.context),
+                    QueryType::new(self.context).into(),
                     input,
                     region,
                     columns,
@@ -211,7 +211,7 @@ impl<'c> AstToYzl<'c, '_> {
             .append_operation(
                 yzl::extend(
                     self.context,
-                    QueryType::get(self.context),
+                    QueryType::new(self.context).into(),
                     input,
                     region,
                     columns,
@@ -264,7 +264,7 @@ impl<'c> AstToYzl<'c, '_> {
         self.symbols.replace(key_names);
 
         let op = yzl::AggregateOperationBuilder::new(self.context, loc)
-            .result(QueryType::get(self.context))
+            .result(QueryType::new(self.context).into())
             .input(input)
             .body(region)
             .group_by(group_by)
@@ -291,7 +291,7 @@ impl<'c> AstToYzl<'c, '_> {
 
         let int64 = IntegerType::new(self.context, 64).into();
         let mut builder = yzl::LimitOperationBuilder::new(self.context, loc)
-            .result(QueryType::get(self.context))
+            .result(QueryType::new(self.context).into())
             .input(input)
             .count(IntegerAttribute::new(int64, count));
         if let Some(offset) = offset {
@@ -338,7 +338,7 @@ impl<'c> AstToYzl<'c, '_> {
         self.symbols.rename(&renames);
         let indices = renames.iter().map(|&(index, _)| index);
         let op = yzl::RenameOperationBuilder::new(self.context, loc)
-            .result(QueryType::get(self.context))
+            .result(QueryType::new(self.context).into())
             .input(input)
             .from(ArrayAttribute::from_strings(self.context, &from))
             .to(ArrayAttribute::from_strings(self.context, &to))
@@ -381,7 +381,7 @@ impl<'c> AstToYzl<'c, '_> {
                 block,
                 join,
                 "`join` is missing its relation",
-                QueryType::get(self.context),
+                QueryType::new(self.context).into(),
             );
         };
 
@@ -391,7 +391,7 @@ impl<'c> AstToYzl<'c, '_> {
                 block,
                 join,
                 &format!("`{relation}` is not a relation"),
-                QueryType::get(self.context),
+                QueryType::new(self.context).into(),
             );
         };
 
@@ -434,7 +434,7 @@ impl<'c> AstToYzl<'c, '_> {
         }
 
         let mut builder = yzl::JoinOperationBuilder::new(self.context, loc)
-            .result(QueryType::get(self.context))
+            .result(QueryType::new(self.context).into())
             .lhs(input)
             .kind(StringAttribute::new(self.context, kind.as_str()))
             .rhs(FlatSymbolRefAttribute::new(self.context, rhs_symbol))
@@ -485,7 +485,7 @@ impl<'c> AstToYzl<'c, '_> {
 
         let (names, region) = self.convert_items(&items, "set item", loc);
         let op = yzl::SetOperationBuilder::new(self.context, loc)
-            .result(QueryType::get(self.context))
+            .result(QueryType::new(self.context).into())
             .input(input)
             .body(region)
             .names(ArrayAttribute::from_strings(self.context, &names))
@@ -503,7 +503,13 @@ impl<'c> AstToYzl<'c, '_> {
         let loc = self.location(distinct);
         block
             .append_operation(
-                yzl::distinct(self.context, QueryType::get(self.context), input, loc).into(),
+                yzl::distinct(
+                    self.context,
+                    QueryType::new(self.context).into(),
+                    input,
+                    loc,
+                )
+                .into(),
             )
             .first_result()
     }
@@ -535,7 +541,7 @@ impl<'c> AstToYzl<'c, '_> {
             .append_operation(
                 yzl::drop(
                     self.context,
-                    QueryType::get(self.context),
+                    QueryType::new(self.context).into(),
                     input,
                     columns,
                     loc,
@@ -562,7 +568,7 @@ impl<'c> AstToYzl<'c, '_> {
                     Some(ast::Expr::FieldAccessExpr(access)) => self.read_ident(access.field()),
                     _ => None,
                 })
-                .unwrap_or_else(|| self.symbols.intern(&format!("column{index}")));
+                .unwrap_or_else(|| self.symbols.intern_fmt(format_args!("column{index}")));
 
             names.push(name);
 
@@ -570,7 +576,7 @@ impl<'c> AstToYzl<'c, '_> {
                 self.convert_expr(body, &Locals::new(), expr)
             } else {
                 self.reported_by_parser(&format!("{what} is missing its expression"));
-                self.emit_hole(body, *range, UnresolvedType::get(self.context))
+                self.emit_hole(body, *range, UnresolvedType::new(self.context).into())
             };
 
             values.push(value);
@@ -603,7 +609,7 @@ impl<'c> AstToYzl<'c, '_> {
             .append_operation(
                 yzl::alias(
                     self.context,
-                    QueryType::get(self.context),
+                    QueryType::new(self.context).into(),
                     input,
                     StringAttribute::new(self.context, alias),
                     loc,
@@ -616,7 +622,7 @@ impl<'c> AstToYzl<'c, '_> {
     /// The row's columns are the block arguments, typed by inference later.
     fn stage_block<'r>(&self, region: &'r Region<'c>, loc: Location<'c>) -> BlockRef<'c, 'r> {
         let width = self.symbols.row().len();
-        let arguments = vec![(UnresolvedType::get(self.context), loc); width];
+        let arguments = vec![(UnresolvedType::new(self.context).into(), loc); width];
         region.append_block(Block::new(&arguments))
     }
 

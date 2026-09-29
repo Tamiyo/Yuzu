@@ -118,7 +118,7 @@ impl<'c> AstToYzl<'c, '_> {
             .operations()
             .filter_map(|op| {
                 let value = op.try_first_result()?;
-                (value.r#type() == QueryType::get(self.context)).then(|| (value, op.location()))
+                QueryType::from_type(value.r#type()).map(|_| (value, op.location()))
             })
             .last();
 

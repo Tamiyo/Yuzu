@@ -101,7 +101,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         };
         let mut fields = Vec::with_capacity(types.len());
         for ty in types {
-            let Some(field) = emit_type(self.context, ty) else {
+            let Some(field) = emit_type(ty) else {
                 report(op, "this column has no Substrait type");
                 return None;
             };

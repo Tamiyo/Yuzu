@@ -157,12 +157,12 @@ struct TypeInferrer<'c, 'd> {
 impl<'c> TypeInferrer<'c, '_> {
     fn term_of(&mut self, value: Value<'c, '_>) -> Term<'c> {
         let ty = value.r#type();
-        if ty != UnresolvedType::get(self.context) {
+        if UnresolvedType::from_type(ty).is_none() {
             return Term::Concrete(ty);
         }
 
         if is_hole(value) {
-            return Term::Concrete(ErrorType::get(self.context));
+            return Term::Concrete(ErrorType::new(self.context).into());
         }
 
         let key = value.id();
@@ -181,7 +181,7 @@ impl<'c> TypeInferrer<'c, '_> {
         let element = RefType::from_type(place.r#type())
             .expect("a verified load or store reads a place")
             .element();
-        if element != UnresolvedType::get(self.context) {
+        if UnresolvedType::from_type(element).is_none() {
             return Term::Concrete(element);
         }
 
@@ -240,7 +240,7 @@ impl<'c> TypeInferrer<'c, '_> {
             (Term::Var(var), term) | (term, Term::Var(var)) => {
                 if self.occurs(var, term) {
                     report(op, "a list cannot contain itself");
-                    self.filled[var.0] = Some(Term::Concrete(ErrorType::get(self.context)));
+                    self.filled[var.0] = Some(Term::Concrete(ErrorType::new(self.context).into()));
                 } else {
                     self.filled[var.0] = Some(term);
                 }
@@ -282,7 +282,7 @@ impl<'c> TypeInferrer<'c, '_> {
 
         let term = self.term_of(value);
         match self.resolve(term) {
-            Some(found) if found != expected && !ErrorType::is(found) => {
+            Some(found) if found != expected && ErrorType::from_type(found).is_none() => {
                 let (expected, found) = (
                     self.display(Term::Concrete(expected)),
                     self.display(Term::Concrete(found)),
@@ -431,7 +431,7 @@ impl<'c> TypeInferrer<'c, '_> {
                 let row = self.input_row(op);
                 self.infer_regions(op, &row, &[]);
                 if matches!(stage, YzlOp::Where(_)) {
-                    let boolean = BoolType::get(self.context);
+                    let boolean = BoolType::new(self.context).into();
                     self.expect_yield(op, boolean, "`where` predicate");
                 }
 
@@ -480,7 +480,7 @@ impl<'c> TypeInferrer<'c, '_> {
             Some(YzlOp::Join(_)) => {
                 let row = self.input_row(op);
                 self.infer_regions(op, &row, &[]);
-                let boolean = BoolType::get(self.context);
+                let boolean = BoolType::new(self.context).into();
                 self.expect_yield(op, boolean, "`on` condition");
                 self.record_row(op, row);
             }
@@ -492,7 +492,7 @@ impl<'c> TypeInferrer<'c, '_> {
     /// An operator with an error operand gives an error, whatever its rule
     /// would give: `nosuch + 1` is not an `int64` for having a `1`.
     fn infer_yz_op(&mut self, op: OperationRef<'c, '_>) {
-        let error = Term::Concrete(ErrorType::get(self.context));
+        let error = Term::Concrete(ErrorType::new(self.context).into());
         if let Some(out) = op.try_first_result()
             && op.operands().any(|operand| {
                 let term = self.term_of(operand);
@@ -504,7 +504,7 @@ impl<'c> TypeInferrer<'c, '_> {
             return;
         }
 
-        let boolean = Term::Concrete(BoolType::get(self.context));
+        let boolean = Term::Concrete(BoolType::new(self.context).into());
         match op.as_yz() {
             Some(
                 YzOp::Add(_)
@@ -520,7 +520,7 @@ impl<'c> TypeInferrer<'c, '_> {
                 self.unify(op, lhs, out);
             }
             Some(YzOp::Shl(_) | YzOp::Shr(_)) => {
-                let int64 = Term::Concrete(Int64Type::get(self.context));
+                let int64 = Term::Concrete(Int64Type::new(self.context).into());
                 let (lhs, rhs) = (self.operand_term(op, 0), self.operand_term(op, 1));
                 let out = self.term_of(op.first_result());
                 self.unify(op, lhs, int64);
@@ -618,7 +618,7 @@ impl<'c> TypeInferrer<'c, '_> {
                 continue;
             };
 
-            if ErrorType::is(resolved) {
+            if ErrorType::from_type(resolved).is_some() {
                 continue;
             }
 
@@ -647,7 +647,7 @@ impl<'c> TypeInferrer<'c, '_> {
     fn operand_term(&mut self, op: OperationRef<'c, '_>, index: usize) -> Term<'c> {
         match op.operand(index) {
             Ok(value) => self.term_of(value),
-            Err(_) => Term::Concrete(UnresolvedType::get(self.context)),
+            Err(_) => Term::Concrete(UnresolvedType::new(self.context).into()),
         }
     }
 
@@ -783,7 +783,7 @@ fn report(op: OperationRef<'_, '_>, message: &str) {
 }
 
 fn is_error(term: Term<'_>) -> bool {
-    matches!(term, Term::Concrete(ty) if ErrorType::is(ty))
+    matches!(term, Term::Concrete(ty) if ErrorType::from_type(ty).is_some())
 }
 
 /// The result of a `yzl.missing`: what the lowering stood in for what it

@@ -216,7 +216,7 @@ pub(crate) fn lower_and_check<'c>(
         yuzu_passes::promote_locals(context, &mut module);
     });
     if let Some(reader) = index {
-        reader.read_inferred(context, &module);
+        reader.read_inferred(&module);
     }
 
     yuzu_mlir::diagnostics::capture(context, sources, diagnostics, || {

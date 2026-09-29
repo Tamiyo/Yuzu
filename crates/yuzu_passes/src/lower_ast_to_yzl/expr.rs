@@ -37,7 +37,7 @@ impl<'c> AstToYzl<'c, '_> {
                 block,
                 literal,
                 "struct literals are not supported yet",
-                UnresolvedType::get(self.context),
+                UnresolvedType::new(self.context).into(),
             ),
         }
     }
@@ -54,12 +54,12 @@ impl<'c> AstToYzl<'c, '_> {
                     return self.emit_hole(
                         block,
                         int.syntax().text_range(),
-                        UnresolvedType::get(self.context),
+                        UnresolvedType::new(self.context).into(),
                     );
                 };
                 yz::constant_int(
                     self.context,
-                    Int64Type::get(self.context),
+                    Int64Type::new(self.context).into(),
                     IntegerAttribute::from_i64(self.context, value),
                     loc,
                 )
@@ -67,7 +67,7 @@ impl<'c> AstToYzl<'c, '_> {
             }
             ast::Literal::FloatLiteral(float) => yz::constant_float(
                 self.context,
-                Float64Type::get(self.context),
+                Float64Type::new(self.context).into(),
                 FloatAttribute::new(
                     self.context,
                     Type::float64(self.context),
@@ -78,14 +78,14 @@ impl<'c> AstToYzl<'c, '_> {
             .into(),
             ast::Literal::BoolLiteral(boolean) => yz::constant_bool(
                 self.context,
-                BoolType::get(self.context),
+                BoolType::new(self.context).into(),
                 BoolAttribute::new(self.context, boolean.value().unwrap_or_default()),
                 loc,
             )
             .into(),
             ast::Literal::StringLiteral(string) => yz::constant_str(
                 self.context,
-                StrType::get(self.context),
+                StrType::new(self.context).into(),
                 StringAttribute::new(self.context, &string.to_value().unwrap_or_default()),
                 loc,
             )
@@ -106,7 +106,7 @@ impl<'c> AstToYzl<'c, '_> {
                 block,
                 ident,
                 "identifier expression is missing its name",
-                UnresolvedType::get(self.context),
+                UnresolvedType::new(self.context).into(),
             );
         };
 
@@ -130,7 +130,7 @@ impl<'c> AstToYzl<'c, '_> {
                     block,
                     access,
                     "field access on an expression is not supported yet",
-                    UnresolvedType::get(self.context),
+                    UnresolvedType::new(self.context).into(),
                 );
             }
             None => None,
@@ -141,7 +141,7 @@ impl<'c> AstToYzl<'c, '_> {
                 block,
                 access,
                 "field access is missing its base",
-                UnresolvedType::get(self.context),
+                UnresolvedType::new(self.context).into(),
             );
         };
 
@@ -150,7 +150,7 @@ impl<'c> AstToYzl<'c, '_> {
                 block,
                 access,
                 "field access is missing its field",
-                UnresolvedType::get(self.context),
+                UnresolvedType::new(self.context).into(),
             );
         };
 
@@ -176,7 +176,7 @@ impl<'c> AstToYzl<'c, '_> {
                     block,
                     binary,
                     "binary expression is missing its left operand",
-                    UnresolvedType::get(self.context),
+                    UnresolvedType::new(self.context).into(),
                 );
             }
         };
@@ -188,12 +188,12 @@ impl<'c> AstToYzl<'c, '_> {
                     block,
                     binary,
                     "binary expression is missing its right operand",
-                    UnresolvedType::get(self.context),
+                    UnresolvedType::new(self.context).into(),
                 );
             }
         };
 
-        let var = UnresolvedType::get(self.context);
+        let var = UnresolvedType::new(self.context).into();
         let cmp = |predicate: CmpPredicate| {
             yz::cmp(
                 self.context,
@@ -271,7 +271,7 @@ impl<'c> AstToYzl<'c, '_> {
         {
             let least = yz::constant_int(
                 self.context,
-                Int64Type::get(self.context),
+                Int64Type::new(self.context).into(),
                 IntegerAttribute::from_i64(self.context, i64::MIN),
                 loc,
             );
@@ -285,25 +285,33 @@ impl<'c> AstToYzl<'c, '_> {
                     block,
                     unary,
                     "unary expression is missing its operand",
-                    UnresolvedType::get(self.context),
+                    UnresolvedType::new(self.context).into(),
                 );
             }
         };
 
         let result = match unary.op() {
-            Some(UnaryOp::Neg) => {
-                yz::neg(self.context, UnresolvedType::get(self.context), value, loc).into()
-            }
-            Some(UnaryOp::Not) => {
-                yz::not(self.context, UnresolvedType::get(self.context), value, loc).into()
-            }
+            Some(UnaryOp::Neg) => yz::neg(
+                self.context,
+                UnresolvedType::new(self.context).into(),
+                value,
+                loc,
+            )
+            .into(),
+            Some(UnaryOp::Not) => yz::not(
+                self.context,
+                UnresolvedType::new(self.context).into(),
+                value,
+                loc,
+            )
+            .into(),
             Some(UnaryOp::Pos) => return value,
             None => {
                 return self.parser_hole(
                     block,
                     unary,
                     "unary expression is missing its operator",
-                    UnresolvedType::get(self.context),
+                    UnresolvedType::new(self.context).into(),
                 );
             }
         };
@@ -327,7 +335,7 @@ impl<'c> AstToYzl<'c, '_> {
                         block,
                         call,
                         "call is missing its callee",
-                        UnresolvedType::get(self.context),
+                        UnresolvedType::new(self.context).into(),
                     );
                 }
             },
@@ -339,7 +347,7 @@ impl<'c> AstToYzl<'c, '_> {
                     block,
                     call,
                     "calling an expression is not supported yet",
-                    UnresolvedType::get(self.context),
+                    UnresolvedType::new(self.context).into(),
                 );
             }
             None => {
@@ -347,7 +355,7 @@ impl<'c> AstToYzl<'c, '_> {
                     block,
                     call,
                     "call is missing its callee",
-                    UnresolvedType::get(self.context),
+                    UnresolvedType::new(self.context).into(),
                 );
             }
         };
@@ -376,7 +384,12 @@ impl<'c> AstToYzl<'c, '_> {
                     None => format!("unresolved identifier `{callee}`"),
                 }
             };
-            return self.error_hole(block, call, &message, UnresolvedType::get(self.context));
+            return self.error_hole(
+                block,
+                call,
+                &message,
+                UnresolvedType::new(self.context).into(),
+            );
         };
 
         self.emit_call(block, callable, &operands, loc)
@@ -397,7 +410,7 @@ impl<'c> AstToYzl<'c, '_> {
                     block,
                     call,
                     "calling an expression is not supported yet",
-                    UnresolvedType::get(self.context),
+                    UnresolvedType::new(self.context).into(),
                 );
             }
             None => None,
@@ -408,7 +421,7 @@ impl<'c> AstToYzl<'c, '_> {
                 block,
                 call,
                 "module call is missing its module or its function",
-                UnresolvedType::get(self.context),
+                UnresolvedType::new(self.context).into(),
             );
         };
 
@@ -417,7 +430,7 @@ impl<'c> AstToYzl<'c, '_> {
                 block,
                 call,
                 &format!("`{base}` is not a module"),
-                UnresolvedType::get(self.context),
+                UnresolvedType::new(self.context).into(),
             );
         };
 
@@ -432,7 +445,7 @@ impl<'c> AstToYzl<'c, '_> {
             return self.emit_hole(
                 block,
                 call.syntax().text_range(),
-                UnresolvedType::get(self.context),
+                UnresolvedType::new(self.context).into(),
             );
         };
 
@@ -442,7 +455,12 @@ impl<'c> AstToYzl<'c, '_> {
                 Some(arities) => arity_mismatch(name, &arities, given),
                 None => format!("`{name}` is a {}, not a function", binding.kind),
             };
-            return self.error_hole(block, call, &message, UnresolvedType::get(self.context));
+            return self.error_hole(
+                block,
+                call,
+                &message,
+                UnresolvedType::new(self.context).into(),
+            );
         };
 
         self.emit_call(block, callable, &operands, loc)
@@ -464,7 +482,7 @@ impl<'c> AstToYzl<'c, '_> {
             .append_operation(
                 yzl::list(
                     self.context,
-                    UnresolvedType::get(self.context),
+                    UnresolvedType::new(self.context).into(),
                     &values,
                     loc,
                 )
@@ -485,7 +503,7 @@ impl<'c> AstToYzl<'c, '_> {
                 block,
                 paren,
                 "parenthesized expression is missing its inner expression",
-                UnresolvedType::get(self.context),
+                UnresolvedType::new(self.context).into(),
             ),
         }
     }
@@ -511,7 +529,7 @@ impl<'c> AstToYzl<'c, '_> {
             Lookup::Local(slot) => {
                 let load = yzl::load(
                     self.context,
-                    UnresolvedType::get(self.context),
+                    UnresolvedType::new(self.context).into(),
                     locals[slot],
                     loc,
                 );
@@ -524,7 +542,7 @@ impl<'c> AstToYzl<'c, '_> {
                 return self.emit_hole(
                     block,
                     node.syntax().text_range(),
-                    UnresolvedType::get(self.context),
+                    UnresolvedType::new(self.context).into(),
                 );
             }
             Lookup::Ambiguous => {
@@ -544,7 +562,7 @@ impl<'c> AstToYzl<'c, '_> {
         self.emit_hole(
             block,
             node.syntax().text_range(),
-            UnresolvedType::get(self.context),
+            UnresolvedType::new(self.context).into(),
         )
     }
 
@@ -556,7 +574,7 @@ impl<'c> AstToYzl<'c, '_> {
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         let mut builder = yzl::CallOperationBuilder::new(self.context, loc)
-            .result(UnresolvedType::get(self.context))
+            .result(UnresolvedType::new(self.context).into())
             .operands(operands)
             .callee(FlatSymbolRefAttribute::new(self.context, callable.symbol))
             .callee_source(StringAttribute::new(self.context, callable.source.as_str()));

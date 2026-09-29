@@ -178,7 +178,7 @@ impl<'c> Translator<'c, '_, '_> {
         let mut signature = Vec::with_capacity(arguments.len());
         let mut emitted = Vec::with_capacity(arguments.len());
         for &argument in arguments {
-            let Some(code) = type_code(self.context, argument.r#type()) else {
+            let Some(code) = type_code(argument.r#type()) else {
                 report(op, "this argument has no Substrait type");
                 return None;
             };
@@ -189,7 +189,7 @@ impl<'c> Translator<'c, '_, '_> {
             });
         }
 
-        let Some(output) = emit_type(self.context, op.first_result().r#type()) else {
+        let Some(output) = emit_type(op.first_result().r#type()) else {
             report(op, "this has no Substrait type");
             return None;
         };

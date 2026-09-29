@@ -7,73 +7,113 @@ use melior::ir::{Type, TypeLike};
 
 /// `!yz.int64`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Int64Type;
+pub struct Int64Type<'c>(Type<'c>);
 
-impl Int64Type {
+impl<'c> Int64Type<'c> {
     #[must_use]
-    pub fn get(context: &Context) -> Type<'_> {
-        // SAFETY: the context is live for the returned lifetime and the type is uniqued in it.
-        unsafe { Type::from_raw(yuzu_mlir_sys::yzuInt64TypeGet(context.to_raw())) }
+    pub fn new(context: &'c Context) -> Self {
+        // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
+        unsafe {
+            Self(Type::from_raw(yuzu_mlir_sys::yzuInt64TypeGet(
+                context.to_raw(),
+            )))
+        }
     }
 
     #[must_use]
-    pub fn is(ty: Type<'_>) -> bool {
+    pub fn from_type(ty: Type<'c>) -> Option<Self> {
         // SAFETY: `ty` is a live type; the query only reads it.
-        unsafe { yuzu_mlir_sys::yzuTypeIsInt64Type(ty.to_raw()) }
+        unsafe { yuzu_mlir_sys::yzuTypeIsInt64Type(ty.to_raw()) }.then_some(Self(ty))
+    }
+}
+
+impl<'c> From<Int64Type<'c>> for Type<'c> {
+    fn from(ty: Int64Type<'c>) -> Self {
+        ty.0
     }
 }
 
 /// `!yz.float64`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Float64Type;
+pub struct Float64Type<'c>(Type<'c>);
 
-impl Float64Type {
+impl<'c> Float64Type<'c> {
     #[must_use]
-    pub fn get(context: &Context) -> Type<'_> {
-        // SAFETY: the context is live for the returned lifetime and the type is uniqued in it.
-        unsafe { Type::from_raw(yuzu_mlir_sys::yzuFloat64TypeGet(context.to_raw())) }
+    pub fn new(context: &'c Context) -> Self {
+        // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
+        unsafe {
+            Self(Type::from_raw(yuzu_mlir_sys::yzuFloat64TypeGet(
+                context.to_raw(),
+            )))
+        }
     }
 
     #[must_use]
-    pub fn is(ty: Type<'_>) -> bool {
+    pub fn from_type(ty: Type<'c>) -> Option<Self> {
         // SAFETY: `ty` is a live type; the query only reads it.
-        unsafe { yuzu_mlir_sys::yzuTypeIsFloat64Type(ty.to_raw()) }
+        unsafe { yuzu_mlir_sys::yzuTypeIsFloat64Type(ty.to_raw()) }.then_some(Self(ty))
+    }
+}
+
+impl<'c> From<Float64Type<'c>> for Type<'c> {
+    fn from(ty: Float64Type<'c>) -> Self {
+        ty.0
     }
 }
 
 /// `!yz.bool`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct BoolType;
+pub struct BoolType<'c>(Type<'c>);
 
-impl BoolType {
+impl<'c> BoolType<'c> {
     #[must_use]
-    pub fn get(context: &Context) -> Type<'_> {
-        // SAFETY: the context is live for the returned lifetime and the type is uniqued in it.
-        unsafe { Type::from_raw(yuzu_mlir_sys::yzuBoolTypeGet(context.to_raw())) }
+    pub fn new(context: &'c Context) -> Self {
+        // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
+        unsafe {
+            Self(Type::from_raw(yuzu_mlir_sys::yzuBoolTypeGet(
+                context.to_raw(),
+            )))
+        }
     }
 
     #[must_use]
-    pub fn is(ty: Type<'_>) -> bool {
+    pub fn from_type(ty: Type<'c>) -> Option<Self> {
         // SAFETY: `ty` is a live type; the query only reads it.
-        unsafe { yuzu_mlir_sys::yzuTypeIsBoolType(ty.to_raw()) }
+        unsafe { yuzu_mlir_sys::yzuTypeIsBoolType(ty.to_raw()) }.then_some(Self(ty))
+    }
+}
+
+impl<'c> From<BoolType<'c>> for Type<'c> {
+    fn from(ty: BoolType<'c>) -> Self {
+        ty.0
     }
 }
 
 /// `!yz.str`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct StrType;
+pub struct StrType<'c>(Type<'c>);
 
-impl StrType {
+impl<'c> StrType<'c> {
     #[must_use]
-    pub fn get(context: &Context) -> Type<'_> {
-        // SAFETY: the context is live for the returned lifetime and the type is uniqued in it.
-        unsafe { Type::from_raw(yuzu_mlir_sys::yzuStrTypeGet(context.to_raw())) }
+    pub fn new(context: &'c Context) -> Self {
+        // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
+        unsafe {
+            Self(Type::from_raw(yuzu_mlir_sys::yzuStrTypeGet(
+                context.to_raw(),
+            )))
+        }
     }
 
     #[must_use]
-    pub fn is(ty: Type<'_>) -> bool {
+    pub fn from_type(ty: Type<'c>) -> Option<Self> {
         // SAFETY: `ty` is a live type; the query only reads it.
-        unsafe { yuzu_mlir_sys::yzuTypeIsStrType(ty.to_raw()) }
+        unsafe { yuzu_mlir_sys::yzuTypeIsStrType(ty.to_raw()) }.then_some(Self(ty))
+    }
+}
+
+impl<'c> From<StrType<'c>> for Type<'c> {
+    fn from(ty: StrType<'c>) -> Self {
+        ty.0
     }
 }
 

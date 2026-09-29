@@ -4,7 +4,6 @@
 //! stage's expressions move into its new region, and the yzl ops are
 //! erased at the end, once nothing reads them.
 
-use melior::ir::attribute::StringAttribute;
 use melior::ir::operation::{Operation, OperationLike, OperationRef};
 use melior::ir::{BlockLike, BlockRef, Module, Type, Value};
 use melior::{Context, IrRewriter};
@@ -124,10 +123,6 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         if let Some(result) = op.try_first_result() {
             self.stages.insert(result.id(), Stage { value, row });
         }
-    }
-
-    fn intern(&self, name: &str) -> &'c str {
-        StringAttribute::new(self.context, name).value()
     }
 }
 
