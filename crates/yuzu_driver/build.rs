@@ -24,8 +24,9 @@ fn main() {
             .expect("each file is under the root");
         writeln!(
             table,
-            "    Embedded {{ path: {path:?}, name: {name:?}, source: include_str!({absolute:?}) }},",
+            "    Embedded {{ path: {path:?}, file: {file:?}, name: {name:?}, source: include_str!({absolute:?}) }},",
             path = module_path(relative),
+            file = file_path(relative),
             name = Path::new("stdlib").join(relative).display().to_string(),
             absolute = file.display().to_string(),
         )
@@ -47,6 +48,16 @@ fn collect(directory: &Path, files: &mut Vec<PathBuf>) {
             files.push(path);
         }
     }
+}
+
+/// A library file's path under the library's root, with `/` between its
+/// parts on every platform.
+fn file_path(relative: &Path) -> String {
+    relative
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// The module path of a library file: `yuzu/std/math.yz` is

@@ -28,6 +28,7 @@ pub use hover::HoverResult;
 pub use inlay_hints::InlayHint;
 pub use navigation::{FileRange, References};
 pub use syntax_highlighting::{Highlight, HlMod, HlMods, HlRange, HlTag};
+pub use yuzu_driver::stdlib::install as install_library;
 
 /// A file the host holds, by the number the server gave it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

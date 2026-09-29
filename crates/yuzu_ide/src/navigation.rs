@@ -106,7 +106,8 @@ mod tests {
 
     use text_size::TextRange;
 
-    use crate::test_support::{at, checked, cursor, render};
+    use crate::test_support::{FILE, Tree, at, checked, cursor, render};
+    use crate::{AnalysisHost, Change};
 
     const HELPERS: (&str, &str) = ("helpers.yz", "pub def two() -> int64 { return 2 }\n");
 
@@ -315,5 +316,26 @@ from t |> select f(a) + f$0(a, a) + f(a, 1) as v
                 main.yz:f 133..134
                 main.yz:f 143..144"]],
         );
+    }
+
+    #[test]
+    fn a_library_function_goes_to_its_installed_file() {
+        let (text, offset) = cursor("table t = { a: int64 }\nfrom t |> select $0sum(a) as v\n");
+        let tree = Tree::new(&[]);
+        let root =
+            yuzu_driver::stdlib::install(&tree.0.join("cache")).expect("the library installs");
+        let mut change = Change::default();
+        change.set_file(FILE, Some(text.into()));
+        change.set_path(FILE, Some(tree.0.join("main.yz")));
+        let mut host = AnalysisHost::default();
+        host.set_library_root(Some(&root));
+        host.apply_change(change);
+        let checked = host.analysis().check(FILE).expect("main.yz has a path");
+
+        let target = checked
+            .goto_definition(at(offset))
+            .expect("`sum` has a declaration");
+        assert!(target.path.starts_with(&root));
+        expect!["aggregates.yz:sum"].assert_eq(&render(&checked, &target.path, target.range));
     }
 }

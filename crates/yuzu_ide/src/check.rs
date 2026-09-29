@@ -181,8 +181,9 @@ pub(crate) fn check(
     parsed: &ParsedFile,
     documents: &[Document<'_>],
     disk: &DiskCache,
+    library_root: Option<&Path>,
 ) -> Checked {
-    let overlay = Overlay::new(saved, documents, disk);
+    let overlay = Overlay::new(saved, documents, disk, library_root);
     let origin = Origin::File(saved.path.clone());
     let focus = match &saved.location {
         Location::Entry { .. } => Focus::Entry {
@@ -278,10 +279,18 @@ struct Overlay<'d> {
     library: FxHashMap<&'d str, (&'d Path, &'d ParsedFile)>,
     /// Where the library's files are, when the file checked is one of them.
     library_files: Option<FsResolver>,
+    /// Where the built-in library was written, so a reference into it has a
+    /// file to go to.
+    library_root: Option<&'d Path>,
 }
 
 impl<'d> Overlay<'d> {
-    fn new(saved: &SavedFile, documents: &[Document<'d>], disk: &'d DiskCache) -> Self {
+    fn new(
+        saved: &SavedFile,
+        documents: &[Document<'d>],
+        disk: &'d DiskCache,
+        library_root: Option<&'d Path>,
+    ) -> Self {
         let base = match &saved.location {
             Location::Entry { base } | Location::Module { base, .. } => base.clone(),
         };
@@ -312,6 +321,7 @@ impl<'d> Overlay<'d> {
             disk,
             library,
             library_files,
+            library_root,
         }
     }
 
@@ -351,9 +361,10 @@ impl ModuleResolver for Overlay<'_> {
                 syntax: parsed.clean_tree().cloned(),
             }));
         }
-        match &self.library_files {
-            Some(files) => self.read(files.candidates(path)),
-            None => Ok(None),
+        match (&self.library_files, self.library_root) {
+            (Some(files), _) => self.read(files.candidates(path)),
+            (None, Some(root)) => Ok(stdlib::resolve_under(root, path)),
+            (None, None) => Ok(None),
         }
     }
 }

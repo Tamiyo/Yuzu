@@ -1,6 +1,6 @@
 //! The host that takes each change, and the snapshot a request reads.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
@@ -42,6 +42,7 @@ pub struct AnalysisHost {
     files: Arc<FxHashMap<FileId, Arc<ParsedFile>>>,
     paths: Arc<FxHashMap<FileId, SavedFile>>,
     disk: Arc<DiskCache>,
+    library_root: Option<Arc<Path>>,
 }
 
 impl AnalysisHost {
@@ -67,6 +68,13 @@ impl AnalysisHost {
         }
     }
 
+    /// Where [`crate::install_library`] wrote the library. A check
+    /// then reads the library from those files, so a reference into it
+    /// goes to a file. Without one, it reads the copy in the compiler.
+    pub fn set_library_root(&mut self, root: Option<&Path>) {
+        self.library_root = root.map(Arc::from);
+    }
+
     /// A snapshot of the files as they are now, for a request to read.
     #[must_use]
     pub fn analysis(&self) -> Analysis {
@@ -74,6 +82,7 @@ impl AnalysisHost {
             files: Arc::clone(&self.files),
             paths: Arc::clone(&self.paths),
             disk: Arc::clone(&self.disk),
+            library_root: self.library_root.clone(),
         }
     }
 }
@@ -84,6 +93,7 @@ pub struct Analysis {
     files: Arc<FxHashMap<FileId, Arc<ParsedFile>>>,
     paths: Arc<FxHashMap<FileId, SavedFile>>,
     disk: Arc<DiskCache>,
+    library_root: Option<Arc<Path>>,
 }
 
 impl Analysis {
@@ -104,7 +114,13 @@ impl Analysis {
                 })
             })
             .collect();
-        Some(check::check(saved, file, &documents, &self.disk))
+        Some(check::check(
+            saved,
+            file,
+            &documents,
+            &self.disk,
+            self.library_root.as_deref(),
+        ))
     }
 
     /// A file's text.

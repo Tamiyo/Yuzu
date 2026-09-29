@@ -2,6 +2,7 @@
 //! and the dispatch of each request and notification to its handler.
 
 use std::panic::{self, AssertUnwindSafe};
+use std::path::PathBuf;
 
 use crossbeam_channel::{RecvError, select};
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, Response};
@@ -70,6 +71,13 @@ pub fn run(connection: &Connection) -> Result<(), RunError> {
         semantic_tokens_refresh: capabilities::semantic_tokens_refresh(&params.capabilities),
         next_request: 0,
     };
+    match library_cache().map(|cache| yuzu_ide::install_library(&cache)) {
+        Some(Ok(root)) => state.host.set_library_root(Some(&root)),
+        Some(Err(error)) => state.log_error(format!(
+            "cannot write the library files, so go to definition does not reach the library: {error}"
+        ))?,
+        None => {}
+    }
     if capabilities::watches_files(&params.capabilities) {
         state.send_request::<RegisterCapability>(RegistrationParams {
             registrations: vec![capabilities::watched_files_registration()],
@@ -101,6 +109,16 @@ pub fn run(connection: &Connection) -> Result<(), RunError> {
             recv(checks) -> result => state.on_check_result(result)?,
         }
     }
+}
+
+/// Where the server writes the library's files: under `$XDG_CACHE_HOME`, or
+/// `~/.cache` when that is not set.
+fn library_cache() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_CACHE_HOME")
+        .filter(|base| !base.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))?;
+    Some(base.join("yuzu"))
 }
 
 impl GlobalState<'_> {

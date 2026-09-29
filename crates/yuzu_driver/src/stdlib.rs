@@ -4,11 +4,16 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
+use std::fs;
+use std::hash::{Hash, Hasher};
+use std::io;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::str::FromStr;
 use std::sync::{Arc, OnceLock};
 
 use melior::Context;
+use rustc_hash::FxHasher;
 
 use yuzu_diagnostics::{DiagnosticsEngine, SourceMap};
 use yuzu_passes::{BoundLibrary, File};
@@ -16,10 +21,11 @@ use yuzu_syntax::GreenNode;
 
 use crate::modules::{self, Loaded, MapResolver, ModuleSource, Origin, Submodule};
 
-/// One library file: its module path, the name a diagnostic shows for it,
-/// and its text.
+/// One library file: its module path, its path under the library's root,
+/// the name a diagnostic shows for it, and its text.
 struct Embedded {
     path: &'static str,
+    file: &'static str,
     name: &'static str,
     source: &'static str,
 }
@@ -103,6 +109,83 @@ pub(crate) fn resolve(path: &str, engine: Engine) -> Option<ModuleSource> {
             source: Arc::clone(&texts()[path]),
             syntax: trees().get(path).cloned(),
         })
+}
+
+/// Writes the library's files under `cache`, read-only, and returns the
+/// folder that holds them.
+///
+/// The folder is named for their content, so one already there is reused.
+/// The files are written to a folder of their own first and then moved
+/// into place, so a reader never sees a part of them.
+///
+/// # Errors
+///
+/// When a folder or a file cannot be written.
+pub fn install(cache: &Path) -> io::Result<PathBuf> {
+    let mut hasher = FxHasher::default();
+    for module in MODULES {
+        module.file.hash(&mut hasher);
+        module.source.hash(&mut hasher);
+    }
+    let root = cache.join(format!("stdlib-{:016x}", hasher.finish()));
+    if root.is_dir() {
+        return Ok(root);
+    }
+
+    let staging = cache.join(format!("stdlib-staging-{}", std::process::id()));
+    remove_staging(&staging);
+    for module in MODULES {
+        let file = staging.join(module.file);
+        if let Some(parent) = file.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&file, module.source)?;
+        let mut permissions = fs::metadata(&file)?.permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(&file, permissions)?;
+    }
+
+    match fs::rename(&staging, &root) {
+        Ok(()) => Ok(root),
+        // Another process put the same content in place first.
+        Err(_) if root.is_dir() => {
+            remove_staging(&staging);
+            Ok(root)
+        }
+        Err(error) => {
+            remove_staging(&staging);
+            Err(error)
+        }
+    }
+}
+
+/// Removes a staging folder whose files are read-only, if it is there.
+fn remove_staging(staging: &Path) {
+    for module in MODULES {
+        let file = staging.join(module.file);
+        if let Ok(metadata) = fs::metadata(&file) {
+            let mut permissions = metadata.permissions();
+            #[expect(
+                clippy::permissions_set_readonly_false,
+                reason = "the file is ours, written a moment ago, and is removed next"
+            )]
+            permissions.set_readonly(false);
+            let _ = fs::set_permissions(&file, permissions);
+        }
+    }
+    let _ = fs::remove_dir_all(staging);
+}
+
+/// A library module as the file [`install`] wrote under `root`. `None` for
+/// a module that has no file, as `yuzu.engine` has none.
+#[must_use]
+pub fn resolve_under(root: &Path, path: &str) -> Option<ModuleSource> {
+    let module = MODULES.iter().find(|module| module.path == path)?;
+    Some(ModuleSource {
+        origin: Origin::File(root.join(module.file)),
+        source: Arc::clone(&texts()[path]),
+        syntax: trees().get(path).cloned(),
+    })
 }
 
 /// The library as every compile on the thread starts from it: its files
@@ -238,8 +321,29 @@ mod tests {
     use yuzu_diagnostics::{DiagnosticsEngine, SourceMap};
     use yuzu_passes::Lowering;
 
-    use super::{Engine, MODULES, trees};
-    use crate::modules::{self, MapResolver};
+    use super::{Engine, MODULES, install, resolve_under, trees};
+    use crate::modules::{self, MapResolver, Origin};
+
+    #[test]
+    fn the_library_installs_read_only_once() {
+        let cache = std::env::temp_dir().join(format!("yuzu-install-{}", std::process::id()));
+        let root = install(&cache).expect("the library installs");
+        let first = MODULES.first().expect("the library has a file");
+        let file = root.join(first.file);
+        let written = std::fs::read_to_string(&file).expect("the file is written");
+        assert_eq!(written, first.source);
+        let permissions = std::fs::metadata(&file)
+            .expect("the file is there")
+            .permissions();
+        assert!(permissions.readonly());
+        assert_eq!(install(&cache).expect("the library installs again"), root);
+
+        let module = resolve_under(&root, first.path).expect("a file module resolves");
+        assert_eq!(module.origin, Origin::File(file));
+        assert!(resolve_under(&root, "yuzu.engine").is_none());
+
+        std::fs::remove_dir_all(&cache).expect("the test's cache is removed");
+    }
 
     #[test]
     fn each_library_file_parses() {
