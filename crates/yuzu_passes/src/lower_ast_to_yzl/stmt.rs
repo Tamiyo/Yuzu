@@ -75,7 +75,7 @@ impl<'c> AstToYzl<'c, '_> {
         }
 
         let Some(name) = self.read_ident(decl.name()) else {
-            self.reported_by_parser("struct is missing its name");
+            self.assert_syntax_error("struct is missing its name");
             return;
         };
 
@@ -95,7 +95,7 @@ impl<'c> AstToYzl<'c, '_> {
         }
 
         let Some(name) = self.read_ident(decl.name()) else {
-            self.reported_by_parser("table is missing its name");
+            self.assert_syntax_error("table is missing its name");
             return;
         };
 
@@ -150,7 +150,6 @@ impl<'c> AstToYzl<'c, '_> {
             return;
         }
 
-        // `convert_method` reports a missing name.
         if let Some(name) = self.read_ident(decl.name())
             && !self.was_hoisted(decl, name)
         {
@@ -169,7 +168,7 @@ impl<'c> AstToYzl<'c, '_> {
         let loc = self.location(decl);
 
         let Some(name) = self.read_ident(decl.name()) else {
-            self.reported_by_parser("function is missing its name");
+            self.assert_syntax_error("function is missing its name");
             return;
         };
 
@@ -190,6 +189,7 @@ impl<'c> AstToYzl<'c, '_> {
         let op = self.in_type_params(generics.clone(), |this| {
             this.build_fn(decl, site, name, &generics, loc)
         });
+
         if let Some(op) = op {
             block.append_operation(op);
         }
@@ -205,12 +205,16 @@ impl<'c> AstToYzl<'c, '_> {
         generics: &[&'c str],
         loc: Location<'c>,
     ) -> Option<Operation<'c>> {
+        // Trait bounds.
+        let (bound_params, bound_traits) = self.read_bounds(decl);
+
+        // Params.
         let mut param_names = Vec::new();
         let mut param_types = Vec::new();
         let mut has_error = false;
         for param in decl.params() {
             let Some(name) = self.read_ident(param.name()) else {
-                self.reported_by_parser("parameter is missing its name");
+                self.assert_syntax_error("parameter is missing its name");
                 has_error = true;
                 continue;
             };
@@ -227,6 +231,7 @@ impl<'c> AstToYzl<'c, '_> {
             param_types.push(ty);
         }
 
+        // Early exit if there are any parameter errors.
         if has_error {
             return None;
         }
@@ -236,14 +241,6 @@ impl<'c> AstToYzl<'c, '_> {
             None => UnresolvedType::new(self.context).into(),
         };
 
-        let signature = FunctionType::new(self.context, &param_types, &[result]);
-
-        let (bound_params, bound_traits) = self.read_bounds(decl);
-
-        let external_name = decl.is_external().then_some(name);
-
-        let name = self.symbol_in(site, name, param_names.len());
-
         let body = Region::new();
         if let Some(block) = decl.body() {
             let ty = UnresolvedType::new(self.context).into();
@@ -252,6 +249,9 @@ impl<'c> AstToYzl<'c, '_> {
 
             let mut locals = Locals::new();
             self.in_block(|this| {
+                // Make a place for each parameter, with the type of the parameter.
+                // Put the argument in the place. The name of the parameter then gives the
+                // place, as the name of a `let` does.
                 for (index, name) in param_names.iter().enumerate() {
                     let argument = entry
                         .argument(index)
@@ -266,6 +266,7 @@ impl<'c> AstToYzl<'c, '_> {
                         argument,
                         loc,
                     );
+
                     this.bind_local(&mut locals, name, place);
                 }
 
@@ -273,8 +274,10 @@ impl<'c> AstToYzl<'c, '_> {
             });
         }
 
+        let symbol = self.symbol_in(site, name, param_names.len());
+        let signature = FunctionType::new(self.context, &param_types, &[result]);
         let mut builder = yzl::FnOperationBuilder::new(self.context, loc)
-            .sym_name(StringAttribute::new(self.context, name))
+            .sym_name(StringAttribute::new(self.context, symbol))
             .params(ArrayAttribute::from_strings(self.context, param_names))
             .signature(TypeAttribute::new(signature.into()))
             .body(body);
@@ -283,7 +286,7 @@ impl<'c> AstToYzl<'c, '_> {
             builder = builder.is_agg(Attribute::unit(self.context));
         }
 
-        if let Some(external_name) = &external_name {
+        if let Some(external_name) = decl.is_external().then_some(name) {
             builder = builder.external_name(StringAttribute::new(self.context, external_name));
         }
 
@@ -311,7 +314,7 @@ impl<'c> AstToYzl<'c, '_> {
         }
 
         let Some(name) = self.read_ident(decl.name()) else {
-            self.reported_by_parser("trait is missing its name");
+            self.assert_syntax_error("trait is missing its name");
             return;
         };
 
@@ -350,12 +353,12 @@ impl<'c> AstToYzl<'c, '_> {
             .trait_()
             .and_then(|trait_ref| self.read_ident(trait_ref.name()))
         else {
-            self.reported_by_parser("`impl` is missing its trait");
+            self.assert_syntax_error("`impl` is missing its trait");
             return;
         };
 
         let Some(target) = self.read_ident(decl.ty()) else {
-            self.reported_by_parser("`impl` is missing its type name");
+            self.assert_syntax_error("`impl` is missing its type name");
             return;
         };
 
@@ -414,12 +417,12 @@ impl<'c> AstToYzl<'c, '_> {
         let loc = self.location(decl);
 
         let Some(name) = self.read_ident(decl.name()) else {
-            self.reported_by_parser("let binding is missing its name");
+            self.assert_syntax_error("let binding is missing its name");
             return;
         };
 
         let Some(expr) = decl.expr() else {
-            self.reported_by_parser("let binding is missing its expression");
+            self.assert_syntax_error("let binding is missing its expression");
             return;
         };
 
@@ -516,12 +519,12 @@ impl<'c> AstToYzl<'c, '_> {
         };
 
         let Some(name) = name else {
-            self.reported_by_parser("assignment is missing its target");
+            self.assert_syntax_error("assignment is missing its target");
             return;
         };
 
         let Some(value) = assign.value() else {
-            self.reported_by_parser("assignment is missing its value");
+            self.assert_syntax_error("assignment is missing its value");
             return;
         };
 
@@ -585,7 +588,7 @@ impl<'c> AstToYzl<'c, '_> {
         stmt: &ast::ExprStmt,
     ) {
         let Some(expr) = stmt.expr() else {
-            self.reported_by_parser("expression statement is missing its expression");
+            self.assert_syntax_error("expression statement is missing its expression");
             return;
         };
 
@@ -784,7 +787,7 @@ impl<'c> AstToYzl<'c, '_> {
                 }
                 ast::Stmt::ModStmt(decl) => {
                     let Some(name) = self.read_ident(decl.name()) else {
-                        self.reported_by_parser("module declaration is missing its name");
+                        self.assert_syntax_error("module declaration is missing its name");
                         continue;
                     };
 
@@ -814,7 +817,7 @@ impl<'c> AstToYzl<'c, '_> {
     /// only when `pub` says so.
     fn bind_import(&mut self, path: &'c str, item: &ast::ImportItem, visibility: Visibility) {
         let Some(name) = self.read_ident(item.name()) else {
-            self.reported_by_parser("import item is missing its name");
+            self.assert_syntax_error("import item is missing its name");
             return;
         };
 
@@ -965,7 +968,7 @@ impl<'c> AstToYzl<'c, '_> {
         let mut traits = Vec::new();
         for bound in decl.bounds() {
             let Some(subject) = self.read_ident(bound.subject()) else {
-                self.reported_by_parser("type bound is missing its subject");
+                self.assert_syntax_error("type bound is missing its subject");
                 continue;
             };
 
@@ -975,7 +978,7 @@ impl<'c> AstToYzl<'c, '_> {
 
             for trait_ref in bound.traits() {
                 let Some(name) = self.read_ident(trait_ref.name()) else {
-                    self.reported_by_parser("trait reference is missing its name");
+                    self.assert_syntax_error("trait reference is missing its name");
                     continue;
                 };
 
@@ -1051,7 +1054,7 @@ impl<'c> AstToYzl<'c, '_> {
         };
 
         let Some(name) = self.read_ident(named.name()) else {
-            self.reported_by_parser("type is missing its name");
+            self.assert_syntax_error("type is missing its name");
             return ErrorType::new(self.context).into();
         };
 
@@ -1144,7 +1147,7 @@ impl<'c> AstToYzl<'c, '_> {
         let mut types = Vec::new();
         for field in fields {
             let (Some(name), Some(ty)) = (self.read_ident(field.name()), field.ty()) else {
-                self.reported_by_parser("struct field is missing its name or type");
+                self.assert_syntax_error("struct field is missing its name or type");
                 continue;
             };
 
@@ -1259,7 +1262,7 @@ impl<'c> AstToYzl<'c, '_> {
 mod tests {
     use expect_test::expect;
 
-    use crate::test_support::{lower, lowered, reported};
+    use crate::test_support::{lower, lowered, lowered_program, reported};
 
     #[test]
     fn a_file_level_let_cannot_be_mut() {
@@ -1368,6 +1371,36 @@ mod tests {
         "]].assert_eq(&reported(
             "struct Row { a: int64 }\ndef f(x: int64) -> int64 {\n  let mut r = x\n  r.a = 1\n  return r\n}\n",
         ));
+    }
+
+    #[test]
+    fn an_external_in_a_module_keeps_its_written_name() {
+        expect![[r#"
+            module {
+              yzl.fn @helpers.median params ["x"] (!yz.float64) -> !yz.float64 external "median" {
+              }
+              yzl.struct @Row ["r"] : [!yz.float64] {sym_visibility = "private"}
+              yzl.table @t of @Row {sym_visibility = "private"}
+              %0 = yzl.from @t
+              %1 = yzl.select %0 as ["m"] {
+              ^bb0(%arg0: !yzl.unresolved):
+                %2 = yzl.call @helpers.median(%arg0) : (!yzl.unresolved) -> !yzl.unresolved {callee_source = "external"}
+                yzl.yield %2 : !yzl.unresolved
+              }
+              yzl.output %1
+            }
+        "#]].assert_eq(&lowered_program(&[
+            (
+                "helpers.yz",
+                Some("helpers"),
+                "pub external def median(x: float64) -> float64\n",
+            ),
+            (
+                "main.yz",
+                None,
+                "from helpers import median\nstruct Row { r: float64 }\ntable t = Row\nfrom t |> select median(r) as m\n",
+            ),
+        ]));
     }
 
     #[test]

@@ -35,7 +35,7 @@ impl<'c> AstToYzl<'c, '_> {
         let (mut value, row) = if let Some(from) = pipeline.source() {
             self.convert_from(block, &from)
         } else {
-            let hole = self.error_hole(
+            let hole = self.hole_and_report(
                 block,
                 pipeline,
                 "a query is missing its `from`",
@@ -83,7 +83,7 @@ impl<'c> AstToYzl<'c, '_> {
     ) -> (Value<'c, 'a>, Row<'c>) {
         let loc = self.location(from);
         let Some(source) = self.read_ident(from.relation()) else {
-            let hole = self.parser_hole(
+            let hole = self.hole_and_assert(
                 block,
                 from,
                 "`from` is missing its relation",
@@ -93,7 +93,7 @@ impl<'c> AstToYzl<'c, '_> {
         };
 
         let Some((symbol, mut row)) = self.symbols.relation(source, None) else {
-            let hole = self.error_hole(
+            let hole = self.hole_and_report(
                 block,
                 from,
                 &format!("`{source}` is not a relation"),
@@ -132,7 +132,7 @@ impl<'c> AstToYzl<'c, '_> {
         let body = self.stage_block(&region, loc);
         let predicate = match where_.predicate() {
             Some(expr) => self.convert_expr(body, &Locals::new(), &expr),
-            None => self.parser_hole(
+            None => self.hole_and_assert(
                 body,
                 where_,
                 "`where` is missing its predicate",
@@ -233,7 +233,7 @@ impl<'c> AstToYzl<'c, '_> {
         let mut key_names: Vec<&'c str> = Vec::new();
         for item in agg.group_by().into_iter().flat_map(|group| group.items()) {
             let Some(column) = self.read_ident(item.column()) else {
-                self.reported_by_parser("group by key is missing its column");
+                self.assert_syntax_error("group by key is missing its column");
                 continue;
             };
 
@@ -284,7 +284,7 @@ impl<'c> AstToYzl<'c, '_> {
         let count = if let Some(count) = limit.count() {
             self.read_limit_count(&count)
         } else {
-            self.reported_by_parser("`limit` is missing its row count");
+            self.assert_syntax_error("`limit` is missing its row count");
             0
         };
         let offset = limit.offset().map(|offset| self.read_limit_count(&offset));
@@ -318,7 +318,7 @@ impl<'c> AstToYzl<'c, '_> {
                 self.read_ident(item.column()),
                 self.read_ident(item.alias()),
             ) else {
-                self.reported_by_parser("rename item is missing a column name");
+                self.assert_syntax_error("rename item is missing a column name");
                 continue;
             };
 
@@ -355,7 +355,7 @@ impl<'c> AstToYzl<'c, '_> {
     ) -> Value<'c, 'a> {
         let loc = self.location(alias);
         let Some(alias) = self.read_ident(alias.alias()) else {
-            self.reported_by_parser("`as` is missing its alias");
+            self.assert_syntax_error("`as` is missing its alias");
             return input;
         };
 
@@ -377,7 +377,7 @@ impl<'c> AstToYzl<'c, '_> {
             ast::JoinKind::Full => JoinKind::Full,
         };
         let Some(relation) = self.read_ident(join.relation()) else {
-            return self.parser_hole(
+            return self.hole_and_assert(
                 block,
                 join,
                 "`join` is missing its relation",
@@ -387,7 +387,7 @@ impl<'c> AstToYzl<'c, '_> {
 
         let alias = self.read_ident(join.alias());
         let Some((rhs_symbol, rhs)) = self.symbols.relation(relation, alias) else {
-            return self.error_hole(
+            return self.hole_and_report(
                 block,
                 join,
                 &format!("`{relation}` is not a relation"),
@@ -421,9 +421,9 @@ impl<'c> AstToYzl<'c, '_> {
         let on = Region::new();
         if join.using().is_none() {
             match join.on() {
-                None => self.reported_by_parser("`join` is missing its `on` or `using` clause"),
+                None => self.assert_syntax_error("`join` is missing its `on` or `using` clause"),
                 Some(clause) => match clause.condition() {
-                    None => self.reported_by_parser("`on` is missing its condition"),
+                    None => self.assert_syntax_error("`on` is missing its condition"),
                     Some(condition) => {
                         let body = self.stage_block(&on, loc);
                         let value = self.convert_expr(body, &Locals::new(), &condition);
@@ -466,7 +466,7 @@ impl<'c> AstToYzl<'c, '_> {
         let mut items = Vec::new();
         for item in set.items() {
             let Some(name) = self.read_ident(item.column()) else {
-                self.reported_by_parser("set item is missing its column");
+                self.assert_syntax_error("set item is missing its column");
                 continue;
             };
 
@@ -524,7 +524,7 @@ impl<'c> AstToYzl<'c, '_> {
         let mut names: Vec<&'c str> = Vec::new();
         for column in drop.columns() {
             let Some(name) = self.read_ident(Some(column.clone())) else {
-                self.reported_by_parser("`drop` is missing a column name");
+                self.assert_syntax_error("`drop` is missing a column name");
                 continue;
             };
 
@@ -575,7 +575,7 @@ impl<'c> AstToYzl<'c, '_> {
             let value = if let Some(expr) = expr {
                 self.convert_expr(body, &Locals::new(), expr)
             } else {
-                self.reported_by_parser(&format!("{what} is missing its expression"));
+                self.assert_syntax_error(&format!("{what} is missing its expression"));
                 self.emit_hole(body, *range, UnresolvedType::new(self.context).into())
             };
 

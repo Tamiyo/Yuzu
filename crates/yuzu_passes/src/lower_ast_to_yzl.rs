@@ -183,7 +183,7 @@ impl<'c> AstToYzl<'c, '_> {
         format!("{}:{line}:{column}", self.name())
     }
 
-    fn error_hole<'a>(
+    fn hole_and_report<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
         node: &impl AstNode,
@@ -194,9 +194,10 @@ impl<'c> AstToYzl<'c, '_> {
         self.emit_hole(block, node.syntax().text_range(), ty)
     }
 
-    /// A piece of syntax the tree lacks. Only a syntax error leaves one, and
-    /// the parser reported it, so the lowering adds nothing.
-    fn reported_by_parser(&self, what: &str) {
+    /// Checks, in a debug build, that a syntax error was reported. Only one
+    /// leaves a piece of syntax out of the tree, and the parser reports it,
+    /// so the lowering reports nothing.
+    fn assert_syntax_error(&self, what: &str) {
         debug_assert!(
             self.has_error_in_file(),
             "{what}, which only a syntax error leaves"
@@ -204,14 +205,14 @@ impl<'c> AstToYzl<'c, '_> {
     }
 
     /// A hole for a piece of syntax the tree lacks.
-    fn parser_hole<'a>(
+    fn hole_and_assert<'a>(
         &self,
         block: BlockRef<'c, 'a>,
         node: &impl AstNode,
         what: &str,
         ty: Type<'c>,
     ) -> Value<'c, 'a> {
-        self.reported_by_parser(what);
+        self.assert_syntax_error(what);
         self.emit_hole(block, node.syntax().text_range(), ty)
     }
 

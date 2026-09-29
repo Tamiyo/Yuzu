@@ -34,7 +34,7 @@ impl<'c> AstToYzl<'c, '_> {
             ast::Expr::ListExpr(list) => self.convert_list(block, locals, list),
             ast::Expr::ParenExpr(paren) => self.convert_paren_expr(block, locals, paren),
             ast::Expr::Pipeline(pipeline) => self.convert_query(block, pipeline).0,
-            ast::Expr::StructExpr(literal) => self.error_hole(
+            ast::Expr::StructExpr(literal) => self.hole_and_report(
                 block,
                 literal,
                 "struct literals are not supported yet",
@@ -103,7 +103,7 @@ impl<'c> AstToYzl<'c, '_> {
         ident: &ast::IdentExpr,
     ) -> Value<'c, 'a> {
         let Some(name) = self.read_ident(ident.name()) else {
-            return self.parser_hole(
+            return self.hole_and_assert(
                 block,
                 ident,
                 "identifier expression is missing its name",
@@ -127,7 +127,7 @@ impl<'c> AstToYzl<'c, '_> {
         let base = match access.base() {
             Some(ast::Expr::IdentExpr(ident)) => self.read_ident(ident.name()),
             Some(_) => {
-                return self.error_hole(
+                return self.hole_and_report(
                     block,
                     access,
                     "field access on an expression is not supported yet",
@@ -138,7 +138,7 @@ impl<'c> AstToYzl<'c, '_> {
         };
 
         let Some(base) = base else {
-            return self.parser_hole(
+            return self.hole_and_assert(
                 block,
                 access,
                 "field access is missing its base",
@@ -147,7 +147,7 @@ impl<'c> AstToYzl<'c, '_> {
         };
 
         let Some(field) = self.read_ident(access.field()) else {
-            return self.parser_hole(
+            return self.hole_and_assert(
                 block,
                 access,
                 "field access is missing its field",
@@ -173,7 +173,7 @@ impl<'c> AstToYzl<'c, '_> {
         let lhs = match binary.lhs() {
             Some(expr) => self.convert_expr(block, locals, &expr),
             None => {
-                return self.parser_hole(
+                return self.hole_and_assert(
                     block,
                     binary,
                     "binary expression is missing its left operand",
@@ -185,7 +185,7 @@ impl<'c> AstToYzl<'c, '_> {
         let rhs = match binary.rhs() {
             Some(expr) => self.convert_expr(block, locals, &expr),
             None => {
-                return self.parser_hole(
+                return self.hole_and_assert(
                     block,
                     binary,
                     "binary expression is missing its right operand",
@@ -244,7 +244,7 @@ impl<'c> AstToYzl<'c, '_> {
                 yz::not(self.context, var, contains, loc).into()
             }
             None => {
-                return self.parser_hole(
+                return self.hole_and_assert(
                     block,
                     binary,
                     "binary expression is missing its operator",
@@ -282,7 +282,7 @@ impl<'c> AstToYzl<'c, '_> {
         let value = match unary.expr() {
             Some(expr) => self.convert_expr(block, locals, &expr),
             None => {
-                return self.parser_hole(
+                return self.hole_and_assert(
                     block,
                     unary,
                     "unary expression is missing its operand",
@@ -308,7 +308,7 @@ impl<'c> AstToYzl<'c, '_> {
             .into(),
             Some(UnaryOp::Pos) => return value,
             None => {
-                return self.parser_hole(
+                return self.hole_and_assert(
                     block,
                     unary,
                     "unary expression is missing its operator",
@@ -332,7 +332,7 @@ impl<'c> AstToYzl<'c, '_> {
             Some(ast::Expr::IdentExpr(ident)) => match self.read_ident(ident.name()) {
                 Some(callee) => callee,
                 None => {
-                    return self.parser_hole(
+                    return self.hole_and_assert(
                         block,
                         call,
                         "call is missing its callee",
@@ -344,7 +344,7 @@ impl<'c> AstToYzl<'c, '_> {
                 return self.convert_module_call(block, locals, call, &access, loc);
             }
             Some(_) => {
-                return self.error_hole(
+                return self.hole_and_report(
                     block,
                     call,
                     "calling an expression is not supported yet",
@@ -352,7 +352,7 @@ impl<'c> AstToYzl<'c, '_> {
                 );
             }
             None => {
-                return self.parser_hole(
+                return self.hole_and_assert(
                     block,
                     call,
                     "call is missing its callee",
@@ -367,10 +367,11 @@ impl<'c> AstToYzl<'c, '_> {
             .flat_map(|args| args.args())
             .map(|arg| self.convert_expr(block, locals, &arg))
             .collect();
-        let given = operands.len();
-        let Some(callable) = self.symbols.callable(callee, given) else {
+
+        let provided_arity = operands.len();
+        let Some(callable) = self.symbols.callable(callee, provided_arity) else {
             let message = if let Some(arities) = self.symbols.arities(callee) {
-                arity_mismatch(callee, &arities, given)
+                arity_mismatch(callee, &arities, provided_arity)
             } else {
                 match self.symbols.kind(callee) {
                     Some(BindingKind::Pending) => {
@@ -385,7 +386,7 @@ impl<'c> AstToYzl<'c, '_> {
                     None => format!("unresolved identifier `{callee}`"),
                 }
             };
-            return self.error_hole(
+            return self.hole_and_report(
                 block,
                 call,
                 &message,
@@ -407,7 +408,7 @@ impl<'c> AstToYzl<'c, '_> {
         let base = match access.base() {
             Some(ast::Expr::IdentExpr(ident)) => self.read_ident(ident.name()),
             Some(_) => {
-                return self.error_hole(
+                return self.hole_and_report(
                     block,
                     call,
                     "calling an expression is not supported yet",
@@ -418,7 +419,7 @@ impl<'c> AstToYzl<'c, '_> {
         };
 
         let (Some(base), Some(name)) = (base, self.read_ident(access.field())) else {
-            return self.parser_hole(
+            return self.hole_and_assert(
                 block,
                 call,
                 "module call is missing its module or its function",
@@ -427,7 +428,7 @@ impl<'c> AstToYzl<'c, '_> {
         };
 
         let Some(path) = self.symbols.module_of(base) else {
-            return self.error_hole(
+            return self.hole_and_report(
                 block,
                 call,
                 &format!("`{base}` is not a module"),
@@ -456,7 +457,7 @@ impl<'c> AstToYzl<'c, '_> {
                 Some(arities) => arity_mismatch(name, &arities, given),
                 None => format!("`{name}` is a {}, not a function", binding.kind),
             };
-            return self.error_hole(
+            return self.hole_and_report(
                 block,
                 call,
                 &message,
@@ -574,7 +575,7 @@ impl<'c> AstToYzl<'c, '_> {
     ) -> Value<'c, 'a> {
         match paren.expr() {
             Some(inner) => self.convert_expr(block, locals, &inner),
-            None => self.parser_hole(
+            None => self.hole_and_assert(
                 block,
                 paren,
                 "parenthesized expression is missing its inner expression",
@@ -665,7 +666,7 @@ impl<'c> AstToYzl<'c, '_> {
 
 /// The message for a call to a function none of whose overloads takes
 /// `given` arguments.
-fn arity_mismatch(name: &str, arities: &[usize], given: usize) -> String {
+fn arity_mismatch(name: &str, arities: &[usize], provided_arity: usize) -> String {
     let expected = match arities {
         [] => unreachable!("`{name}` has an overload wherever its name is visible"),
         [only] => only.to_string(),
@@ -675,7 +676,7 @@ fn arity_mismatch(name: &str, arities: &[usize], given: usize) -> String {
         }
     };
 
-    format!("`{name}` expects {expected} argument(s), found {given}")
+    format!("`{name}` expects {expected} argument(s), found {provided_arity}")
 }
 
 #[cfg(test)]
