@@ -7,7 +7,7 @@ use yuzu_syntax::SyntaxKind;
 
 use crate::Checked;
 use crate::file_structure;
-use crate::names::{Resolution, declaring, node_at};
+use crate::names::{DeclarationKind, Resolution, declaring, node_at};
 use crate::navigation::resolution_at;
 
 /// What a hover shows, and the range it is about.
@@ -48,8 +48,13 @@ pub(crate) fn hover(checked: &Checked, source: SourceId, offset: TextSize) -> Op
 }
 
 /// A declaration as a reader would write it: a function's signature, a
-/// parameter or a `let` with its type, or a table or struct in full.
+/// parameter or a `let` with its type, a table or struct in full, or a
+/// module by its path.
 fn describe(checked: &Checked, resolution: &Resolution) -> Option<String> {
+    if resolution.kind == DeclarationKind::Module {
+        return Some(format!("module {}", checked.name(resolution)));
+    }
+
     let root = checked.syntax(resolution.declared.source)?;
     let declared = declaring(&root, resolution.declared.range)?;
     let declaration = node_at(&root, resolution.declaration.range)?;
@@ -163,5 +168,24 @@ from t |> select double(1) + cap as v
                 )
             "#]],
         );
+    }
+
+    #[test]
+    fn a_module_shows_its_path() {
+        let (text, offset) = cursor(
+            "import helpers as h\ntable t = { a: int64 }\nfrom t |> select $0h.two() as v\n",
+        );
+        let (_tree, checked) = checked(
+            &[("helpers.yz", "pub def two() -> int64 { return 2 }\n")],
+            &text,
+        );
+        let hover = checked.hover(at(offset));
+        let rendered = hover.map(|hover| format!("{} {}", &text[hover.range], hover.markup));
+        expect![[r#"
+            Some(
+                "h ```yuzu\nmodule helpers\n```",
+            )
+        "#]]
+        .assert_debug_eq(&rendered);
     }
 }

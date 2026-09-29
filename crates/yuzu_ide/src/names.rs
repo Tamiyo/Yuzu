@@ -1,7 +1,6 @@
-//! The references in a check's index, narrowed from the syntax each side
-//! was lowered from to the name inside it. The index says what the name is
-//! and what kind of declaration it names, so a use of a parameter finds the
-//! parameter and not the function around it.
+//! The references in a check's index, with each declaration narrowed to
+//! the name it declares. The lowering gives the name each use wrote, and
+//! the whole declaration it names.
 
 use rustc_hash::FxHashMap;
 use text_size::TextRange;
@@ -38,6 +37,8 @@ pub(crate) enum DeclarationKind {
     Table,
     Struct,
     Trait,
+    /// A module, whose declaration is its file.
+    Module,
 }
 
 /// The tree of each source a check lowered.
@@ -49,30 +50,26 @@ pub(crate) fn resolutions(references: &[Reference], trees: &Trees) -> Vec<Resolu
         .iter()
         .enumerate()
         .filter_map(|(at, reference)| {
-            let used = used_name(
-                &root(reference.at.source_id)?,
-                reference.at.range,
-                &reference.name,
-            )?;
-            let declared_root = root(reference.target.source_id)?;
-            let declared = declared_name(
-                &declared_root,
-                reference.target.range,
-                &reference.name,
-                reference.kind,
-            )?;
+            let (declared, kind) = match reference.kind {
+                TargetKind::Module => (reference.target.range, DeclarationKind::Module),
+                TargetKind::Declaration => {
+                    let root = root(reference.target.source_id)?;
+                    let declared = declared_name(&root, reference.target.range, &reference.name)?;
+                    (declared, declaration_kind(&declaring(&root, declared)?)?)
+                }
+            };
             Some(Resolution {
                 reference: at,
                 used: Name {
                     source: reference.at.source_id,
-                    range: used,
+                    range: reference.at.range,
                 },
                 declared: Name {
                     source: reference.target.source_id,
                     range: declared,
                 },
                 declaration: reference.target,
-                kind: declaration_kind(&declaring(&declared_root, declared)?)?,
+                kind,
             })
         })
         .collect()
@@ -102,48 +99,10 @@ fn nodes_at(root: &SyntaxNode, range: TextRange) -> impl Iterator<Item = SyntaxN
         .take_while(move |node| node.text_range() == range)
 }
 
-/// Where a use spells `name`: a name read, a callee bare or qualified by its
-/// module, or the relation of a `from` or a `join`.
-fn used_name(root: &SyntaxNode, range: TextRange, name: &str) -> Option<TextRange> {
-    let ident = nodes_at(root, range).find_map(|node| match node.kind() {
-        SyntaxKind::IdentExpr => ast::IdentExpr::cast(node)?.name(),
-        SyntaxKind::CallExpr => match ast::CallExpr::cast(node)?.callee()? {
-            ast::Expr::IdentExpr(callee) => callee.name(),
-            ast::Expr::FieldAccessExpr(callee) => callee.field(),
-            ast::Expr::CallExpr(_)
-            | ast::Expr::StructExpr(_)
-            | ast::Expr::ListExpr(_)
-            | ast::Expr::BinaryExpr(_)
-            | ast::Expr::UnaryExpr(_)
-            | ast::Expr::ParenExpr(_)
-            | ast::Expr::Literal(_)
-            | ast::Expr::Pipeline(_) => None,
-        },
-        SyntaxKind::FromSource => ast::FromSource::cast(node)?.relation(),
-        SyntaxKind::JoinStage => ast::JoinStage::cast(node)?.relation(),
-        _ => None,
-    })?;
-    let token = ident.token()?;
-    (token.text() == name).then(|| token.text_range())
-}
-
-/// Where a declaration spells `name`. A local or a symbol is named by the
-/// declaration's own `Ident`; a parameter by one of the function's.
-fn declared_name(
-    root: &SyntaxNode,
-    range: TextRange,
-    name: &str,
-    kind: TargetKind,
-) -> Option<TextRange> {
+/// Where a declaration spells `name`: its own `Ident`.
+fn declared_name(root: &SyntaxNode, range: TextRange, name: &str) -> Option<TextRange> {
     let declaration = node_at(root, range)?;
-    let ident = match kind {
-        TargetKind::Local | TargetKind::Symbol => declaration.children().find_map(ast::Ident::cast),
-        TargetKind::Parameter => ast::FuncStmt::cast(declaration)?
-            .params()
-            .filter_map(|param| param.name())
-            .find(|ident| ident.token().is_some_and(|token| token.text() == name)),
-    }?;
-    let token = ident.token()?;
+    let token = declaration.children().find_map(ast::Ident::cast)?.token()?;
     (token.text() == name).then(|| token.text_range())
 }
 

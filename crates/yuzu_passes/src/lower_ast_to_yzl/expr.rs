@@ -328,9 +328,9 @@ impl<'c> AstToYzl<'c, '_> {
     ) -> Value<'c, 'a> {
         let loc = self.location(call);
 
-        let callee = match call.callee() {
+        let (callee, callee_range) = match call.callee() {
             Some(ast::Expr::IdentExpr(ident)) => match self.read_ident(ident.name()) {
-                Some(callee) => callee,
+                Some(callee) => (callee, ident.syntax().text_range()),
                 None => {
                     return self.hole_and_assert(
                         block,
@@ -394,6 +394,7 @@ impl<'c> AstToYzl<'c, '_> {
             );
         };
 
+        self.record(callee_range, callee, callable.target);
         self.emit_call(block, callable, &operands, loc)
     }
 
@@ -406,7 +407,9 @@ impl<'c> AstToYzl<'c, '_> {
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         let base = match access.base() {
-            Some(ast::Expr::IdentExpr(ident)) => self.read_ident(ident.name()),
+            Some(ast::Expr::IdentExpr(ident)) => self
+                .read_ident(ident.name())
+                .map(|base| (base, ident.syntax().text_range())),
             Some(_) => {
                 return self.hole_and_report(
                     block,
@@ -418,7 +421,7 @@ impl<'c> AstToYzl<'c, '_> {
             None => None,
         };
 
-        let (Some(base), Some(name)) = (base, self.read_ident(access.field())) else {
+        let (Some((base, base_range)), Some(name)) = (base, self.read_ident(access.field())) else {
             return self.hole_and_assert(
                 block,
                 call,
@@ -435,6 +438,7 @@ impl<'c> AstToYzl<'c, '_> {
                 UnresolvedType::new(self.context).into(),
             );
         };
+        self.record_module(base_range, base, path);
 
         let operands: Vec<Value> = call
             .args()
@@ -465,6 +469,9 @@ impl<'c> AstToYzl<'c, '_> {
             );
         };
 
+        if let Some(field) = access.field() {
+            self.record(field.syntax().text_range(), name, callable.target);
+        }
         self.emit_call(block, callable, &operands, loc)
     }
 
@@ -602,7 +609,8 @@ impl<'c> AstToYzl<'c, '_> {
                     .expect("the scope answered from the row this block was built for")
                     .into();
             }
-            Lookup::Local(slot) => {
+            Lookup::Local { slot, declared } => {
+                self.record_local(node.syntax().text_range(), name, declared);
                 let load = yzl::load(
                     self.context,
                     UnresolvedType::new(self.context).into(),
@@ -611,8 +619,9 @@ impl<'c> AstToYzl<'c, '_> {
                 );
                 return block.append_operation(load.into()).first_result();
             }
-            Lookup::Let(symbol) => {
-                return self.emit_call(block, Callable::constant(symbol), &[], loc);
+            Lookup::Let(symbol, target) => {
+                self.record(node.syntax().text_range(), name, target);
+                return self.emit_call(block, Callable::constant(symbol, target), &[], loc);
             }
             Lookup::Lost => {
                 return self.emit_hole(

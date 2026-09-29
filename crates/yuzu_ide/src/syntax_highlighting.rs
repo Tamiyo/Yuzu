@@ -136,6 +136,7 @@ pub(crate) fn highlight_uses(checked: &Checked, source: SourceId) -> Vec<HlRange
                 DeclarationKind::Table => HlTag::Table.into(),
                 DeclarationKind::Struct => HlTag::Struct.into(),
                 DeclarationKind::Trait => HlTag::Trait.into(),
+                DeclarationKind::Module => HlTag::Module.into(),
             };
             HlRange {
                 range: resolution.used.range,
@@ -395,6 +396,7 @@ from employees e
             .collect();
         expect![[r"
             x Parameter
+            k Local Mutable
             k Local Mutable
             cap Local
             k Local Mutable

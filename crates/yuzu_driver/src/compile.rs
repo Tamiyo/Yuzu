@@ -194,7 +194,17 @@ pub(crate) fn lower_and_check<'c>(
     yzl: Option<&mut String>,
     mut index: Option<&mut IndexReader<'_>>,
 ) -> Option<melior::ir::Module<'c>> {
-    let mut module = yuzu_passes::lower_ast_to_yzl(context, sources, files, diagnostics, library);
+    let mut module = match index.as_deref_mut() {
+        Some(reader) => yuzu_passes::lower_ast_to_yzl_with_listener(
+            context,
+            sources,
+            files,
+            diagnostics,
+            library,
+            reader,
+        ),
+        None => yuzu_passes::lower_ast_to_yzl(context, sources, files, diagnostics, library),
+    };
 
     if let Some(yzl) = yzl {
         *yzl = module.as_operation().to_string();

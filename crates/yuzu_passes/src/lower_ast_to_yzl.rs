@@ -4,6 +4,7 @@
 use melior::Context;
 use melior::ir::attribute::StringAttribute;
 use melior::ir::{BlockLike, BlockRef, Location, Module, Type, Value};
+use rustc_hash::FxHashMap;
 use text_size::TextRange;
 use yuzu_ast::ast::{self, AstNode};
 use yuzu_diagnostics::{DiagnosticBuilder, DiagnosticsEngine, SourceId, SourceMap, Span};
@@ -11,7 +12,7 @@ use yuzu_mlir::ir::location::LocationExt;
 use yuzu_mlir::ir::operation::OperationExt;
 use yuzu_mlir::ods::yzl;
 
-use crate::lower_ast_to_yzl::symbols::{Row, SymbolTable};
+use crate::lower_ast_to_yzl::symbols::{ModulePath, Row, SymbolTable, Target};
 
 mod expr;
 mod program;
@@ -21,6 +22,39 @@ mod symbols;
 
 pub use program::{File, Lowering};
 pub use symbols::{BoundLibrary, PRELUDE};
+
+/// A name the program wrote, and what it names.
+#[derive(Clone, Copy, Debug)]
+pub struct NameUse<'a> {
+    /// Where the name is written.
+    pub used: Span,
+    /// The name as written. An alias spells it differently from the
+    /// declaration it names.
+    pub spelling: &'a str,
+    pub target: NameTarget<'a>,
+}
+
+/// What a name names.
+#[derive(Clone, Copy, Debug)]
+pub enum NameTarget<'a> {
+    /// A declaration: all of its syntax, and the name it declares.
+    Declaration { at: Span, name: &'a str },
+    /// A module: the file that holds it, and its path.
+    Module { file: SourceId, path: &'a str },
+}
+
+/// Told each name the lowering resolves, so an editor sees the names the
+/// IR does not keep: an import, an alias, a trait in a bound.
+pub trait NameListener {
+    fn on_name(&mut self, name: NameUse<'_>);
+}
+
+/// A listener for a lowering that nothing watches.
+struct Silent;
+
+impl NameListener for Silent {
+    fn on_name(&mut self, _name: NameUse<'_>) {}
+}
 
 /// `files` is in the order the imports were resolved, the entry file last,
 /// and holds at least that one.
@@ -40,8 +74,32 @@ pub fn lower_ast_to_yzl<'c>(
     diagnostics: &mut DiagnosticsEngine,
     library: Option<&'c BoundLibrary<'c>>,
 ) -> Module<'c> {
+    lower_ast_to_yzl_with_listener(context, sources, files, diagnostics, library, &mut Silent)
+}
+
+/// [`lower_ast_to_yzl`], telling `listener` each name it resolves.
+///
+/// # Panics
+///
+/// If `files` is empty.
+pub fn lower_ast_to_yzl_with_listener<'c>(
+    context: &'c Context,
+    sources: &SourceMap,
+    files: &[File],
+    diagnostics: &mut DiagnosticsEngine,
+    library: Option<&'c BoundLibrary<'c>>,
+    listener: &mut dyn NameListener,
+) -> Module<'c> {
     let entry = files.last().expect("a program has an entry file");
-    let mut lowerer = AstToYzl::new(context, library, sources, entry, diagnostics);
+    let mut lowerer = AstToYzl::new(
+        context,
+        library,
+        sources,
+        files,
+        entry,
+        diagnostics,
+        listener,
+    );
     lowerer.lower(files, entry)
 }
 
@@ -59,7 +117,16 @@ pub fn bind_library<'c>(
     diagnostics: &mut DiagnosticsEngine,
 ) -> BoundLibrary<'c> {
     let first = files.first().expect("a library has a file");
-    let mut lowerer = AstToYzl::new(context, None, sources, first, diagnostics);
+    let mut silent = Silent;
+    let mut lowerer = AstToYzl::new(
+        context,
+        None,
+        sources,
+        files,
+        first,
+        diagnostics,
+        &mut silent,
+    );
     lowerer.bind_names(files);
     lowerer.symbols.into_library()
 }
@@ -73,6 +140,9 @@ struct AstToYzl<'c, 'd> {
     /// The name of the file being lowered, made once for its locations.
     file: StringAttribute<'c>,
     diagnostics: &'d mut DiagnosticsEngine,
+    listener: &'d mut dyn NameListener,
+    /// The file each module was read from, for a name to point into.
+    module_files: FxHashMap<ModulePath<'c>, SourceId>,
 }
 
 /// The values a function body's `let`s bound, by slot. They live apart from
@@ -85,16 +155,31 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         context: &'c Context,
         library: Option<&'c BoundLibrary<'c>>,
         sources: &'d SourceMap,
+        files: &[File],
         file: &File,
         diagnostics: &'d mut DiagnosticsEngine,
+        listener: &'d mut dyn NameListener,
     ) -> Self {
+        let symbols = SymbolTable::new(context, library);
+        let module_files = files
+            .iter()
+            .map(|file| {
+                let module = match file.module.as_deref() {
+                    Some(path) => ModulePath::from_path(symbols.intern(path)),
+                    None => ModulePath::entry(),
+                };
+                (module, file.source_id)
+            })
+            .collect();
         Self {
             context,
-            symbols: SymbolTable::new(context, library),
+            symbols,
             sources,
             source_id: file.source_id,
             file: StringAttribute::new(context, sources.name(file.source_id)),
             diagnostics,
+            listener,
+            module_files,
         }
     }
 }
@@ -121,12 +206,62 @@ impl<'c> AstToYzl<'c, '_> {
         (result, self.symbols.close_relation())
     }
 
-    fn diagnostic_at(&self, range: TextRange, message: &str) -> DiagnosticBuilder {
-        let span = Span {
+    /// Tells the listener that the name at `used` in this file names a
+    /// declaration. A declaration in a module this run did not read, as a
+    /// bound library's, has no file to point into.
+    fn record(&mut self, used: TextRange, spelling: &str, target: Target<'c>) {
+        let Some(&source_id) = self.module_files.get(&target.at.module) else {
+            return;
+        };
+        self.listener.on_name(NameUse {
+            used: self.span(used),
+            spelling,
+            target: NameTarget::Declaration {
+                at: Span {
+                    source_id,
+                    range: target.range,
+                },
+                name: target.at.name,
+            },
+        });
+    }
+
+    /// Tells the listener that the name at `used` names a local of this file.
+    fn record_local(&mut self, used: TextRange, name: &str, declared: TextRange) {
+        self.listener.on_name(NameUse {
+            used: self.span(used),
+            spelling: name,
+            target: NameTarget::Declaration {
+                at: self.span(declared),
+                name,
+            },
+        });
+    }
+
+    /// Tells the listener that the name at `used` names a module.
+    fn record_module(&mut self, used: TextRange, spelling: &str, path: &'c str) {
+        let Some(&source_id) = self.module_files.get(&ModulePath::from_path(path)) else {
+            return;
+        };
+        self.listener.on_name(NameUse {
+            used: self.span(used),
+            spelling,
+            target: NameTarget::Module {
+                file: source_id,
+                path,
+            },
+        });
+    }
+
+    fn span(&self, range: TextRange) -> Span {
+        Span {
             source_id: self.source_id,
             range,
-        };
-        DiagnosticBuilder::error(span, message)
+        }
+    }
+
+    fn diagnostic_at(&self, range: TextRange, message: &str) -> DiagnosticBuilder {
+        DiagnosticBuilder::error(self.span(range), message)
     }
 
     fn report(&mut self, node: &impl AstNode, message: &str) {

@@ -1,13 +1,15 @@
 //! What the IR knows about a program's names and types, kept as plain data
 //! so it outlives the MLIR context it was read from.
 //!
-//! References are read after lowering, while each read of a local is still
-//! a load of its place; types are read after inference. An op's location is
-//! the range the lowering made it from, so both are keyed by source range.
+//! References are what the lowering told its [`NameListener`] as it
+//! resolved each name, since the IR keeps no import or alias. Types are
+//! read from the IR after inference; an op's location is the range the
+//! lowering made it from, so both are keyed by source range.
 
 use melior::ir::operation::{OperationLike, OperationRef};
 use melior::ir::{Module, Type, Value, ValueLike};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
+use text_size::TextRange;
 use yuzu_diagnostics::{SourceMap, Span};
 use yuzu_mlir::diagnostics::span;
 use yuzu_mlir::ir::block::BlockExt;
@@ -16,27 +18,28 @@ use yuzu_mlir::ir::region::RegionExt;
 use yuzu_mlir::ir::value::op_result;
 use yuzu_mlir::ops::yzl::YzlOp;
 use yuzu_mlir::types::{self, ErrorType, QueryType, RefType, UnresolvedType};
+use yuzu_passes::{NameListener, NameTarget, NameUse};
 
-/// A name the program uses, and the declaration it names. `at` covers the
-/// syntax the use was lowered from, which holds the name; `target` covers
-/// the whole declaration.
+/// A name the program uses, and what it names. `at` is the name as
+/// written; `target` covers the whole declaration, or the start of a
+/// module's file.
 #[derive(Clone, Debug)]
 pub struct Reference {
     pub at: Span,
     pub target: Span,
-    /// The name as the declaration spells it.
+    /// The name as the declaration spells it, which an alias does not; a
+    /// module's path.
     pub name: String,
     pub kind: TargetKind,
 }
 
-/// What a reference's target declares, which says where in its syntax the
-/// name is: a function's parameter lies inside the function it belongs to.
+/// What a reference names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TargetKind {
-    Local,
-    Parameter,
-    /// A function, a module-level `let`, a table, or a struct.
-    Symbol,
+    /// A declaration, whose own name is inside `target`.
+    Declaration,
+    /// A module, whose file `target` points at.
+    Module,
 }
 
 /// A type inference settled, and the syntax it belongs to: an expression,
@@ -60,6 +63,35 @@ pub(crate) struct IndexReader<'s> {
     index: Index,
     /// Each local's declaration, and the value it first stores.
     initializers: FxHashMap<Span, Span>,
+    /// The names recorded so far. The lowering may resolve a name twice, as
+    /// the hoist and the walk both read a signature.
+    recorded: FxHashSet<Span>,
+}
+
+impl NameListener for IndexReader<'_> {
+    fn on_name(&mut self, name: NameUse<'_>) {
+        if !self.recorded.insert(name.used) {
+            return;
+        }
+
+        let (target, declared, kind) = match name.target {
+            NameTarget::Declaration { at, name } => (at, name, TargetKind::Declaration),
+            NameTarget::Module { file, path } => (
+                Span {
+                    source_id: file,
+                    range: TextRange::empty(0.into()),
+                },
+                path,
+                TargetKind::Module,
+            ),
+        };
+        self.index.references.push(Reference {
+            at: name.used,
+            target,
+            name: declared.to_owned(),
+            kind,
+        });
+    }
 }
 
 impl<'s> IndexReader<'s> {
@@ -68,6 +100,7 @@ impl<'s> IndexReader<'s> {
             sources,
             index: Index::default(),
             initializers: FxHashMap::default(),
+            recorded: FxHashSet::default(),
         }
     }
 
@@ -75,20 +108,11 @@ impl<'s> IndexReader<'s> {
         self.index
     }
 
-    /// References, from the module as the lowering left it.
+    /// Each local's initializer, from the module as the lowering left it,
+    /// while each local is still a place that its first store fills.
     pub(crate) fn read_lowered(&mut self, module: &Module<'_>) {
-        let body = module.body();
-        let mut declarations: FxHashMap<&str, Span> = FxHashMap::default();
-        for op in body.operations() {
-            if let Some(name) = op.text_attribute("sym_name")
-                && let Some(at) = span(self.sources, op.location())
-            {
-                declarations.insert(name, at);
-            }
-        }
-
-        for op in body.operations() {
-            self.read_references(op, &declarations);
+        for op in module.body().operations() {
+            self.read_initializers(op);
         }
     }
 
@@ -116,36 +140,15 @@ impl<'s> IndexReader<'s> {
         self.index.types.extend(initialized);
     }
 
-    fn read_references(&mut self, op: OperationRef<'_, '_>, declarations: &FxHashMap<&str, Span>) {
-        let target = match op.as_yzl() {
-            Some(YzlOp::Load(_)) => op
-                .try_first_operand()
-                .and_then(|place| self.read_local(place)),
-            Some(YzlOp::Store(_)) => {
-                self.read_initializer(op);
-                None
-            }
-            Some(YzlOp::Call(call)) => symbol(declarations, call.callee().value()),
-            Some(YzlOp::From(from)) => symbol(declarations, from.source().value()),
-            Some(YzlOp::Join(join)) => symbol(declarations, join.rhs().value()),
-            _ => None,
-        };
-
-        if let Some((target, name, kind)) = target
-            && let Some(at) = span(self.sources, op.location())
-        {
-            self.index.references.push(Reference {
-                at,
-                target,
-                name,
-                kind,
-            });
+    fn read_initializers(&mut self, op: OperationRef<'_, '_>) {
+        if let Some(YzlOp::Store(_)) = op.as_yzl() {
+            self.read_initializer(op);
         }
 
         for region in op.regions() {
             for block in region.blocks() {
                 for inner in block.operations() {
-                    self.read_references(inner, declarations);
+                    self.read_initializers(inner);
                 }
             }
         }
@@ -188,37 +191,10 @@ impl<'s> IndexReader<'s> {
         }
     }
 
-    /// The local a place is: its declaration, name and kind.
-    fn read_local(&self, place: Value<'_, '_>) -> Option<(Span, String, TargetKind)> {
-        let result = op_result(place)?;
-        let owner = result.owner();
-        let Some(YzlOp::Local(local)) = owner.as_yzl() else {
-            return None;
-        };
-        let kind = if local.is_param() {
-            TargetKind::Parameter
-        } else {
-            TargetKind::Local
-        };
-        let name = local.var_name().value().to_owned();
-        Some((span(self.sources, owner.location())?, name, kind))
-    }
-
     fn defined_at(&self, value: Value<'_, '_>) -> Option<Span> {
         let result = op_result(value)?;
         span(self.sources, result.owner().location())
     }
-}
-
-/// A symbol's declaration, and the name it was written under: `helpers.two`
-/// is declared as `two`.
-fn symbol(
-    declarations: &FxHashMap<&str, Span>,
-    symbol: &str,
-) -> Option<(Span, String, TargetKind)> {
-    let target = *declarations.get(symbol)?;
-    let name = yuzu_passes::written_name(symbol).to_owned();
-    Some((target, name, TargetKind::Symbol))
 }
 
 /// A type worth showing a reader: one inference settled, of a value the
@@ -305,10 +281,10 @@ def double(x: int64) -> int64 {
 from t |> select double(a) + cap as v
 ",
             &expect![[r#"
-                use "x" -> "def double(x: int64) -> int64 {"
+                use "x" -> "x: int64"
                 use "y" -> "let y = x * 2"
-                use "from t" -> "table t = { a: int64 }"
-                use "double(a)" -> "def double(x: int64) -> int64 {"
+                use "t" -> "table t = { a: int64 }"
+                use "double" -> "def double(x: int64) -> int64 {"
                 use "cap" -> "let cap = 10"
                 type "let cap = 10": int64
                 type "10": int64
@@ -331,9 +307,11 @@ table u = { b: int64 }
 from t |> join u on a == b |> select a + two() as v
 ",
             &expect![[r#"
-                use "from t" -> "table t = { a: int64 }"
-                use "|> join u on a == b" -> "table u = { b: int64 }"
-                use "two()" -> helpers.yz: "pub def two() -> int64 { return 2 }"
+                use "helpers" -> helpers.yz: ""
+                use "two" -> helpers.yz: "pub def two() -> int64 { return 2 }"
+                use "t" -> "table t = { a: int64 }"
+                use "u" -> "table u = { b: int64 }"
+                use "two" -> helpers.yz: "pub def two() -> int64 { return 2 }"
                 type "a == b": bool
                 type "two()": int64
                 type "a + two()": int64"#]],

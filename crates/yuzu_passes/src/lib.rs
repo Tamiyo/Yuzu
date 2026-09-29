@@ -17,7 +17,10 @@ pub use check_mutability::check_mutability;
 pub use infer_types::infer_types;
 pub use inline_calls::inline_calls;
 pub use legalize_operators::legalize_operators;
-pub use lower_ast_to_yzl::{BoundLibrary, File, Lowering, PRELUDE, bind_library, lower_ast_to_yzl};
+pub use lower_ast_to_yzl::{
+    BoundLibrary, File, Lowering, NameListener, NameTarget, NameUse, PRELUDE, bind_library,
+    lower_ast_to_yzl, lower_ast_to_yzl_with_listener,
+};
 pub use lower_yzl_to_yzr::lower_yzl_to_yzr;
 pub use promote_locals::promote_locals;
 pub use remove_dead_symbols::remove_dead_symbols;

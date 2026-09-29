@@ -299,6 +299,7 @@ from t |> select double(a) + cap + two() as v
             &PROGRAM.replacen("+ two()", "+ t$0wo()", 1),
             &expect![[r"
                 helpers.yz:two 8..11
+                main.yz:two 20..23
                 main.yz:two 160..163"]],
         );
     }
@@ -337,5 +338,74 @@ from t |> select f(a) + f$0(a, a) + f(a, 1) as v
             .expect("`sum` has a declaration");
         assert!(target.path.starts_with(&root));
         expect!["aggregates.yz:sum"].assert_eq(&render(&checked, &target.path, target.range));
+    }
+
+    #[test]
+    fn an_alias_goes_to_what_it_names() {
+        check_definition(
+            "from helpers import two as deux\ntable t = { a: int64 }\nfrom t |> select $0deux() as v\n",
+            &expect![[r#"
+                Some(
+                    "helpers.yz:two",
+                )
+            "#]],
+        );
+    }
+
+    #[test]
+    fn an_import_item_goes_to_its_declaration() {
+        check_definition(
+            "from helpers import $0two\ntable t = { a: int64 }\nfrom t |> select two() as v\n",
+            &expect![[r#"
+                Some(
+                    "helpers.yz:two",
+                )
+            "#]],
+        );
+    }
+
+    #[test]
+    fn a_module_qualifier_goes_to_its_file() {
+        check_definition(
+            "import helpers as h\ntable t = { a: int64 }\nfrom t |> select $0h.two() as v\n",
+            &expect![[r#"
+                Some(
+                    "helpers.yz:",
+                )
+            "#]],
+        );
+    }
+
+    #[test]
+    fn a_trait_in_a_bound_goes_to_the_trait() {
+        check_definition(
+            "trait Numeric {\n    def zero(x: Self) -> Self\n}\ndef id[T](x: T) -> T where T: $0Numeric { return x }\n",
+            &expect![[r#"
+                Some(
+                    "main.yz:Numeric",
+                )
+            "#]],
+        );
+    }
+
+    #[test]
+    fn both_names_in_an_impl_header_go_to_their_declarations() {
+        let program = "trait Show {\n    def show(x: Self) -> str\n}\nstruct Row { a: int64 }\nimpl Show for Row {\n    def show(x: Row) -> str { return \"row\" }\n}\n";
+        check_definition(
+            &program.replacen("impl Show", "impl $0Show", 1),
+            &expect![[r#"
+                Some(
+                    "main.yz:Show",
+                )
+            "#]],
+        );
+        check_definition(
+            &program.replacen("for Row", "for $0Row", 1),
+            &expect![[r#"
+                Some(
+                    "main.yz:Row",
+                )
+            "#]],
+        );
     }
 }

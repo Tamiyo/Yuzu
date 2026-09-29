@@ -92,7 +92,7 @@ impl<'c> AstToYzl<'c, '_> {
             return (hole, Row::lost());
         };
 
-        let Some((symbol, mut row)) = self.symbols.relation(source, None) else {
+        let Some((symbol, mut row, target)) = self.symbols.relation(source, None) else {
             let hole = self.hole_and_report(
                 block,
                 from,
@@ -101,6 +101,9 @@ impl<'c> AstToYzl<'c, '_> {
             );
             return (hole, Row::lost());
         };
+        if let Some(relation) = from.relation() {
+            self.record(relation.syntax().text_range(), source, target);
+        }
 
         let mut value = block
             .append_operation(
@@ -386,7 +389,7 @@ impl<'c> AstToYzl<'c, '_> {
         };
 
         let alias = self.read_ident(join.alias());
-        let Some((rhs_symbol, rhs)) = self.symbols.relation(relation, alias) else {
+        let Some((rhs_symbol, rhs, target)) = self.symbols.relation(relation, alias) else {
             return self.hole_and_report(
                 block,
                 join,
@@ -394,6 +397,9 @@ impl<'c> AstToYzl<'c, '_> {
                 QueryType::new(self.context).into(),
             );
         };
+        if let Some(written) = join.relation() {
+            self.record(written.syntax().text_range(), relation, target);
+        }
 
         let mut using: Vec<&'c str> = Vec::new();
         if let Some(clause) = join.using() {

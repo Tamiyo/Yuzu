@@ -15,7 +15,7 @@ use yuzu_mlir::types::{self, ErrorType, ListType, ParamType, RefType, StructType
 
 use crate::lower_ast_to_yzl::symbols::{
     Binding, BindingKind, Declared, FunctionKind, Lookup, Method, ModulePath, Overload, Reference,
-    Row,
+    Row, Target,
 };
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 
@@ -105,8 +105,11 @@ impl<'c> AstToYzl<'c, '_> {
 
         // An imported struct is held under the module that declared it,
         // whatever an `as` renamed it to here.
-        let row = if let Some(struct_name) = self.read_ident(decl.struct_name()) {
-            if let Some(symbol) = self.symbols.struct_symbol(struct_name) {
+        let row = if let Some(written) = decl.struct_name()
+            && let Some(struct_name) = self.read_ident(Some(written.clone()))
+        {
+            if let Some((symbol, target)) = self.symbols.struct_symbol(struct_name) {
+                self.record(written.syntax().text_range(), struct_name, target);
                 symbol
             } else {
                 debug_assert!(
@@ -210,6 +213,7 @@ impl<'c> AstToYzl<'c, '_> {
 
         // Params.
         let mut param_names = Vec::new();
+        let mut param_ranges = Vec::new();
         let mut param_types = Vec::new();
         let mut has_error = false;
         for param in decl.params() {
@@ -228,6 +232,7 @@ impl<'c> AstToYzl<'c, '_> {
             };
 
             param_names.push(name);
+            param_ranges.push(param.syntax().text_range());
             param_types.push(ty);
         }
 
@@ -267,7 +272,7 @@ impl<'c> AstToYzl<'c, '_> {
                         loc,
                     );
 
-                    this.bind_local(&mut locals, name, place);
+                    this.bind_local(&mut locals, name, param_ranges[index], place);
                 }
 
                 this.convert_block(entry, &mut locals, &block);
@@ -369,12 +374,20 @@ impl<'c> AstToYzl<'c, '_> {
             _ => self.read_methods(decl.methods()),
         };
 
-        let trait_symbol = self.symbols.trait_symbol(trait_name);
-        if trait_symbol.is_none() {
+        let trait_symbol = if let Some((symbol, declared)) = self.symbols.trait_symbol(trait_name) {
+            if let Some(written) = decl.trait_().and_then(|trait_ref| trait_ref.name()) {
+                self.record(written.syntax().text_range(), trait_name, declared);
+            }
+            Some(symbol)
+        } else {
             self.report(decl, &format!("unknown trait `{trait_name}`"));
-        }
+            None
+        };
 
-        let target = if let Some(symbol) = self.symbols.struct_symbol(target) {
+        let target = if let Some((symbol, declared)) = self.symbols.struct_symbol(target) {
+            if let Some(written) = decl.ty() {
+                self.record(written.syntax().text_range(), target, declared);
+            }
             symbol
         } else {
             if types::scalar(self.context, target).is_none() {
@@ -434,7 +447,7 @@ impl<'c> AstToYzl<'c, '_> {
             let kind = LocalKind::Let(decl.mutability());
             let value = self.convert_expr(block, locals, &expr);
             let place = self.emit_local(block, name, kind, element, value, loc);
-            self.bind_local(locals, name, place);
+            self.bind_local(locals, name, decl.syntax().text_range(), place);
             return;
         }
 
@@ -509,8 +522,10 @@ impl<'c> AstToYzl<'c, '_> {
             return;
         }
 
-        let name = match assign.target() {
-            Some(ast::Expr::IdentExpr(ident)) => self.read_ident(ident.name()),
+        let target = match assign.target() {
+            Some(ast::Expr::IdentExpr(ident)) => self
+                .read_ident(ident.name())
+                .map(|name| (name, ident.syntax().text_range())),
             Some(target) => {
                 self.report(&target, "only a name can be assigned to");
                 return;
@@ -518,7 +533,7 @@ impl<'c> AstToYzl<'c, '_> {
             None => None,
         };
 
-        let Some(name) = name else {
+        let Some((name, written)) = target else {
             self.assert_syntax_error("assignment is missing its target");
             return;
         };
@@ -528,7 +543,7 @@ impl<'c> AstToYzl<'c, '_> {
             return;
         };
 
-        let Some(slot) = self.resolve_place(assign, name) else {
+        let Some(slot) = self.resolve_place(assign, name, written) else {
             return;
         };
 
@@ -759,18 +774,27 @@ impl<'c> AstToYzl<'c, '_> {
         for stmt in root.stmts() {
             match &stmt {
                 ast::Stmt::FromImportStmt(import) => {
-                    let Some(path) = import.path().map(|path| self.read_path(&path)) else {
+                    let Some(written) = import.path() else {
                         continue;
                     };
+                    let path = self.read_path(&written);
+                    self.record_module(written.syntax().text_range(), path, path);
 
                     for item in import.items() {
                         self.bind_import(path, &item, import.visibility());
                     }
                 }
                 ast::Stmt::ImportStmt(import) => {
-                    let Some(path) = import.path().map(|path| self.read_path(&path)) else {
+                    let Some(written) = import.path() else {
                         continue;
                     };
+                    let path = self.read_path(&written);
+                    self.record_module(written.syntax().text_range(), path, path);
+                    if let Some(alias) = import.alias()
+                        && let Some(spelling) = self.read_ident(Some(alias.clone()))
+                    {
+                        self.record_module(alias.syntax().text_range(), spelling, path);
+                    }
 
                     let last = path
                         .rsplit('.')
@@ -825,7 +849,18 @@ impl<'c> AstToYzl<'c, '_> {
             return;
         };
 
-        let local = self.read_ident(item.alias()).unwrap_or(name);
+        let declared = Target {
+            at: from,
+            range: exported.text_range,
+        };
+        let alias = item.alias();
+        for written in item.name().into_iter().chain(alias.clone()) {
+            if let Some(spelling) = self.read_ident(Some(written.clone())) {
+                self.record(written.syntax().text_range(), spelling, declared);
+            }
+        }
+
+        let local = self.read_ident(alias).unwrap_or(name);
 
         if self.symbols.binding(local).is_some() {
             self.check_duplicate(item, exported.kind.name(), local);
@@ -911,9 +946,15 @@ impl<'c> AstToYzl<'c, '_> {
         self.symbols.add_overload(name, overload);
     }
 
-    /// Binds a name to a place the body has declared.
-    fn bind_local<'a>(&mut self, locals: &mut Locals<'c, 'a>, name: &'c str, place: Value<'c, 'a>) {
-        self.symbols.bind_local(name, locals.len());
+    /// Binds a name to a place the body has declared at `declared`.
+    fn bind_local<'a>(
+        &mut self,
+        locals: &mut Locals<'c, 'a>,
+        name: &'c str,
+        declared: TextRange,
+        place: Value<'c, 'a>,
+    ) {
+        self.symbols.bind_local(name, locals.len(), declared);
         locals.push(place);
     }
 
@@ -984,10 +1025,13 @@ impl<'c> AstToYzl<'c, '_> {
 
                 // A bound names the trait's symbol, the one its `impl`s are
                 // recorded under: in a module the two are not spelled alike.
-                let Some(bound_trait) = self.symbols.trait_symbol(name) else {
+                let Some((bound_trait, declared)) = self.symbols.trait_symbol(name) else {
                     self.report(&trait_ref, &format!("unknown trait `{name}`"));
                     continue;
                 };
+                if let Some(written) = trait_ref.name() {
+                    self.record(written.syntax().text_range(), name, declared);
+                }
 
                 subjects.push(subject);
                 traits.push(bound_trait);
@@ -1077,7 +1121,10 @@ impl<'c> AstToYzl<'c, '_> {
             return scalar;
         }
 
-        if let Some(symbol) = self.symbols.struct_symbol(name) {
+        if let Some((symbol, declared)) = self.symbols.struct_symbol(name) {
+            if let Some(written) = named.name() {
+                self.record(written.syntax().text_range(), name, declared);
+            }
             return StructType::new(self.context, symbol).into();
         }
 
@@ -1089,15 +1136,24 @@ impl<'c> AstToYzl<'c, '_> {
         self.symbols.intern(&path.to_dotted())
     }
 
-    /// The slot of the place an assignment writes, when the name is one.
-    fn resolve_place(&mut self, node: &impl AstNode, name: &str) -> Option<usize> {
+    /// The slot of the place an assignment writes, when the name written at
+    /// `written` is one.
+    fn resolve_place(
+        &mut self,
+        node: &impl AstNode,
+        name: &str,
+        written: TextRange,
+    ) -> Option<usize> {
         let message = match self.symbols.lookup(Reference::unqualified(name)) {
-            Lookup::Local(slot) => return Some(slot),
+            Lookup::Local { slot, declared } => {
+                self.record_local(written, name, declared);
+                return Some(slot);
+            }
             Lookup::Lost => return None,
             Lookup::Column(_) | Lookup::Ambiguous | Lookup::NarrowedAway => {
                 format!("`{name}` is a column; `set` is how a query writes one")
             }
-            Lookup::Let(_) => {
+            Lookup::Let(..) => {
                 format!("`{name}` is a module-level binding and cannot be assigned")
             }
             Lookup::NotAValue(what) => format!("`{name}` is a {what}, not a binding"),
