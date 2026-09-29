@@ -763,7 +763,7 @@ impl<'c> AstToYzl<'c, '_> {
                     };
 
                     for item in import.items() {
-                        self.bind_import(path, &item);
+                        self.bind_import(path, &item, import.visibility());
                     }
                 }
                 ast::Stmt::ImportStmt(import) => {
@@ -781,7 +781,7 @@ impl<'c> AstToYzl<'c, '_> {
                         import,
                         name,
                         BindingKind::Module { path },
-                        Visibility::Private,
+                        import.visibility(),
                     );
                 }
                 ast::Stmt::ModStmt(decl) => {
@@ -812,7 +812,9 @@ impl<'c> AstToYzl<'c, '_> {
         }
     }
 
-    fn bind_import(&mut self, path: &'c str, item: &ast::ImportItem) {
+    /// `visibility` is the import's own: a module passes on what it imports
+    /// only when `pub` says so.
+    fn bind_import(&mut self, path: &'c str, item: &ast::ImportItem, visibility: Visibility) {
         let Some(name) = self.read_ident(item.name()) else {
             self.reported_by_parser("import item is missing its name");
             return;
@@ -834,7 +836,7 @@ impl<'c> AstToYzl<'c, '_> {
             Binding {
                 kind: BindingKind::Import { from },
                 text_range: item.syntax().text_range(),
-                visibility: exported.visibility,
+                visibility,
             },
         );
     }
@@ -928,24 +930,35 @@ impl<'c> AstToYzl<'c, '_> {
             return None;
         }
 
-        let Some((declared, binding)) = self
-            .symbols
-            .find_declared(module, name)
-            .map(|(declared, binding)| (declared, binding.clone()))
-        else {
+        // The module's own entry decides: an import it did not mark `pub`
+        // is not exported, whatever the origin's visibility.
+        let Some(own) = self.symbols.declared_binding(module, name) else {
             self.report(at, &format!("`{path}` does not declare `{name}`"));
             return None;
         };
 
-        if binding.visibility != Visibility::Public {
-            self.report(
-                at,
+        if own.visibility != Visibility::Public {
+            let is_import = matches!(own.kind, BindingKind::Import { .. });
+            let mut diagnostic = self.diagnostic_at(
+                at.syntax().text_range(),
                 &format!("`{name}` is not public; `{path}` keeps it to itself"),
             );
+            if is_import {
+                diagnostic = diagnostic.note(format!(
+                    "`{path}` imports `{name}`; `pub from` would export it again"
+                ));
+            }
+
+            self.diagnostics.emit(diagnostic);
             return None;
         }
 
-        Some((declared, binding))
+        let found = self
+            .symbols
+            .find_declared(module, name)
+            .map(|(declared, binding)| (declared, binding.clone()))
+            .expect("an import points at a declaration that exists");
+        Some(found)
     }
 
     /// One entry per `(parameter, trait)` pair.

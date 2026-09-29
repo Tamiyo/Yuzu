@@ -318,6 +318,13 @@ impl ModStmt {
 
 ast_node!(ImportStmt);
 impl ImportStmt {
+    /// Whether a file that imports this module may name the module through
+    /// it. An import is private unless `pub` exports it again.
+    #[must_use]
+    pub fn visibility(&self) -> Visibility {
+        visibility_of(self.syntax())
+    }
+
     #[must_use]
     pub fn path(&self) -> Option<ModulePath> {
         support::child(self.syntax())
@@ -332,6 +339,13 @@ impl ImportStmt {
 
 ast_node!(FromImportStmt);
 impl FromImportStmt {
+    /// Whether a file that imports this module may name the items through
+    /// it. An import is private unless `pub` exports it again.
+    #[must_use]
+    pub fn visibility(&self) -> Visibility {
+        visibility_of(self.syntax())
+    }
+
     #[must_use]
     pub fn path(&self) -> Option<ModulePath> {
         support::child(self.syntax())
@@ -1141,6 +1155,24 @@ mod tests {
         let fields: Vec<StructField> = structs[0].fields().collect();
         assert_eq!(fields[0].visibility(), Visibility::Public);
         assert_eq!(fields[1].visibility(), Visibility::Private);
+    }
+
+    #[test]
+    fn an_import_is_private_until_pub_exports_it() {
+        let syntax = parsed("pub from a import x\nfrom a import y\npub import b\nimport c\n");
+        let from: Vec<Visibility> = syntax
+            .descendants()
+            .filter_map(FromImportStmt::cast)
+            .map(|import| import.visibility())
+            .collect();
+        assert_eq!(from, [Visibility::Public, Visibility::Private]);
+
+        let plain: Vec<Visibility> = syntax
+            .descendants()
+            .filter_map(ImportStmt::cast)
+            .map(|import| import.visibility())
+            .collect();
+        assert_eq!(plain, [Visibility::Public, Visibility::Private]);
     }
 
     /// A module declaration carries a `mod` of its own, so the narrowing has

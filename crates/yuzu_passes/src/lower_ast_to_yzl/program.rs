@@ -477,4 +477,38 @@ mod tests {
             ),
         ]));
     }
+
+    #[test]
+    fn a_private_import_is_not_exported_again() {
+        expect![[r"
+            error: `f` is not public; `b` keeps it to itself
+             --> main.yz:1:15
+              |
+            1 | from b import f
+              |               ^
+              = note: `b` imports `f`; `pub from` would export it again
+        "]]
+        .assert_eq(&reported_program(&[
+            (
+                "a.yz",
+                Some("a"),
+                "pub def f(x: int64) -> int64 { return x }\n",
+            ),
+            ("b.yz", Some("b"), "from a import f\n"),
+            ("main.yz", None, "from b import f\n"),
+        ]));
+    }
+
+    #[test]
+    fn a_public_import_is_exported_again() {
+        expect![[r""]].assert_eq(&reported_program(&[
+            ("a.yz", Some("a"), "pub def f(x: int64) -> int64 { return x }\n"),
+            ("b.yz", Some("b"), "pub from a import f\n"),
+            (
+                "main.yz",
+                None,
+                "from b import f\nstruct Row { a: int64 }\ntable t = Row\nfrom t |> select f(a) as v\n",
+            ),
+        ]));
+    }
 }

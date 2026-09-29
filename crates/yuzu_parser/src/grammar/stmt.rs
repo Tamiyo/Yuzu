@@ -70,6 +70,9 @@ fn parse_public_stmt(p: &mut Parser) -> CompletedMarker {
         Some(TokenKind::StructKw) => parse_struct_stmt(p),
         Some(TokenKind::TableKw) => parse_table_stmt(p),
         Some(TokenKind::ModKw) => parse_mod_stmt(p),
+        // A query cannot be exported, so a `from` here is an import.
+        Some(TokenKind::FromKw) => parse_from_import_stmt(p),
+        Some(TokenKind::ImportKw) => parse_import_stmt(p),
         _ => {
             let m = p.start();
             let range = p.peek_range();
@@ -135,6 +138,7 @@ fn parse_mod_stmt(p: &mut Parser) -> CompletedMarker {
 /// `import a.b`, optionally renamed by `as`.
 fn parse_import_stmt(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
+    parse_visibility(p);
     p.expect(TokenKind::ImportKw);
     parse_module_path(p);
     parse_rename(p);
@@ -144,6 +148,7 @@ fn parse_import_stmt(p: &mut Parser) -> CompletedMarker {
 /// `from a.b import x, y as z`.
 fn parse_from_import_stmt(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
+    parse_visibility(p);
     p.expect(TokenKind::FromKw);
     parse_module_path(p);
     p.expect(TokenKind::ImportKw);
@@ -1179,6 +1184,29 @@ mod tests {
                     Whitespace@35..36 " "
                     Ident@36..40
                       Identifier@36..40 "mean"
+            "#]],
+        );
+    }
+
+    #[test]
+    fn parse_a_public_import() {
+        check(
+            "pub from helpers import spread",
+            &expect![[r#"
+                FromImportStmt@0..30
+                  PubKw@0..3 "pub"
+                  Whitespace@3..4 " "
+                  FromKw@4..8 "from"
+                  Whitespace@8..9 " "
+                  ModulePath@9..16
+                    Ident@9..16
+                      Identifier@9..16 "helpers"
+                  Whitespace@16..17 " "
+                  ImportKw@17..23 "import"
+                  Whitespace@23..24 " "
+                  ImportItem@24..30
+                    Ident@24..30
+                      Identifier@24..30 "spread"
             "#]],
         );
     }

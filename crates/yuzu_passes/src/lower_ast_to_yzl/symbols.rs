@@ -555,10 +555,18 @@ impl<'c> SymbolTable<'c> {
         }
     }
 
+    /// What a module holds under a name, an import left as it is.
+    pub(super) fn declared_binding(
+        &self,
+        module: ModulePath<'c>,
+        name: &str,
+    ) -> Option<&Binding<'c>> {
+        self.declared_in(module, name).map(|(_, binding)| binding)
+    }
+
     /// What this file holds under a name, an import left as it is.
     pub(super) fn binding(&self, name: &str) -> Option<&Binding<'c>> {
-        self.declared_in(self.module, name)
-            .map(|(_, binding)| binding)
+        self.declared_binding(self.module, name)
     }
 
     /// What a name in this file stands for, and where it was declared,
