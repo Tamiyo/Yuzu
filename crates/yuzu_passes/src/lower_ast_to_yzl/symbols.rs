@@ -865,6 +865,51 @@ impl<'c> SymbolTable<'c> {
         })
     }
 
+    /// The names a module's top level can use, and what each declares: its
+    /// own declarations and imports, then the prelude's public names, each
+    /// in name order.
+    pub(super) fn visible_in(&self, module: ModulePath<'c>) -> Vec<(&'c str, DeclarationKind)> {
+        let prelude = ModulePath::from_path(PRELUDE);
+        let declarations = |module: ModulePath<'c>| {
+            self.modules
+                .get(&module)
+                .into_iter()
+                .chain(
+                    self.library
+                        .and_then(|library| library.modules.get(&module)),
+                )
+                .flat_map(|declared| declared.iter())
+        };
+        let mut visible: Vec<(&'c str, DeclarationKind)> = Vec::new();
+        let mut add = |name: &'c str, binding: &Binding<'c>| {
+            let kind = match &binding.kind {
+                BindingKind::Import { from } => match self.find_in(*from) {
+                    Some((_, origin)) => origin.kind.declaration_kind(),
+                    None => return,
+                },
+                kind => kind.declaration_kind(),
+            };
+            if !visible.iter().any(|&(seen, _)| seen == name) {
+                visible.push((name, kind));
+            }
+        };
+        let mut own: Vec<_> = declarations(module).collect();
+        own.sort_unstable_by_key(|&(&name, _)| name);
+        for (&name, binding) in own {
+            add(name, binding);
+        }
+        if module != prelude {
+            let mut exported: Vec<_> = declarations(prelude)
+                .filter(|(_, binding)| binding.visibility == Visibility::Public)
+                .collect();
+            exported.sort_unstable_by_key(|&(&name, _)| name);
+            for (&name, binding) in exported {
+                add(name, binding);
+            }
+        }
+        visible
+    }
+
     /// The declaration a name in this file names, whatever it is: for a
     /// function, its first overload this module can call.
     pub(super) fn target_of(&self, name: &str) -> Option<Target<'c>> {

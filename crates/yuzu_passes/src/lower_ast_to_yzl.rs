@@ -12,7 +12,7 @@ use yuzu_mlir::ir::location::LocationExt;
 use yuzu_mlir::ir::operation::OperationExt;
 use yuzu_mlir::ods::yzl;
 
-use crate::lower_ast_to_yzl::symbols::{ModulePath, Row, SymbolTable, Target};
+use crate::lower_ast_to_yzl::symbols::{DeclarationKind, ModulePath, Row, SymbolTable, Target};
 
 mod expr;
 mod program;
@@ -43,10 +43,29 @@ pub enum NameTarget<'a> {
     Module { file: SourceId, path: &'a str },
 }
 
+/// What a name a file can use declares.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NameKind {
+    Struct,
+    Relation,
+    Function,
+    Trait,
+    /// A module-level `let`.
+    Binding,
+    Module,
+}
+
 /// Told each name the lowering resolves, so an editor sees the names the
-/// IR does not keep: an import, an alias, a trait in a bound.
+/// IR does not keep: an import, an alias, a trait in a bound. It is also
+/// told the names in scope, for completion.
 pub trait NameListener {
     fn on_name(&mut self, name: NameUse<'_>);
+
+    /// The columns the expressions of the stage at `stage` can read.
+    fn on_row(&mut self, _stage: Span, _columns: &mut dyn Iterator<Item = &str>) {}
+
+    /// The names the top level of the file `file` can use.
+    fn on_file(&mut self, _file: SourceId, _names: &mut dyn Iterator<Item = (&str, NameKind)>) {}
 }
 
 /// A listener for a lowering that nothing watches.
@@ -100,7 +119,9 @@ pub fn lower_ast_to_yzl_with_listener<'c>(
         diagnostics,
         listener,
     );
-    lowerer.lower(files, entry)
+    let module = lowerer.lower(files, entry);
+    lowerer.report_files(files);
+    module
 }
 
 /// Binds the names `files` declare, in the order the imports were resolved,
@@ -148,6 +169,20 @@ struct AstToYzl<'c, 'd> {
 /// The values a function body's `let`s bound, by slot. They live apart from
 /// the symbol table because each borrows the block being built.
 type Locals<'c, 'a> = Vec<Value<'c, 'a>>;
+
+/// What a declaration is, as a completion shows it. An import is followed to
+/// what it names, so it is none of these.
+fn name_kind(kind: DeclarationKind) -> Option<NameKind> {
+    Some(match kind {
+        DeclarationKind::Struct => NameKind::Struct,
+        DeclarationKind::Relation => NameKind::Relation,
+        DeclarationKind::Function => NameKind::Function,
+        DeclarationKind::Trait => NameKind::Trait,
+        DeclarationKind::Binding => NameKind::Binding,
+        DeclarationKind::Module => NameKind::Module,
+        DeclarationKind::Import => return None,
+    })
+}
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
     /// Starts at `file`; the walk moves from file to file.
@@ -204,6 +239,21 @@ impl<'c> AstToYzl<'c, '_> {
         self.symbols.open_relation(row);
         let result = f(self);
         (result, self.symbols.close_relation())
+    }
+
+    /// Tells the listener the names each file's top level can use.
+    fn report_files(&mut self, files: &[File]) {
+        for file in files {
+            let module = match file.module.as_deref() {
+                Some(path) => ModulePath::from_path(self.symbols.intern(path)),
+                None => ModulePath::entry(),
+            };
+            let visible = self.symbols.visible_in(module);
+            let mut names = visible
+                .iter()
+                .filter_map(|&(name, kind)| Some((name, name_kind(kind)?)));
+            self.listener.on_file(file.source_id, &mut names);
+        }
     }
 
     /// Tells the listener that the name at `used` in this file names a

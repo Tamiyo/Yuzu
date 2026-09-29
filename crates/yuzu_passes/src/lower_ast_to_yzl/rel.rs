@@ -58,6 +58,8 @@ impl<'c> AstToYzl<'c, '_> {
         input: Value<'c, 'a>,
         stage: &ast::Stage,
     ) -> Value<'c, 'a> {
+        let at = self.span(stage.syntax().text_range());
+        self.listener.on_row(at, &mut self.symbols.row().names());
         match stage {
             ast::Stage::WhereStage(where_) => self.convert_where(block, input, where_),
             ast::Stage::SelectStage(select) => self.convert_select(block, input, select),

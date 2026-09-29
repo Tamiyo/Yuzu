@@ -2,8 +2,8 @@
 
 use lsp_types::notification::{DidChangeWatchedFiles, Notification as _};
 use lsp_types::{
-    ClientCapabilities, DidChangeWatchedFilesRegistrationOptions, FileSystemWatcher,
-    FoldingRangeProviderCapability, GlobPattern, HoverProviderCapability, OneOf,
+    ClientCapabilities, CompletionOptions, DidChangeWatchedFilesRegistrationOptions,
+    FileSystemWatcher, FoldingRangeProviderCapability, GlobPattern, HoverProviderCapability, OneOf,
     PositionEncodingKind, Registration, RenameOptions, SelectionRangeProviderCapability,
     SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions,
     SemanticTokensServerCapabilities, ServerCapabilities, SignatureHelpOptions,
@@ -24,6 +24,7 @@ pub(crate) fn server_capabilities(encoding: PositionEncoding) -> ServerCapabilit
         references_provider: Some(OneOf::Left(true)),
         document_highlight_provider: Some(OneOf::Left(true)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
+        completion_provider: Some(CompletionOptions::default()),
         rename_provider: Some(OneOf::Right(RenameOptions {
             prepare_provider: Some(true),
             work_done_progress_options: WorkDoneProgressOptions::default(),

@@ -11,9 +11,10 @@ use lsp_types::notification::{
     Notification as _,
 };
 use lsp_types::request::{
-    DocumentHighlightRequest, DocumentSymbolRequest, FoldingRangeRequest, GotoDefinition,
-    HoverRequest, InlayHintRequest, PrepareRenameRequest, References, RegisterCapability, Rename,
-    Request as _, SelectionRangeRequest, SemanticTokensFullRequest, SignatureHelpRequest,
+    Completion, DocumentHighlightRequest, DocumentSymbolRequest, FoldingRangeRequest,
+    GotoDefinition, HoverRequest, InlayHintRequest, PrepareRenameRequest, References,
+    RegisterCapability, Rename, Request as _, SelectionRangeRequest, SemanticTokensFullRequest,
+    SignatureHelpRequest,
 };
 use lsp_types::{InitializeParams, InitializeResult, RegistrationParams, ServerInfo};
 use rustc_hash::FxHashMap;
@@ -158,6 +159,7 @@ impl GlobalState<'_> {
                 self.respond_or_fail::<PrepareRenameRequest>(request, handlers::prepare_rename)
             }
             Rename::METHOD => self.respond_or_fail::<Rename>(request, handlers::rename),
+            Completion::METHOD => self.respond::<Completion>(request, handlers::completion),
             InlayHintRequest::METHOD => {
                 self.respond::<InlayHintRequest>(request, handlers::inlay_hint)
             }

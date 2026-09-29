@@ -4,17 +4,18 @@
 use std::collections::HashMap;
 
 use lsp_types::{
-    DocumentHighlight, DocumentHighlightParams, DocumentSymbolParams, DocumentSymbolResponse,
-    FoldingRange, FoldingRangeParams, GotoDefinitionParams, GotoDefinitionResponse, Hover,
-    HoverContents, HoverParams, InlayHint, InlayHintKind, InlayHintLabel, InlayHintParams,
-    Location, MarkupContent, MarkupKind, ParameterInformation, ParameterLabel,
-    PrepareRenameResponse, ReferenceParams, RenameParams, SelectionRange, SelectionRangeParams,
-    SemanticTokensParams, SemanticTokensResult, SignatureHelp, SignatureHelpParams,
-    SignatureInformation, TextDocumentPositionParams, TextEdit, Url, WorkspaceEdit,
+    CompletionItemKind, CompletionParams, CompletionResponse, DocumentHighlight,
+    DocumentHighlightParams, DocumentSymbolParams, DocumentSymbolResponse, FoldingRange,
+    FoldingRangeParams, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents,
+    HoverParams, InlayHint, InlayHintKind, InlayHintLabel, InlayHintParams, Location,
+    MarkupContent, MarkupKind, ParameterInformation, ParameterLabel, PrepareRenameResponse,
+    ReferenceParams, RenameParams, SelectionRange, SelectionRangeParams, SemanticTokensParams,
+    SemanticTokensResult, SignatureHelp, SignatureHelpParams, SignatureInformation,
+    TextDocumentPositionParams, TextEdit, Url, WorkspaceEdit,
 };
 use rustc_hash::FxHashSet;
 use text_size::{TextRange, TextSize};
-use yuzu_ide::{CallSite, Checked, FilePosition, HlRange};
+use yuzu_ide::{CallSite, Checked, CompletionKind, FilePosition, HlRange};
 
 use crate::documents::Document;
 use crate::global_state::GlobalState;
@@ -147,6 +148,48 @@ pub(crate) fn hover(state: &GlobalState, params: &HoverParams) -> Option<Hover> 
         }),
         range: Some(to_proto::range(&document.line_index, hover.range)),
     })
+}
+
+/// The names that fit at a position. Where the position is, is read from
+/// the document's text now; the names come from the last check, which may
+/// be older, by where the stage around the position starts.
+pub(crate) fn completion(
+    state: &GlobalState,
+    params: &CompletionParams,
+) -> Option<CompletionResponse> {
+    let position = &params.text_document_position;
+    let (file_id, document, checked, _) = state.last_check(&position.text_document.uri)?;
+    let offset = from_proto::offset(&document.line_index, position.position)?;
+    let mut site = state
+        .analysis()
+        .completion_site(FilePosition { file_id, offset })?;
+    let back = TextShift::between(&document.text, checked.file_text(file_id)?);
+    site.stage = site
+        .stage
+        .and_then(|stage| back.map(TextRange::empty(stage)))
+        .map(TextRange::start);
+    let items = checked
+        .completions(file_id, &site)
+        .into_iter()
+        .map(|item| lsp_types::CompletionItem {
+            label: item.label,
+            kind: Some(completion_kind(item.kind)),
+            ..lsp_types::CompletionItem::default()
+        })
+        .collect();
+    Some(CompletionResponse::Array(items))
+}
+
+fn completion_kind(kind: CompletionKind) -> CompletionItemKind {
+    match kind {
+        CompletionKind::Keyword => CompletionItemKind::KEYWORD,
+        CompletionKind::Column => CompletionItemKind::FIELD,
+        CompletionKind::Local | CompletionKind::Parameter | CompletionKind::Binding => {
+            CompletionItemKind::VARIABLE
+        }
+        CompletionKind::Function => CompletionItemKind::FUNCTION,
+        CompletionKind::Module => CompletionItemKind::MODULE,
+    }
 }
 
 /// The name a rename at a position would change.

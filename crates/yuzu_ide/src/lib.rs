@@ -9,6 +9,7 @@ use text_size::TextSize;
 
 mod analysis;
 mod check;
+mod completion;
 mod file_structure;
 mod folding_ranges;
 mod hover;
@@ -24,6 +25,7 @@ mod test_support;
 
 pub use analysis::{Analysis, AnalysisHost, Change};
 pub use check::Checked;
+pub use completion::{CompletionItem, CompletionKind, CompletionSite};
 pub use file_structure::{StructureNode, StructureNodeKind};
 pub use folding_ranges::{Fold, FoldKind};
 pub use hover::HoverResult;

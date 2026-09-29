@@ -10,7 +10,7 @@ use melior::ir::operation::{OperationLike, OperationRef};
 use melior::ir::{Module, Type, Value, ValueLike};
 use rustc_hash::{FxHashMap, FxHashSet};
 use text_size::TextRange;
-use yuzu_diagnostics::{SourceMap, Span};
+use yuzu_diagnostics::{SourceId, SourceMap, Span};
 use yuzu_mlir::diagnostics::span;
 use yuzu_mlir::ir::block::BlockExt;
 use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
@@ -18,7 +18,7 @@ use yuzu_mlir::ir::region::RegionExt;
 use yuzu_mlir::ir::value::op_result;
 use yuzu_mlir::ops::yzl::YzlOp;
 use yuzu_mlir::types::{self, ErrorType, QueryType, RefType, UnresolvedType};
-use yuzu_passes::{NameListener, NameTarget, NameUse};
+use yuzu_passes::{NameKind, NameListener, NameTarget, NameUse};
 
 /// A name the program uses, and what it names. `at` is the name as
 /// written; `target` covers the whole declaration, or the start of a
@@ -50,11 +50,40 @@ pub struct Typed {
     pub ty: String,
 }
 
-/// The references and types a check read from the IR.
+/// The columns the expressions of a stage can read.
+#[derive(Clone, Debug)]
+pub struct StageRow {
+    pub stage: Span,
+    pub columns: Vec<String>,
+}
+
+/// A name the top level of a file can use, and what it declares.
+#[derive(Clone, Debug)]
+pub struct ScopeName {
+    pub name: String,
+    pub kind: ScopeKind,
+}
+
+/// What a name in scope declares.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScopeKind {
+    Struct,
+    Relation,
+    Function,
+    Trait,
+    /// A module-level `let`.
+    Binding,
+    Module,
+}
+
+/// The references, types and scopes a check read.
 #[derive(Debug, Default)]
 pub struct Index {
     pub references: Vec<Reference>,
     pub types: Vec<Typed>,
+    pub rows: Vec<StageRow>,
+    /// The names each file's top level can use, by the file's source.
+    pub scopes: FxHashMap<SourceId, Vec<ScopeName>>,
 }
 
 /// Reads an index from the module at the two points a check passes.
@@ -91,6 +120,30 @@ impl NameListener for IndexReader<'_> {
             name: declared.to_owned(),
             kind,
         });
+    }
+
+    fn on_row(&mut self, stage: Span, columns: &mut dyn Iterator<Item = &str>) {
+        self.index.rows.push(StageRow {
+            stage,
+            columns: columns.map(str::to_owned).collect(),
+        });
+    }
+
+    fn on_file(&mut self, file: SourceId, names: &mut dyn Iterator<Item = (&str, NameKind)>) {
+        let names = names
+            .map(|(name, kind)| ScopeName {
+                name: name.to_owned(),
+                kind: match kind {
+                    NameKind::Struct => ScopeKind::Struct,
+                    NameKind::Relation => ScopeKind::Relation,
+                    NameKind::Function => ScopeKind::Function,
+                    NameKind::Trait => ScopeKind::Trait,
+                    NameKind::Binding => ScopeKind::Binding,
+                    NameKind::Module => ScopeKind::Module,
+                },
+            })
+            .collect();
+        self.index.scopes.insert(file, names);
     }
 }
 

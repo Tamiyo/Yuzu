@@ -20,8 +20,13 @@ use crate::hover::HoverResult;
 use crate::inlay_hints::InlayHint;
 use crate::names::{self, Resolution, Trees};
 use crate::navigation::{FileRange, References};
-use crate::{CallSite, FileId, FilePosition, HlRange, RenameError, SignatureHelp};
-use crate::{hover, inlay_hints, navigation, rename, signature_help, syntax_highlighting};
+use crate::{
+    CallSite, CompletionItem, CompletionSite, FileId, FilePosition, HlRange, RenameError,
+    SignatureHelp,
+};
+use crate::{
+    completion, hover, inlay_hints, navigation, rename, signature_help, syntax_highlighting,
+};
 
 /// What checking a file's program found. Its names are resolved once, when
 /// the check is made on the checker thread, so a request only looks them up.
@@ -99,6 +104,14 @@ impl Checked {
     #[must_use]
     pub fn goto_definition(&self, position: FilePosition) -> Option<FileRange> {
         navigation::goto_definition(self, self.source(position.file_id)?, position.offset)
+    }
+
+    /// The names that fit at `site` in a file, from what this check found.
+    #[must_use]
+    pub fn completions(&self, file_id: FileId, site: &CompletionSite) -> Vec<CompletionItem> {
+        self.source(file_id)
+            .map(|source| completion::completions(self, source, site))
+            .unwrap_or_default()
     }
 
     /// The overloads of the function a call names, as this check resolved
