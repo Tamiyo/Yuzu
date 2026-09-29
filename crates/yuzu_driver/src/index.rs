@@ -6,7 +6,7 @@
 //! the range the lowering made it from, so both are keyed by source range.
 
 use melior::Context;
-use melior::ir::operation::{OperationLike, OperationRef, OperationResult};
+use melior::ir::operation::{OperationLike, OperationRef};
 use melior::ir::{Module, Type, Value, ValueLike};
 use rustc_hash::FxHashMap;
 use yuzu_diagnostics::diagnostics::Span;
@@ -15,6 +15,7 @@ use yuzu_mlir::diagnostics::span;
 use yuzu_mlir::ir::block::BlockExt;
 use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
 use yuzu_mlir::ir::region::RegionExt;
+use yuzu_mlir::ir::value::op_result;
 use yuzu_mlir::ops::yzl::YzlOp;
 use yuzu_mlir::types::{self, ErrorType, QueryType, RefType, UnresolvedType};
 
@@ -191,7 +192,7 @@ impl<'s> IndexReader<'s> {
 
     /// The local a place is: its declaration, name and kind.
     fn read_local(&self, place: Value<'_, '_>) -> Option<(Span, String, TargetKind)> {
-        let result = OperationResult::try_from(place).ok()?;
+        let result = op_result(place)?;
         let owner = result.owner();
         let Some(YzlOp::Local(local)) = owner.as_yzl() else {
             return None;
@@ -206,7 +207,7 @@ impl<'s> IndexReader<'s> {
     }
 
     fn defined_at(&self, value: Value<'_, '_>) -> Option<Span> {
-        let result = OperationResult::try_from(value).ok()?;
+        let result = op_result(value)?;
         span(self.sources, result.owner().location())
     }
 }

@@ -2,14 +2,14 @@
 //! never in another aggregate's arguments, and an `agg def` must use an
 //! aggregate without calling itself.
 
-use melior::ir::operation::{OperationLike, OperationRef, OperationResult};
+use melior::ir::operation::{OperationLike, OperationRef};
 use melior::ir::{BlockRef, Location, Module};
 use rustc_hash::{FxHashMap, FxHashSet};
 use yuzu_mlir::diagnostics::emit_error;
 use yuzu_mlir::ir::block::BlockExt;
 use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
 use yuzu_mlir::ir::region::RegionExt;
-use yuzu_mlir::ir::value::{ValueExt, ValueId};
+use yuzu_mlir::ir::value::{ValueExt, ValueId, op_result};
 use yuzu_mlir::ops::yzl::YzlOp;
 
 pub fn check_aggregates(module: &Module) {
@@ -179,7 +179,7 @@ where
     'c: 'm,
 {
     let returned = op.body_terminator()?.try_first_operand()?;
-    Some(OperationResult::try_from(returned).ok()?.owner().location())
+    Some(op_result(returned)?.owner().location())
 }
 
 #[cfg(test)]

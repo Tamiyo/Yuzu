@@ -8,7 +8,7 @@
 //! relation read twice is translated once and written out at both uses.
 
 use melior::Context;
-use melior::ir::operation::{OperationLike, OperationRef, OperationResult};
+use melior::ir::operation::{OperationLike, OperationRef};
 use melior::ir::{Location, Module, Type, Value, ValueLike};
 use rustc_hash::{FxHashMap, FxHashSet};
 use substrait::proto::{PlanRel, Rel, RelRoot, plan_rel};
@@ -19,7 +19,7 @@ use yuzu_mlir::diagnostics::emit_error;
 use yuzu_mlir::ir::attribute::array::ArrayAttributeExt;
 use yuzu_mlir::ir::block::BlockExt;
 use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
-use yuzu_mlir::ir::value::ValueId;
+use yuzu_mlir::ir::value::{ValueId, op_result};
 use yuzu_mlir::ops::yz::YzOp;
 use yuzu_mlir::ops::yzr::YzrOp;
 
@@ -121,7 +121,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
     /// operation, which is how a column of the row is told from a computed
     /// value.
     fn producer<'v>(value: Value<'c, 'v>) -> Option<OperationRef<'c, 'v>> {
-        Some(OperationResult::try_from(value).ok()?.owner())
+        Some(op_result(value)?.owner())
     }
 
     /// The names and types of a row, from the `yz.struct` that declares it.

@@ -6,9 +6,7 @@ use std::mem;
 
 use melior::Context;
 use melior::ir::attribute::{ArrayAttribute, TypeAttribute};
-use melior::ir::operation::{
-    OperationLike, OperationMutLike, OperationRef, OperationRefMut, OperationResult,
-};
+use melior::ir::operation::{OperationLike, OperationMutLike, OperationRef, OperationRefMut};
 use melior::ir::r#type::FunctionType;
 use melior::ir::{Attribute, BlockRef, Location, Module, Type, Value, ValueLike};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -18,7 +16,7 @@ use yuzu_mlir::ir::attribute::array::ArrayAttributeExt;
 use yuzu_mlir::ir::block::BlockExt;
 use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
 use yuzu_mlir::ir::region::RegionExt;
-use yuzu_mlir::ir::value::{ValueExt, ValueId};
+use yuzu_mlir::ir::value::{ValueExt, ValueId, op_result};
 use yuzu_mlir::ops::yz::YzOp;
 use yuzu_mlir::ops::yzl::{FnOp, YzlOp};
 use yuzu_mlir::types::{self, BoolType, ErrorType, Int64Type, RefType, UnresolvedType};
@@ -790,8 +788,8 @@ fn is_error(term: Term<'_>) -> bool {
 /// The result of a `yzl.missing`: what the lowering stood in for what it
 /// could not lower.
 fn is_hole(value: Value<'_, '_>) -> bool {
-    OperationResult::try_from(value)
-        .is_ok_and(|result| matches!(result.owner().as_yzl(), Some(YzlOp::Missing(_))))
+    op_result(value)
+        .is_some_and(|result| matches!(result.owner().as_yzl(), Some(YzlOp::Missing(_))))
 }
 
 fn element(term: Term<'_>) -> Option<Term<'_>> {

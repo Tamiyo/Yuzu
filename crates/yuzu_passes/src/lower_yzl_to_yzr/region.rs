@@ -1,12 +1,12 @@
 use melior::IrRewriter;
-use melior::ir::operation::{OperationLike, OperationResult};
+use melior::ir::operation::OperationLike;
 use melior::ir::{
     Block, BlockLike, BlockRef, Location, Region, RegionLike, RegionRef, Type, Value, ValueLike,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use yuzu_mlir::ir::block::BlockExt;
 use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
-use yuzu_mlir::ir::value::{ValueExt, ValueId};
+use yuzu_mlir::ir::value::{ValueExt, ValueId, op_result};
 use yuzu_mlir::ods::yzr;
 use yuzu_mlir::ops::yzl::YzlOp;
 
@@ -292,7 +292,7 @@ fn rests_on<'c: 'a, 'a>(
             continue;
         }
 
-        let Ok(result) = OperationResult::try_from(value) else {
+        let Some(result) = op_result(value) else {
             continue;
         };
 
