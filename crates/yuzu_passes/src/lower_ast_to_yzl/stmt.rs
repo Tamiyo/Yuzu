@@ -1928,7 +1928,8 @@ external def upper(s: str) -> str
                 yzl.return
               } {sym_visibility = "private"}
             }
-        "#]].assert_eq(&lowered("def g(x: int64) {\n    let y = x\n}\n"));
+        "#]]
+        .assert_eq(&lowered("def g(x: int64) {\n    let y = x\n}\n"));
     }
 
     #[test]
@@ -1939,7 +1940,8 @@ external def upper(s: str) -> str
               |
             1 | def f(x: int64) -> int64 {
               | ^^^^^^^^^^^^^^^^^^^^^^^^^^
-        "]].assert_eq(&reported("def f(x: int64) -> int64 {\n    let y = x\n}\n"));
+        "]]
+        .assert_eq(&reported("def f(x: int64) -> int64 {\n    let y = x\n}\n"));
     }
 
     #[test]
@@ -1950,7 +1952,8 @@ external def upper(s: str) -> str
               |
             3 |     let y = x
               |     ^^^^^^^^^
-        "]].assert_eq(&reported(
+        "]]
+        .assert_eq(&reported(
             "def f(x: int64) -> int64 {\n    return x\n    let y = x\n}\n",
         ));
     }
