@@ -64,8 +64,26 @@ pub trait NameListener {
     /// The columns the expressions of the stage at `stage` can read.
     fn on_row(&mut self, _stage: Span, _columns: &mut dyn Iterator<Item = &str>) {}
 
-    /// The names the top level of the file `file` can use.
-    fn on_file(&mut self, _file: SourceId, _names: &mut dyn Iterator<Item = (&str, NameKind)>) {}
+    /// The names the top level of the file `file` can use. `module` is the
+    /// file's module path; the entry file has none.
+    fn on_file(
+        &mut self,
+        _file: SourceId,
+        _module: Option<&str>,
+        _names: &mut dyn Iterator<Item = ScopeEntry<'_>>,
+    ) {
+    }
+}
+
+/// A name a file's top level can use.
+#[derive(Clone, Copy, Debug)]
+pub struct ScopeEntry<'a> {
+    pub name: &'a str,
+    pub kind: NameKind,
+    /// Whether a file that imports this one can name it.
+    pub is_exported: bool,
+    /// For a module, the file that holds it.
+    pub module_file: Option<SourceId>,
 }
 
 /// A listener for a lowering that nothing watches.
@@ -249,10 +267,19 @@ impl<'c> AstToYzl<'c, '_> {
                 None => ModulePath::entry(),
             };
             let visible = self.symbols.visible_in(module);
-            let mut names = visible
-                .iter()
-                .filter_map(|&(name, kind)| Some((name, name_kind(kind)?)));
-            self.listener.on_file(file.source_id, &mut names);
+            let module_files = &self.module_files;
+            let mut names = visible.iter().filter_map(|visible| {
+                Some(ScopeEntry {
+                    name: visible.name,
+                    kind: name_kind(visible.kind)?,
+                    is_exported: visible.is_exported,
+                    module_file: visible
+                        .module
+                        .and_then(|path| module_files.get(&ModulePath::from_path(path)).copied()),
+                })
+            });
+            self.listener
+                .on_file(file.source_id, file.module.as_deref(), &mut names);
         }
     }
 

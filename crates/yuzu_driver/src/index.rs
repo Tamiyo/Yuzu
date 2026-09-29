@@ -18,7 +18,7 @@ use yuzu_mlir::ir::region::RegionExt;
 use yuzu_mlir::ir::value::op_result;
 use yuzu_mlir::ops::yzl::YzlOp;
 use yuzu_mlir::types::{self, ErrorType, QueryType, RefType, UnresolvedType};
-use yuzu_passes::{NameKind, NameListener, NameTarget, NameUse};
+use yuzu_passes::{NameKind, NameListener, NameTarget, NameUse, ScopeEntry};
 
 /// A name the program uses, and what it names. `at` is the name as
 /// written; `target` covers the whole declaration, or the start of a
@@ -62,6 +62,10 @@ pub struct StageRow {
 pub struct ScopeName {
     pub name: String,
     pub kind: ScopeKind,
+    /// Whether a file that imports this one can name it.
+    pub is_exported: bool,
+    /// For a module, the file that holds it.
+    pub module_file: Option<SourceId>,
 }
 
 /// What a name in scope declares.
@@ -84,6 +88,8 @@ pub struct Index {
     pub rows: Vec<StageRow>,
     /// The names each file's top level can use, by the file's source.
     pub scopes: FxHashMap<SourceId, Vec<ScopeName>>,
+    /// The file each module was read from, by the module's path.
+    pub modules: FxHashMap<String, SourceId>,
 }
 
 /// Reads an index from the module at the two points a check passes.
@@ -129,11 +135,21 @@ impl NameListener for IndexReader<'_> {
         });
     }
 
-    fn on_file(&mut self, file: SourceId, names: &mut dyn Iterator<Item = (&str, NameKind)>) {
+    fn on_file(
+        &mut self,
+        file: SourceId,
+        module: Option<&str>,
+        names: &mut dyn Iterator<Item = ScopeEntry<'_>>,
+    ) {
+        if let Some(module) = module {
+            self.index.modules.insert(module.to_owned(), file);
+        }
         let names = names
-            .map(|(name, kind)| ScopeName {
-                name: name.to_owned(),
-                kind: match kind {
+            .map(|entry| ScopeName {
+                name: entry.name.to_owned(),
+                is_exported: entry.is_exported,
+                module_file: entry.module_file,
+                kind: match entry.kind {
                     NameKind::Struct => ScopeKind::Struct,
                     NameKind::Relation => ScopeKind::Relation,
                     NameKind::Function => ScopeKind::Function,

@@ -668,7 +668,9 @@ impl<'c> AstToYzl<'c, '_> {
             Lookup::NotAValue(what) => {
                 // Still the name of a declaration, as a function is before
                 // its call is typed.
-                if let Some(target) = self.symbols.target_of(name) {
+                if let Some(path) = self.symbols.module_of(name) {
+                    self.record_module(used, name, path);
+                } else if let Some(target) = self.symbols.target_of(name) {
                     self.record(used, name, target);
                 }
                 format!("`{reference}` is a {what}, not a value")

@@ -23,6 +23,30 @@ pub struct CompletionSite {
     pub keywords: &'static [&'static str],
     /// Whether a function or a module-level `let` fits here.
     pub takes_value: bool,
+    /// The name before the `.` the cursor is after: a module, whose
+    /// exported names fit.
+    pub member_of: Option<String>,
+    /// The module a `from .. import` names, whose exported names fit.
+    pub import_from: Option<String>,
+    /// Whether a relation fits: after `from` or `join`.
+    pub takes_relation: bool,
+    /// Whether a type fits: after `:`, `->` or `[`.
+    pub takes_type: bool,
+}
+
+impl CompletionSite {
+    fn with_keywords(keywords: &'static [&'static str]) -> Self {
+        CompletionSite {
+            stage: None,
+            locals: Vec::new(),
+            keywords,
+            takes_value: false,
+            member_of: None,
+            import_from: None,
+            takes_relation: false,
+            takes_type: false,
+        }
+    }
 }
 
 /// A name that fits, and what it is.
@@ -43,7 +67,15 @@ pub enum CompletionKind {
     /// A module-level `let`.
     Binding,
     Module,
+    Relation,
+    Struct,
+    Trait,
+    /// A type the language has: a scalar, or `List`.
+    Type,
 }
+
+/// The types every program has.
+const BUILTIN_TYPES: &[&str] = &["int64", "float64", "bool", "str", "List"];
 
 /// What a stage starts with after its `|>`.
 const STAGE_KEYWORDS: &[&str] = &[
@@ -88,16 +120,32 @@ pub(crate) fn completion_site(root: &SyntaxNode, offset: TextSize) -> Completion
         }),
     };
 
-    if before
-        .as_ref()
-        .is_some_and(|before| before.kind() == SyntaxKind::Pipe)
-    {
-        return CompletionSite {
-            stage: None,
-            locals: Vec::new(),
-            keywords: STAGE_KEYWORDS,
-            takes_value: false,
-        };
+    let before_kind = before.as_ref().map(SyntaxToken::kind);
+    match before_kind {
+        Some(SyntaxKind::Pipe) => return CompletionSite::with_keywords(STAGE_KEYWORDS),
+        Some(SyntaxKind::Dot) => {
+            let base = before
+                .as_ref()
+                .and_then(previous_significant)
+                .filter(|base| base.kind() == SyntaxKind::Identifier);
+            return CompletionSite {
+                member_of: base.map(|base| base.text().to_owned()),
+                ..CompletionSite::with_keywords(&[])
+            };
+        }
+        Some(SyntaxKind::FromKw | SyntaxKind::JoinKw) => {
+            return CompletionSite {
+                takes_relation: true,
+                ..CompletionSite::with_keywords(&[])
+            };
+        }
+        Some(SyntaxKind::Colon | SyntaxKind::Arrow | SyntaxKind::LeftSquare) => {
+            return CompletionSite {
+                takes_type: true,
+                ..CompletionSite::with_keywords(&[])
+            };
+        }
+        _ => {}
     }
 
     let anchor = typed
@@ -105,6 +153,19 @@ pub(crate) fn completion_site(root: &SyntaxNode, offset: TextSize) -> Completion
         .and_then(SyntaxToken::parent)
         .or_else(|| before.as_ref().and_then(SyntaxToken::parent))
         .unwrap_or_else(|| root.clone());
+    if let Some(import) = anchor.ancestors().find_map(ast::FromImportStmt::cast)
+        && let Some(keyword) = import
+            .syntax()
+            .children_with_tokens()
+            .find(|element| element.kind() == SyntaxKind::ImportKw)
+        && keyword.text_range().end() <= offset
+    {
+        return CompletionSite {
+            import_from: import.path().map(|path| path.to_dotted()),
+            ..CompletionSite::with_keywords(&[])
+        };
+    }
+
     let stage = anchor
         .ancestors()
         .find_map(ast::Stage::cast)
@@ -125,8 +186,8 @@ pub(crate) fn completion_site(root: &SyntaxNode, offset: TextSize) -> Completion
     CompletionSite {
         stage,
         locals,
-        keywords,
         takes_value: stage.is_some() || body.is_some() || !starts_statement,
+        ..CompletionSite::with_keywords(keywords)
     }
 }
 
@@ -146,12 +207,48 @@ pub(crate) fn completions(
         }
     };
 
+    let index = checked.index();
+    // A module's names: through a name that names it, or by its path.
+    let module_file = site
+        .member_of
+        .as_deref()
+        .and_then(|base| {
+            index
+                .scopes
+                .get(&source)?
+                .iter()
+                .find(|name| name.name == base && name.kind == ScopeKind::Module)?
+                .module_file
+        })
+        .or_else(|| index.modules.get(site.import_from.as_deref()?).copied());
+    if site.member_of.is_some() || site.import_from.is_some() {
+        for name in module_file
+            .and_then(|file| index.scopes.get(&file))
+            .into_iter()
+            .flatten()
+            .filter(|name| name.is_exported)
+        {
+            add(&name.name, scope_kind(name.kind));
+        }
+        return items;
+    }
+
     for keyword in site.keywords {
         add(keyword, CompletionKind::Keyword);
     }
+    if site.takes_type {
+        for ty in BUILTIN_TYPES {
+            add(ty, CompletionKind::Type);
+        }
+    }
+    let wanted = |kind: ScopeKind| match kind {
+        ScopeKind::Function | ScopeKind::Binding | ScopeKind::Module => site.takes_value,
+        ScopeKind::Relation => site.takes_relation,
+        ScopeKind::Struct => site.takes_type,
+        ScopeKind::Trait => false,
+    };
     if let Some(stage) = site.stage
-        && let Some(row) = checked
-            .index()
+        && let Some(row) = index
             .rows
             .iter()
             .find(|row| row.stage.source_id == source && row.stage.range.start() == stage)
@@ -163,20 +260,23 @@ pub(crate) fn completions(
     for (name, kind) in site.locals.iter().rev() {
         add(name, *kind);
     }
-    if site.takes_value
-        && let Some(scope) = checked.index().scopes.get(&source)
-    {
-        for name in scope {
-            let kind = match name.kind {
-                ScopeKind::Function => CompletionKind::Function,
-                ScopeKind::Binding => CompletionKind::Binding,
-                ScopeKind::Module => CompletionKind::Module,
-                ScopeKind::Struct | ScopeKind::Relation | ScopeKind::Trait => continue,
-            };
-            add(&name.name, kind);
+    for name in index.scopes.get(&source).into_iter().flatten() {
+        if wanted(name.kind) {
+            add(&name.name, scope_kind(name.kind));
         }
     }
     items
+}
+
+fn scope_kind(kind: ScopeKind) -> CompletionKind {
+    match kind {
+        ScopeKind::Function => CompletionKind::Function,
+        ScopeKind::Binding => CompletionKind::Binding,
+        ScopeKind::Module => CompletionKind::Module,
+        ScopeKind::Relation => CompletionKind::Relation,
+        ScopeKind::Struct => CompletionKind::Struct,
+        ScopeKind::Trait => CompletionKind::Trait,
+    }
 }
 
 fn previous_significant(token: &SyntaxToken) -> Option<SyntaxToken> {
@@ -237,8 +337,12 @@ mod tests {
     use crate::test_support::{FILE, analysis, checked, cursor};
 
     fn check(fixture: &str, expected: &Expect) {
+        check_with(&[], fixture, expected);
+    }
+
+    fn check_with(files: &[(&str, &str)], fixture: &str, expected: &Expect) {
         let (text, offset) = cursor(fixture);
-        let (_tree, checked) = checked(&[], &text);
+        let (_tree, checked) = checked(files, &text);
         let site = analysis(&text)
             .completion_site(FilePosition {
                 file_id: FILE,
@@ -338,6 +442,49 @@ mod tests {
             Keyword from
             Keyword mod
             Keyword pub"]],
+        );
+    }
+
+    #[test]
+    fn after_a_module_and_a_dot_its_exported_names() {
+        check_with(
+            &[(
+                "helpers.yz",
+                "pub def two() -> int64 { return 2 }\ndef hidden() -> int64 { return 0 }\n",
+            )],
+            "import helpers as h\ntable t = { a: int64 }\nfrom t |> select h.$0 as v\n",
+            &expect!["Function two"],
+        );
+    }
+
+    #[test]
+    fn an_import_item_takes_the_module_names() {
+        check_with(
+            &[(
+                "helpers.yz",
+                "pub def two() -> int64 { return 2 }\ndef hidden() -> int64 { return 0 }\n",
+            )],
+            "from helpers import $0\n",
+            &expect!["Function two"],
+        );
+    }
+
+    #[test]
+    fn after_from_the_relations() {
+        check(&format!("{PROGRAM}from $0\n"), &expect!["Relation t"]);
+    }
+
+    #[test]
+    fn after_a_colon_the_types() {
+        check(
+            &format!("struct Row {{ a: int64 }}\n{PROGRAM}def f(x: $0) -> int64 {{ return 1 }}\n"),
+            &expect![[r"
+                Type int64
+                Type float64
+                Type bool
+                Type str
+                Type List
+                Struct Row"]],
         );
     }
 }

@@ -18,7 +18,7 @@ pub use infer_types::infer_types;
 pub use inline_calls::inline_calls;
 pub use legalize_operators::legalize_operators;
 pub use lower_ast_to_yzl::{
-    BoundLibrary, File, Lowering, NameKind, NameListener, NameTarget, NameUse, PRELUDE,
+    BoundLibrary, File, Lowering, NameKind, NameListener, NameTarget, NameUse, PRELUDE, ScopeEntry,
     bind_library, lower_ast_to_yzl, lower_ast_to_yzl_with_listener,
 };
 pub use lower_yzl_to_yzr::lower_yzl_to_yzr;

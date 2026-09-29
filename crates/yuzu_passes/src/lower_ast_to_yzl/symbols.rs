@@ -392,6 +392,17 @@ impl<'c> Callable<'c> {
     }
 }
 
+/// A name a module's top level can use.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Visible<'c> {
+    pub(super) name: &'c str,
+    pub(super) kind: DeclarationKind,
+    /// Whether a module that imports this one can name it.
+    pub(super) is_exported: bool,
+    /// The module a module name names.
+    pub(super) module: Option<&'c str>,
+}
+
 /// The declaration a name resolved to, and the range of its syntax in the
 /// file that declares it: for a function, the one overload the name picked.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -865,10 +876,9 @@ impl<'c> SymbolTable<'c> {
         })
     }
 
-    /// The names a module's top level can use, and what each declares: its
-    /// own declarations and imports, then the prelude's public names, each
-    /// in name order.
-    pub(super) fn visible_in(&self, module: ModulePath<'c>) -> Vec<(&'c str, DeclarationKind)> {
+    /// The names a module's top level can use: its own declarations and
+    /// imports, then the prelude's public names, each in name order.
+    pub(super) fn visible_in(&self, module: ModulePath<'c>) -> Vec<Visible<'c>> {
         let prelude = ModulePath::from_path(PRELUDE);
         let declarations = |module: ModulePath<'c>| {
             self.modules
@@ -880,23 +890,32 @@ impl<'c> SymbolTable<'c> {
                 )
                 .flat_map(|declared| declared.iter())
         };
-        let mut visible: Vec<(&'c str, DeclarationKind)> = Vec::new();
-        let mut add = |name: &'c str, binding: &Binding<'c>| {
-            let kind = match &binding.kind {
+        let mut visible: Vec<Visible<'c>> = Vec::new();
+        let mut add = |name: &'c str, binding: &Binding<'c>, is_own: bool| {
+            let declared = match &binding.kind {
                 BindingKind::Import { from } => match self.find_in(*from) {
-                    Some((_, origin)) => origin.kind.declaration_kind(),
+                    Some((_, origin)) => &origin.kind,
                     None => return,
                 },
-                kind => kind.declaration_kind(),
+                kind => kind,
             };
-            if !visible.iter().any(|&(seen, _)| seen == name) {
-                visible.push((name, kind));
+            if visible.iter().any(|seen| seen.name == name) {
+                return;
             }
+            visible.push(Visible {
+                name,
+                kind: declared.declaration_kind(),
+                is_exported: is_own && binding.visibility == Visibility::Public,
+                module: match declared {
+                    BindingKind::Module { path } => Some(*path),
+                    _ => None,
+                },
+            });
         };
         let mut own: Vec<_> = declarations(module).collect();
         own.sort_unstable_by_key(|&(&name, _)| name);
         for (&name, binding) in own {
-            add(name, binding);
+            add(name, binding, true);
         }
         if module != prelude {
             let mut exported: Vec<_> = declarations(prelude)
@@ -904,7 +923,7 @@ impl<'c> SymbolTable<'c> {
                 .collect();
             exported.sort_unstable_by_key(|&(&name, _)| name);
             for (&name, binding) in exported {
-                add(name, binding);
+                add(name, binding, false);
             }
         }
         visible

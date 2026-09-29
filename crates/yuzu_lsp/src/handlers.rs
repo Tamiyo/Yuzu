@@ -189,6 +189,9 @@ fn completion_kind(kind: CompletionKind) -> CompletionItemKind {
         }
         CompletionKind::Function => CompletionItemKind::FUNCTION,
         CompletionKind::Module => CompletionItemKind::MODULE,
+        CompletionKind::Relation => CompletionItemKind::CLASS,
+        CompletionKind::Struct | CompletionKind::Type => CompletionItemKind::STRUCT,
+        CompletionKind::Trait => CompletionItemKind::INTERFACE,
     }
 }
 
