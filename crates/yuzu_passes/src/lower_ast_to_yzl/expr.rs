@@ -33,7 +33,7 @@ impl<'c> AstToYzl<'c, '_> {
             ast::Expr::ListExpr(list) => self.convert_list(block, locals, list),
             ast::Expr::ParenExpr(paren) => self.convert_paren_expr(block, locals, paren),
             ast::Expr::Pipeline(pipeline) => self.convert_query(block, pipeline).0,
-            ast::Expr::StructExpr(literal) => self.report_and_hole(
+            ast::Expr::StructExpr(literal) => self.error_hole(
                 block,
                 literal,
                 "struct literals are not supported yet",
@@ -50,7 +50,7 @@ impl<'c> AstToYzl<'c, '_> {
         let loc = self.location(literal);
         let operation = match literal {
             ast::Literal::IntLiteral(int) => {
-                let Some(value) = self.int64_value(int) else {
+                let Some(value) = self.read_int64(int) else {
                     return self.emit_hole(
                         block,
                         int.syntax().text_range(),
@@ -111,7 +111,7 @@ impl<'c> AstToYzl<'c, '_> {
         };
 
         let loc = self.location(ident);
-        self.name_ref(block, locals, ident, Reference::unqualified(name), loc)
+        self.convert_reference(block, locals, ident, Reference::unqualified(name), loc)
     }
 
     /// `t.a` is a qualified column reference, not a load.
@@ -126,7 +126,7 @@ impl<'c> AstToYzl<'c, '_> {
         let base = match access.base() {
             Some(ast::Expr::IdentExpr(ident)) => self.read_ident(ident.name()),
             Some(_) => {
-                return self.report_and_hole(
+                return self.error_hole(
                     block,
                     access,
                     "field access on an expression is not supported yet",
@@ -158,7 +158,7 @@ impl<'c> AstToYzl<'c, '_> {
             qualifier: Some(base),
             name: field,
         };
-        self.name_ref(block, locals, access, reference, loc)
+        self.convert_reference(block, locals, access, reference, loc)
     }
 
     fn convert_binary<'a>(
@@ -335,7 +335,7 @@ impl<'c> AstToYzl<'c, '_> {
                 return self.convert_module_call(block, locals, call, &access, loc);
             }
             Some(_) => {
-                return self.report_and_hole(
+                return self.error_hole(
                     block,
                     call,
                     "calling an expression is not supported yet",
@@ -376,10 +376,10 @@ impl<'c> AstToYzl<'c, '_> {
                     None => format!("unresolved identifier `{callee}`"),
                 }
             };
-            return self.report_and_hole(block, call, &message, UnresolvedType::get(self.context));
+            return self.error_hole(block, call, &message, UnresolvedType::get(self.context));
         };
 
-        self.call(block, callable, &operands, loc)
+        self.emit_call(block, callable, &operands, loc)
     }
 
     fn convert_module_call<'a>(
@@ -392,20 +392,28 @@ impl<'c> AstToYzl<'c, '_> {
     ) -> Value<'c, 'a> {
         let base = match access.base() {
             Some(ast::Expr::IdentExpr(ident)) => self.read_ident(ident.name()),
-            _ => None,
+            Some(_) => {
+                return self.error_hole(
+                    block,
+                    call,
+                    "calling an expression is not supported yet",
+                    UnresolvedType::get(self.context),
+                );
+            }
+            None => None,
         };
 
         let (Some(base), Some(name)) = (base, self.read_ident(access.field())) else {
-            return self.report_and_hole(
+            return self.parser_hole(
                 block,
                 call,
-                "calling an expression is not supported yet",
+                "module call is missing its module or its function",
                 UnresolvedType::get(self.context),
             );
         };
 
         let Some(path) = self.symbols.module_of(base) else {
-            return self.report_and_hole(
+            return self.error_hole(
                 block,
                 call,
                 &format!("`{base}` is not a module"),
@@ -420,7 +428,7 @@ impl<'c> AstToYzl<'c, '_> {
             .map(|arg| self.convert_expr(block, locals, &arg))
             .collect();
 
-        let Some((at, binding)) = self.read_export(call, path, name) else {
+        let Some((at, binding)) = self.resolve_export(call, path, name) else {
             return self.emit_hole(
                 block,
                 call.syntax().text_range(),
@@ -434,10 +442,10 @@ impl<'c> AstToYzl<'c, '_> {
                 Some(arities) => arity_mismatch(name, &arities, given),
                 None => format!("`{name}` is a {}, not a function", binding.kind),
             };
-            return self.report_and_hole(block, call, &message, UnresolvedType::get(self.context));
+            return self.error_hole(block, call, &message, UnresolvedType::get(self.context));
         };
 
-        self.call(block, callable, &operands, loc)
+        self.emit_call(block, callable, &operands, loc)
     }
 
     fn convert_list<'a>(
@@ -484,7 +492,7 @@ impl<'c> AstToYzl<'c, '_> {
 
     /// A module-level `let` becomes a call for expansion to inline, since a
     /// stage region is isolated.
-    fn name_ref<'a>(
+    fn convert_reference<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
         locals: &Locals<'c, 'a>,
@@ -510,7 +518,7 @@ impl<'c> AstToYzl<'c, '_> {
                 return block.append_operation(load.into()).first_result();
             }
             Lookup::Let(symbol) => {
-                return self.call(block, Callable::constant(symbol), &[], loc);
+                return self.emit_call(block, Callable::constant(symbol), &[], loc);
             }
             Lookup::Lost => {
                 return self.emit_hole(
@@ -532,7 +540,7 @@ impl<'c> AstToYzl<'c, '_> {
             Lookup::Unknown => format!("unresolved identifier `{reference}`"),
         };
 
-        self.unresolved_column(node, &message);
+        self.report_unresolved(node, &message);
         self.emit_hole(
             block,
             node.syntax().text_range(),
@@ -540,7 +548,7 @@ impl<'c> AstToYzl<'c, '_> {
         )
     }
 
-    fn call<'a>(
+    fn emit_call<'a>(
         &self,
         block: BlockRef<'c, 'a>,
         callable: Callable<'c>,

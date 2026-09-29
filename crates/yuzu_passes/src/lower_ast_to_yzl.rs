@@ -14,7 +14,7 @@ use yuzu_mlir::ir::location::LocationExt;
 use yuzu_mlir::ir::operation::OperationExt;
 use yuzu_mlir::ods::yzl;
 
-use crate::lower_ast_to_yzl::symbols::SymbolTable;
+use crate::lower_ast_to_yzl::symbols::{Row, SymbolTable};
 
 mod expr;
 mod program;
@@ -44,15 +44,7 @@ pub fn lower_ast_to_yzl<'c>(
     library: Option<&'c BoundLibrary<'c>>,
 ) -> Module<'c> {
     let entry = files.last().expect("a program has an entry file");
-    let mut lowerer = AstToYzl {
-        context,
-        symbols: SymbolTable::new(context, library),
-        sources,
-        source_id: entry.source_id,
-        file: StringAttribute::new(context, sources.name(entry.source_id)),
-        diagnostics,
-    };
-
+    let mut lowerer = AstToYzl::new(context, library, sources, entry, diagnostics);
     lowerer.lower(files, entry)
 }
 
@@ -70,15 +62,7 @@ pub fn bind_library<'c>(
     diagnostics: &mut DiagnosticsEngine,
 ) -> BoundLibrary<'c> {
     let first = files.first().expect("a library has a file");
-    let mut lowerer = AstToYzl {
-        context,
-        symbols: SymbolTable::new(context, None),
-        sources,
-        source_id: first.source_id,
-        file: StringAttribute::new(context, sources.name(first.source_id)),
-        diagnostics,
-    };
-
+    let mut lowerer = AstToYzl::new(context, None, sources, first, diagnostics);
     lowerer.bind_names(files);
     lowerer.symbols.into_library()
 }
@@ -98,8 +82,49 @@ struct AstToYzl<'c, 'd> {
 /// the symbol table because each borrows the block being built.
 type Locals<'c, 'a> = Vec<Value<'c, 'a>>;
 
+impl<'c, 'd> AstToYzl<'c, 'd> {
+    /// Starts at `file`; the walk moves from file to file.
+    fn new(
+        context: &'c Context,
+        library: Option<&'c BoundLibrary<'c>>,
+        sources: &'d SourceMap,
+        file: &File,
+        diagnostics: &'d mut DiagnosticsEngine,
+    ) -> Self {
+        Self {
+            context,
+            symbols: SymbolTable::new(context, library),
+            sources,
+            source_id: file.source_id,
+            file: StringAttribute::new(context, sources.name(file.source_id)),
+            diagnostics,
+        }
+    }
+}
+
 impl<'c> AstToYzl<'c, '_> {
-    fn error_at(&self, range: TextRange, message: &str) -> DiagnosticBuilder {
+    fn in_type_params<R>(&mut self, names: Vec<&'c str>, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.symbols.open_type_params(names);
+        let result = f(self);
+        self.symbols.close();
+        result
+    }
+
+    fn in_block<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.symbols.open_block();
+        let result = f(self);
+        self.symbols.close();
+        result
+    }
+
+    /// Also hands back the row the relation has when `f` returns.
+    fn in_relation<R>(&mut self, row: Row<'c>, f: impl FnOnce(&mut Self) -> R) -> (R, Row<'c>) {
+        self.symbols.open_relation(row);
+        let result = f(self);
+        (result, self.symbols.close_relation())
+    }
+
+    fn diagnostic_at(&self, range: TextRange, message: &str) -> DiagnosticBuilder {
         let span = Span {
             source_id: self.source_id,
             range,
@@ -112,12 +137,12 @@ impl<'c> AstToYzl<'c, '_> {
     }
 
     fn report_at(&mut self, range: TextRange, message: &str) {
-        let diagnostic = self.error_at(range, message);
+        let diagnostic = self.diagnostic_at(range, message);
         self.diagnostics.emit(diagnostic);
     }
 
     /// `None`, after a report, when `int64` cannot hold the literal.
-    fn int64_value(&mut self, int: &ast::IntLiteral) -> Option<i64> {
+    fn read_int64(&mut self, int: &ast::IntLiteral) -> Option<i64> {
         let value = int.value().and_then(|value| i64::try_from(value).ok());
         if value.is_none() {
             self.report(int, "integer literal is out of range for `int64`");
@@ -126,8 +151,8 @@ impl<'c> AstToYzl<'c, '_> {
         value
     }
 
-    fn unresolved_column(&mut self, node: &impl AstNode, message: &str) {
-        let mut diagnostic = self.error_at(node.syntax().text_range(), message);
+    fn report_unresolved(&mut self, node: &impl AstNode, message: &str) {
+        let mut diagnostic = self.diagnostic_at(node.syntax().text_range(), message);
         if let Some(note) = self.row_note() {
             diagnostic = diagnostic.note(note);
         }
@@ -139,7 +164,7 @@ impl<'c> AstToYzl<'c, '_> {
         const SHOWN: usize = 8;
 
         let row = self.symbols.current_row()?;
-        if row.len() == 0 {
+        if row.is_empty() {
             return Some("this relation carries no columns".to_string());
         }
 
@@ -161,7 +186,7 @@ impl<'c> AstToYzl<'c, '_> {
         format!("{}:{line}:{column}", self.name())
     }
 
-    fn report_and_hole<'a>(
+    fn error_hole<'a>(
         &mut self,
         block: BlockRef<'c, 'a>,
         node: &impl AstNode,
@@ -176,7 +201,7 @@ impl<'c> AstToYzl<'c, '_> {
     /// the parser reported it, so the lowering adds nothing.
     fn reported_by_parser(&self, what: &str) {
         debug_assert!(
-            self.has_syntax_error(),
+            self.has_error_in_file(),
             "{what}, which only a syntax error leaves"
         );
     }
@@ -193,7 +218,7 @@ impl<'c> AstToYzl<'c, '_> {
         self.emit_hole(block, node.syntax().text_range(), ty)
     }
 
-    fn has_syntax_error(&self) -> bool {
+    fn has_error_in_file(&self) -> bool {
         self.diagnostics.diagnostics().iter().any(|diagnostic| {
             diagnostic
                 .labels

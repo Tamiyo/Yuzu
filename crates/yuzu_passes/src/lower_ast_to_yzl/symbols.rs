@@ -96,6 +96,10 @@ impl<'c> Row<'c> {
         self.columns.len()
     }
 
+    pub(super) fn is_empty(&self) -> bool {
+        self.columns.is_empty()
+    }
+
     pub(super) fn names(&self) -> impl Iterator<Item = &'c str> + use<'_, 'c> {
         self.columns.iter().map(|column| column.name)
     }
@@ -119,7 +123,7 @@ impl<'c> Row<'c> {
         }
     }
 
-    pub(super) fn has(&self, reference: Reference<'_>) -> bool {
+    pub(super) fn has_column(&self, reference: Reference<'_>) -> bool {
         !matches!(self.column(reference), ColumnLookup::Absent)
     }
 
@@ -129,12 +133,14 @@ impl<'c> Row<'c> {
         }
     }
 
-    pub(super) fn rename(&mut self, index: usize, name: &'c str) {
-        self.columns[index].name = name;
+    /// Renames a column, and hands back its old name.
+    pub(super) fn rename(&mut self, index: usize, name: &'c str) -> &'c str {
+        std::mem::replace(&mut self.columns[index].name, name)
     }
 
-    pub(super) fn remove(&mut self, index: usize) {
-        self.columns.remove(index);
+    /// Removes a column, and hands back its name.
+    pub(super) fn remove(&mut self, index: usize) -> &'c str {
+        self.columns.remove(index).name
     }
 
     pub(super) fn append(&mut self, other: Row<'c>) {
@@ -210,7 +216,13 @@ impl Binding<'_> {
             BindingKind::Func { overloads, .. } => overloads
                 .iter()
                 .any(|overload| overload.text_range == text_range),
-            _ => self.text_range == text_range,
+            BindingKind::Struct { .. }
+            | BindingKind::Relation { .. }
+            | BindingKind::Trait { .. }
+            | BindingKind::Let
+            | BindingKind::Module { .. }
+            | BindingKind::Pending
+            | BindingKind::Import { .. } => self.text_range == text_range,
         }
     }
 }
@@ -225,9 +237,7 @@ impl BindingKind<'_> {
             BindingKind::Trait { .. } => "trait",
             BindingKind::Let | BindingKind::Pending => "binding",
             BindingKind::Module { .. } => "module",
-            BindingKind::Import { .. } => {
-                unreachable!("a lookup follows an import before anything asks its name")
-            }
+            BindingKind::Import { .. } => "import",
         }
     }
 }
@@ -407,7 +417,8 @@ impl<'c> SymbolTable<'c> {
     }
 
     /// The name a declaration's op is built under. MLIR has one namespace
-    /// for the whole program, so the module qualifies it.
+    /// for the whole program, so the module qualifies it. A qualified name
+    /// is formatted and interned on each call.
     pub(super) fn symbol(&self, at: Declared<'c>) -> &'c str {
         match at.module.0 {
             Some(path) => self.intern(&format!("{path}.{}", at.name)),
@@ -585,7 +596,13 @@ impl<'c> SymbolTable<'c> {
         let (_, binding) = self.declared_in(at.module, at.name)?;
         match &binding.kind {
             BindingKind::Import { from } => self.find_in(*from),
-            _ => Some((at, binding)),
+            BindingKind::Struct { .. }
+            | BindingKind::Relation { .. }
+            | BindingKind::Func { .. }
+            | BindingKind::Trait { .. }
+            | BindingKind::Let
+            | BindingKind::Module { .. }
+            | BindingKind::Pending => Some((at, binding)),
         }
     }
 
@@ -632,7 +649,13 @@ impl<'c> SymbolTable<'c> {
     pub(super) fn module_of(&self, name: &str) -> Option<&'c str> {
         match self.kind(name)? {
             BindingKind::Module { path } => Some(*path),
-            _ => None,
+            BindingKind::Struct { .. }
+            | BindingKind::Relation { .. }
+            | BindingKind::Func { .. }
+            | BindingKind::Trait { .. }
+            | BindingKind::Let
+            | BindingKind::Pending
+            | BindingKind::Import { .. } => None,
         }
     }
 
@@ -725,7 +748,7 @@ impl<'c> SymbolTable<'c> {
 
     // --- scopes ---
 
-    pub(super) fn enter_type_params(&mut self, names: Vec<&'c str>) {
+    pub(super) fn open_type_params(&mut self, names: Vec<&'c str>) {
         self.scopes.push(Scope::TypeParams { names });
     }
 
@@ -738,13 +761,13 @@ impl<'c> SymbolTable<'c> {
     }
 
     /// A function body is open, so a statement is local to it.
-    pub(super) fn in_body(&self) -> bool {
+    pub(super) fn is_in_body(&self) -> bool {
         self.scopes
             .iter()
             .any(|scope| matches!(scope, Scope::Block { .. }))
     }
 
-    pub(super) fn enter_block(&mut self) {
+    pub(super) fn open_block(&mut self) {
         self.scopes.push(Scope::Block { locals: Vec::new() });
     }
 
@@ -757,22 +780,22 @@ impl<'c> SymbolTable<'c> {
         locals.push(Local { name, slot });
     }
 
-    pub(super) fn enter_relation(&mut self, row: Row<'c>) {
+    pub(super) fn open_relation(&mut self, row: Row<'c>) {
         self.scopes.push(Scope::Relation {
             row,
             narrowed: Vec::new(),
         });
     }
 
-    pub(super) fn leave(&mut self) {
+    pub(super) fn close(&mut self) {
         self.scopes.pop();
     }
 
-    /// Leaves the relation a query opened, and hands back its row.
-    pub(super) fn leave_relation(&mut self) -> Row<'c> {
+    /// Closes the relation a query opened, and hands back its row.
+    pub(super) fn close_relation(&mut self) -> Row<'c> {
         match self.scopes.pop() {
             Some(Scope::Relation { row, .. }) => row,
-            _ => panic!("a query is left outside a relation"),
+            _ => panic!("a relation is closed outside a relation"),
         }
     }
 
@@ -838,7 +861,12 @@ impl<'c> SymbolTable<'c> {
         match &binding.kind {
             BindingKind::Let => {}
             BindingKind::Pending => return Lookup::NotYet,
-            kind => return Lookup::NotAValue(kind.name()),
+            kind @ (BindingKind::Struct { .. }
+            | BindingKind::Relation { .. }
+            | BindingKind::Func { .. }
+            | BindingKind::Trait { .. }
+            | BindingKind::Module { .. }
+            | BindingKind::Import { .. }) => return Lookup::NotAValue(kind.name()),
         }
 
         Lookup::Let(self.refer(at))
@@ -851,12 +879,9 @@ impl<'c> SymbolTable<'c> {
     // --- what each stage does to the row ---
 
     fn replace_row(&mut self, next: Row<'c>) {
-        let Some(Scope::Relation { row, narrowed }) = self.scopes.last_mut() else {
-            panic!("a stage is being lowered outside a relation")
-        };
-
+        let (row, narrowed) = self.relation_mut();
         for name in row.names() {
-            if !next.has(Reference::unqualified(name)) && !narrowed.contains(&name) {
+            if !next.has_column(Reference::unqualified(name)) && !narrowed.contains(&name) {
                 narrowed.push(name);
             }
         }
@@ -864,10 +889,22 @@ impl<'c> SymbolTable<'c> {
         *row = next;
     }
 
-    fn row_mut(&mut self) -> &mut Row<'c> {
+    fn relation_mut(&mut self) -> (&mut Row<'c>, &mut Vec<&'c str>) {
         match self.scopes.last_mut() {
-            Some(Scope::Relation { row, .. }) => row,
+            Some(Scope::Relation { row, narrowed }) => (row, narrowed),
             _ => panic!("a stage is being lowered outside a relation"),
+        }
+    }
+
+    fn row_mut(&mut self) -> &mut Row<'c> {
+        self.relation_mut().0
+    }
+
+    /// Records a name the row no longer carries.
+    fn narrow(&mut self, name: &'c str) {
+        let (row, narrowed) = self.relation_mut();
+        if !row.has_column(Reference::unqualified(name)) && !narrowed.contains(&name) {
+            narrowed.push(name);
         }
     }
 
@@ -886,18 +923,18 @@ impl<'c> SymbolTable<'c> {
     }
 
     pub(super) fn remove(&mut self, index: usize) {
-        let mut next = self.row().clone();
-        next.remove(index);
-        self.replace_row(next);
+        let name = self.row_mut().remove(index);
+        self.narrow(name);
     }
 
     pub(super) fn rename(&mut self, renames: &[(usize, &'c str)]) {
-        let mut next = self.row().clone();
-        for (index, to) in renames {
-            next.rename(*index, to);
+        let old: Vec<&'c str> = renames
+            .iter()
+            .map(|&(index, to)| self.row_mut().rename(index, to))
+            .collect();
+        for name in old {
+            self.narrow(name);
         }
-
-        self.replace_row(next);
     }
 
     pub(super) fn concat(&mut self, rhs: Row<'c>) {
@@ -984,11 +1021,11 @@ mod tests {
         );
     }
 
-    fn enter_relation(symbols: &mut SymbolTable<'static>, relation: &'static str) {
+    fn open_relation(symbols: &mut SymbolTable<'static>, relation: &'static str) {
         let (_, row) = symbols
             .relation(relation, None)
             .expect("the relation is declared");
-        symbols.enter_relation(row);
+        symbols.open_relation(row);
     }
 
     fn bare(name: &str) -> Reference<'_> {
@@ -1005,7 +1042,7 @@ mod tests {
     #[test]
     fn a_column_resolves_by_position() {
         let mut symbols = symbols();
-        enter_relation(&mut symbols, "t");
+        open_relation(&mut symbols, "t");
 
         assert_eq!(symbols.lookup(bare("dept_id")), Lookup::Column(1));
         assert_eq!(symbols.lookup(bare("nope")), Lookup::Unknown);
@@ -1015,7 +1052,7 @@ mod tests {
     fn a_qualifier_picks_between_same_named_columns() {
         let mut symbols = symbols();
         bind_relation(&mut symbols, "depts", vec!["id"]);
-        enter_relation(&mut symbols, "t");
+        open_relation(&mut symbols, "t");
         symbols.alias("a");
         let (_, rhs) = symbols
             .relation("depts", Some("d"))
@@ -1030,7 +1067,7 @@ mod tests {
     #[test]
     fn a_narrowed_column_is_not_an_unknown_name() {
         let mut symbols = symbols();
-        enter_relation(&mut symbols, "t");
+        open_relation(&mut symbols, "t");
         symbols.remove(0);
 
         assert_eq!(symbols.lookup(bare("id")), Lookup::NarrowedAway);
@@ -1044,17 +1081,17 @@ mod tests {
         bind_let(&mut symbols, "id");
 
         assert_eq!(symbols.lookup(bare("cap")), Lookup::Let("cap"));
-        symbols.enter_block();
+        symbols.open_block();
         symbols.bind_local("cap", 0);
         assert_eq!(symbols.lookup(bare("cap")), Lookup::Local(0));
-        symbols.enter_block();
+        symbols.open_block();
         symbols.bind_local("cap", 7);
         assert_eq!(symbols.lookup(bare("cap")), Lookup::Local(7));
-        symbols.leave();
+        symbols.close();
         assert_eq!(symbols.lookup(bare("cap")), Lookup::Local(0));
-        symbols.leave();
+        symbols.close();
         assert_eq!(symbols.lookup(bare("cap")), Lookup::Let("cap"));
-        enter_relation(&mut symbols, "t");
+        open_relation(&mut symbols, "t");
         assert_eq!(symbols.lookup(bare("id")), Lookup::Column(0));
     }
 
@@ -1062,11 +1099,11 @@ mod tests {
     fn an_isolated_scope_reaches_the_module_and_nothing_between() {
         let mut symbols = symbols();
         bind_let(&mut symbols, "cap");
-        symbols.enter_block();
+        symbols.open_block();
         symbols.bind_local("x", 0);
-        symbols.enter_block();
+        symbols.open_block();
         symbols.bind_local("local", 1);
-        enter_relation(&mut symbols, "t");
+        open_relation(&mut symbols, "t");
 
         assert_eq!(symbols.lookup(bare("id")), Lookup::Column(0));
         assert_eq!(symbols.lookup(bare("x")), Lookup::Unknown);
@@ -1180,7 +1217,7 @@ mod tests {
     #[test]
     fn replacing_the_row_narrows_the_names_it_drops() {
         let mut symbols = symbols();
-        enter_relation(&mut symbols, "t");
+        open_relation(&mut symbols, "t");
         assert_eq!(symbols.column(bare("dept_id")), ColumnLookup::Unique(1));
         symbols.replace(vec!["dept_id", "n"]);
 
@@ -1193,7 +1230,7 @@ mod tests {
     fn join_concatenates_both_rows() {
         let mut symbols = symbols();
         bind_relation(&mut symbols, "depts", vec!["dept_id"]);
-        enter_relation(&mut symbols, "t");
+        open_relation(&mut symbols, "t");
         let (_, rhs) = symbols.relation("depts", None).expect("depts is bound");
         symbols.concat(rhs);
 

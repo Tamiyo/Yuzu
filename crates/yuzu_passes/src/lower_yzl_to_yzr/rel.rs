@@ -421,9 +421,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         };
 
         let dropped: Vec<&str> = stage.columns().strings().collect();
-        let Some(kept) = kept_columns(op, &dropped, &row) else {
-            return;
-        };
+        let kept = kept_columns(&dropped, &row);
 
         let region = self.column_region(&row, &kept, op.location());
         let produced = kept.iter().map(|&index| row[index]).collect();
@@ -589,28 +587,20 @@ fn column_index(index: usize) -> i64 {
 
 /// Resolution removes the first column each name matches, so dropping
 /// one name twice drops two columns, and this has to agree exactly.
-fn kept_columns(op: OperationRef<'_, '_>, columns: &[&str], row: &Row<'_>) -> Option<Vec<usize>> {
+fn kept_columns(columns: &[&str], row: &[Column<'_>]) -> Vec<usize> {
     let mut dropped: Vec<usize> = Vec::new();
     for column in columns {
-        let found = row
-            .iter()
-            .enumerate()
-            .find(|(index, (name, _))| name == column && !dropped.contains(index))
-            .map(|(index, _)| index);
-
-        if let Some(index) = found {
-            dropped.push(index);
-        } else {
-            report(op, &format!("`{column}` is not in the row"));
-            return None;
-        }
+        let index = (0..row.len())
+            .find(|&index| row[index].0 == *column && !dropped.contains(&index))
+            .unwrap_or_else(|| {
+                panic!("the AST lowering drops `{column}` only when the row holds it")
+            });
+        dropped.push(index);
     }
 
-    Some(
-        (0..row.len())
-            .filter(|index| !dropped.contains(index))
-            .collect(),
-    )
+    (0..row.len())
+        .filter(|index| !dropped.contains(index))
+        .collect()
 }
 
 #[cfg(test)]

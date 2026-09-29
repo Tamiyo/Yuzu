@@ -133,7 +133,7 @@ impl<'c> AstToYzl<'c, '_> {
     /// file the bound library already holds is not bound again.
     pub(super) fn bind_names(&mut self, files: &[File]) {
         for file in files {
-            let module = self.module_of(file);
+            let module = self.file_module(file);
             if self.symbols.is_library_module(module) {
                 continue;
             }
@@ -151,7 +151,7 @@ impl<'c> AstToYzl<'c, '_> {
     fn in_file<T>(&mut self, file: &File, walk: impl FnOnce(&mut Self) -> T) -> T {
         self.source_id = file.source_id;
         self.file = StringAttribute::new(self.context, self.sources.name(file.source_id));
-        let module = self.module_of(file);
+        let module = self.file_module(file);
         self.symbols.enter_module(module);
 
         let result = walk(self);
@@ -163,7 +163,7 @@ impl<'c> AstToYzl<'c, '_> {
         result
     }
 
-    fn module_of(&mut self, file: &File) -> ModulePath<'c> {
+    fn file_module(&self, file: &File) -> ModulePath<'c> {
         match file.module.as_deref() {
             Some(module) => ModulePath::from_path(self.symbols.intern(module)),
             None => ModulePath::entry(),

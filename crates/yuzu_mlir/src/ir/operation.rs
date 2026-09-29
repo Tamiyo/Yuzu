@@ -2,12 +2,11 @@
 
 use melior::Context;
 use melior::ir::Value;
-use melior::ir::attribute::{ArrayAttribute, StringAttribute};
+use melior::ir::attribute::StringAttribute;
 use melior::ir::operation::{OperationLike, OperationMutLike, OperationRef, OperationRefMut};
 
 use melior::ir::RegionLike;
 
-use crate::ir::attribute::array::ArrayAttributeExt;
 use crate::ir::block::BlockExt;
 
 /// Reads over an operation's results, operands and attributes.
@@ -63,12 +62,6 @@ pub trait OperationMutExt<'c: 'a, 'a>: OperationMutLike<'c, 'a> {
     fn set_private(&mut self, context: &'c Context) {
         let private = StringAttribute::new(context, "private");
         self.set_attribute("sym_visibility", private.into());
-    }
-
-    /// Stamps an array of indices.
-    fn set_index_array_attribute(&mut self, context: &'c Context, name: &str, indices: &[usize]) {
-        let indices = ArrayAttribute::from_indices(context, indices.iter().copied());
-        self.set_attribute(name, indices.into());
     }
 }
 
