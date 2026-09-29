@@ -16,6 +16,17 @@ pub trait ValueExt<'c>: ValueLike<'c> {
     fn id(&self) -> ValueId {
         ValueId(self.to_raw().ptr as usize)
     }
+
+    /// Whether exactly one operand uses the value.
+    fn has_one_use(&self) -> bool {
+        // SAFETY: the value is live while `self` borrows it, and its use list
+        // is read, not changed.
+        unsafe {
+            let first = mlir_sys::mlirValueGetFirstUse(self.to_raw());
+            !mlir_sys::mlirOpOperandIsNull(first)
+                && mlir_sys::mlirOpOperandIsNull(mlir_sys::mlirOpOperandGetNextUse(first))
+        }
+    }
 }
 
 impl<'c, T: ValueLike<'c>> ValueExt<'c> for T {}

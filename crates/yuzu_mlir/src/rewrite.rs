@@ -6,7 +6,7 @@
 
 use melior::ir::attribute::{BoolAttribute, FloatAttribute, IntegerAttribute, StringAttribute};
 use melior::ir::operation::{OperationLike, OperationRef};
-use melior::ir::{Attribute, Module, Value, ValueLike};
+use melior::ir::{Attribute, BlockLike, Module, RegionLike, Value, ValueLike};
 use melior::{
     Context, Error, GreedyRewriteDriverConfig, PatternRewriter, RewritePattern, RewritePatternSet,
     RewriterBase, apply_patterns_and_fold_greedily, create_op_rewrite_pattern,
@@ -15,9 +15,10 @@ use melior::{
 use crate::ir::attribute::array::ArrayAttributeExt;
 use crate::ir::attribute::integer::IntegerAttributeExt;
 use crate::ir::operation::OperationCast;
-use crate::ir::value::op_result;
+use crate::ir::value::{ValueExt, op_result};
 use crate::ods::yz;
 use crate::ops::yz::YzOp;
+use crate::ops::yzr::YzrOp;
 
 /// Applies the patterns and the folders until nothing changes, the way
 /// MLIR's canonicalizer does.
@@ -30,6 +31,7 @@ pub fn canonicalize(context: &Context, module: &Module) -> Result<(), Error> {
     let patterns = RewritePatternSet::new(context);
     patterns.add(pattern(context, "yz.add", reassociate_add));
     patterns.add(pattern(context, "yz.in", fold_membership));
+    patterns.add(pattern(context, "yzr.project", merge_projects));
 
     let config = GreedyRewriteDriverConfig::new();
     config.set_use_top_down_traversal(true);
@@ -174,6 +176,48 @@ fn fold_membership<'c>(
         .into(),
     );
     rewriter.replace_op_with_operation(op, decided);
+    true
+}
+
+/// A project of a project, the inner used only there, becomes one project:
+/// the outer body runs on the values the inner body yields, where it read
+/// the columns those values became. A chain of selects is then one level of
+/// the plan.
+fn merge_projects<'c>(
+    _context: &'c Context,
+    outer: OperationRef<'c, '_>,
+    rewriter: RewriterBase<'c, '_>,
+) -> bool {
+    let Some(YzrOp::Project(project)) = outer.as_yzr() else {
+        return false;
+    };
+    let Some(inner) = op_result(project.input()).map(|result| result.owner()) else {
+        return false;
+    };
+    let Some(YzrOp::Project(feeding)) = inner.as_yzr() else {
+        return false;
+    };
+    if !feeding.result().has_one_use() {
+        return false;
+    }
+
+    let body = feeding
+        .body()
+        .first_block()
+        .expect("a verified project has its body");
+    let rest = project
+        .body()
+        .first_block()
+        .expect("a verified project has its body");
+    let yield_ = body.terminator().expect("a project's body ends in a yield");
+    let columns: Vec<Value> = yield_.operands().collect();
+
+    rewriter.start_op_modification(inner);
+    rewriter.erase_op(yield_);
+    rewriter.merge_blocks(rest, body, &columns);
+    feeding.result().set_type(project.result().r#type());
+    rewriter.finalize_op_modification(inner);
+    rewriter.replace_op_with_values(outer, &[feeding.result().into()]);
     true
 }
 

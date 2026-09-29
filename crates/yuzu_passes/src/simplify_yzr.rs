@@ -449,4 +449,33 @@ from t
             "#]],
         );
     }
+
+    #[test]
+    fn a_chain_of_selects_is_one_project() {
+        check_simplified(
+            r"
+struct Row { a: int64, b: int64 }
+table t = Row
+
+let doubled = from t |> select a * 2 as twice, b
+from doubled |> select twice + b as total
+",
+            &expect![[r#"
+                module {
+                  yz.struct @Row ["a", "b"] : [!yz.int64, !yz.int64]
+                  %0 = yzr.table @t : !yz.struct<@Row>
+                  yz.struct @row ["twice", "b"] : [!yz.int64, !yz.int64]
+                  %1 = yzr.project %0 {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.int64):
+                    %2 = yz.constant_int 2
+                    %3 = yz.mul %arg0, %2 : !yz.int64, !yz.int64 -> !yz.int64
+                    %4 = yz.add %3, %arg1 : !yz.int64, !yz.int64 -> !yz.int64
+                    yzr.yield %4 : !yz.int64
+                  } : !yz.struct<@Row> -> !yz.struct<@row_0>
+                  yz.struct @row_0 ["total"] : [!yz.int64]
+                  yzr.output %1 : !yz.struct<@row_0>
+                }
+            "#]],
+        );
+    }
 }
