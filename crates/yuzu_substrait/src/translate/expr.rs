@@ -2,14 +2,16 @@
 //! the row the region sees, by position; everything else is an operation
 //! whose operands were translated before it, the region being in order.
 
+use melior::ir::attribute::{BoolAttribute, FloatAttribute, IntegerAttribute, StringAttribute};
 use melior::ir::operation::{OperationLike, OperationRef};
-use melior::ir::{RegionLike, Value, ValueLike};
+use melior::ir::{Attribute, RegionLike, Value, ValueLike};
 use rustc_hash::FxHashMap;
 use substrait::proto::{
     Expression, FunctionArgument, Type,
     expression::{RexType, ScalarFunction, SingularOrList, literal::LiteralType},
     function_argument::ArgType,
 };
+use yuzu_mlir::ir::attribute::array::ArrayAttributeExt;
 use yuzu_mlir::ir::block::BlockExt;
 use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
 use yuzu_mlir::ir::value::{ValueExt, ValueId};
@@ -54,7 +56,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
             // only ever stands to the right of a membership test, which
             // reads its elements where they are.
             let skip = matches!(inner.as_yzr(), Some(YzrOp::Agg(_)))
-                || matches!(inner.as_yz(), Some(YzOp::List(_)));
+                || matches!(inner.as_yz(), Some(YzOp::List(_) | YzOp::ConstantList(_)));
             if matches!(inner.as_yzr(), Some(YzrOp::Yield(_))) {
                 yielded.extend(inner.operands());
             } else if !skip {
@@ -123,7 +125,11 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
                 None
             }
             // Declarations and terminators are not values.
-            YzOp::Struct(_) | YzOp::Func(_) | YzOp::Return(_) | YzOp::List(_) => {
+            YzOp::Struct(_)
+            | YzOp::Func(_)
+            | YzOp::Return(_)
+            | YzOp::List(_)
+            | YzOp::ConstantList(_) => {
                 report(op, "this is not an expression");
                 None
             }
@@ -225,17 +231,23 @@ fn translate_membership(
     let value = op.operand(0).expect("a verified `yz.in` has its value");
     let value = expression_of(op, value, values)?;
     let list = op.operand(1).expect("a verified `yz.in` has its list");
-    let producer = Translator::producer(list)
-        .filter(|producer| matches!(producer.as_yz(), Some(YzOp::List(_))));
-    let Some(producer) = producer else {
-        report(op, "`in` takes a list of values on its right");
-        return None;
+    let producer = Translator::producer(list);
+    let options = match producer.as_ref().and_then(OperationCast::as_yz) {
+        Some(YzOp::ConstantList(constants)) => constants
+            .values()
+            .elements()
+            .map(constant_literal)
+            .collect(),
+        Some(YzOp::List(elements)) => elements
+            .operation()
+            .operands()
+            .map(|option| expression_of(op, option, values))
+            .collect::<Option<Vec<_>>>()?,
+        _ => {
+            report(op, "`in` takes a list of values on its right");
+            return None;
+        }
     };
-
-    let options = producer
-        .operands()
-        .map(|option| expression_of(op, option, values))
-        .collect::<Option<Vec<_>>>()?;
 
     Some(Expression {
         rex_type: Some(RexType::SingularOrList(Box::new(SingularOrList {
@@ -243,6 +255,25 @@ fn translate_membership(
             options,
         }))),
     })
+}
+
+/// A value of a `yz.constant_list` as a literal. Its verifier holds each
+/// value to the constant of the element type.
+fn constant_literal(value: Attribute<'_>) -> Expression {
+    // A bool is an integer attribute of one bit, so it is asked first.
+    if let Ok(boolean) = BoolAttribute::try_from(value) {
+        return literal(LiteralType::Boolean(boolean.value()));
+    }
+    if let Ok(integer) = IntegerAttribute::try_from(value) {
+        return literal(LiteralType::I64(integer.value()));
+    }
+    if let Ok(real) = FloatAttribute::try_from(value) {
+        return literal(LiteralType::Fp64(real.value()));
+    }
+    if let Ok(text) = StringAttribute::try_from(value) {
+        return literal(LiteralType::String(text.value().to_owned()));
+    }
+    unreachable!("a verified `yz.constant_list` holds only constants, not {value}")
 }
 
 /// The expressions a region yielded, for a stage that wants values.

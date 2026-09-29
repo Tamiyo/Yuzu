@@ -2,7 +2,8 @@
 //! resolves to something callable.
 
 use melior::ir::attribute::{
-    BoolAttribute, FlatSymbolRefAttribute, FloatAttribute, IntegerAttribute, StringAttribute,
+    ArrayAttribute, BoolAttribute, FlatSymbolRefAttribute, FloatAttribute, IntegerAttribute,
+    StringAttribute,
 };
 use melior::ir::{Attribute, BlockLike, BlockRef, Location, Type, Value};
 use yuzu_ast::ast::{self, AstNode, BinOp, UnaryOp};
@@ -10,7 +11,7 @@ use yuzu_mlir::attributes::CmpPredicate;
 use yuzu_mlir::ir::attribute::integer::IntegerAttributeExt;
 use yuzu_mlir::ir::operation::OperationExt;
 use yuzu_mlir::ods::{yz, yzl};
-use yuzu_mlir::types::{BoolType, Float64Type, Int64Type, StrType, UnresolvedType};
+use yuzu_mlir::types::{BoolType, Float64Type, Int64Type, ListType, StrType, UnresolvedType};
 
 use crate::lower_ast_to_yzl::symbols::{BindingKind, Callable, FunctionKind, Lookup, Reference};
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
@@ -473,6 +474,9 @@ impl<'c> AstToYzl<'c, '_> {
         list: &ast::ListExpr,
     ) -> Value<'c, 'a> {
         let loc = self.location(list);
+        if let Some((element, values)) = self.read_constant_list(list) {
+            return self.emit_constant_list(block, element, &values, loc);
+        }
 
         let values: Vec<Value> = list
             .elements()
@@ -484,6 +488,77 @@ impl<'c> AstToYzl<'c, '_> {
                     self.context,
                     UnresolvedType::new(self.context).into(),
                     &values,
+                    loc,
+                )
+                .into(),
+            )
+            .first_result()
+    }
+
+    /// The values of a list whose elements are all literals of one kind,
+    /// with the kind's type. Any other list is lowered element by element,
+    /// so inference reports a mix of kinds as it reports any other.
+    fn read_constant_list(&self, list: &ast::ListExpr) -> Option<(Type<'c>, Vec<Attribute<'c>>)> {
+        let mut element: Option<Type<'c>> = None;
+        let mut values = Vec::new();
+        for expr in list.elements() {
+            let ast::Expr::Literal(literal) = expr else {
+                return None;
+            };
+
+            let (ty, value): (Type<'c>, Attribute<'c>) = match &literal {
+                ast::Literal::IntLiteral(int) => (
+                    Int64Type::new(self.context).into(),
+                    IntegerAttribute::from_i64(
+                        self.context,
+                        int.value().and_then(|value| i64::try_from(value).ok())?,
+                    )
+                    .into(),
+                ),
+                ast::Literal::FloatLiteral(float) => (
+                    Float64Type::new(self.context).into(),
+                    FloatAttribute::new(
+                        self.context,
+                        Type::float64(self.context),
+                        float.value().unwrap_or_default(),
+                    )
+                    .into(),
+                ),
+                ast::Literal::BoolLiteral(boolean) => (
+                    BoolType::new(self.context).into(),
+                    BoolAttribute::new(self.context, boolean.value().unwrap_or_default()).into(),
+                ),
+                ast::Literal::StringLiteral(string) => (
+                    StrType::new(self.context).into(),
+                    StringAttribute::new(self.context, &string.to_value().unwrap_or_default())
+                        .into(),
+                ),
+            };
+
+            if element.is_some_and(|element| element != ty) {
+                return None;
+            }
+
+            element = Some(ty);
+            values.push(value);
+        }
+
+        Some((element?, values))
+    }
+
+    fn emit_constant_list<'a>(
+        &self,
+        block: BlockRef<'c, 'a>,
+        element: Type<'c>,
+        values: &[Attribute<'c>],
+        loc: Location<'c>,
+    ) -> Value<'c, 'a> {
+        block
+            .append_operation(
+                yz::constant_list(
+                    self.context,
+                    ListType::new(self.context, element).into(),
+                    ArrayAttribute::new(self.context, values),
                     loc,
                 )
                 .into(),

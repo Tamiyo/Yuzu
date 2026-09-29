@@ -1225,11 +1225,9 @@ from t
                   %0 = yzl.from @t
                   %1 = yzl.where %0 {
                   ^bb0(%arg0: !yz.int64):
-                    %2 = yz.constant_int 1
-                    %3 = yz.constant_int 3
-                    %4 = yzl.list[%2, %3] : (!yz.int64, !yz.int64) -> !yz.list<!yz.int64>
-                    %5 = yz.in %arg0, %4 : !yz.int64, !yz.list<!yz.int64> -> !yz.bool
-                    yzl.yield %5 : !yz.bool
+                    %2 = yz.constant_list [1, 3] : <!yz.int64>
+                    %3 = yz.in %arg0, %2 : !yz.int64, !yz.list<!yz.int64> -> !yz.bool
+                    yzl.yield %3 : !yz.bool
                   }
                   yzl.output %1
                 }
@@ -1250,7 +1248,7 @@ from t
 |> where a in ids
 ",
             &expect![[r"
-                error: expected `str`, found `int64`
+                error: expected `List[str]`, found `List[int64]`
                  --> test.yz:5:1
                   |
                 5 | let ids: List[str] = [1, 3]
@@ -1362,10 +1360,8 @@ from t
                   yzl.struct @Row ["a"] : [!yz.int64] {sym_visibility = "private"}
                   yzl.table @t of @Row {sym_visibility = "private"}
                   yzl.const @xs {
-                    %2 = yz.constant_int 1
-                    %3 = yz.constant_int 2
-                    %4 = yzl.list[%2, %3] : (!yz.int64, !yz.int64) -> !yz.list<!yz.int64>
-                    yzl.yield %4 : !yz.list<!yz.int64>
+                    %2 = yz.constant_list [1, 2] : <!yz.int64>
+                    yzl.yield %2 : !yz.list<!yz.int64>
                   } {sym_visibility = "private"}
                   %0 = yzl.from @t
                   %1 = yzl.where %0 {

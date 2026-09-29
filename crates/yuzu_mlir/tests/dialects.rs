@@ -526,6 +526,19 @@ fn verifies(source: &str) -> bool {
 }
 
 #[test]
+fn a_constant_list_holds_constants_of_its_element_type() {
+    let list = |values: &str, element: &str| {
+        format!(
+            "module {{ %t = yzr.table @t : !yz.struct<@row> \n %p = yzr.project %t {{\n ^bb0(%a: !yz.int64):\n %l = yz.constant_list [{values}] : <{element}>\n %in = yz.in %a, %l : !yz.int64, !yz.list<{element}> -> !yz.bool\n yzr.yield %in : !yz.bool\n }} : !yz.struct<@row> -> !yz.struct<@out>\n yz.struct @row [\"a\"] : [!yz.int64]\n yz.struct @out [\"in\"] : [!yz.bool] }}"
+        )
+    };
+    assert!(verifies(&list("1, 2", "!yz.int64")));
+    assert!(verifies(&list(r#""a", "b""#, "!yz.str")));
+    assert!(!verifies(&list(r#"1, "b""#, "!yz.int64")));
+    assert!(!verifies(&list("1.5", "!yz.int64")));
+}
+
+#[test]
 fn a_struct_has_as_many_types_as_names() {
     assert!(verifies(
         r#"module { yz.struct @S ["a", "b"] : [!yz.int64, !yz.str] }"#

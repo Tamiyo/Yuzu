@@ -102,6 +102,20 @@ def Yz_ConstantStrOp : Yz_Op<"constant_str", [ConstantLike, Pure]> {
   let hasFolder = 1;
 }
 
+def Yz_ConstantListOp : Yz_Op<"constant_list", [ConstantLike, Pure]> {
+  let summary = "a list literal whose elements are all literals";
+  let description = [{
+    The elements are one attribute rather than one op each, so a long
+    literal list costs a pass one op. Each value is the attribute of the
+    element type's constant: an integer, a float, a bool or a string.
+  }];
+  let arguments = (ins ArrayAttr:$values);
+  let results = (outs Yz_ListType:$result);
+  let assemblyFormat = "$values attr-dict `:` type($result)";
+  let hasFolder = 1;
+  let hasVerifier = 1;
+}
+
 def Yz_ListOp : Yz_Op<"list", [Pure]> {
   let summary = "a list of values; the operands are the elements";
   let arguments = (ins Variadic<AnyType>:$elements);
@@ -237,9 +251,9 @@ def Yz_OrOp : Yz_Op<"or", [Commutative, Pure]> {
 def Yz_InOp : Yz_Op<"in", [Pure]> {
   let summary = "membership: whether the value is an element of the list";
   let description = [{
-    Folds when the value is a constant and the list is a `yz.list`: to true
-    when an element equals the value, and to false when every element is a
-    constant that does not.
+    Folds when the value is a constant and the list is a `yz.constant_list`
+    or a `yz.list`: to true when an element equals the value, and to false
+    when every element is a constant that does not.
   }];
   let arguments = (ins AnyType:$value, AnyType:$list);
   let results = (outs Yz_BoolOrUnresolvedType:$result);

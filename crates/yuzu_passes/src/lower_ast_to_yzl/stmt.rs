@@ -1520,10 +1520,8 @@ external def upper(s: str) -> str
         expect![[r#"
             module {
               yzl.const @ids : !yz.list<!yz.int64> {
-                %0 = yz.constant_int 1
-                %1 = yz.constant_int 3
-                %2 = yzl.list[%0, %1] : (!yz.int64, !yz.int64) -> !yzl.unresolved
-                yzl.yield %2 : !yzl.unresolved
+                %0 = yz.constant_list [1, 3] : <!yz.int64>
+                yzl.yield %0 : !yz.list<!yz.int64>
               } {sym_visibility = "private"}
             }
         "#]]

@@ -811,11 +811,9 @@ from t
               } {set_cols = [2]}
               %4 = yzl.where %3 {
               ^bb0(%arg0: !yzl.unresolved, %arg1: !yzl.unresolved, %arg2: !yzl.unresolved, %arg3: !yzl.unresolved, %arg4: !yzl.unresolved, %arg5: !yzl.unresolved):
-                %7 = yz.constant_int 1
-                %8 = yz.constant_int 3
-                %9 = yzl.list[%7, %8] : (!yz.int64, !yz.int64) -> !yzl.unresolved
-                %10 = yz.in %arg2, %9 : !yzl.unresolved, !yzl.unresolved -> !yzl.unresolved
-                yzl.yield %10 : !yzl.unresolved
+                %7 = yz.constant_list [1, 3] : <!yz.int64>
+                %8 = yz.in %arg2, %7 : !yzl.unresolved, !yz.list<!yz.int64> -> !yzl.unresolved
+                yzl.yield %8 : !yzl.unresolved
               }
               %5 = yzl.drop %4 ["rating"]
               %6 = yzl.distinct %5

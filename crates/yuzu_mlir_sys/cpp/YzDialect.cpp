@@ -56,6 +56,9 @@ mlir::Operation *YzDialect::materializeConstant(mlir::OpBuilder &builder,
   if (llvm::isa<StrType>(type))
     if (auto text = llvm::dyn_cast<mlir::StringAttr>(value))
       return ConstantStrOp::create(builder, loc, type, text);
+  if (llvm::isa<ListType>(type))
+    if (auto values = llvm::dyn_cast<mlir::ArrayAttr>(value))
+      return ConstantListOp::create(builder, loc, type, values);
   return nullptr;
 }
 
@@ -63,6 +66,21 @@ mlir::OpFoldResult ConstantIntOp::fold(FoldAdaptor) { return getValueAttr(); }
 mlir::OpFoldResult ConstantFloatOp::fold(FoldAdaptor) { return getValueAttr(); }
 mlir::OpFoldResult ConstantBoolOp::fold(FoldAdaptor) { return getValueAttr(); }
 mlir::OpFoldResult ConstantStrOp::fold(FoldAdaptor) { return getValueAttr(); }
+mlir::OpFoldResult ConstantListOp::fold(FoldAdaptor) { return getValuesAttr(); }
+
+// Each value is what the element type's constant op would hold.
+mlir::LogicalResult ConstantListOp::verify() {
+  mlir::Type element = llvm::cast<ListType>(getType()).getInner();
+  for (auto [index, value] : llvm::enumerate(getValues())) {
+    bool fits = (llvm::isa<Int64Type>(element) && llvm::isa<mlir::IntegerAttr>(value)) ||
+                (llvm::isa<Float64Type>(element) && llvm::isa<mlir::FloatAttr>(value)) ||
+                (llvm::isa<BoolType>(element) && llvm::isa<mlir::BoolAttr>(value)) ||
+                (llvm::isa<StrType>(element) && llvm::isa<mlir::StringAttr>(value));
+    if (!fits)
+      return emitOpError("value ") << index << " is not a constant of " << element;
+  }
+  return mlir::success();
+}
 
 // Folding answers at compile time what the engine would answer at run time,
 // so a fold that cannot be carried out exactly declines instead of guessing.
@@ -312,6 +330,15 @@ struct FoldMembership : public mlir::OpRewritePattern<InOp> {
     mlir::Attribute value;
     if (!mlir::matchPattern(op.getValue(), mlir::m_Constant(&value)))
       return mlir::failure();
+
+    if (auto constants = op.getList().getDefiningOp<ConstantListOp>()) {
+      bool found = llvm::any_of(constants.getValues(), [&](mlir::Attribute element) {
+        return sameValue(value, element).value_or(false);
+      });
+      rewriter.replaceOpWithNewOp<ConstantBoolOp>(op, op.getType(),
+                                                  rewriter.getBoolAttr(found));
+      return mlir::success();
+    }
 
     auto list = op.getList().getDefiningOp<ListOp>();
     if (!list)
