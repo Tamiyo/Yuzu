@@ -9,8 +9,10 @@ use text_size::TextRange;
 use yuzu_ast::ast::{self, AstNode, Mutability, Visibility};
 use yuzu_mlir::attributes::CalleeSource;
 use yuzu_mlir::ir::attribute::array::ArrayAttributeExt;
-use yuzu_mlir::ir::operation::{OperationExt, OperationMutExt};
+use yuzu_mlir::ir::block::BlockExt;
+use yuzu_mlir::ir::operation::{OperationCast, OperationExt, OperationMutExt};
 use yuzu_mlir::ods::yzl;
+use yuzu_mlir::ops::yzl::YzlOp;
 use yuzu_mlir::types::{
     self, ErrorType, ListType, ParamType, RefType, StructType, UnitType, UnresolvedType,
 };
@@ -279,6 +281,7 @@ impl<'c> AstToYzl<'c, '_> {
                 }
 
                 this.convert_block(entry, &mut locals, &block);
+                this.emit_final_return(entry, decl, name, result, &block);
             });
         }
 
@@ -594,6 +597,10 @@ impl<'c> AstToYzl<'c, '_> {
     ) {
         self.in_block(|this| {
             for stmt in body.stmts() {
+                if ends_in_return(block) {
+                    this.report(&stmt, "nothing can follow a `return`");
+                    break;
+                }
                 this.convert_stmt(block, locals, &stmt);
             }
         });
@@ -1222,6 +1229,38 @@ impl<'c> AstToYzl<'c, '_> {
         (names, types)
     }
 
+    /// The `return` a body that does not end in one gets: none of a value in
+    /// a unit function, and a hole after a report in any other.
+    fn emit_final_return<'a>(
+        &mut self,
+        entry: BlockRef<'c, 'a>,
+        decl: &ast::FuncStmt,
+        name: &str,
+        result: Type<'c>,
+        body: &ast::BlockStmt,
+    ) {
+        if ends_in_return(entry) {
+            return;
+        }
+
+        let range = body.syntax().text_range();
+        let values = if UnitType::from_type(result).is_some() {
+            Vec::new()
+        } else {
+            if ErrorType::from_type(result).is_none() {
+                let message = format!(
+                    "`{name}` must end with a `return` of `{}`",
+                    types::name(result)
+                );
+                self.report(decl, &message);
+            }
+            vec![self.emit_hole(entry, range, ErrorType::new(self.context).into())]
+        };
+
+        let loc = self.location_at(range);
+        entry.append_operation(yzl::r#return(self.context, &values, loc).into());
+    }
+
     fn emit_struct<'a>(
         &self,
         block: BlockRef<'c, 'a>,
@@ -1320,6 +1359,13 @@ impl<'c> AstToYzl<'c, '_> {
         );
         hoisted
     }
+}
+
+/// Whether a block's last op is a `return`, after which nothing may come.
+fn ends_in_return(block: BlockRef<'_, '_>) -> bool {
+    block
+        .last_operation()
+        .is_some_and(|op| matches!(op.as_yzl(), Some(YzlOp::Return(_))))
 }
 
 #[cfg(test)]
@@ -1866,5 +1912,46 @@ external def upper(s: str) -> str
               |          ^^^^
         "]]
         .assert_eq(&reported("def f(x: Nope) -> int64 { return 1 }\n"));
+    }
+
+    #[test]
+    fn a_unit_function_may_end_without_a_return() {
+        expect![[r#"
+            module {
+              yzl.fn @g params ["x"] (!yz.int64) -> !yz.unit {
+              ^bb0(%arg0: !yzl.unresolved):
+                %0 = yzl.local "x" param : !yzl.ref<!yz.int64>
+                yzl.store %0, %arg0 : !yzl.ref<!yz.int64>, !yzl.unresolved
+                %1 = yzl.load %0 : !yzl.ref<!yz.int64> -> !yzl.unresolved
+                %2 = yzl.local "y" : !yzl.ref<!yzl.unresolved>
+                yzl.store %2, %1 : !yzl.ref<!yzl.unresolved>, !yzl.unresolved
+                yzl.return
+              } {sym_visibility = "private"}
+            }
+        "#]].assert_eq(&lowered("def g(x: int64) {\n    let y = x\n}\n"));
+    }
+
+    #[test]
+    fn a_function_with_a_result_ends_in_a_return() {
+        expect![[r"
+            error: `f` must end with a `return` of `int64`
+             --> test.yz:1:1
+              |
+            1 | def f(x: int64) -> int64 {
+              | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+        "]].assert_eq(&reported("def f(x: int64) -> int64 {\n    let y = x\n}\n"));
+    }
+
+    #[test]
+    fn nothing_follows_a_return() {
+        expect![[r"
+            error: nothing can follow a `return`
+             --> test.yz:3:5
+              |
+            3 |     let y = x
+              |     ^^^^^^^^^
+        "]].assert_eq(&reported(
+            "def f(x: int64) -> int64 {\n    return x\n    let y = x\n}\n",
+        ));
     }
 }
