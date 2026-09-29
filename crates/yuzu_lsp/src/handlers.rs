@@ -5,15 +5,17 @@ use lsp_types::{
     DocumentHighlight, DocumentHighlightParams, DocumentSymbolParams, DocumentSymbolResponse,
     FoldingRange, FoldingRangeParams, GotoDefinitionParams, GotoDefinitionResponse, Hover,
     HoverContents, HoverParams, InlayHint, InlayHintKind, InlayHintLabel, InlayHintParams,
-    Location, MarkupContent, MarkupKind, ReferenceParams, SelectionRange, SelectionRangeParams,
-    SemanticTokensParams, SemanticTokensResult, TextDocumentPositionParams,
+    Location, MarkupContent, MarkupKind, ParameterInformation, ParameterLabel, ReferenceParams,
+    SelectionRange, SelectionRangeParams, SemanticTokensParams, SemanticTokensResult,
+    SignatureHelp, SignatureHelpParams, SignatureInformation, TextDocumentPositionParams,
 };
 use rustc_hash::FxHashSet;
 use text_size::{TextRange, TextSize};
-use yuzu_ide::{Checked, FilePosition, HlRange};
+use yuzu_ide::{CallSite, Checked, FilePosition, HlRange};
 
 use crate::documents::Document;
 use crate::global_state::GlobalState;
+use crate::text_shift::TextShift;
 use crate::to_proto::Locations;
 use crate::{from_proto, to_proto};
 
@@ -141,6 +143,50 @@ pub(crate) fn hover(state: &GlobalState, params: &HoverParams) -> Option<Hover> 
             value: hover.markup,
         }),
         range: Some(to_proto::range(&document.line_index, hover.range)),
+    })
+}
+
+/// The overloads of the function a call names. The call is found in the
+/// text the document has now, and its function's name is carried back to
+/// the text the last check read, which resolved it.
+pub(crate) fn signature_help(
+    state: &GlobalState,
+    params: &SignatureHelpParams,
+) -> Option<SignatureHelp> {
+    let position = &params.text_document_position_params;
+    let (file_id, document, checked, _) = state.last_check(&position.text_document.uri)?;
+    let offset = from_proto::offset(&document.line_index, position.position)?;
+    let site = state.analysis().call_at(FilePosition { file_id, offset })?;
+    let back = TextShift::between(&document.text, checked.file_text(file_id)?);
+    let site = CallSite {
+        callee: back.map(site.callee)?,
+        argument: site.argument,
+    };
+    let help = checked.signature_help(file_id, site)?;
+    let signatures = help
+        .signatures
+        .into_iter()
+        .map(|signature| {
+            let parameters = signature
+                .parameters
+                .iter()
+                .map(|&range| ParameterInformation {
+                    label: ParameterLabel::Simple(signature.label[range].to_owned()),
+                    documentation: None,
+                })
+                .collect();
+            SignatureInformation {
+                label: signature.label,
+                documentation: None,
+                parameters: Some(parameters),
+                active_parameter: None,
+            }
+        })
+        .collect();
+    Some(SignatureHelp {
+        signatures,
+        active_signature: u32::try_from(help.active_signature).ok(),
+        active_parameter: u32::try_from(help.active_parameter).ok(),
     })
 }
 

@@ -16,6 +16,7 @@ mod inlay_hints;
 mod names;
 mod navigation;
 mod selection_ranges;
+mod signature_help;
 mod syntax_highlighting;
 #[cfg(test)]
 mod test_support;
@@ -27,6 +28,7 @@ pub use folding_ranges::{Fold, FoldKind};
 pub use hover::HoverResult;
 pub use inlay_hints::InlayHint;
 pub use navigation::{FileRange, References};
+pub use signature_help::{CallSite, Signature, SignatureHelp};
 pub use syntax_highlighting::{Highlight, HlMod, HlMods, HlRange, HlTag};
 pub use yuzu_driver::stdlib::install as install_library;
 

@@ -12,8 +12,8 @@ use yuzu_syntax::{GreenNode, SyntaxNode};
 
 use crate::check::{self, DiskCache, Document};
 use crate::{
-    Checked, FileId, FilePosition, Fold, HlRange, StructureNode, file_structure, folding_ranges,
-    selection_ranges, syntax_highlighting,
+    CallSite, Checked, FileId, FilePosition, Fold, HlRange, StructureNode, file_structure,
+    folding_ranges, selection_ranges, signature_help, syntax_highlighting,
 };
 
 /// New texts and paths for some files. `None` removes a file's text, or
@@ -154,6 +154,13 @@ impl Analysis {
     pub fn folding_ranges(&self, file_id: FileId) -> Option<Vec<Fold>> {
         let file = self.file(file_id)?;
         Some(folding_ranges::folding_ranges(&file.syntax(), file.text()))
+    }
+
+    /// The call whose arguments a position is in, from the text as it is
+    /// now; a check may not have read it yet.
+    #[must_use]
+    pub fn call_at(&self, position: FilePosition) -> Option<CallSite> {
+        signature_help::call_at(&self.file(position.file_id)?.syntax(), position.offset)
     }
 
     /// The ranges around a position, innermost first.

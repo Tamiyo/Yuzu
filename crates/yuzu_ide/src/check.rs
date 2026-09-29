@@ -20,8 +20,8 @@ use crate::hover::HoverResult;
 use crate::inlay_hints::InlayHint;
 use crate::names::{self, Resolution, Trees};
 use crate::navigation::{FileRange, References};
-use crate::{FileId, FilePosition, HlRange};
-use crate::{hover, inlay_hints, navigation, syntax_highlighting};
+use crate::{CallSite, FileId, FilePosition, HlRange, SignatureHelp};
+use crate::{hover, inlay_hints, navigation, signature_help, syntax_highlighting};
 
 /// What checking a file's program found. Its names are resolved once, when
 /// the check is made on the checker thread, so a request only looks them up.
@@ -99,6 +99,13 @@ impl Checked {
     #[must_use]
     pub fn goto_definition(&self, position: FilePosition) -> Option<FileRange> {
         navigation::goto_definition(self, self.source(position.file_id)?, position.offset)
+    }
+
+    /// The overloads of the function a call names, as this check resolved
+    /// the name at `site.callee` in a file.
+    #[must_use]
+    pub fn signature_help(&self, file_id: FileId, site: CallSite) -> Option<SignatureHelp> {
+        signature_help::signature_help(self, self.source(file_id)?, site)
     }
 
     /// The declaration of the name at a position, and each use of it.

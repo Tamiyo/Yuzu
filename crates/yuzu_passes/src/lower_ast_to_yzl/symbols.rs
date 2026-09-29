@@ -865,6 +865,30 @@ impl<'c> SymbolTable<'c> {
         })
     }
 
+    /// The declaration a name in this file names, whatever it is: for a
+    /// function, its first overload this module can call.
+    pub(super) fn target_of(&self, name: &str) -> Option<Target<'c>> {
+        let (at, _) = self.find(name)?;
+        self.target_in(at)
+    }
+
+    /// The declaration at a place, followed through imports: for a
+    /// function, its first overload this module can call.
+    pub(super) fn target_in(&self, at: Declared<'c>) -> Option<Target<'c>> {
+        let (at, binding) = self.find_in(at)?;
+        let range = match &binding.kind {
+            BindingKind::Func { overloads, .. } => self.visible(at, overloads).next()?.text_range,
+            BindingKind::Struct { .. }
+            | BindingKind::Relation { .. }
+            | BindingKind::Trait { .. }
+            | BindingKind::Let
+            | BindingKind::Module { .. }
+            | BindingKind::Pending
+            | BindingKind::Import { .. } => binding.text_range,
+        };
+        Some(Target { at, range })
+    }
+
     /// The argument counts a function's visible overloads take, least
     /// first, when a name is a function.
     pub(super) fn arities(&self, name: &str) -> Option<Vec<usize>> {

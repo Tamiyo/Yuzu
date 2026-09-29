@@ -383,6 +383,11 @@ impl<'c> AstToYzl<'c, '_> {
 
         let provided_arity = operands.len();
         let Some(callable) = self.symbols.callable(callee, provided_arity) else {
+            // A call that takes the wrong number of arguments still names the
+            // function, as it does while the arguments are being typed.
+            if let Some(target) = self.symbols.target_of(callee) {
+                self.record(callee_range, callee, target);
+            }
             let message = if let Some(arities) = self.symbols.arities(callee) {
                 arity_mismatch(callee, &arities, provided_arity)
             } else {
@@ -470,6 +475,11 @@ impl<'c> AstToYzl<'c, '_> {
 
         let given = operands.len();
         let Some(callable) = self.symbols.callable_in(at, given) else {
+            if let Some(field) = access.field()
+                && let Some(target) = self.symbols.target_in(at)
+            {
+                self.record(field.syntax().text_range(), name, target);
+            }
             let message = match self.symbols.arities_in(at) {
                 Some(arities) => arity_mismatch(name, &arities, given),
                 None => format!("`{name}` is a {}, not a function", binding.kind),
@@ -655,7 +665,14 @@ impl<'c> AstToYzl<'c, '_> {
                     "column `{name}` is no longer in the row: an earlier stage narrowed it away"
                 )
             }
-            Lookup::NotAValue(what) => format!("`{reference}` is a {what}, not a value"),
+            Lookup::NotAValue(what) => {
+                // Still the name of a declaration, as a function is before
+                // its call is typed.
+                if let Some(target) = self.symbols.target_of(name) {
+                    self.record(used, name, target);
+                }
+                format!("`{reference}` is a {what}, not a value")
+            }
             Lookup::NotYet => format!("`{reference}` is bound further down the file"),
             Lookup::Unknown => format!("unresolved identifier `{reference}`"),
         };

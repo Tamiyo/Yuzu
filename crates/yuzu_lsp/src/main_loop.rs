@@ -13,7 +13,7 @@ use lsp_types::notification::{
 use lsp_types::request::{
     DocumentHighlightRequest, DocumentSymbolRequest, FoldingRangeRequest, GotoDefinition,
     HoverRequest, InlayHintRequest, References, RegisterCapability, Request as _,
-    SelectionRangeRequest, SemanticTokensFullRequest,
+    SelectionRangeRequest, SemanticTokensFullRequest, SignatureHelpRequest,
 };
 use lsp_types::{InitializeParams, InitializeResult, RegistrationParams, ServerInfo};
 use rustc_hash::FxHashMap;
@@ -151,6 +151,9 @@ impl GlobalState<'_> {
                 self.respond::<DocumentHighlightRequest>(request, handlers::document_highlight)
             }
             HoverRequest::METHOD => self.respond::<HoverRequest>(request, handlers::hover),
+            SignatureHelpRequest::METHOD => {
+                self.respond::<SignatureHelpRequest>(request, handlers::signature_help)
+            }
             InlayHintRequest::METHOD => {
                 self.respond::<InlayHintRequest>(request, handlers::inlay_hint)
             }
