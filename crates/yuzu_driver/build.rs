@@ -27,7 +27,7 @@ fn main() {
             "    Embedded {{ path: {path:?}, file: {file:?}, name: {name:?}, source: include_str!({absolute:?}) }},",
             path = module_path(relative),
             file = file_path(relative),
-            name = Path::new("stdlib").join(relative).display().to_string(),
+            name = format!("stdlib/{}", file_path(relative)),
             absolute = file.display().to_string(),
         )
         .expect("writing to a string cannot fail");
@@ -53,25 +53,24 @@ fn collect(directory: &Path, files: &mut Vec<PathBuf>) {
 /// A library file's path under the library's root, with `/` between its
 /// parts on every platform.
 fn file_path(relative: &Path) -> String {
-    relative
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy().into_owned())
-        .collect::<Vec<_>>()
-        .join("/")
+    segments(relative).join("/")
 }
 
 /// The module path of a library file: `yuzu/std/math.yz` is
 /// `yuzu.std.math`, and `yuzu/std/mod.yz` is `yuzu.std`.
 fn module_path(relative: &Path) -> String {
-    let mut segments: Vec<String> = relative
-        .with_extension("")
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy().into_owned())
-        .collect();
+    let mut segments = segments(&relative.with_extension(""));
 
     if segments.last().is_some_and(|last| last == "mod") {
         segments.pop();
     }
 
     segments.join(".")
+}
+
+/// The parts of a path, each as text.
+fn segments(path: &Path) -> Vec<String> {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect()
 }

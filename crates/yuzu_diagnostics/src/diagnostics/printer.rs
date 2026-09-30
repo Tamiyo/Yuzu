@@ -3,12 +3,14 @@ use std::fmt::Write;
 use crate::diagnostics::{Diagnostic, Label, LabelStyle, Severity};
 use crate::source_map::{SourceId, SourceMap};
 
+/// Renders diagnostics as text, with the source lines they point into.
 #[derive(Debug)]
 pub struct DiagnosticPrinter<'a> {
     sources: &'a SourceMap,
 }
 
 impl<'a> DiagnosticPrinter<'a> {
+    /// A printer for diagnostics that point into `sources`.
     #[must_use]
     pub fn new(sources: &'a SourceMap) -> Self {
         Self { sources }
@@ -24,6 +26,7 @@ impl<'a> DiagnosticPrinter<'a> {
             .join("\n")
     }
 
+    /// One diagnostic: its message, each line it points at, and its notes.
     #[must_use]
     pub fn render(&self, diagnostic: &Diagnostic) -> String {
         let mut out = String::new();
@@ -42,11 +45,11 @@ impl<'a> DiagnosticPrinter<'a> {
         let lines = self.snippet_lines(diagnostic);
         let gutter = lines
             .iter()
-            .map(|&(_, line)| line.to_string().len())
+            .map(|&(_, line)| digits(line))
             .max()
             .unwrap_or(1);
         for (source, line) in lines {
-            self.print_snippet(&mut out, diagnostic, source, line, gutter);
+            self.render_snippet(&mut out, diagnostic, source, line, gutter);
         }
 
         for note in &diagnostic.notes {
@@ -60,7 +63,7 @@ impl<'a> DiagnosticPrinter<'a> {
     /// source order.
     fn snippet_lines(&self, diagnostic: &Diagnostic) -> Vec<(SourceId, usize)> {
         let mut lines: Vec<(SourceId, usize)> = Vec::new();
-        let primary = primary_label(diagnostic);
+        let primary = primary_label(diagnostic.labels.iter());
         let mut rest: Vec<(SourceId, usize)> = diagnostic
             .labels
             .iter()
@@ -78,7 +81,7 @@ impl<'a> DiagnosticPrinter<'a> {
         lines
     }
 
-    fn print_snippet(
+    fn render_snippet(
         &self,
         out: &mut String,
         diagnostic: &Diagnostic,
@@ -88,11 +91,7 @@ impl<'a> DiagnosticPrinter<'a> {
     ) {
         let labels = self.labels_on(diagnostic, source, line);
         let line_text = self.sources.line_text(source, line);
-        let first = labels
-            .iter()
-            .find(|label| matches!(label.style, LabelStyle::Primary))
-            .or_else(|| labels.first())
-            .expect("a snippet's line holds a label");
+        let first = primary_label(labels.iter().copied()).expect("a snippet's line holds a label");
         let column = line_text
             .get(..self.byte_column(first))
             .map_or(1, |before| before.chars().count() + 1);
@@ -131,10 +130,10 @@ impl<'a> DiagnosticPrinter<'a> {
         }
         out.push('\n');
 
-        self.print_stacked_labels(out, &labels, line_text, gutter);
+        self.render_stacked_labels(out, &labels, line_text, gutter);
     }
 
-    fn print_stacked_labels(
+    fn render_stacked_labels(
         &self,
         out: &mut String,
         labels: &[&Label],
@@ -221,12 +220,17 @@ fn shown(line_text: &str) -> String {
     line_text.replace('\t', "    ")
 }
 
-fn primary_label(diagnostic: &Diagnostic) -> Option<&Label> {
-    diagnostic
-        .labels
-        .iter()
+/// The primary label among `labels`, or the first when none is primary.
+fn primary_label<'l>(mut labels: impl Iterator<Item = &'l Label> + Clone) -> Option<&'l Label> {
+    labels
+        .clone()
         .find(|label| matches!(label.style, LabelStyle::Primary))
-        .or_else(|| diagnostic.labels.first())
+        .or_else(|| labels.next())
+}
+
+/// How many digits a line number takes.
+fn digits(line: usize) -> usize {
+    line.checked_ilog10().map_or(1, |log| log as usize + 1)
 }
 
 fn span_len(label: &Label) -> usize {

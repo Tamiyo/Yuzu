@@ -25,7 +25,9 @@ pub struct CompileOptions {
 /// reported on the way.
 #[derive(Debug)]
 pub struct Compilation {
+    /// The plan, when the program compiled.
     pub plan: Option<Plan>,
+    /// All the compile reported.
     pub diagnostics: Vec<Diagnostic>,
     /// The sources the diagnostics point into.
     pub sources: SourceMap,
@@ -92,8 +94,10 @@ pub fn compile(
     let mut sources = SourceMap::new();
     let source_id = sources.add(name, source);
     let mut dumps = Dumps {
-        yzl: options.dump_yzl.then(String::new),
-        yzr: options.dump_yzr.then(String::new),
+        keep_yzl: options.dump_yzl,
+        keep_yzr: options.dump_yzr,
+        yzl: None,
+        yzr: None,
     };
 
     let plan = plan_through_mlir(
@@ -108,19 +112,22 @@ pub fn compile(
         plan,
         diagnostics: diagnostics.into_diagnostics(),
         sources,
-        yzl: dumps.yzl.filter(|yzl| !yzl.is_empty()),
-        yzr: dumps.yzr.filter(|yzr| !yzr.is_empty()),
+        yzl: dumps.yzl,
+        yzr: dumps.yzr,
     }
 }
 
-/// The modules a compile keeps as text, where the options asked for them.
+/// The modules a compile keeps as text: those the options asked for, once
+/// the compile reaches them.
 struct Dumps {
+    keep_yzl: bool,
+    keep_yzr: bool,
     yzl: Option<String>,
     yzr: Option<String>,
 }
 
-/// Source to plan, through every MLIR pass in order. `None` once anything
-/// has reported: a pass reads what the one before it settled, so running on
+/// Source to plan, through every MLIR pass in order. `None` once an error
+/// is reported: a pass reads what the one before it settled, so running on
 /// after an error would report the same mistake again in other words.
 ///
 /// The query is one of the sources rather than a text of its own, so its
@@ -141,7 +148,7 @@ fn plan_through_mlir(
             &files,
             diagnostics,
             Some(stdlib::bound_library(engine)),
-            dumps.yzl.as_mut(),
+            dumps.keep_yzl.then_some(&mut dumps.yzl),
             None,
         )
         .filter(|_| !diagnostics.has_errors())?;
@@ -161,8 +168,8 @@ fn plan_through_mlir(
             yuzu_passes::lower_yzl_to_yzr(context, &mut module);
             yuzu_passes::simplify_yzr(context, &mut module);
             yuzu_passes::legalize_operators(context, &mut module);
-            if let Some(yzr) = dumps.yzr.as_mut() {
-                *yzr = module.as_operation().to_string();
+            if dumps.keep_yzr {
+                dumps.yzr = Some(module.as_operation().to_string());
             }
         });
         if diagnostics.has_errors() {
@@ -191,7 +198,7 @@ pub(crate) fn lower_and_check<'c>(
     files: &[yuzu_passes::File],
     diagnostics: &mut DiagnosticsEngine,
     library: Option<&'c yuzu_passes::BoundLibrary<'c>>,
-    yzl: Option<&mut String>,
+    yzl: Option<&mut Option<String>>,
     mut index: Option<&mut IndexReader<'_>>,
 ) -> Option<melior::ir::Module<'c>> {
     let mut module = match index.as_deref_mut() {
@@ -207,7 +214,7 @@ pub(crate) fn lower_and_check<'c>(
     };
 
     if let Some(yzl) = yzl {
-        *yzl = module.as_operation().to_string();
+        *yzl = Some(module.as_operation().to_string());
     }
 
     let verified = yuzu_mlir::diagnostics::capture(context, sources, diagnostics, || {
@@ -254,7 +261,7 @@ thread_local! {
 }
 
 /// Runs a compile in this thread's context. Making a context registers every
-/// op of the dialects, which was a sixth of a compile.
+/// op of the dialects, and that is slow.
 pub(crate) fn in_thread_context<T>(compile: impl FnOnce(&melior::Context) -> T) -> T {
     CONTEXT.with(|thread| {
         let mut thread = thread.borrow_mut();
@@ -277,19 +284,6 @@ mod tests {
 
     use super::{CompileOptions, compile};
     use crate::modules::MapResolver;
-    use crate::stdlib::Engine;
-
-    #[test]
-    fn an_engine_the_compiler_does_not_know_is_named_in_the_error() {
-        let unknown = "postgres"
-            .parse::<Engine>()
-            .expect_err("postgres is not an engine");
-        assert_eq!(
-            unknown.to_string(),
-            "`postgres` is not a supported engine; the supported engine is `datafusion`"
-        );
-        assert_eq!("datafusion".parse::<Engine>(), Ok(Engine::default()));
-    }
 
     #[test]
     fn a_failed_compile_keeps_its_diagnostics_as_data() {

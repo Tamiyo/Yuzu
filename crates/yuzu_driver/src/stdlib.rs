@@ -47,11 +47,22 @@ pub enum Engine {
     DataFusion,
 }
 
+impl Engine {
+    /// Every engine, in the order a message lists them.
+    pub const ALL: &[Engine] = &[Engine::DataFusion];
+
+    /// The name an option gives the engine.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Engine::DataFusion => "datafusion",
+        }
+    }
+}
+
 impl fmt::Display for Engine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Engine::DataFusion => "datafusion",
-        })
+        f.write_str(self.as_str())
     }
 }
 
@@ -59,12 +70,13 @@ impl FromStr for Engine {
     type Err = UnknownEngine;
 
     fn from_str(name: &str) -> Result<Self, UnknownEngine> {
-        match name {
-            "datafusion" => Ok(Engine::DataFusion),
-            _ => Err(UnknownEngine {
+        Engine::ALL
+            .iter()
+            .copied()
+            .find(|engine| engine.as_str() == name)
+            .ok_or_else(|| UnknownEngine {
                 name: name.to_owned(),
-            }),
-        }
+            })
     }
 }
 
@@ -76,11 +88,20 @@ pub struct UnknownEngine {
 
 impl fmt::Display for UnknownEngine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "`{}` is not a supported engine; the supported engine is `datafusion`",
-            self.name
-        )
+        write!(f, "`{}` is not a supported engine; ", self.name)?;
+        match Engine::ALL {
+            [only] => write!(f, "the supported engine is `{only}`"),
+            all => {
+                f.write_str("the supported engines are ")?;
+                for (index, engine) in all.iter().enumerate() {
+                    if index > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "`{engine}`")?;
+                }
+                Ok(())
+            }
+        }
     }
 }
 
@@ -251,7 +272,7 @@ impl Library {
     fn load(engine: Engine, resolver: &dyn ModuleResolver) -> Self {
         let mut sources = SourceMap::new();
         let mut diagnostics = DiagnosticsEngine::new();
-        let entry = sources.add("<library>".to_string(), String::new());
+        let entry = sources.add("<library>", "");
         let Loaded {
             files,
             mut submodules,
@@ -337,7 +358,7 @@ fn trees() -> &'static HashMap<&'static str, GreenNode> {
             .iter()
             .map(|module| {
                 let mut sources = SourceMap::new();
-                let source_id = sources.add(module.name.to_string(), module.source.to_string());
+                let source_id = sources.add(module.name, Arc::clone(&texts()[module.path]));
                 let mut diagnostics = DiagnosticsEngine::new();
                 let syntax = yuzu_parser::parse_text(module.source, &mut diagnostics, source_id);
                 assert!(
@@ -362,6 +383,18 @@ mod tests {
 
     use super::{Engine, MODULES, install, resolve_under, trees};
     use crate::modules::{self, MapResolver, Origin};
+
+    #[test]
+    fn an_engine_the_compiler_does_not_know_is_named_in_the_error() {
+        let unknown = "postgres"
+            .parse::<Engine>()
+            .expect_err("postgres is not an engine");
+        assert_eq!(
+            unknown.to_string(),
+            "`postgres` is not a supported engine; the supported engine is `datafusion`"
+        );
+        assert_eq!("datafusion".parse::<Engine>(), Ok(Engine::default()));
+    }
 
     #[test]
     fn the_library_installs_read_only_once() {
@@ -399,7 +432,7 @@ mod tests {
         });
         let mut sources = SourceMap::new();
         let mut diagnostics = DiagnosticsEngine::new();
-        let entry = sources.add("main.yz".to_string(), imports);
+        let entry = sources.add("main.yz", imports);
         let resolver = MapResolver(HashMap::new());
         let mut files = modules::load(
             entry,
