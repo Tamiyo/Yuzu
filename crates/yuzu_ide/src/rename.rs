@@ -108,18 +108,44 @@ fn renamed(
     let spelling = text(checked, here);
     let declared = text(checked, at.declared);
 
-    // A declaration's name renames every use that spells it; an alias's,
-    // only its own spellings in its file.
+    // A declaration's name renames every use that spells it, and each
+    // declaration linked to it; an alias's, only its own spellings in its
+    // file.
     let is_alias = spelling != declared;
-    let uses = uses_of(checked, at.declared)
-        .into_iter()
-        .filter(|used| text(checked, *used) == spelling && (!is_alias || used.source == source));
-    let names = (!is_alias)
-        .then_some(at.declared)
-        .into_iter()
-        .chain(uses)
-        .collect();
+    if is_alias {
+        let names = uses_of(checked, at.declared)
+            .into_iter()
+            .filter(|used| used.source == source && text(checked, *used) == spelling)
+            .collect();
+        return Ok((here, names));
+    }
+    let mut names = linked(checked, at.declared);
+    for declaration in 0..names.len() {
+        for used in uses_of(checked, names[declaration]) {
+            if text(checked, used) == spelling && !names.contains(&used) {
+                names.push(used);
+            }
+        }
+    }
     Ok((here, names))
+}
+
+/// A declaration and each one that shares a use with it, as the `a` of
+/// `using (a)` names a column on each side of a join.
+fn linked(checked: &Checked, declared: Name) -> Vec<Name> {
+    let mut linked = vec![declared];
+    let mut next = 0;
+    while let Some(&at) = linked.get(next) {
+        next += 1;
+        for used in uses_of(checked, at) {
+            for resolution in checked.resolutions() {
+                if resolution.used == used && !linked.contains(&resolution.declared) {
+                    linked.push(resolution.declared);
+                }
+            }
+        }
+    }
+    linked
 }
 
 fn text(checked: &Checked, name: Name) -> &str {
@@ -183,6 +209,19 @@ mod tests {
             &PROGRAM.replacen("return y", "let $0w = 1\n    return y", 1),
             "z",
             &expect!["main.yz 118..119 w"],
+        );
+    }
+
+    #[test]
+    fn a_using_column_renames_both_sides() {
+        check(
+            "table t = { id: int64, x: int64 }\ntable u = { id: int64, y: int64 }\nfrom t |> join u using (id) |> select $0id\n",
+            "key",
+            &expect![[r"
+                main.yz 106..108 id
+                main.yz 12..14 id
+                main.yz 46..48 id
+                main.yz 92..94 id"]],
         );
     }
 

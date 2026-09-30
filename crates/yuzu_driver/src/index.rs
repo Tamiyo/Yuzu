@@ -100,17 +100,15 @@ pub(crate) struct IndexReader<'s> {
     index: Index,
     /// Each local's declaration, and the value it first stores.
     initializers: FxHashMap<Span, Span>,
-    /// The names recorded so far. The lowering may resolve a name twice, as
-    /// the hoist and the walk both read a signature.
-    recorded: FxHashSet<Span>,
+    /// The names recorded so far, each with what it names. The lowering may
+    /// resolve a name twice, as the hoist and the walk both read a
+    /// signature. One name can also name two declarations, as the `a` of
+    /// `using (a)` names a column on each side.
+    recorded: FxHashSet<(Span, Span)>,
 }
 
 impl NameListener for IndexReader<'_> {
     fn on_name(&mut self, name: NameUse<'_>) {
-        if !self.recorded.insert(name.used) {
-            return;
-        }
-
         let (target, declared, kind) = match name.target {
             NameTarget::Declaration { at, name } => (at, name, TargetKind::Declaration),
             NameTarget::Module { file, path } => (
@@ -122,6 +120,9 @@ impl NameListener for IndexReader<'_> {
                 TargetKind::Module,
             ),
         };
+        if !self.recorded.insert((name.used, target)) {
+            return;
+        }
         self.index.references.push(Reference {
             at: name.used,
             target,

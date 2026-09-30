@@ -605,6 +605,27 @@ mod tests {
     }
 
     #[test]
+    fn a_using_column_is_listed_once() {
+        check(
+            "table t = { id: int64, x: int64 }\ntable u = { id: int64, y: int64 }\nfrom t |> join u using (id) |> select $0\n",
+            &expect![[r"
+                Column id
+                Column x
+                Column y
+                Binding ENGINE
+                Function avg
+                Function count
+                Function count_distinct
+                Function max
+                Function min
+                Function pow
+                Function shift_left
+                Function shift_right
+                Function sum"]],
+        );
+    }
+
+    #[test]
     fn a_file_not_checked_yet_still_has_its_keywords() {
         let (text, offset) = cursor(&format!("{PROGRAM}from t |> $0\n"));
         let site = analysis(&text)

@@ -275,6 +275,31 @@ from t |> select double(a) + cap + two() as v
         );
     }
 
+    const JOIN: &str = "table t = { id: int64, x: int64 }\ntable u = { id: int64, y: int64 }\nfrom t |> join u using ({using}) |> select {select}\n";
+
+    #[test]
+    fn a_using_column_goes_to_the_left_column() {
+        let (text, offset) = cursor(&JOIN.replace("{using}", "id").replace("{select}", "$0id"));
+        let (_tree, checked) = checked(&[], &text);
+        let target = checked
+            .goto_definition(at(offset))
+            .expect("`id` has a declaration");
+        assert_eq!(&text[..target.range.end().into()], "table t = { id");
+    }
+
+    #[test]
+    fn the_right_column_is_used_by_the_using_clause() {
+        check_references(
+            &JOIN
+                .replace("u = { id", "u = { $0id")
+                .replace("{using}", "id")
+                .replace("{select}", "id"),
+            &expect![[r"
+                main.yz:id 46..48
+                main.yz:id 92..94"]],
+        );
+    }
+
     #[test]
     fn references_start_at_the_declaration() {
         check_references(
