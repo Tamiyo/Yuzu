@@ -18,7 +18,8 @@ fn parse_named_type(p: &mut Parser) -> CompletedMarker {
 
     if p.at(TokenKind::LeftSquare) {
         p.bump();
-        if p.at(TokenKind::RightSquare) {
+        // Peeked, not asked: `]` is no type, so it joins no expected set.
+        if p.peek_kind() == Some(TokenKind::RightSquare) {
             parse_type(p);
         }
         delimited(p, TokenKind::RightSquare, Trailing::Forbidden, |p| {

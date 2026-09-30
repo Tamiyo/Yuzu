@@ -94,10 +94,6 @@ impl<'t, 'input> Parser<'t, 'input> {
         self.source.peek_kind()
     }
 
-    pub(crate) fn peek_range(&mut self) -> Option<TextRange> {
-        self.source.peek_token().map(|token| token.range)
-    }
-
     pub(crate) fn peek_nth_kind(&mut self, n: usize) -> Option<TokenKind> {
         self.source.peek_nth_kind(n)
     }
@@ -152,10 +148,7 @@ impl<'t, 'input> Parser<'t, 'input> {
     }
 
     pub(crate) fn error_expression(&mut self, set: TokenSet) {
-        let (found, range) = match self.source.peek_token() {
-            Some(token) => (Some(token.text.to_owned()), token.range),
-            None => (None, self.end_range()),
-        };
+        let (found, range) = self.found();
         self.expected_kinds = TokenSet::EMPTY;
 
         let error = ParseError::ExpectedExpression {
@@ -170,9 +163,13 @@ impl<'t, 'input> Parser<'t, 'input> {
         }
     }
 
-    /// Reports `pub` at `range` before something that declares nothing.
-    pub(crate) fn error_declaration(&mut self, range: TextRange) {
+    /// Reports the token after a `pub` that declares nothing. The token is
+    /// left for the statement it starts.
+    pub(crate) fn error_declaration(&mut self) {
+        let (found, range) = self.found();
+        self.expected_kinds = TokenSet::EMPTY;
         let error = ParseError::ExpectedDeclaration {
+            found,
             range,
             source_id: self.source_id,
         };
@@ -190,15 +187,11 @@ impl<'t, 'input> Parser<'t, 'input> {
         }
         let start = token.range.start() + TextSize::of('"');
         let inner = &token.text[1..token.text.len() - 1];
-        let found: Vec<(TextRange, String)> = yuzu_lexer::escape::unknown_escapes(inner)
-            .map(|(at, escape)| {
-                let at = start + TextSize::try_from(at).expect("a token is shorter than 4 GiB");
-                (TextRange::at(at, TextSize::of(escape)), escape.to_owned())
-            })
-            .collect();
-        for (range, escape) in found {
+        for (at, escape) in yuzu_lexer::escape::unknown_escapes(inner) {
+            let at = start + TextSize::try_from(at).expect("a token is shorter than 4 GiB");
+            let range = TextRange::at(at, TextSize::of(escape));
             let error = ParseError::UnknownEscape {
-                escape,
+                escape: escape.to_owned(),
                 range,
                 source_id: self.source_id,
             };
@@ -206,7 +199,15 @@ impl<'t, 'input> Parser<'t, 'input> {
         }
     }
 
-    /// The token the text ends with, as an empty range after it.
+    /// The kind of the next token and where it is, or the end of input.
+    fn found(&mut self) -> (Option<TokenKind>, TextRange) {
+        match self.source.peek_token() {
+            Some(token) => (Some(token.kind), token.range),
+            None => (None, self.end_range()),
+        }
+    }
+
+    /// An empty range after the last token that is not trivia.
     fn end_range(&self) -> TextRange {
         TextRange::empty(self.source.end_of_last_token())
     }
@@ -244,10 +245,7 @@ impl<'t, 'input> Parser<'t, 'input> {
     }
 
     fn report_expected_kind(&mut self) {
-        let (found, range) = match self.source.peek_token() {
-            Some(token) => (Some(token.kind), token.range),
-            None => (None, self.end_range()),
-        };
+        let (found, range) = self.found();
         let error = ParseError::ExpectedKind {
             expected: mem::take(&mut self.expected_kinds),
             found,

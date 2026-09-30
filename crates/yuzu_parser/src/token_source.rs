@@ -34,7 +34,7 @@ impl<'t, 'input> TokenSource<'t, 'input> {
             .nth(n)
     }
 
-    pub(crate) fn peek_token(&mut self) -> Option<&Token<'_>> {
+    pub(crate) fn peek_token(&mut self) -> Option<&'t Token<'input>> {
         self.eat_trivia();
         self.peek_token_raw()
     }
@@ -73,7 +73,7 @@ impl<'t, 'input> TokenSource<'t, 'input> {
         self.peek_token_raw().map(|Token { kind, .. }| *kind)
     }
 
-    fn peek_token_raw(&self) -> Option<&Token<'_>> {
+    fn peek_token_raw(&self) -> Option<&'t Token<'input>> {
         self.tokens.get(self.cursor)
     }
 }

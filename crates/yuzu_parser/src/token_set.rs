@@ -2,7 +2,10 @@
 
 use yuzu_lexer::token_kind::TokenKind;
 
-const _: () = assert!(TokenKind::ALL.len() <= 128, "a token set holds 128 kinds");
+const _: () = assert!(
+    TokenKind::ALL.len() <= 128,
+    "a token set holds at most 128 kinds"
+);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct TokenSet(u128);

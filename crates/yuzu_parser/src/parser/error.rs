@@ -12,12 +12,13 @@ pub(crate) enum ParseError {
         source_id: SourceId,
     },
     ExpectedExpression {
-        found: Option<String>,
+        found: Option<TokenKind>,
         range: TextRange,
         source_id: SourceId,
     },
     /// `pub` before something that declares nothing.
     ExpectedDeclaration {
+        found: Option<TokenKind>,
         range: TextRange,
         source_id: SourceId,
     },
@@ -38,10 +39,7 @@ impl From<ParseError> for Diagnostic {
                 range,
                 source_id,
             } => {
-                let description = match found {
-                    Some(kind) => describe(kind),
-                    None => String::from("end of input"),
-                };
+                let description = describe_found(found);
                 let expected_description =
                     expected.iter().map(describe).collect::<Vec<_>>().join(", ");
                 let message = if expected.iter().nth(1).is_none() {
@@ -56,16 +54,20 @@ impl From<ParseError> for Diagnostic {
                 range,
                 source_id,
             } => {
-                let message = match &found {
-                    Some(text) => format!("expected expression, found `{text}`"),
-                    None => "expected expression, found end of input".to_string(),
-                };
+                let message = format!("expected expression, found {}", describe_found(found));
                 (range, source_id, message)
             }
-            ParseError::ExpectedDeclaration { range, source_id } => (
+            ParseError::ExpectedDeclaration {
+                found,
                 range,
                 source_id,
-                "`pub` goes before a declaration".to_owned(),
+            } => (
+                range,
+                source_id,
+                format!(
+                    "expected a declaration after `pub`, found {}",
+                    describe_found(found)
+                ),
             ),
             ParseError::UnknownEscape {
                 escape,
@@ -81,6 +83,14 @@ impl From<ParseError> for Diagnostic {
         DiagnosticBuilder::error(span, message)
             .primary_label(span, "")
             .build()
+    }
+}
+
+/// The token a parse found, as a message names it.
+fn describe_found(found: Option<TokenKind>) -> String {
+    match found {
+        Some(kind) => describe(kind),
+        None => "end of input".to_owned(),
     }
 }
 
@@ -154,7 +164,7 @@ mod tests {
     #[test]
     fn expected_expression_names_the_token_it_found() {
         let error = ParseError::ExpectedExpression {
-            found: Some("for".to_string()),
+            found: Some(TokenKind::ForKw),
             range: TextRange::default(),
             source_id: source_id(),
         };

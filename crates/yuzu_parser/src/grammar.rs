@@ -176,7 +176,7 @@ mod test_support {
     pub(crate) fn check<R>(input: &str, parse: impl FnOnce(&mut Parser) -> R, expected: &Expect) {
         let tokens: Vec<Token> = Lexer::new(input).collect();
         let mut sources = SourceMap::new();
-        let source_id = sources.add("test".to_string(), input.to_string());
+        let source_id = sources.add("test".to_owned(), input.to_owned());
 
         let mut parser = Parser::new(TokenSource::new(&tokens), source_id);
         parse(&mut parser);
@@ -189,13 +189,10 @@ mod test_support {
         expected.assert_eq(&format!("{tree:#?}"));
     }
 
-    /// The tree and the errors, for a test of how a parse recovers.
     pub(crate) fn check_recovery(input: &str, expected: &Expect) {
-        let tokens: Vec<Token> = Lexer::new(input).collect();
-        let mut sources = SourceMap::new();
-        let source_id = sources.add("test".to_string(), input.to_string());
         let mut diagnostics = DiagnosticsEngine::new();
-        let tree = crate::parse(&tokens, &mut diagnostics, source_id);
+        let source_id = SourceMap::new().add("test".to_owned(), input.to_owned());
+        let tree = crate::parse_text(input, &mut diagnostics, source_id);
 
         let errors: Vec<String> = diagnostics
             .diagnostics()
@@ -210,7 +207,6 @@ mod test_support {
         expected.assert_eq(&format!("{tree:#?}{}", errors.join("\n")));
     }
 
-    /// The nodes, without tokens, and the errors.
     pub(crate) fn check_outline(input: &str, expected: &Expect) {
         use std::fmt::Write as _;
 
@@ -322,16 +318,53 @@ mod tests {
     }
 
     #[test]
-    fn pub_before_no_declaration_is_reported_at_the_pub() {
+    fn pub_before_no_declaration_is_reported_at_what_follows() {
         check_outline(
             "pub impl T {}\n",
             &expect![[r"
-            Root
-              Error
-              ImplStmt
-                Ident
-            0..3 `pub` goes before a declaration
-        "]],
+                Root
+                  Error
+                  ImplStmt
+                    Ident
+                4..8 expected a declaration after `pub`, found `impl`
+            "]],
+        );
+    }
+
+    #[test]
+    fn a_narrowed_pub_before_no_declaration_is_one_error() {
+        check_outline(
+            "pub(mod) impl T {}\n",
+            &expect![[r"
+                Root
+                  Error
+                  ImplStmt
+                    Ident
+                9..13 expected a declaration after `pub`, found `impl`
+            "]],
+        );
+    }
+
+    #[test]
+    fn an_empty_type_argument_list_expects_a_type() {
+        check_outline(
+            "def f(m: Map[]) -> int64 { return 1 }\n",
+            &expect![[r"
+                Root
+                  FuncStmt
+                    Ident
+                    FuncParam
+                      Ident
+                      NamedTypeAnnotation
+                        Ident
+                        NamedTypeAnnotation
+                    NamedTypeAnnotation
+                      Ident
+                    BlockStmt
+                      ReturnStmt
+                        IntLiteral
+                13..14 expected identifier, found `]`
+            "]],
         );
     }
 

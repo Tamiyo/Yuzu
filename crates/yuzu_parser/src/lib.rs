@@ -20,6 +20,7 @@ pub fn parse_text(
     parse(&tokens, diagnostics, source_id)
 }
 
+/// Parses lexed tokens, trivia included, into a tree that holds every one.
 pub fn parse(
     tokens: &[Token],
     diagnostics: &mut DiagnosticsEngine,

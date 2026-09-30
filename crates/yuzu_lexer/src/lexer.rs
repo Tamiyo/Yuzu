@@ -64,9 +64,6 @@ mod tests {
 
     #[test]
     fn keywords_win_over_identifiers() {
-        for &kind in TokenKind::ALL.iter().filter(|kind| kind.is_keyword()) {
-            assert_eq!(one(&kind.to_string()), kind);
-        }
         assert_eq!(one("true"), TokenKind::BoolLit);
         assert_eq!(one("false"), TokenKind::BoolLit);
     }

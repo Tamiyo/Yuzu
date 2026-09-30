@@ -75,11 +75,8 @@ fn parse_public_stmt(p: &mut Parser) -> CompletedMarker {
         Some(TokenKind::ImportKw) => parse_import_stmt(p),
         _ => {
             let m = p.start();
-            let range = p.peek_range();
-            p.bump();
-            if let Some(range) = range {
-                p.error_declaration(range);
-            }
+            parse_visibility(p);
+            p.error_declaration();
             p.complete(m, SyntaxKind::Error)
         }
     }

@@ -420,12 +420,86 @@ impl TokenKind {
         }
     }
 
+    /// Whether the parser skips the kind: it separates tokens and means nothing.
     #[must_use]
     pub fn is_trivia(self) -> bool {
-        matches!(
-            self,
-            TokenKind::Comment | TokenKind::Whitespace | TokenKind::Newline
-        )
+        match self {
+            TokenKind::Comment | TokenKind::Whitespace | TokenKind::Newline => true,
+            TokenKind::Plus
+            | TokenKind::Minus
+            | TokenKind::Star
+            | TokenKind::StarStar
+            | TokenKind::Slash
+            | TokenKind::Percent
+            | TokenKind::Eq
+            | TokenKind::EqEq
+            | TokenKind::Neq
+            | TokenKind::Lt
+            | TokenKind::Lte
+            | TokenKind::Gt
+            | TokenKind::Gte
+            | TokenKind::Shl
+            | TokenKind::Shr
+            | TokenKind::Arrow
+            | TokenKind::Pipe
+            | TokenKind::Dot
+            | TokenKind::LeftParen
+            | TokenKind::RightParen
+            | TokenKind::LeftCurly
+            | TokenKind::RightCurly
+            | TokenKind::LeftSquare
+            | TokenKind::RightSquare
+            | TokenKind::Comma
+            | TokenKind::Colon
+            | TokenKind::AggKw
+            | TokenKind::AggregateKw
+            | TokenKind::AndKw
+            | TokenKind::AsKw
+            | TokenKind::ByKw
+            | TokenKind::DefKw
+            | TokenKind::DistinctKw
+            | TokenKind::DropKw
+            | TokenKind::ExtendKw
+            | TokenKind::ExternalKw
+            | TokenKind::ForKw
+            | TokenKind::FromKw
+            | TokenKind::FullKw
+            | TokenKind::GroupKw
+            | TokenKind::ImplKw
+            | TokenKind::ImportKw
+            | TokenKind::InKw
+            | TokenKind::InnerKw
+            | TokenKind::JoinKw
+            | TokenKind::LeftKw
+            | TokenKind::LetKw
+            | TokenKind::LimitKw
+            | TokenKind::ModKw
+            | TokenKind::MutKw
+            | TokenKind::NotKw
+            | TokenKind::OffsetKw
+            | TokenKind::OnKw
+            | TokenKind::OrKw
+            | TokenKind::PubKw
+            | TokenKind::RenameKw
+            | TokenKind::ReturnKw
+            | TokenKind::RightKw
+            | TokenKind::SelectKw
+            | TokenKind::SetKw
+            | TokenKind::StructKw
+            | TokenKind::TableKw
+            | TokenKind::TraitKw
+            | TokenKind::UsingKw
+            | TokenKind::WhereKw
+            | TokenKind::Identifier
+            | TokenKind::BoolLit
+            | TokenKind::IntLit
+            | TokenKind::FloatLit
+            | TokenKind::HexLit
+            | TokenKind::BinaryLit
+            | TokenKind::StringLit
+            | TokenKind::RawStringLit
+            | TokenKind::Error => false,
+        }
     }
 }
 
@@ -518,7 +592,6 @@ impl std::fmt::Display for TokenKind {
 mod tests {
     use super::*;
 
-    /// A keyword or a symbol lexes back from its display to itself.
     #[test]
     fn each_spelled_kind_lexes_back_from_its_display() {
         for &kind in TokenKind::ALL {
