@@ -10,8 +10,9 @@ pub mod types;
 
 /// A context without a thread pool.
 ///
-/// A module holds one query and its library, so handing the verifier's and the passes' work to other threads
-/// costs more than the work: with the pool, a compile took 2.5 times as long.
+/// A module holds one query and its library. For that little work, other
+/// threads cost more than they save: a compile with the pool takes 2.5
+/// times as long.
 #[must_use]
 pub fn context() -> Context {
     let context = Context::new_with_threading(false);

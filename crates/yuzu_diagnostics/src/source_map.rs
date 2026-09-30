@@ -16,7 +16,6 @@ pub struct LineCol {
 #[derive(Clone)]
 struct Entry {
     name: Arc<str>,
-    /// The file the text was read from. `None` for a source with no file.
     path: Option<Arc<Path>>,
     text: Arc<str>,
     line_starts: Arc<[usize]>,
@@ -106,7 +105,7 @@ impl SourceMap {
         self.entries[source_id.0 - 1].path.as_deref()
     }
 
-    /// The source read from a file.
+    /// The id of the source read from `path`, if one was.
     #[must_use]
     pub fn file_id(&self, path: &Path) -> Option<SourceId> {
         let index = self

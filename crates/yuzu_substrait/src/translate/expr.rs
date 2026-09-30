@@ -147,7 +147,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         self.translate_function(op, urn, base, values)
     }
 
-    /// A call of the function `base` declares under `urn`.
+    /// A call of the function named `base` under `urn`.
     fn translate_function(
         &mut self,
         op: OperationRef<'c, '_>,
@@ -221,8 +221,8 @@ impl<'c> Translator<'c, '_, '_> {
     }
 }
 
-/// What a value became, which the operation producing it recorded before
-/// this one was reached.
+/// What a value became. The operation that produces the value records it
+/// before the translation reaches `op`.
 pub(crate) fn expression_of(
     op: OperationRef<'_, '_>,
     value: Value<'_, '_>,

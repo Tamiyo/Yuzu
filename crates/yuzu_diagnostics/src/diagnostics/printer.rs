@@ -194,7 +194,6 @@ impl<'a> DiagnosticPrinter<'a> {
         self.sources.line_col(label.span.source_id, offset)
     }
 
-    /// Where a label starts in its line, in bytes.
     fn byte_column(&self, label: &Label) -> usize {
         self.line_col(label).col - 1
     }
@@ -210,7 +209,6 @@ impl<'a> DiagnosticPrinter<'a> {
     }
 }
 
-/// How many cells a text takes when printed: a tab takes four.
 fn width(text: &str) -> usize {
     text.chars().map(|c| if c == '\t' { 4 } else { 1 }).sum()
 }
@@ -220,7 +218,6 @@ fn shown(line_text: &str) -> String {
     line_text.replace('\t', "    ")
 }
 
-/// The primary label among `labels`, or the first when none is primary.
 fn primary_label<'l>(mut labels: impl Iterator<Item = &'l Label> + Clone) -> Option<&'l Label> {
     labels
         .clone()
@@ -228,7 +225,6 @@ fn primary_label<'l>(mut labels: impl Iterator<Item = &'l Label> + Clone) -> Opt
         .or_else(|| labels.next())
 }
 
-/// How many digits a line number takes.
 fn digits(line: usize) -> usize {
     line.checked_ilog10().map_or(1, |log| log as usize + 1)
 }

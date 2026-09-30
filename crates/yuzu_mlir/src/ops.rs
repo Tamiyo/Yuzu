@@ -17,8 +17,8 @@ impl yzl::FnOp<'_, '_> {
 }
 
 impl yzl::JoinOp<'_, '_> {
-    /// For a `using` join, where each column it names is in the left row and
-    /// in the right row.
+    /// For a `using` join, the position of each named column in the left row
+    /// and in the right row.
     #[must_use]
     pub fn using_keys(&self) -> Option<(Vec<usize>, Vec<usize>)> {
         use crate::ir::attribute::array::ArrayAttributeExt;
@@ -32,9 +32,9 @@ impl yzl::JoinOp<'_, '_> {
 /// The row a `using` join produces, as positions in the left row followed by
 /// the right row.
 ///
-/// First each named column once, at its left position; then the other left
-/// columns; then the other right columns; last the left's and the right's own
-/// copies of the named columns.
+/// The row starts with each named column once, at its left position. The
+/// other left columns follow, then the other right columns. Last come the
+/// left's and the right's own copies of the named columns.
 #[must_use]
 pub fn using_join_order(
     left_width: usize,

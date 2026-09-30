@@ -18,7 +18,7 @@ macro_rules! syntax_kinds {
             /// their raw values.
             pub const ALL: &[SyntaxKind] = &[$(Self::$token,)* $(Self::$node,)* Self::Error];
 
-            /// The token kind a token's syntax kind is.
+            /// The token kind this kind stands for, when it is a token's kind.
             #[must_use]
             pub fn token_kind(self) -> Option<TokenKind> {
                 match self {

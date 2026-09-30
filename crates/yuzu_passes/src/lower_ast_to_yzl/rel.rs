@@ -420,8 +420,9 @@ impl<'c> AstToYzl<'c, '_> {
                 let reference = Reference::unqualified(name);
                 match (self.symbols.column(reference), rhs.column(reference)) {
                     (ColumnLookup::Unique(left), ColumnLookup::Unique(right)) => {
-                        // The name is both sides' column: the left one first,
-                        // where the merged column is declared.
+                        // The name names the column on both sides. The left
+                        // column comes first, because it declares the merged
+                        // column.
                         let used = column.syntax().text_range();
                         let sides = [self.symbols.row().declared(left), rhs.declared(right)];
                         for declared in sides.into_iter().flatten() {
@@ -495,8 +496,8 @@ impl<'c> AstToYzl<'c, '_> {
         set: &ast::SetStage,
     ) -> Value<'c, 'a> {
         let loc = self.location(set);
-        // An item whose column does not resolve is left out of both lists,
-        // so each column stays in step with its value.
+        // An item whose column does not resolve goes into neither list, so
+        // each column stays in step with its value.
         let mut columns: Vec<usize> = Vec::new();
         let mut items = Vec::new();
         for item in set.items() {
@@ -613,8 +614,8 @@ impl<'c> AstToYzl<'c, '_> {
         let mut fields = Vec::new();
         let mut values = Vec::new();
         for (index, Item { alias, expr, range }) in items.iter().enumerate() {
-            // An item that reads a column as it is keeps the column's name,
-            // and where the column was named.
+            // An item that reads a column unchanged keeps the column's name
+            // and the syntax that named it.
             let read = match expr {
                 Some(ast::Expr::IdentExpr(ident)) => {
                     self.read_ident(ident.name()).map(Reference::unqualified)

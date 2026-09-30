@@ -20,7 +20,7 @@ class CompileOptions:
     @property
     def target(self) -> typing.Optional[builtins.str]:
         r"""
-        The engine to compile for; `datafusion` when it is `None`.
+        The engine to compile for. `None` means `datafusion`.
         """
     def __new__(cls, target: typing.Optional[builtins.str] = None) -> CompileOptions: ...
 

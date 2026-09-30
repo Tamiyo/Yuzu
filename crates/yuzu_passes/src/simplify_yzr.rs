@@ -1,5 +1,5 @@
 //! The dialects' canonicalization, then MLIR's CSE. The `yz` ops declare
-//! their own folders, and `yuzu_mlir::rewrite` their patterns.
+//! their own folders, and `yuzu_mlir::rewrite` declares their patterns.
 //! Stage regions are `IsolatedFromAbove`, so what a fold leaves behind stays
 //! inside the region that becomes a Substrait expression.
 
@@ -11,7 +11,7 @@ use melior::pass::transform;
 ///
 /// # Panics
 ///
-/// Panics if either step fails, which neither does on any module the
+/// Panics if either step fails. Neither fails on a module that the
 /// lowering builds.
 pub fn simplify_yzr(context: &Context, module: &mut Module) {
     yuzu_mlir::rewrite::canonicalize(context, module)

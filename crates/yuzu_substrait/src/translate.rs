@@ -36,8 +36,8 @@ mod types;
 ///
 /// # Panics
 ///
-/// Panics if the module does not verify: the stages it reads are taken as
-/// their verifiers promise.
+/// Panics if the module does not verify. The translation trusts each stage
+/// to hold what its verifier promises.
 #[must_use]
 pub fn translate<'c>(context: &'c Context, module: &Module<'c>) -> Option<Plan> {
     let symbols = SymbolTable::new(module);
@@ -88,9 +88,9 @@ pub fn translate<'c>(context: &'c Context, module: &Module<'c>) -> Option<Plan> 
     }))
 }
 
-/// The relational values more than one stage reads. Substrait nests, so
-/// each of those is written out at every use; any other relation moves into
-/// the one stage that reads it.
+/// The relational values more than one stage reads. Substrait nests
+/// relations, so the plan writes each of these out at every use. Any other
+/// relation moves into the one stage that reads it.
 fn shared_relations(module: &Module<'_>) -> FxHashSet<ValueId> {
     let mut reads: FxHashMap<ValueId, usize> = FxHashMap::default();
     for op in module.body().operations() {
@@ -106,7 +106,6 @@ fn shared_relations(module: &Module<'_>) -> FxHashSet<ValueId> {
 
 struct Translator<'c, 'a, 's> {
     symbols: &'s SymbolTable<'c, 'a>,
-    /// The relations more than one stage reads.
     shared: FxHashSet<ValueId>,
     /// What each shared relation translated to, so it is walked once.
     translated: FxHashMap<ValueId, Rel>,
@@ -134,7 +133,6 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         }
     }
 
-    /// The names and types of a row, from the `yz.struct` that declares it.
     fn row(&self, ty: Type<'c>) -> Option<(Vec<&'c str>, Vec<Type<'c>>)> {
         self.read_declaration(ty, |item| {
             (
@@ -144,14 +142,13 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         })
     }
 
-    /// How many columns a relation's row has.
     fn width(&self, value: Value<'c, 'a>) -> Option<usize> {
         self.read_declaration(value.r#type(), |item| item.names().len())
     }
 }
 
-/// Substrait has no way to say this. Reported against the operation, so the
-/// location it carries is the source the reader wrote.
+/// Reports that Substrait cannot express `op`. The error goes on the
+/// operation, so its location points into the source.
 fn report(op: OperationRef<'_, '_>, message: &str) {
     emit_error(op.location(), message);
 }
@@ -201,8 +198,8 @@ pub(crate) mod test_support {
             None,
         );
 
-        // Each group runs only on what the one before left without error, as
-        // in the driver: a pass may take its predecessors' work as settled.
+        // As in the driver, a group runs only when the group before it
+        // reported no error. A pass may take the work before it as settled.
         let groups: [Group; 3] = [
             |context, module| {
                 yuzu_passes::check_mutability(module);

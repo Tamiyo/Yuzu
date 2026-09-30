@@ -258,10 +258,10 @@ def Yz_OrOp : Yz_Op<"or", [Commutative, Pure]> {
 def Yz_InOp : Yz_Op<"in", [Pure]> {
   let summary = "membership: whether the value is an element of the list";
   let description = [{
-    Canonicalizes to a constant when the value is a constant and the list is
-    a `yz.constant_list` or a `yz.list`: to true when an element equals the
-    value, and to false when every element is a constant that does not. The
-    pattern is `fold_membership` in `yuzu_mlir::rewrite`.
+    The op canonicalizes to a constant when the value is a constant and the
+    list is a `yz.constant_list` or a `yz.list`. The result is true when an
+    element equals the value. It is false when every element is a constant
+    that does not. The pattern is `fold_membership` in `yuzu_mlir::rewrite`.
   }];
   let arguments = (ins AnyType:$value, AnyType:$list);
   let results = (outs Yz_BoolOrUnresolvedType:$result);

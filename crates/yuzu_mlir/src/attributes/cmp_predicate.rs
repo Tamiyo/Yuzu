@@ -5,8 +5,8 @@ use crate::ops::yz::CmpOp;
 
 /// The comparison a `yz.cmp` asks for.
 ///
-/// The op's attribute admits the same six spellings, so the verifier, the
-/// C++ folder and this enum read one list.
+/// The op's attribute, the C++ folder and this enum spell the same six
+/// comparisons. A test checks each spelling against the verifier.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CmpPredicate {
     Equal,

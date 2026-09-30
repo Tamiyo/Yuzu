@@ -6,7 +6,6 @@ use crate::grammar::{Trailing, delimited_non_empty, parse_ident};
 use crate::parser::{Parser, marker::CompletedMarker};
 use crate::token_set::TokenSet;
 
-/// The keywords that name a join's kind.
 const JOIN_TYPES: TokenSet = TokenSet::new(&[
     TokenKind::InnerKw,
     TokenKind::LeftKw,

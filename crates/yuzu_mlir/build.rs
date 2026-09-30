@@ -67,8 +67,8 @@ enum Presence {
 /// ODS `storageType`s mapped to melior attribute wrappers — every wrapper
 /// melior has. A storage type melior cannot wrap reads as a plain
 /// `Attribute` (with a build warning), so a new attribute kind in the
-/// `TableGen` never breaks the build; it just reads untyped until melior
-/// grows a wrapper for it.
+/// `TableGen` never breaks the build; it reads untyped until melior grows a
+/// wrapper for it.
 #[derive(Clone, Copy)]
 enum Storage {
     /// Converted into the named melior wrapper.
@@ -122,8 +122,8 @@ impl Storage {
 /// Attributes the crate gives a type of its own. The generator leaves the
 /// accessor out so a hand-written one of the same name stands in its place,
 /// reading the attribute back as what it means rather than what it stores.
-/// Every entry is checked against the dialect, so renaming one in `TableGen`
-/// fails the build rather than silently leaving two accessors or none.
+/// The build checks every entry against the dialect, so a rename in
+/// `TableGen` fails the build and does not leave two accessors or none.
 const TYPED_ACCESSORS: &[(&str, &str)] = &[
     ("yzl.call", "callee_source"),
     ("yz.cmp", "predicate"),

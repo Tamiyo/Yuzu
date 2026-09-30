@@ -43,8 +43,8 @@ def Yzl_RefType : Yzl_Type<"Ref", "ref"> {
   let description = [{
     What `yzl.local` gives, and what `yzl.load` and `yzl.store` read and
     write. `element` is the type of the value the place holds: the local's
-    annotation, or `!yzl.unresolved` until inference resolves it. Every
-    place is removed by `mem2reg` after inference.
+    annotation, or `!yzl.unresolved` until inference resolves it. `mem2reg`
+    removes every place after inference.
   }];
   let parameters = (ins "::mlir::Type":$element);
   let assemblyFormat = "`<` $element `>`";
@@ -224,11 +224,11 @@ def Yzl_AliasOp : Yzl_Op<"alias", [Pure]> {
 def Yzl_JoinOp : Yzl_Op<"join", [IsolatedFromAbove, Pure]> {
   let summary = "join a named relation onto the query";
   let description = [{
-    With `using`, `left_keys` and `right_keys` give where each named column
-    is in the left row and in the right row. The joined row is then each
-    named column once, the other left columns, the other right columns, and
-    last the two sides' own copies of the named columns, which only a
-    qualified name reaches.
+    With `using`, `left_keys` and `right_keys` give the position of each
+    named column in the left row and in the right row. The joined row starts
+    with each named column once. The other left columns follow, then the
+    other right columns. Last come the two sides' own copies of the named
+    columns, which only a qualified name reaches.
   }];
   let arguments = (ins Yzl_QueryType:$lhs,
                        Yuzu_StrEnumAttr<["inner", "left", "right", "full"]>:$kind,
@@ -263,7 +263,7 @@ def Yzl_DistinctOp : Yzl_Op<"distinct", [Pure]> {
 def Yzl_DropOp : Yzl_Op<"drop", [Pure]> {
   let summary = "remove named columns; a pure name effect";
   let description = [{
-    `drop_cols` gives where each dropped column is in the input row.
+    `drop_cols` gives the position of each dropped column in the input row.
   }];
   let arguments = (ins Yzl_QueryType:$input, StrArrayAttr:$columns,
                        I64ArrayAttr:$drop_cols);

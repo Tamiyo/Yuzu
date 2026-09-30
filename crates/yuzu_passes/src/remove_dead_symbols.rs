@@ -6,8 +6,8 @@ use melior::pass::transform;
 ///
 /// # Panics
 ///
-/// Panics if symbol DCE fails, which it does not on any module the lowering
-/// builds.
+/// Panics if symbol DCE fails. It does not fail on a module that the
+/// lowering builds.
 pub fn remove_dead_symbols(context: &Context, module: &mut Module) {
     let passes = crate::pass_manager(context);
     passes.add_pass(transform::create_symbol_dce_pass());

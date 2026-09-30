@@ -19,7 +19,7 @@ pyo3_stub_gen::create_exception!(
 #[pyclass]
 #[derive(Debug)]
 pub struct CompileOptions {
-    /// The engine to compile for; `datafusion` when it is `None`.
+    /// The engine to compile for. `None` means `datafusion`.
     #[pyo3(get)]
     pub target: Option<String>,
 }

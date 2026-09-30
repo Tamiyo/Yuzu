@@ -28,9 +28,9 @@ pub use simplify_yzr::simplify_yzr;
 
 /// The name a declaration was written under, as a message shows it.
 ///
-/// A symbol is qualified by its module's path, and an overloaded function's
-/// also ends in its parameter count. A name cannot start with a digit, so a
-/// last piece that does is a count.
+/// A symbol starts with its module's path, and an overloaded function's
+/// symbol also ends in its parameter count. A name cannot start with a
+/// digit, so a last piece that does is a count.
 pub(crate) fn written_name(symbol: &str) -> &str {
     let mut pieces = symbol.rsplit('.');
     let last = pieces.next().unwrap_or(symbol);

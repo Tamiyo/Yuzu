@@ -1,8 +1,9 @@
 //! MLIR diagnostics folded into Yuzu's engine.
 //!
-//! `capture` attaches one handler to the context, so everything MLIR emits inside it — pass errors
-//! sent through `emit_error`, verifier failures, parse errors — lands in
-//! the engine as span-carrying diagnostics instead of on stderr.
+//! `capture` attaches one handler to the context. Everything MLIR emits
+//! inside it goes to the engine as diagnostics with spans, not to stderr.
+//! This includes pass errors sent through `emit_error`, verifier failures
+//! and parse errors.
 
 use std::cell::RefCell;
 use std::ffi::CString;

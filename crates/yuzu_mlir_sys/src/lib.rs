@@ -1,6 +1,7 @@
 use mlir_sys::{MlirAttribute, MlirContext, MlirLocation, MlirStringRef, MlirType};
 
-// These are the symbols the C++ leaf in `cpp/` exports, with the signatures it declares; `build.rs` links that leaf into this crate.
+// The symbols the C++ leaf in `cpp/` exports, with the signatures it
+// declares. `build.rs` links that leaf into this crate.
 unsafe extern "C" {
     /// Loads the `yz`, `yzl` and `yzr` dialects into a live context.
     pub fn yzuRegisterAllDialects(ctx: MlirContext);

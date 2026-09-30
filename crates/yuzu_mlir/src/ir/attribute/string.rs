@@ -8,9 +8,9 @@ use melior::ir::attribute::StringAttribute;
 /// The longest name formatted on the stack.
 const STACK: usize = 128;
 
-/// Interns a formatted name in the context. A name of up to `STACK` bytes
-/// is formatted on the stack, so it costs no allocation; a longer one is
-/// formatted into a `String`.
+/// Interns a formatted name in the context. The function formats a name of
+/// up to `STACK` bytes on the stack, so it costs no allocation. It formats a
+/// longer name into a `String`.
 #[must_use]
 pub fn intern_fmt<'c>(context: &'c Context, args: fmt::Arguments<'_>) -> &'c str {
     let mut buffer = StackBuffer {

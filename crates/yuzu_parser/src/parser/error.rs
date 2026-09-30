@@ -86,7 +86,6 @@ impl From<ParseError> for Diagnostic {
     }
 }
 
-/// The token a parse found, as a message names it.
 fn describe_found(found: Option<TokenKind>) -> String {
     match found {
         Some(kind) => describe(kind),
@@ -94,7 +93,6 @@ fn describe_found(found: Option<TokenKind>) -> String {
     }
 }
 
-/// A kind as a message names it: a keyword or a symbol as it is spelled.
 fn describe(kind: TokenKind) -> String {
     if kind.is_keyword() || kind.is_symbol() {
         format!("`{kind}`")

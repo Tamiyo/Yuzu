@@ -62,8 +62,8 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             }
             Some(YzlOp::Missing(_)) => report(op, "this part of the query is missing"),
             // `yzr.table` carries the row as its type, so a table's declaration
-            // is not needed. Calls, lists and terminators are lowered with the
-            // region that holds them.
+            // is not needed. A call, a list or a terminator lowers with the
+            // region that holds it.
             Some(
                 YzlOp::Table(_)
                 | YzlOp::Call(_)
@@ -92,8 +92,8 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             op.location(),
         ));
         self.anchor = None;
-        // SAFETY: `op` and `item` are not used after this, and nothing is
-        // placed before `op` any more.
+        // SAFETY: nothing uses `op` or `item` after this, and `anchor` does
+        // not hold `op`.
         unsafe { symbols.erase(op) };
         symbols.insert_placed(placed);
     }
@@ -139,8 +139,8 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             .into(),
         );
         self.anchor = None;
-        // SAFETY: `op` and `function` are not used after this, and nothing
-        // is placed before `op` any more.
+        // SAFETY: nothing uses `op` or `function` after this, and `anchor`
+        // does not hold `op`.
         unsafe { symbols.erase(op) };
         symbols.insert_placed(placed);
     }

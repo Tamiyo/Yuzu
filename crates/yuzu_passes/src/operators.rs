@@ -66,8 +66,7 @@ impl Operator {
             .find(|operator| operator.is_implemented_by(symbol))
     }
 
-    /// The symbol of the function that implements the operator: a new
-    /// `String` for each call.
+    /// The symbol of the function that implements the operator.
     pub(crate) fn to_symbol(&self) -> String {
         format!("{}.{}", self.module, self.name)
     }

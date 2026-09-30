@@ -16,7 +16,7 @@ pub fn escaped(after_backslash: char) -> Option<char> {
 }
 
 /// The text between a string literal's quotes, with each escape replaced
-/// by the character it stands for. An unknown escape is kept as written;
+/// by the character it stands for. An unknown escape stays as written.
 /// [`unknown_escapes`] finds it for a report.
 #[must_use]
 pub fn unescape(inner: &str) -> String {

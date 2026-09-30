@@ -1,6 +1,6 @@
 //! Which function a yzr operation is. A yz op maps onto a [`Func`], and the
-//! Substrait tables answer from there, rather than each op growing a mapping
-//! of its own.
+//! Substrait tables answer from the [`Func`]. Thus no op needs a mapping of
+//! its own.
 
 use substrait::proto::aggregate_function::AggregationInvocation;
 use yuzu_mlir::attributes::CmpPredicate;

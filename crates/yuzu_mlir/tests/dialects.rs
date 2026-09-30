@@ -661,8 +661,6 @@ module {{
 }
 
 /// melior's generated matching, where it works today: on operations you own.
-/// A walk's borrowed refs cannot use this yet — the generated `TryFrom`
-/// consumes an owned Operation — which is what `yuzu_mlir::ops` covers.
 #[test]
 fn typed_matching_works_on_owned_operations() {
     use melior::ir::attribute::IntegerAttribute;

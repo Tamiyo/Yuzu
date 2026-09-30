@@ -1,5 +1,5 @@
 //! Typed op constructors, generated straight from the dialect definitions in
-//! `yuzu_ir_sys` — the same records the C++ is generated from.
+//! `yuzu_mlir_sys`. The C++ build generates its code from the same records.
 
 melior_macro::dialect! {
     name: "yz",

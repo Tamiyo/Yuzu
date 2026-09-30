@@ -62,7 +62,6 @@ fn erase_yzl<'c>(context: &'c Context, body: BlockRef<'c, '_>) {
     }
 }
 
-/// A column of a row: its name and its type.
 type Column<'c> = (&'c str, Type<'c>);
 
 type Row<'c> = Vec<Column<'c>>;
@@ -85,8 +84,8 @@ enum Yielded<'k> {
 struct YzlToYzr<'c, 'a> {
     context: &'c Context,
     body: BlockRef<'c, 'a>,
-    /// The top-level yzl op being converted, while it stands: what it
-    /// becomes is placed before it.
+    /// The top-level yzl op being converted. What it becomes goes before
+    /// it.
     anchor: Option<OperationRef<'c, 'a>>,
     stages: FxHashMap<ValueId, Stage<'c, 'a>>,
     /// The struct declaring each row shape; one nobody declared is declared
@@ -100,7 +99,6 @@ struct YzlToYzr<'c, 'a> {
 }
 
 impl<'c, 'a> YzlToYzr<'c, 'a> {
-    /// Converts one top-level op, placing what it becomes before it.
     fn convert_at(&mut self, op: OperationRef<'c, 'a>, symbols: &mut SymbolTable<'c, 'a>) {
         self.anchor = Some(op);
         self.convert_op(op, symbols);

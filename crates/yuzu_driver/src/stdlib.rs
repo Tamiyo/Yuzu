@@ -137,9 +137,10 @@ pub(crate) fn resolve(path: &str, engine: Engine) -> Option<ModuleSource> {
 /// Writes the library's files under `cache`, read-only, and returns the
 /// folder that holds them.
 ///
-/// The folder is named for their content, so one already there is reused.
-/// The files are written to a folder of their own first and then moved
-/// into place, so a reader never sees a part of them.
+/// The folder's name comes from the files' content, so a call reuses a
+/// folder that is already there. The files go into a staging folder first,
+/// and the staging folder then moves into place. Thus a reader never sees
+/// part of the files.
 ///
 /// # Errors
 ///
@@ -182,7 +183,6 @@ pub fn install(cache: &Path) -> io::Result<PathBuf> {
     }
 }
 
-/// Removes a staging folder whose files are read-only, if it is there.
 fn remove_staging(staging: &Path) {
     for module in MODULES {
         let file = staging.join(module.file);
@@ -217,7 +217,6 @@ pub(crate) struct Library {
     pub(crate) sources: SourceMap,
     pub(crate) files: Vec<File>,
     pub(crate) submodules: HashMap<String, Vec<Submodule>>,
-    /// Each file's tree, by its source's id.
     pub(crate) trees: Vec<(SourceId, GreenNode)>,
 }
 
@@ -268,7 +267,6 @@ impl Library {
         })
     }
 
-    /// Loads the library's files for an engine, as `resolver` gives them.
     fn load(engine: Engine, resolver: &dyn ModuleResolver) -> Self {
         let mut sources = SourceMap::new();
         let mut diagnostics = DiagnosticsEngine::new();

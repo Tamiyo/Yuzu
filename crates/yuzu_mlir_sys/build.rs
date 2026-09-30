@@ -49,7 +49,7 @@ fn main() {
             "cpp/Register.cpp",
         ])
         // LLVM's headers and the generated `.inc` files are not this crate's
-        // code, so only the warnings in `cpp/` are shown.
+        // code, so the build shows only the warnings in `cpp/`.
         .flag("-isystem")
         .flag(&out)
         .flag("-isystem")

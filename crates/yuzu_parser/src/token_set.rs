@@ -1,5 +1,3 @@
-//! A set of token kinds, one bit for each kind.
-
 use yuzu_lexer::token_kind::TokenKind;
 
 const _: () = assert!(

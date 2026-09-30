@@ -7,7 +7,7 @@ use melior::ir::{Value, ValueLike};
 /// The identity of a value while the op that defines it is alive.
 ///
 /// A value is not uniqued, so a new op can reuse the memory of an erased
-/// one: a map keyed by `ValueId` must not outlive an erasure in the IR it
+/// one. A map keyed by `ValueId` must not outlive an erasure in the IR it
 /// reads.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct ValueId(usize);

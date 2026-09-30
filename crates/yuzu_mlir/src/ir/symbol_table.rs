@@ -86,8 +86,8 @@ impl<'c, 'a> SymbolTable<'c, 'a> {
     ///
     /// # Safety
     ///
-    /// The op is a symbol, and it is freed. The caller must not use any copy
-    /// of `operation`, or any reference into the op, after this call.
+    /// The op must be a symbol. The call frees the op, so the caller must not
+    /// use any copy of `operation`, or any reference into the op, after it.
     pub unsafe fn erase(&mut self, operation: OperationRef<'c, '_>) {
         assert!(
             self.is_top_level(operation),

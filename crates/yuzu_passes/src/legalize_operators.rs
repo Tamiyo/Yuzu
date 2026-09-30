@@ -19,12 +19,13 @@ use yuzu_mlir::types::ParamType;
 use crate::inline_calls::copy;
 use crate::operators::Operator;
 
-/// Replaces each operator with a copy of the library function that implements it.
+/// Replaces each operator with a copy of the library function that
+/// implements it.
 ///
 /// # Panics
 ///
-/// Panics if canonicalization fails, which it does not on any module the
-/// lowering builds.
+/// Panics if canonicalization fails. It does not fail on a module that
+/// the lowering builds.
 pub fn legalize_operators(context: &Context, module: &mut Module) {
     let rewriter = IrRewriter::new(context);
     let rewriter = rewriter.as_rewriter_base();

@@ -35,8 +35,8 @@ pub struct NameUse<'a> {
     pub spelling: &'a str,
     /// What the name names.
     pub target: NameTarget<'a>,
-    /// The import that renamed the declaration in this file, when the name
-    /// goes through one: all of its `x as y` item.
+    /// The `x as y` import item that renamed the declaration in this file,
+    /// when the name goes through one.
     pub alias: Option<Span>,
 }
 
@@ -70,15 +70,15 @@ pub trait NameListener {
     /// A name the program wrote, and what it names.
     fn on_name(&mut self, name: NameUse<'_>);
 
-    /// A declaration the program wrote: all of its syntax, and the name it
-    /// declares. A declaration no name uses is here too.
+    /// A declaration the program wrote, with all of its syntax and the name
+    /// it declares. The lowering also reports a declaration that no name uses.
     fn on_declaration(&mut self, _at: Span, _name: &str) {}
 
     /// The columns the expressions of the stage at `stage` can read.
     fn on_row(&mut self, _stage: Span, _columns: &mut dyn Iterator<Item = &str>) {}
 
     /// The names the top level of the file `file` can use. `module` is the
-    /// file's module path; the entry file has none.
+    /// file's module path. The entry file has none.
     fn on_file(
         &mut self,
         _file: SourceId,
@@ -100,7 +100,6 @@ pub struct ScopeEntry<'a> {
     pub module_file: Option<SourceId>,
 }
 
-/// A listener for a lowering that nothing watches.
 struct Silent;
 
 impl NameListener for Silent {
@@ -203,8 +202,8 @@ struct AstToYzl<'c, 'd> {
 /// the symbol table because each borrows the block being built.
 type Locals<'c, 'a> = Vec<Value<'c, 'a>>;
 
-/// What a declaration is, as a completion shows it. An import is followed to
-/// what it names, so it is none of these.
+/// What a declaration is, as a completion shows it. The scope follows an
+/// import to what it names, so an import has no kind.
 fn name_kind(kind: DeclarationKind) -> Option<NameKind> {
     Some(match kind {
         DeclarationKind::Struct => NameKind::Struct,
@@ -218,7 +217,7 @@ fn name_kind(kind: DeclarationKind) -> Option<NameKind> {
 }
 
 impl<'c, 'd> AstToYzl<'c, 'd> {
-    /// Starts at `file`; the walk moves from file to file.
+    /// Starts at `file`. The walk then moves from file to file.
     fn new(
         context: &'c Context,
         library: Option<&'c BoundLibrary<'c>>,
@@ -298,8 +297,8 @@ impl<'c> AstToYzl<'c, '_> {
 
     /// Tells the listener that the name at `used` in this file names a
     /// declaration, through the import at `alias` that renamed it. A
-    /// declaration in a module this run did not read, as a bound library's,
-    /// has no file to point into.
+    /// declaration in a module that this run did not read has no file. A
+    /// bound library is an example.
     fn record_through(
         &mut self,
         used: TextRange,
@@ -345,7 +344,6 @@ impl<'c> AstToYzl<'c, '_> {
         self.listener.on_declaration(self.span(declared), name);
     }
 
-    /// Tells the listener that the name at `used` names a module.
     fn record_module(&mut self, used: TextRange, spelling: &str, path: &'c str) {
         let Some(&source_id) = self.module_files.get(&ModulePath::from_path(path)) else {
             return;
@@ -437,9 +435,9 @@ impl<'c> AstToYzl<'c, '_> {
         self.emit_hole(block, node.syntax().text_range(), ty)
     }
 
-    /// Checks, in a debug build, that a syntax error was reported. Only one
-    /// leaves a piece of syntax out of the tree, and the parser reports it,
-    /// so the lowering reports nothing.
+    /// Checks, in a debug build, that the file has an error. Only a syntax
+    /// error leaves a piece of syntax out of the tree. The parser reports
+    /// it, so the lowering reports nothing.
     fn assert_syntax_error(&self, what: &str) {
         debug_assert!(
             self.has_error_in_file(),

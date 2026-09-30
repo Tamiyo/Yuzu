@@ -109,7 +109,7 @@ impl<'c> AstToYzl<'c, '_> {
                 break;
             }
 
-            // A call lowers only the overload it calls; any other reference
+            // A call lowers only the overload it calls. Any other reference
             // lowers everything under the name.
             for used in used {
                 let Some(waiting) = on_demand.get_mut(&used.at) else {
@@ -185,9 +185,9 @@ impl<'c> AstToYzl<'c, '_> {
 }
 
 /// The name of a declaration that can wait until a reference names it, and
-/// its parameter count when it is a function. A `let` cannot wait: the hoist
-/// leaves it pending, and a lookup of a pending `let` is reported until its
-/// body is lowered.
+/// its parameter count when it is a function. A `let` cannot wait. The
+/// hoist leaves it pending, and a lookup of it is an error until the
+/// lowering reaches its body.
 fn on_demand_name(stmt: &ast::Stmt) -> Option<(ast::Ident, Option<usize>)> {
     match stmt {
         ast::Stmt::StructStmt(decl) => Some((decl.name()?, None)),

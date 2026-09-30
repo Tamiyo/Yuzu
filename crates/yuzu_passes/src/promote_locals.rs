@@ -9,8 +9,8 @@ use melior::pass::transform;
 ///
 /// # Panics
 ///
-/// Panics if `mem2reg` fails, which it does not on any module the lowering
-/// builds.
+/// Panics if `mem2reg` fails. It does not fail on a module that the
+/// lowering builds.
 pub fn promote_locals(context: &Context, module: &mut Module) {
     let passes = crate::pass_manager(context);
     passes.add_pass(transform::create_mem_2_reg());

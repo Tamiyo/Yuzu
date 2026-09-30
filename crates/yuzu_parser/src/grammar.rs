@@ -88,8 +88,8 @@ pub(crate) fn delimited_non_empty(
 }
 
 /// The items of a bracketed list, up to the `close` the caller then takes.
-/// A missing comma is reported and the next item still parses, and a token
-/// no item can start is reported and skipped.
+/// The list reports a missing comma and still parses the next item. It
+/// reports and skips a token that no item can start.
 pub(crate) fn delimited(
     p: &mut Parser,
     close: TokenKind,

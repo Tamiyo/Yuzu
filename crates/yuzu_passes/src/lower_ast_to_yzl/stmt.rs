@@ -40,7 +40,6 @@ enum LocalKind {
     Param,
 }
 
-/// A parameter a function declares.
 struct Param<'c> {
     name: &'c str,
     range: TextRange,
@@ -215,7 +214,7 @@ impl<'c> AstToYzl<'c, '_> {
     }
 
     /// The `yzl.fn` for a declaration, with its type parameters in scope.
-    /// `None` when a parameter could not be read.
+    /// `None` when the lowering cannot read a parameter.
     fn convert_fn_op(
         &mut self,
         decl: &ast::FuncStmt,
@@ -429,8 +428,8 @@ impl<'c> AstToYzl<'c, '_> {
             self.convert_method(body, &method, Site::InImpl(&methods));
         }
 
-        // The methods are still checked, but an implementation of no trait
-        // is not built.
+        // The lowering checks the methods, but it builds no implementation
+        // of an unknown trait.
         let Some(trait_symbol) = trait_symbol else {
             return;
         };
@@ -912,8 +911,8 @@ impl<'c> AstToYzl<'c, '_> {
             return;
         }
 
-        // A module is declared by its file, which the listener hears of by
-        // its path.
+        // A module's file declares the module. The listener hears of a
+        // module by its path.
         let text_range = node.syntax().text_range();
         if !matches!(kind, BindingKind::Module { .. }) {
             self.declare(name, text_range);
@@ -1003,8 +1002,8 @@ impl<'c> AstToYzl<'c, '_> {
             return None;
         }
 
-        // The module's own entry decides: an import it did not mark `pub`
-        // is not exported, whatever the origin's visibility.
+        // The module's own entry decides. The module does not export an
+        // import it did not mark `pub`, whatever the origin's visibility.
         let Some(own) = self.symbols.declared_binding(module, name) else {
             self.report(at, &format!("`{path}` does not declare `{name}`"));
             return None;
@@ -1219,8 +1218,8 @@ impl<'c> AstToYzl<'c, '_> {
         place
     }
 
-    /// The `return` a body at `range` that does not end in one gets: none of
-    /// a value in a unit function, and a hole in any other.
+    /// Ends a body at `range` that has no final `return`. A unit function
+    /// returns no value, and any other function returns a hole.
     fn emit_final_return<'a>(&self, entry: BlockRef<'c, 'a>, result: Type<'c>, range: TextRange) {
         let values = if UnitType::from_type(result).is_some() {
             Vec::new()
@@ -1257,7 +1256,7 @@ impl<'c> AstToYzl<'c, '_> {
     }
 
     /// Reports a body that does not end in a `return` when the function
-    /// has a value to return. An unknown result type was reported already.
+    /// has a value to return. An unknown result type already has a report.
     fn check_final_return(&mut self, decl: &ast::FuncStmt, name: &str, result: Type<'c>) {
         if UnitType::from_type(result).is_some() || ErrorType::from_type(result).is_some() {
             return;
@@ -1278,8 +1277,8 @@ impl<'c> AstToYzl<'c, '_> {
         let mut kept = Vec::new();
         let mut seen: Vec<(Method<'c>, TextRange)> = Vec::new();
         for decl in methods {
-            // A method with no name is a syntax error, which the parser
-            // reported.
+            // A method with no name is a syntax error. The parser reports
+            // it.
             if let Some(name) = self.read_ident(decl.name()) {
                 let method = Method {
                     name,

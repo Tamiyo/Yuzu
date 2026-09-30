@@ -182,8 +182,8 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
     }
 
     /// The keys are columns of the input row, by position, and the measures
-    /// are the region's `yzr.agg` ops. A grouping with no measures is what
-    /// `distinct` became.
+    /// are the region's `yzr.agg` ops. The lowering to yzr turns `distinct`
+    /// into a grouping with no measures.
     fn translate_aggregate(&mut self, op: OperationRef<'c, 'a>, keys: &[i32]) -> Option<RelType> {
         let (input, _) = self.translate_input(op)?;
         let region = self.translate_region(op)?;

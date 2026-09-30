@@ -103,7 +103,6 @@ impl<'t, 'input> Parser<'t, 'input> {
         self.peek_kind() == Some(kind)
     }
 
-    /// Whether the next token is one of `set`.
     pub(crate) fn at_any(&mut self, set: TokenSet) -> bool {
         self.expected_kinds = self.expected_kinds.union(set);
         self.peek_kind().is_some_and(|kind| set.contains(kind))
@@ -168,8 +167,8 @@ impl<'t, 'input> Parser<'t, 'input> {
         }
     }
 
-    /// Reports the token after a `pub` that declares nothing. The token is
-    /// left for the statement it starts.
+    /// Reports the token after a `pub` that declares nothing. It leaves the
+    /// token for the statement that the token starts.
     pub(crate) fn error_declaration(&mut self) {
         let (found, range) = self.found();
         self.expected_kinds = TokenSet::EMPTY;
@@ -212,7 +211,6 @@ impl<'t, 'input> Parser<'t, 'input> {
         }
     }
 
-    /// An empty range after the last token that is not trivia.
     fn end_range(&self) -> TextRange {
         TextRange::empty(self.source.end_of_last_token())
     }

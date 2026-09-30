@@ -123,8 +123,6 @@ pub(crate) fn check_yzr(source: &str, expected: &Expect) {
     );
 }
 
-/// The passes in the groups the driver runs them in, stopping after the
-/// first group that reports, as a compile does.
 pub(crate) fn check_simplified(source: &str, expected: &Expect) {
     type Group = for<'c> fn(&'c Context, &mut Module<'c>);
 

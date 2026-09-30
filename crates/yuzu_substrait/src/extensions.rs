@@ -33,8 +33,8 @@ pub(crate) enum Func {
     Coalesce,
 }
 
-/// Map a primitive op's function to its Substrait extension function.
-/// Membership is not one: it is a `SingularOrList`.
+/// The Substrait extension function for a primitive op's function.
+/// Membership has none, because it is a `SingularOrList`.
 pub(crate) fn function_target(func: Func) -> (&'static str, &'static str) {
     match func {
         Func::Add => (ARITHMETIC_URN, "add"),

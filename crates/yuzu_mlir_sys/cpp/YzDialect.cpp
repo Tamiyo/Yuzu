@@ -199,9 +199,9 @@ mlir::OpFoldResult RemOp::fold(FoldAdaptor adaptor) {
       [](double lhs, double rhs) { return std::fmod(lhs, rhs); });
 }
 
-// By squaring, so an exponent of any size takes at most 64 steps. A float
-// power does not fold: `pow` is not correctly rounded, so a folded constant
-// could differ from the engine's answer in its last bit.
+// An integer power folds by squaring, so any exponent takes at most 64
+// steps. A float power does not fold: `pow` is not correctly rounded, so a
+// folded constant can differ from the engine's answer in its last bit.
 mlir::OpFoldResult PowOp::fold(FoldAdaptor adaptor) {
   return foldNumericBinary(
       adaptor.getLhs(), adaptor.getRhs(),
@@ -296,10 +296,10 @@ static bool comparePredicate(llvm::StringRef predicate, T lhs, T rhs) {
 }
 
 mlir::OpFoldResult CmpOp::fold(FoldAdaptor adaptor) {
-  // A bool is an i1 integer attribute whose `getInt` sign-extends `true` to
-  // -1, so bools are read first, as false before true. Integers compare as
-  // integers: above 2^53 a double stands for more than one of them, so
-  // comparing through one answers a different question than the engine will.
+  // A bool is an i1 integer attribute, and its `getInt` sign-extends `true`
+  // to -1. So the fold reads bools first, with false before true. Integers
+  // compare as integers: above 2^53, one double stands for more than one
+  // integer, so a comparison through doubles can differ from the engine.
   bool value;
   if (auto lhs = llvm::dyn_cast_if_present<mlir::BoolAttr>(adaptor.getLhs())) {
     auto rhs = llvm::dyn_cast_if_present<mlir::BoolAttr>(adaptor.getRhs());

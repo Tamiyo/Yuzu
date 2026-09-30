@@ -68,7 +68,6 @@ fn module_path(relative: &Path) -> String {
     segments.join(".")
 }
 
-/// The parts of a path, each as text.
 fn segments(path: &Path) -> Vec<String> {
     path.components()
         .map(|component| component.as_os_str().to_string_lossy().into_owned())

@@ -34,8 +34,8 @@ impl<'c: 'a, 'a, T: BlockLike<'c, 'a>> BlockExt<'c, 'a> for T {
         )
     }
 
-    /// The block's terminator when it has one, found at once; otherwise the
-    /// walk to the last operation.
+    /// The block's terminator, found without a walk when the block has one.
+    /// Otherwise the function walks to the last operation.
     fn last_operation(&self) -> Option<OperationRef<'c, 'a>> {
         self.terminator().or_else(|| self.operations().last())
     }

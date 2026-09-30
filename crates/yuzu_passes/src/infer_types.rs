@@ -155,7 +155,7 @@ struct TypeInferrer<'c, 'd> {
     /// its yielded types.
     relations: FxHashMap<&'c str, Row<'c>>,
     pending: Vec<PendingBound<'c>>,
-    /// The function whose body is being inferred.
+    /// The function whose body the pass infers.
     caller: Option<&'c str>,
     /// The type variables each generic call minted, in declaration order.
     instances: FxHashMap<ValueId, Instance<'c>>,
@@ -190,7 +190,7 @@ impl<'c> TypeInferrer<'c, '_> {
         Term::Var(self.var_for(place.id()))
     }
 
-    /// The variable a value stands for, made the first time it is asked.
+    /// The variable a value stands for, made on the first request.
     fn var_for(&mut self, key: ValueId) -> TypeVar {
         if let Some(&var) = self.vars.get(&key) {
             return var;
@@ -784,8 +784,8 @@ impl<'c> TypeInferrer<'c, '_> {
                 let term = self.place_term(result);
                 match self.resolve(term) {
                     Some(element) => result.set_type(RefType::new(self.context, element).into()),
-                    // The place takes its initializer's type, and the
-                    // initializer comes first, so it was reported there.
+                    // The place takes its initializer's type. The initializer
+                    // comes first, so the report is already on it.
                     None => debug_assert!(
                         self.reported_unresolved,
                         "a place is left untyped only after its initializer is reported"

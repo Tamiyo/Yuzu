@@ -1,7 +1,7 @@
 //! Substrait has no user-defined functions, so a call to one is replaced by
 //! the body it names, and a call left standing is an error. The language
 //! has no conditional, so a function that reaches itself never stops
-//! expanding: such a cycle is reported before anything expands.
+//! expanding. The pass reports such a cycle before it expands any call.
 
 use std::collections::VecDeque;
 
@@ -148,9 +148,9 @@ fn report_cycle(call: OperationRef) {
 }
 
 /// Replaces a call with a copy of its body, and returns the calls the copy
-/// holds, which need expanding in turn. The lowering and inference settled
-/// what a call names and takes, so only what a program can still get wrong
-/// is reported.
+/// holds, which need expanding in turn. The lowering and inference settle
+/// what a call names and takes, so this reports only what a program can
+/// still get wrong.
 fn expand<'c, 'a>(
     context: &'c Context,
     rewriter: &'a RewriterBase<'c, 'a>,

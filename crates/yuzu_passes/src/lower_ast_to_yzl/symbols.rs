@@ -51,8 +51,8 @@ struct Column<'c> {
     qualifier: Option<&'c str>,
     name: &'c str,
     declared: Option<Span>,
-    /// One side's own copy of a column a `using` join merged: only a
-    /// qualified name reaches it, and the relation's output leaves it out.
+    /// One side's own copy of a column that a `using` join merged. Only a
+    /// qualified name reaches it, and the relation does not output it.
     is_hidden: bool,
 }
 
@@ -452,7 +452,7 @@ pub(super) struct Overload {
     pub(super) visibility: Visibility,
 }
 
-/// A method a trait declares. Methods may overload by parameter count.
+/// A method a trait declares. Methods can overload by parameter count.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct Method<'c> {
     pub(super) name: &'c str,
@@ -631,8 +631,8 @@ impl<'c> SymbolTable<'c> {
     }
 
     /// A name as the context holds it. This and [`Self::intern_fmt`] are
-    /// the only places the pass interns: a name read from the syntax, a
-    /// module path, and a symbol the module qualifies all come through them.
+    /// the only places the pass interns. A name read from the syntax, a
+    /// module path, and a qualified symbol all come through them.
     pub(super) fn intern(&self, text: &str) -> &'c str {
         StringAttribute::new(self.context, text).value()
     }
@@ -643,8 +643,8 @@ impl<'c> SymbolTable<'c> {
     }
 
     /// The name a declaration's op is built under. MLIR has one namespace
-    /// for the whole program, so the module qualifies it. A qualified name
-    /// is interned on each call.
+    /// for the whole program, so the module qualifies it. Each call interns
+    /// a qualified name again.
     pub(super) fn symbol(&self, at: Declared<'c>) -> &'c str {
         match at.module.0 {
             Some(path) => self.intern_fmt(format_args!("{path}.{}", at.name)),
@@ -654,7 +654,7 @@ impl<'c> SymbolTable<'c> {
 
     /// The symbol of one declaration under a name that may be overloaded.
     /// MLIR has one symbol per name, so an overloaded one adds its
-    /// parameter count; [`crate::written_name`] removes it again.
+    /// parameter count. [`crate::written_name`] removes the count again.
     pub(super) fn overload_symbol(
         &self,
         base: &'c str,
@@ -679,7 +679,8 @@ impl<'c> SymbolTable<'c> {
     }
 
     /// The symbol a reference names, recorded as a use. A call gives the
-    /// `arity` of the overload it uses; any other reference uses them all.
+    /// `arity` of the overload it uses. Any other reference uses all the
+    /// overloads.
     fn refer(&mut self, at: Declared<'c>, arity: Option<usize>) -> &'c str {
         self.used.push(Use { at, arity });
         self.symbol(at)
@@ -938,7 +939,7 @@ impl<'c> SymbolTable<'c> {
     }
 
     /// The overload of the function declared at a place that takes `given`
-    /// arguments. A private overload is seen only in its own module.
+    /// arguments. Only its own module sees a private overload.
     pub(super) fn callable_in(&mut self, at: Declared<'c>, given: usize) -> Option<Callable<'c>> {
         let (at, binding) = self.find_in(at)?;
         let BindingKind::Func { kind, overloads } = &binding.kind else {

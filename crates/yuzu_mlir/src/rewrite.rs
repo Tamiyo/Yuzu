@@ -67,12 +67,12 @@ fn pattern(context: &Context, root: &str, rewrite: Rewrite) -> RewritePattern {
 /// `(x + c1) + c2` becomes `x + (c1 + c2)`, which lets one constant reach
 /// another through the value between them.
 ///
-/// The two forms compute the same only while no intermediate overflows
-/// differently, and the dialect leaves overflow to the engine. Two constants
-/// of the same sign are safe: the intermediate sum lies between `x` and the
-/// final one, so it overflows only when the final one does. Mixed signs are
-/// not, since `(x + 1) + -1` can overflow at the first step and not at all
-/// when reassociated.
+/// The two forms compute the same value only when no intermediate sum
+/// overflows differently. The dialect leaves overflow to the engine. Two
+/// constants of the same sign are safe: the intermediate sum lies between
+/// `x` and the final sum, so it overflows only when the final sum does.
+/// Mixed signs are not safe, because `(x + 1) + -1` can overflow at the
+/// first step and not at all when reassociated.
 fn reassociate_add<'c>(
     context: &'c Context,
     op: OperationRef<'c, '_>,
@@ -125,8 +125,8 @@ fn reassociate_add<'c>(
     true
 }
 
-/// `x in [a, b]` with a constant `x` is decided once an element equals it,
-/// or once every element is a constant that does not.
+/// Folds `x in [a, b]` with a constant `x` to true when an element equals
+/// `x`. It folds to false when every element is a constant that does not.
 fn fold_membership<'c>(
     context: &'c Context,
     op: OperationRef<'c, '_>,
@@ -191,10 +191,10 @@ fn fold_membership<'c>(
     true
 }
 
-/// A project of a project, the inner used only there, becomes one project:
-/// the outer body runs on the values the inner body yields, where it read
-/// the columns those values became. A chain of selects is then one level of
-/// the plan.
+/// Merges a project whose input is another project into one project, when
+/// nothing else uses the inner project. The outer body reads the values the
+/// inner body yields in place of the columns those values became. A chain
+/// of selects then gives one level of the plan.
 fn merge_projects<'c>(
     _context: &'c Context,
     outer: OperationRef<'c, '_>,
@@ -257,9 +257,9 @@ fn constant_int<'c>(value: Value<'c, '_>) -> Option<(i64, Type<'c>)> {
     Some((constant.value().value(), value.r#type()))
 }
 
-/// Whether two constants are equal. The language owns its literals, so it
-/// decides: `-0.0` and `0.0` are both zero, and equal. `None` for two of
-/// different kinds.
+/// Whether two constants are equal. `None` means the two are of different
+/// kinds. The language owns its literals, so it decides that `-0.0` and
+/// `0.0` are equal.
 fn same_value(lhs: Attribute<'_>, rhs: Attribute<'_>) -> Option<bool> {
     // A bool is an integer attribute of one bit, so it is asked first.
     if let (Ok(lhs), Ok(rhs)) = (BoolAttribute::try_from(lhs), BoolAttribute::try_from(rhs)) {

@@ -296,7 +296,6 @@ fn parse_methods(p: &mut Parser, mut method: impl FnMut(&mut Parser)) {
     }
 }
 
-/// `pub`, `external` and `agg`, each when present, then `def`.
 fn parse_func_prefix(p: &mut Parser) {
     parse_visibility(p);
     if p.at(TokenKind::ExternalKw) {

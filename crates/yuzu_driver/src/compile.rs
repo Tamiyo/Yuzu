@@ -126,12 +126,12 @@ struct Dumps {
     yzr: Option<String>,
 }
 
-/// Source to plan, through every MLIR pass in order. `None` once an error
-/// is reported: a pass reads what the one before it settled, so running on
-/// after an error would report the same mistake again in other words.
+/// Source to plan, through every MLIR pass in order. Returns `None` once an
+/// error is reported. Each pass reads what the pass before it settled, so a
+/// pass that runs after an error reports the same mistake in other words.
 ///
-/// The query is one of the sources rather than a text of its own, so its
-/// name, its text and the id a diagnostic carries cannot disagree.
+/// The query is one of the sources, not a separate text. Thus its name, its
+/// text and the id a diagnostic carries cannot disagree.
 fn plan_through_mlir(
     sources: &mut SourceMap,
     source_id: SourceId,
@@ -153,9 +153,9 @@ fn plan_through_mlir(
         )
         .filter(|_| !diagnostics.has_errors())?;
 
-        // Expansion runs after the aggregate rules, which read an `agg fn` body
-        // while it is still a body, and before the lowering, which has no way to
-        // carry a function across.
+        // Expansion runs after the aggregate rules, because they read an
+        // `agg fn` body while it is still a body. It runs before the lowering,
+        // because the lowering cannot carry a function across.
         yuzu_mlir::diagnostics::capture(context, sources, diagnostics, || {
             yuzu_passes::inline_calls(context, &mut module);
             yuzu_passes::remove_dead_symbols(context, &mut module);
@@ -183,15 +183,15 @@ fn plan_through_mlir(
     })
 }
 
-/// The frontend and the checks after it, through `check_aggregates`: what
-/// a compile and an editor's check share. Each check runs even after an
-/// error, and passes over what the error left behind; `None` only when the
-/// module does not verify, which no pass can read.
+/// The frontend and the checks after it, through `check_aggregates`. A
+/// compile and an editor's check share this part. Each check runs even after
+/// an error, and passes over what the error left behind. Returns `None` only
+/// when the module does not verify, because no pass can read such a module.
 ///
-/// `library` is the library's names bound ahead of time; without it, the
-/// lowering binds them from the library files among `files`. `yzl` takes the
-/// lowered module as text, and `index` reads the module after lowering and
-/// after inference, when a caller wants them.
+/// `library` holds the library's names, bound ahead of time. Without it, the
+/// lowering binds them from the library files among `files`. When a caller
+/// gives them, `yzl` takes the lowered module as text, and `index` reads the
+/// module after lowering and after inference.
 pub(crate) fn lower_and_check<'c>(
     context: &'c melior::Context,
     sources: &SourceMap,
@@ -242,12 +242,11 @@ pub(crate) fn lower_and_check<'c>(
     Some(module)
 }
 
-/// How many compiles one thread's context serves. A context keeps every
-/// attribute it has uniqued until it is dropped, so a long-lived process
-/// replaces it now and then.
+/// How many compiles one thread's context serves. A context keeps each
+/// attribute it uniques until it is dropped, so a thread replaces its context
+/// after this many compiles.
 const CONTEXT_COMPILES: usize = 1000;
 
-/// The context this thread compiles in, and how many compiles it has served.
 struct ThreadContext {
     context: melior::Context,
     compiles: usize,
@@ -260,8 +259,8 @@ thread_local! {
     });
 }
 
-/// Runs a compile in this thread's context. Making a context registers every
-/// op of the dialects, and that is slow.
+/// Runs a compile in this thread's context. Making a context is slow,
+/// because it registers every op of the dialects.
 pub(crate) fn in_thread_context<T>(compile: impl FnOnce(&melior::Context) -> T) -> T {
     CONTEXT.with(|thread| {
         let mut thread = thread.borrow_mut();

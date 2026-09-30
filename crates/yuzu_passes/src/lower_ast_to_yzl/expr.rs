@@ -283,8 +283,8 @@ impl<'c> AstToYzl<'c, '_> {
     ) -> Value<'c, 'a> {
         let loc = self.location(unary);
 
-        // `int64`'s least value is written as the negation of a literal one
-        // past its greatest, which alone is out of range.
+        // The program writes `int64`'s least value as the negation of a
+        // literal one past its greatest. That literal alone is out of range.
         if unary.op() == Some(UnaryOp::Neg)
             && let Some(ast::Expr::Literal(ast::Literal::IntLiteral(int))) = unary.expr()
             && int.value() == Some(i64::MIN.unsigned_abs())
@@ -389,8 +389,9 @@ impl<'c> AstToYzl<'c, '_> {
 
         let given = operands.len();
         let Some(callable) = self.symbols.callable(callee, given) else {
-            // A call that takes the wrong number of arguments still names the
-            // function, as it does while the arguments are being typed.
+            // A call with the wrong number of arguments still names the
+            // function. The name stays resolved while the user types the
+            // arguments.
             if let Some(target) = self.symbols.target_of(callee) {
                 self.record(callee_range, callee, target);
             }
@@ -620,8 +621,9 @@ impl<'c> AstToYzl<'c, '_> {
     }
 
     /// The values of a list whose elements are all literals of one kind,
-    /// with the kind's type. Any other list is lowered element by element,
-    /// so inference reports a mix of kinds as it reports any other.
+    /// with the kind's type. The lowering converts any other list element
+    /// by element, so inference reports a mix of kinds as it reports any
+    /// other type mismatch.
     fn read_constant_list(&self, list: &ast::ListExpr) -> Option<(Type<'c>, Vec<Attribute<'c>>)> {
         let mut element: Option<Type<'c>> = None;
         let mut values = Vec::new();

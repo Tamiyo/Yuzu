@@ -106,8 +106,9 @@ pub enum Mutability {
 
 /// How far a declaration's name reaches.
 ///
-/// `Module` is what `pub(mod)` asks for: the files of the enclosing module and no further, which is how a
-/// module keeps a helper its own while its siblings still use it.
+/// `Module` is what `pub(mod)` asks for: the files of the enclosing module
+/// and no further. With it, each file of a module can use a helper that
+/// other modules cannot name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Visibility {
     Public,
@@ -1094,8 +1095,8 @@ impl FloatLiteral {
 
 ast_node!(StringLiteral);
 impl StringLiteral {
-    /// The literal's text, with its escapes replaced; a raw string's text as
-    /// written. A new `String` for each call.
+    /// The literal's text, with its escapes replaced. A raw string gives its
+    /// text as written. Each call makes a new `String`.
     #[must_use]
     pub fn to_value(&self) -> Option<String> {
         let token = self.0.first_token()?;

@@ -3,7 +3,7 @@
 //! `new` builds one in a context, and `from_type` tells one apart. MLIR
 //! uniques a type in its context, so both return the same type every time.
 //! `new` needs a context that has loaded the dialects, as [`crate::context`]
-//! makes one; a debug build checks it, since MLIR does not.
+//! makes one. A debug build checks this, because MLIR does not.
 
 mod yz;
 mod yzl;
@@ -14,9 +14,9 @@ use melior::ir::Type;
 pub use yz::{BoolType, Float64Type, Int64Type, ListType, StrType, StructType, UnitType};
 pub use yzl::{ErrorType, ParamType, QueryType, RefType, UnresolvedType};
 
-/// Checks, in a debug build, that `context` has loaded the dialect whose op
-/// `op` is. MLIR builds a type of a dialect the context has not loaded with
-/// no check at all.
+/// In a debug build, checks that `context` has loaded the dialect of `op`.
+/// MLIR builds a type of a dialect that the context has not loaded, and
+/// gives no error.
 fn debug_assert_loaded(context: &Context, op: &str) {
     debug_assert!(
         context.is_registered_operation(op),
@@ -82,9 +82,9 @@ fn scalar_name(ty: Type<'_>) -> Option<&'static str> {
 
 /// How a type is written in source, for a diagnostic.
 ///
-/// A reader wrote `int64` and `List[int64]`, not `!yz.int64` and
-/// `!yz.list<!yz.int64>`. The MLIR spelling is the fallback, so a type with no source syntax still
-/// prints as something.
+/// The reader wrote `int64` and `List[int64]`, not `!yz.int64` and
+/// `!yz.list<!yz.int64>`. A type with no source syntax falls back to its
+/// MLIR spelling.
 #[must_use]
 pub fn name(ty: Type<'_>) -> String {
     if let Some(list) = ListType::from_type(ty) {
