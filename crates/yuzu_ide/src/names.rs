@@ -3,7 +3,7 @@
 //! the whole declaration it names.
 
 use rustc_hash::FxHashMap;
-use text_size::TextRange;
+use text_size::{TextRange, TextSize};
 use yuzu_ast::ast::{self, AstNode, Mutability};
 use yuzu_diagnostics::{SourceId, Span};
 use yuzu_driver::index::{Reference, TargetKind};
@@ -16,11 +16,13 @@ pub(crate) struct Name {
     pub(crate) range: TextRange,
 }
 
-/// A use of a name, and the declaration it names.
-#[derive(Clone, Debug)]
+/// A use of a name, and the declaration it names. A declaration no use
+/// names is its own use.
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct Resolution {
-    /// The reference in the index this resolution narrows.
-    pub(crate) reference: usize,
+    /// The reference in the index this resolution narrows, when a use
+    /// names the declaration.
+    pub(crate) reference: Option<usize>,
     pub(crate) used: Name,
     pub(crate) declared: Name,
     /// The whole declaration, as the index gives it.
@@ -61,7 +63,7 @@ pub(crate) fn resolutions(references: &[Reference], trees: &Trees) -> Vec<Resolu
                 }
             };
             Some(Resolution {
-                reference: at,
+                reference: Some(at),
                 used: Name {
                     source: reference.at.source_id,
                     range: reference.at.range,
@@ -75,6 +77,48 @@ pub(crate) fn resolutions(references: &[Reference], trees: &Trees) -> Vec<Resolu
             })
         })
         .collect()
+}
+
+/// The declaration whose name is at `offset`, from the syntax alone. A
+/// stage's item is left out, as it can name a column and not declare one.
+pub(crate) fn declaration_at(
+    root: &SyntaxNode,
+    source: SourceId,
+    offset: TextSize,
+) -> Option<Resolution> {
+    let token = root
+        .token_at_offset(offset)
+        .find(|token| token.kind() == SyntaxKind::Identifier)?;
+    let ident = token
+        .parent()
+        .filter(|node| node.kind() == SyntaxKind::Ident)?;
+    let declaring = ident.parent()?;
+    if !matches!(
+        declaring.kind(),
+        SyntaxKind::FuncParam
+            | SyntaxKind::LetStmt
+            | SyntaxKind::FuncStmt
+            | SyntaxKind::TableStmt
+            | SyntaxKind::StructStmt
+            | SyntaxKind::TraitStmt
+            | SyntaxKind::StructField
+    ) {
+        return None;
+    }
+    let declared = Name {
+        source,
+        range: token.text_range(),
+    };
+    Some(Resolution {
+        reference: None,
+        used: declared,
+        declared,
+        declaration: Span {
+            source_id: source,
+            range: declaring.text_range(),
+        },
+        kind: declaration_kind(&declaring)?,
+    })
 }
 
 /// The node that declares the name at `name`: the node around its `Ident`.

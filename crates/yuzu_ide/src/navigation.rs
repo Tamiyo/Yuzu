@@ -6,7 +6,7 @@ use text_size::{TextRange, TextSize};
 use yuzu_diagnostics::SourceId;
 
 use crate::Checked;
-use crate::names::{Name, Resolution};
+use crate::names::{self, Name, Resolution};
 
 /// A range in a file on disk.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -28,7 +28,7 @@ pub(crate) fn goto_definition(
     source: SourceId,
     offset: TextSize,
 ) -> Option<FileRange> {
-    let resolution = resolution_at(checked.resolutions(), source, offset)?;
+    let resolution = resolution_at(checked, source, offset)?;
     file_range(checked, resolution.declared)
 }
 
@@ -62,13 +62,14 @@ pub(crate) fn highlight_related(
 }
 
 /// The resolution a position is on: a use first, then a declaration one
-/// of the uses names.
+/// of the uses names, then a declaration no use names.
 pub(crate) fn resolution_at(
-    resolutions: &[Resolution],
+    checked: &Checked,
     source: SourceId,
     offset: TextSize,
-) -> Option<&Resolution> {
+) -> Option<Resolution> {
     let on = |name: Name| name.source == source && name.range.contains_inclusive(offset);
+    let resolutions = checked.resolutions();
     resolutions
         .iter()
         .find(|resolution| on(resolution.used))
@@ -77,11 +78,13 @@ pub(crate) fn resolution_at(
                 .iter()
                 .find(|resolution| on(resolution.declared))
         })
+        .copied()
+        .or_else(|| names::declaration_at(&checked.syntax(source)?, source, offset))
 }
 
 /// The declaration of the name at a position, and each of its uses.
 fn names(checked: &Checked, source: SourceId, offset: TextSize) -> Option<(Name, Vec<Name>)> {
-    let at = resolution_at(checked.resolutions(), source, offset)?;
+    let at = resolution_at(checked, source, offset)?;
     Some((at.declared, uses_of(checked, at.declared)))
 }
 
@@ -262,6 +265,14 @@ from t |> select double(a) + cap + two() as v
             .map(|found| &text[found.range])
             .collect();
         assert_eq!(uses, ["sum"]);
+    }
+
+    #[test]
+    fn a_function_no_one_calls_has_its_declaration() {
+        check_references(
+            &format!("{PROGRAM}def $0unused() -> int64 {{ return 1 }}\n"),
+            &expect!["main.yz:unused 175..181"],
+        );
     }
 
     #[test]

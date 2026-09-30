@@ -98,7 +98,7 @@ fn renamed(
     source: SourceId,
     offset: TextSize,
 ) -> Result<(Name, Vec<Name>), RenameError> {
-    let at = resolution_at(checked.resolutions(), source, offset).ok_or(RenameError::NoName)?;
+    let at = resolution_at(checked, source, offset).ok_or(RenameError::NoName)?;
     if at.kind == DeclarationKind::Module {
         return Err(RenameError::Module);
     }
@@ -174,6 +174,15 @@ mod tests {
             &expect![[r"
                 main.yz 100..101 y
                 main.yz 121..122 y"]],
+        );
+    }
+
+    #[test]
+    fn a_let_no_one_reads_renames() {
+        check(
+            &PROGRAM.replacen("return y", "let $0w = 1\n    return y", 1),
+            "z",
+            &expect!["main.yz 118..119 w"],
         );
     }
 

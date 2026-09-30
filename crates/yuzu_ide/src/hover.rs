@@ -20,7 +20,7 @@ pub struct HoverResult {
 }
 
 pub(crate) fn hover(checked: &Checked, source: SourceId, offset: TextSize) -> Option<HoverResult> {
-    if let Some(resolution) = resolution_at(checked.resolutions(), source, offset) {
+    if let Some(resolution) = resolution_at(checked, source, offset) {
         let range = if resolution.used.source == source
             && resolution.used.range.contains_inclusive(offset)
         {
@@ -28,7 +28,7 @@ pub(crate) fn hover(checked: &Checked, source: SourceId, offset: TextSize) -> Op
         } else {
             resolution.declared.range
         };
-        let text = describe(checked, resolution)?;
+        let text = describe(checked, &resolution)?;
         return Some(HoverResult {
             range,
             markup: code(&text),
@@ -117,6 +117,18 @@ from t |> select double(1) + cap as v
             &expect![[r#"
                 Some(
                     "double ```yuzu\ndef double(x: int64) -> int64\n```",
+                )
+            "#]],
+        );
+    }
+
+    #[test]
+    fn a_struct_no_one_names_shows_itself() {
+        check(
+            &format!("{PROGRAM}struct $0Unused {{ a: int64 }}\n"),
+            &expect![[r#"
+                Some(
+                    "Unused ```yuzu\nstruct Unused { a: int64 }\n```",
                 )
             "#]],
         );

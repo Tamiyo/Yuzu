@@ -208,7 +208,10 @@ impl Checked {
 
     /// The name a resolution resolves, as its declaration spells it.
     pub(crate) fn name(&self, resolution: &Resolution) -> &str {
-        &self.inner.index.references[resolution.reference].name
+        match resolution.reference {
+            Some(at) => &self.inner.index.references[at].name,
+            None => &self.text(resolution.declared.source)[resolution.declared.range],
+        }
     }
 
     /// The tree a source was lowered from.
