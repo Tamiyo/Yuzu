@@ -10,6 +10,7 @@ use melior::ir::operation::{OperationLike, OperationRef};
 use melior::ir::{Module, Type, Value, ValueLike};
 use rustc_hash::{FxHashMap, FxHashSet};
 use text_size::TextRange;
+use yuzu_ast::ast::Visibility;
 use yuzu_diagnostics::{SourceId, SourceMap, Span};
 use yuzu_mlir::diagnostics::span;
 use yuzu_mlir::ir::block::BlockExt;
@@ -62,8 +63,8 @@ pub struct StageRow {
 pub struct ScopeName {
     pub name: String,
     pub kind: ScopeKind,
-    /// Whether a file that imports this one can name it.
-    pub is_exported: bool,
+    /// How far the name reaches from this file.
+    pub visibility: Visibility,
     /// For a module, the file that holds it.
     pub module_file: Option<SourceId>,
 }
@@ -148,7 +149,7 @@ impl NameListener for IndexReader<'_> {
         let names = names
             .map(|entry| ScopeName {
                 name: entry.name.to_owned(),
-                is_exported: entry.is_exported,
+                visibility: entry.visibility,
                 module_file: entry.module_file,
                 kind: match entry.kind {
                     NameKind::Struct => ScopeKind::Struct,

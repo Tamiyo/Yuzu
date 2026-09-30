@@ -43,6 +43,14 @@ const SCALARS: [Scalar; 4] = [
     },
 ];
 
+/// How source spells the list type, as in `List[int64]`.
+pub const LIST: &str = "List";
+
+/// How source spells each scalar type.
+pub fn scalar_spellings() -> impl Iterator<Item = &'static str> {
+    SCALARS.iter().map(|scalar| scalar.spelling)
+}
+
 /// The scalar type a name stands for, when it names one.
 #[must_use]
 pub fn scalar<'c>(context: &'c Context, name: &str) -> Option<Type<'c>> {
@@ -68,7 +76,7 @@ fn scalar_name(ty: Type<'_>) -> Option<&'static str> {
 #[must_use]
 pub fn name(ty: Type<'_>) -> String {
     if let Some(list) = ListType::from_type(ty) {
-        return format!("List[{}]", name(list.inner()));
+        return format!("{LIST}[{}]", name(list.inner()));
     }
 
     if let Some(declaration) = StructType::from_type(ty) {

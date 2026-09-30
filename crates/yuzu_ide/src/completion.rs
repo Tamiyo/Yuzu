@@ -6,9 +6,11 @@
 //! columns by where the stage starts.
 
 use text_size::TextSize;
-use yuzu_ast::ast::{self, AstNode};
+use yuzu_ast::ast::{self, AstNode, Visibility};
 use yuzu_diagnostics::SourceId;
 use yuzu_driver::index::ScopeKind;
+use yuzu_lexer::token_kind::TokenKind;
+use yuzu_mlir::types;
 use yuzu_syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
 
 use crate::Checked;
@@ -25,7 +27,7 @@ pub struct CompletionSite {
     /// The locals and parameters written before the cursor that it can read.
     pub locals: Vec<(String, CompletionKind)>,
     /// The keywords that can start what is written here.
-    pub keywords: &'static [&'static str],
+    pub keywords: &'static [TokenKind],
     /// Whether a function or a module-level `let` fits here.
     pub takes_value: bool,
     /// The name before the `.` the cursor is after: a module, whose
@@ -42,7 +44,7 @@ pub struct CompletionSite {
 }
 
 impl CompletionSite {
-    fn keywords_only(keywords: &'static [&'static str]) -> Self {
+    fn keywords_only(keywords: &'static [TokenKind]) -> Self {
         CompletionSite {
             stage: None,
             locals: Vec::new(),
@@ -68,10 +70,10 @@ impl CompletionSite {
 
     fn add_syntax_items(&self, add: &mut dyn FnMut(&str, CompletionKind)) {
         for keyword in self.keywords {
-            add(keyword, CompletionKind::Keyword);
+            add(&keyword.to_string(), CompletionKind::Keyword);
         }
         if self.takes_type {
-            for ty in BUILTIN_TYPES {
+            for ty in types::scalar_spellings().chain([types::LIST]) {
                 add(ty, CompletionKind::Type);
             }
         }
@@ -116,35 +118,42 @@ pub enum CompletionKind {
     Type,
 }
 
-/// The types every program has.
-const BUILTIN_TYPES: &[&str] = &["int64", "float64", "bool", "str", "List"];
-
 /// What a stage starts with after its `|>`.
-const STAGE_KEYWORDS: &[&str] = &[
-    "where",
-    "select",
-    "extend",
-    "aggregate",
-    "limit",
-    "rename",
-    "as",
-    "join",
-    "left",
-    "right",
-    "full",
-    "set",
-    "distinct",
-    "drop",
+const STAGE_KEYWORDS: &[TokenKind] = &[
+    TokenKind::WhereKw,
+    TokenKind::SelectKw,
+    TokenKind::ExtendKw,
+    TokenKind::AggregateKw,
+    TokenKind::LimitKw,
+    TokenKind::RenameKw,
+    TokenKind::AsKw,
+    TokenKind::JoinKw,
+    TokenKind::LeftKw,
+    TokenKind::RightKw,
+    TokenKind::FullKw,
+    TokenKind::SetKw,
+    TokenKind::DistinctKw,
+    TokenKind::DropKw,
 ];
 
 /// What a statement at a file's top level starts with.
-const FILE_KEYWORDS: &[&str] = &[
-    "struct", "table", "def", "agg", "external", "let", "trait", "impl", "import", "from", "mod",
-    "pub",
+const FILE_KEYWORDS: &[TokenKind] = &[
+    TokenKind::StructKw,
+    TokenKind::TableKw,
+    TokenKind::DefKw,
+    TokenKind::AggKw,
+    TokenKind::ExternalKw,
+    TokenKind::LetKw,
+    TokenKind::TraitKw,
+    TokenKind::ImplKw,
+    TokenKind::ImportKw,
+    TokenKind::FromKw,
+    TokenKind::ModKw,
+    TokenKind::PubKw,
 ];
 
 /// What a statement in a function body starts with.
-const BODY_KEYWORDS: &[&str] = &["let", "return"];
+const BODY_KEYWORDS: &[TokenKind] = &[TokenKind::LetKw, TokenKind::ReturnKw];
 
 pub(crate) fn completion_site(root: &SyntaxNode, offset: TextSize) -> CompletionSite {
     let token = root.token_at_offset(offset).left_biased();
@@ -281,7 +290,7 @@ pub(crate) fn completions(
             .and_then(|file| index.scopes.get(&file))
             .into_iter()
             .flatten()
-            .filter(|name| name.is_exported)
+            .filter(|name| name.visibility == Visibility::Public)
         {
             add(&name.name, scope_kind(name.kind));
         }

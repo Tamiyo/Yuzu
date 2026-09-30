@@ -6,7 +6,7 @@ use melior::ir::attribute::StringAttribute;
 use melior::ir::{BlockLike, BlockRef, Location, Module, Type, Value};
 use rustc_hash::FxHashMap;
 use text_size::TextRange;
-use yuzu_ast::ast::{self, AstNode};
+use yuzu_ast::ast::{self, AstNode, Visibility};
 use yuzu_diagnostics::{DiagnosticBuilder, DiagnosticsEngine, SourceId, SourceMap, Span};
 use yuzu_mlir::ir::location::LocationExt;
 use yuzu_mlir::ir::operation::OperationExt;
@@ -86,8 +86,9 @@ pub trait NameListener {
 pub struct ScopeEntry<'a> {
     pub name: &'a str,
     pub kind: NameKind,
-    /// Whether a file that imports this one can name it.
-    pub is_exported: bool,
+    /// How far the name reaches from this file. A name the file sees from
+    /// the prelude is private here.
+    pub visibility: Visibility,
     /// For a module, the file that holds it.
     pub module_file: Option<SourceId>,
 }
@@ -270,7 +271,7 @@ impl<'c> AstToYzl<'c, '_> {
                 Some(ScopeEntry {
                     name: visible.name,
                     kind: name_kind(visible.kind)?,
-                    is_exported: visible.is_exported,
+                    visibility: visible.visibility,
                     module_file: visible
                         .module
                         .and_then(|path| module_files.get(&ModulePath::from_path(path)).copied()),

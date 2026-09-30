@@ -397,8 +397,8 @@ impl<'c> Callable<'c> {
 pub(super) struct Visible<'c> {
     pub(super) name: &'c str,
     pub(super) kind: DeclarationKind,
-    /// Whether a module that imports this one can name it.
-    pub(super) is_exported: bool,
+    /// How far the name reaches from this module.
+    pub(super) visibility: Visibility,
     /// The module a module name names.
     pub(super) module: Option<&'c str>,
 }
@@ -907,7 +907,11 @@ impl<'c> SymbolTable<'c> {
             visible.push(Visible {
                 name,
                 kind: declared.declaration_kind(),
-                is_exported: is_own && binding.visibility == Visibility::Public,
+                visibility: if is_own {
+                    binding.visibility
+                } else {
+                    Visibility::Private
+                },
                 module: match declared {
                     BindingKind::Module { path } => Some(*path),
                     BindingKind::Struct { .. }
