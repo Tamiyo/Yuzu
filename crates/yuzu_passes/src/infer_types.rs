@@ -121,6 +121,12 @@ impl<'c> Declarations<'c> {
     }
 }
 
+/// The type parameters one generic call solves, by the call's result.
+struct Instance<'c> {
+    callee: &'c str,
+    params: Vec<(&'c str, TypeVar)>,
+}
+
 /// A bound checked once the variable standing for its parameter resolves.
 #[derive(Clone, Copy)]
 struct PendingBound<'c> {
@@ -151,7 +157,7 @@ struct TypeInferrer<'c, 'd> {
     /// The function whose body is being inferred.
     caller: Option<&'c str>,
     /// The type variables each generic call minted, in declaration order.
-    instances: FxHashMap<ValueId, Vec<TypeVar>>,
+    instances: FxHashMap<ValueId, Instance<'c>>,
 }
 
 impl<'c> TypeInferrer<'c, '_> {
@@ -165,34 +171,31 @@ impl<'c> TypeInferrer<'c, '_> {
             return Term::Concrete(ErrorType::new(self.context).into());
         }
 
-        let key = value.id();
-        if let Some(&var) = self.vars.get(&key) {
-            return Term::Var(var);
-        }
-
-        let var = self.fresh();
-        self.vars.insert(key, var);
-        Term::Var(var)
+        Term::Var(self.var_for(value.id()))
     }
 
     /// The type of the value a place holds: its annotation, or a variable
     /// for the place.
     fn place_term(&mut self, place: Value<'c, '_>) -> Term<'c> {
         let element = RefType::from_type(place.r#type())
-            .expect("a verified load or store reads a place")
+            .expect("a place has a `!yzl.ref` type")
             .element();
         if UnresolvedType::from_type(element).is_none() {
             return Term::Concrete(element);
         }
 
-        let key = place.id();
+        Term::Var(self.var_for(place.id()))
+    }
+
+    /// The variable a value stands for, made the first time it is asked.
+    fn var_for(&mut self, key: ValueId) -> TypeVar {
         if let Some(&var) = self.vars.get(&key) {
-            return Term::Var(var);
+            return var;
         }
 
         let var = self.fresh();
         self.vars.insert(key, var);
-        Term::Var(var)
+        var
     }
 
     fn fresh(&mut self) -> TypeVar {
@@ -572,17 +575,18 @@ impl<'c> TypeInferrer<'c, '_> {
         signature: &Signature<'c>,
     ) -> FxHashMap<&'c str, TypeVar> {
         let mut bindings = FxHashMap::default();
-        let mut ordered = Vec::new();
-        for name in &signature.type_params {
+        let mut params = Vec::new();
+        for &name in &signature.type_params {
             let var = self.fresh();
-            bindings.insert(*name, var);
-            ordered.push(var);
+            bindings.insert(name, var);
+            params.push((name, var));
         }
 
-        if !ordered.is_empty()
+        if !params.is_empty()
             && let Some(result) = op.try_first_result()
         {
-            self.instances.insert(result.id(), ordered);
+            self.instances
+                .insert(result.id(), Instance { callee, params });
         }
 
         for bound in &signature.bounds {
@@ -601,9 +605,10 @@ impl<'c> TypeInferrer<'c, '_> {
     }
 
     /// Whether a function requires a trait of one of its type parameters.
-    fn is_bounded(&self, function: Option<&str>, subject: &str, trait_: &str) -> bool {
-        function
-            .and_then(|function| self.declared.signatures.get(function))
+    fn is_bounded(&self, function: &str, subject: &str, trait_: &str) -> bool {
+        self.declared
+            .signatures
+            .get(function)
             .is_some_and(|signature| {
                 signature
                     .bounds
@@ -624,7 +629,9 @@ impl<'c> TypeInferrer<'c, '_> {
 
             let name = types::name(resolved);
             let implemented = if let Some(param) = ParamType::from_type(resolved) {
-                self.is_bounded(bound.caller, param.name(), bound.trait_)
+                bound
+                    .caller
+                    .is_some_and(|caller| self.is_bounded(caller, param.name(), bound.trait_))
             } else {
                 self.declared.impls.contains(&Implementation {
                     trait_: bound.trait_,
@@ -753,16 +760,26 @@ impl<'c> TypeInferrer<'c, '_> {
     /// A partial answer is worse than none, so a call whose parameters did
     /// not all resolve is left unstamped.
     fn stamp_type_args(&mut self, op: &mut OperationRefMut<'c, '_>, result: ValueId) {
-        let Some(vars) = self.instances.remove(&result) else {
+        let Some(Instance { callee, params }) = self.instances.remove(&result) else {
             return;
         };
 
-        let resolved: Vec<Attribute<'c>> = vars
-            .iter()
-            .filter_map(|&var| self.resolve(Term::Var(var)))
-            .map(|ty| TypeAttribute::new(ty).into())
-            .collect();
-        if resolved.len() == vars.len() {
+        let mut resolved: Vec<Attribute<'c>> = Vec::with_capacity(params.len());
+        for (name, var) in params {
+            match self.resolve(Term::Var(var)) {
+                Some(ty) => resolved.push(TypeAttribute::new(ty).into()),
+                // A parameter no argument and no use pins down.
+                None => emit_error(
+                    op.location(),
+                    &format!(
+                        "the type parameter `{name}` of `{}` could not be inferred",
+                        crate::written_name(callee)
+                    ),
+                ),
+            }
+        }
+
+        if resolved.len() == resolved.capacity() {
             op.set_attribute(
                 "type_args",
                 ArrayAttribute::new(self.context, &resolved).into(),
@@ -1235,6 +1252,27 @@ from t
                   yzl.output %1
                 }
             "#]],
+        );
+    }
+
+    #[test]
+    fn a_type_parameter_nothing_pins_down_is_reported() {
+        check(
+            r"
+def mk[T]() -> int64 { return 1 }
+
+struct Row { a: int64 }
+table t = Row
+
+from t |> select mk() as v
+",
+            &expect![[r"
+                error: the type parameter `T` of `mk` could not be inferred
+                 --> test.yz:7:18
+                  |
+                7 | from t |> select mk() as v
+                  |                  ^^^^
+            "]],
         );
     }
 

@@ -31,8 +31,7 @@ pub use simplify_yzr::simplify_yzr;
 /// A symbol is qualified by its module's path, and an overloaded function's
 /// also ends in its parameter count. A name cannot start with a digit, so a
 /// last piece that does is a count.
-#[must_use]
-pub fn written_name(symbol: &str) -> &str {
+pub(crate) fn written_name(symbol: &str) -> &str {
     let mut pieces = symbol.rsplit('.');
     let last = pieces.next().unwrap_or(symbol);
     if last.starts_with(|c: char| c.is_ascii_digit()) {

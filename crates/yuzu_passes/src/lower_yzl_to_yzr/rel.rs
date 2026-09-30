@@ -107,10 +107,8 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         function: FnOp<'c, '_>,
     ) {
         let location = op.location();
-        let Ok(signature) = FunctionType::try_from(function.signature().value()) else {
-            report(op, "an operator's implementation has no function type");
-            return;
-        };
+        let signature = FunctionType::try_from(function.signature().value())
+            .expect("a verified yzl.fn has a function type");
 
         let parameters: Vec<_> = (0..signature.input_count())
             .map(|index| {

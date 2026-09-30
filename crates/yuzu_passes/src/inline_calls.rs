@@ -101,18 +101,24 @@ fn callee<'c>(call: OperationRef<'c, '_>) -> &'c str {
     site.callee().value()
 }
 
-/// The call that closes a cycle through `symbol`, when the declarations it
-/// calls reach back to one still being walked. `walked` holds each symbol
-/// seen: `true` while its calls are being walked, `false` once they are.
+/// How far the cycle search has walked a declaration's calls.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Walk {
+    InProgress,
+    Done,
+}
+
+/// The call that closes a cycle reachable from `symbol`, when the
+/// declarations it calls reach back to one still being walked.
 fn find_cycle<'c, 'a>(
     symbol: &'c str,
     symbols: &SymbolTable<'c, 'a>,
-    walked: &mut FxHashMap<&'c str, bool>,
+    walked: &mut FxHashMap<&'c str, Walk>,
 ) -> Option<OperationRef<'c, 'a>> {
     if walked.contains_key(symbol) {
         return None;
     }
-    walked.insert(symbol, true);
+    walked.insert(symbol, Walk::InProgress);
     let mut calls = Vec::new();
     if let Some(declaration) = symbols.lookup(symbol) {
         collect_region_calls(declaration, &mut calls);
@@ -120,8 +126,8 @@ fn find_cycle<'c, 'a>(
     for call in calls {
         let target = callee(call);
         match walked.get(target) {
-            Some(true) => return Some(call),
-            Some(false) => {}
+            Some(Walk::InProgress) => return Some(call),
+            Some(Walk::Done) => {}
             None => {
                 if let Some(closing) = find_cycle(target, symbols, walked) {
                     return Some(closing);
@@ -129,7 +135,7 @@ fn find_cycle<'c, 'a>(
             }
         }
     }
-    walked.insert(symbol, false);
+    walked.insert(symbol, Walk::Done);
     None
 }
 
@@ -152,7 +158,7 @@ fn expand<'c, 'a>(
     symbols: &SymbolTable<'c, '_>,
 ) -> Option<Vec<OperationRef<'c, 'a>>> {
     let Some(YzlOp::Call(site)) = call.as_yzl() else {
-        unreachable!("only calls are expanded");
+        unreachable!("only calls are collected");
     };
 
     let callee = site.callee().value();

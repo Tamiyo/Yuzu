@@ -51,10 +51,10 @@ impl Operator {
     /// The operator an op is, when it is one the library implements.
     pub(crate) fn of(op: OperationRef) -> Option<&'static Self> {
         match op.as_yz()? {
-            YzOp::Rem(_) => Some(&OPERATORS[0]),
-            YzOp::Pow(_) => Some(&OPERATORS[1]),
-            YzOp::Shl(_) => Some(&OPERATORS[2]),
-            YzOp::Shr(_) => Some(&OPERATORS[3]),
+            YzOp::Rem(_) => Some(&REM),
+            YzOp::Pow(_) => Some(&POW),
+            YzOp::Shl(_) => Some(&SHL),
+            YzOp::Shr(_) => Some(&SHR),
             _ => None,
         }
     }

@@ -17,7 +17,7 @@ use yuzu_mlir::ops::yz::YzOp;
 use yuzu_mlir::types::ParamType;
 
 use crate::inline_calls::copy;
-use crate::operators::{OPERATORS, Operator};
+use crate::operators::Operator;
 
 /// Replaces each operator with a copy of the library function that implements it.
 ///
@@ -39,16 +39,12 @@ pub fn legalize_operators(context: &Context, module: &mut Module) {
     }
 
     let symbols = SymbolTable::new(module);
-    let implementations: Vec<Option<OperationRef>> = OPERATORS
-        .iter()
-        .map(|operator| symbols.lookup(&operator.to_symbol()))
-        .collect();
+    let mut implementations: FxHashMap<&'static str, Option<OperationRef>> = FxHashMap::default();
     for (op, operator) in operators {
-        let index = OPERATORS
-            .iter()
-            .position(|known| std::ptr::eq(known, operator))
-            .expect("an operator is one of the operators");
-        let Some(implementation) = implementations[index] else {
+        let implementation = *implementations
+            .entry(operator.name)
+            .or_insert_with(|| symbols.lookup(&operator.to_symbol()));
+        let Some(implementation) = implementation else {
             emit_error(
                 op.location(),
                 &format!(
@@ -105,7 +101,7 @@ fn expand<'c, 'a>(
         .expect("a verified yz.func has a body");
 
     let arguments: Vec<Value<'c, 'a>> = op.operands().collect();
-    debug_assert_eq!(
+    assert_eq!(
         body.argument_count(),
         arguments.len(),
         "an operator takes as many operands as its implementation takes parameters"
