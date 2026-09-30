@@ -16,3 +16,6 @@ __pycache__/
 .pytest_cache/
 .Python
 .venv/
+
+# Local notes and design docs
+docs/
