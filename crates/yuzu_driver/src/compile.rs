@@ -92,7 +92,7 @@ pub fn compile(
 ) -> Compilation {
     let mut diagnostics = DiagnosticsEngine::new();
     let mut sources = SourceMap::new();
-    let source_id = origin.clone().add_to(&mut sources, source.into());
+    let source_id = origin.add_to(&mut sources, source.into());
     let mut dumps = Dumps {
         keep_yzl: options.dump_yzl,
         keep_yzr: options.dump_yzr,
