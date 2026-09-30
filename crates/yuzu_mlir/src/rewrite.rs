@@ -257,8 +257,9 @@ fn constant_int<'c>(value: Value<'c, '_>) -> Option<(i64, Type<'c>)> {
     Some((constant.value().value(), value.r#type()))
 }
 
-/// Whether two constants are equal, the way the engine compares them: `-0.0`
-/// equals `0.0`, and NaN equals nothing. `None` for two of different kinds.
+/// Whether two constants are equal. The language owns its literals, so it
+/// decides: `-0.0` and `0.0` are both zero, and equal. `None` for two of
+/// different kinds.
 fn same_value(lhs: Attribute<'_>, rhs: Attribute<'_>) -> Option<bool> {
     // A bool is an integer attribute of one bit, so it is asked first.
     if let (Ok(lhs), Ok(rhs)) = (BoolAttribute::try_from(lhs), BoolAttribute::try_from(rhs)) {
@@ -271,7 +272,7 @@ fn same_value(lhs: Attribute<'_>, rhs: Attribute<'_>) -> Option<bool> {
         return Some(lhs.value() == rhs.value());
     }
     if let (Ok(lhs), Ok(rhs)) = (FloatAttribute::try_from(lhs), FloatAttribute::try_from(rhs)) {
-        #[expect(clippy::float_cmp, reason = "the engine compares exactly")]
+        #[expect(clippy::float_cmp, reason = "two literals compare exactly")]
         return Some(lhs.value() == rhs.value());
     }
     if let (Ok(lhs), Ok(rhs)) = (
