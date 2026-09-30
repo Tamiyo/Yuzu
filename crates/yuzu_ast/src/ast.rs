@@ -869,7 +869,7 @@ pub enum JoinKind {
 }
 
 impl JoinKind {
-    fn from_token(kind: SyntaxKind) -> Option<Self> {
+    fn from_kind(kind: SyntaxKind) -> Option<Self> {
         Some(match kind {
             SyntaxKind::InnerKw => JoinKind::Inner,
             SyntaxKind::LeftKw => JoinKind::Left,
@@ -888,7 +888,7 @@ impl JoinStage {
         self.syntax()
             .children_with_tokens()
             .filter_map(SyntaxElement::into_token)
-            .find_map(|token| JoinKind::from_token(token.kind()))
+            .find_map(|token| JoinKind::from_kind(token.kind()))
             .unwrap_or(JoinKind::Inner)
     }
 
@@ -1078,7 +1078,8 @@ impl IntLiteral {
 
 ast_node!(FloatLiteral);
 impl FloatLiteral {
-    /// The literal's value. `_` separates digits.
+    /// The literal's value. `_` separates digits, and a literal that holds
+    /// one is read from a new `String` without them.
     #[must_use]
     pub fn value(&self) -> Option<f64> {
         let token = self.0.first_token()?;
@@ -1126,9 +1127,31 @@ mod tests {
             .expect("the input holds the node")
     }
 
-    /// The outermost join stage, so a chained query yields its last stage.
     fn join(input: &str) -> JoinStage {
         first(input)
+    }
+
+    #[test]
+    fn an_integer_literal_reads_its_base_and_separators() {
+        let value = |input: &str| first::<IntLiteral>(input).value();
+        assert_eq!(value("let x = 1_000\n"), Some(1000));
+        assert_eq!(value("let x = 0xFF\n"), Some(255));
+        assert_eq!(value("let x = 0b101\n"), Some(5));
+        assert_eq!(value("let x = 18446744073709551616\n"), None);
+    }
+
+    #[test]
+    fn a_float_literal_reads_its_separators() {
+        let value = |input: &str| first::<FloatLiteral>(input).value();
+        assert_eq!(value("let x = 1.5\n"), Some(1.5));
+        assert_eq!(value("let x = 1_000.25\n"), Some(1000.25));
+    }
+
+    #[test]
+    fn a_string_literal_replaces_its_escapes_unless_raw() {
+        let value = |input: &str| first::<StringLiteral>(input).to_value();
+        assert_eq!(value("let x = \"a\\tb\"\n").as_deref(), Some("a\tb"));
+        assert_eq!(value("let x = r\"a\\tb\"\n").as_deref(), Some("a\\tb"));
     }
 
     fn text(ident: Option<Ident>) -> Option<String> {
