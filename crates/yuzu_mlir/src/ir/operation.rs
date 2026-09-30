@@ -1,11 +1,9 @@
 //! Reads, attribute stamps and dialect casts on an operation.
 
 use melior::Context;
-use melior::ir::Value;
 use melior::ir::attribute::StringAttribute;
 use melior::ir::operation::{OperationLike, OperationMutLike, OperationRef, OperationRefMut};
-
-use melior::ir::RegionLike;
+use melior::ir::{RegionLike, Value};
 
 use crate::ir::block::BlockExt;
 

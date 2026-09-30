@@ -10,6 +10,7 @@ use melior::ir::{Type, TypeLike};
 pub struct Int64Type<'c>(Type<'c>);
 
 impl<'c> Int64Type<'c> {
+    /// The type, uniqued in the context.
     #[must_use]
     pub fn new(context: &'c Context) -> Self {
         // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
@@ -20,6 +21,7 @@ impl<'c> Int64Type<'c> {
         }
     }
 
+    /// The view of a type, when it is this type.
     #[must_use]
     pub fn from_type(ty: Type<'c>) -> Option<Self> {
         // SAFETY: `ty` is a live type; the query only reads it.
@@ -38,6 +40,7 @@ impl<'c> From<Int64Type<'c>> for Type<'c> {
 pub struct Float64Type<'c>(Type<'c>);
 
 impl<'c> Float64Type<'c> {
+    /// The type, uniqued in the context.
     #[must_use]
     pub fn new(context: &'c Context) -> Self {
         // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
@@ -48,6 +51,7 @@ impl<'c> Float64Type<'c> {
         }
     }
 
+    /// The view of a type, when it is this type.
     #[must_use]
     pub fn from_type(ty: Type<'c>) -> Option<Self> {
         // SAFETY: `ty` is a live type; the query only reads it.
@@ -66,6 +70,7 @@ impl<'c> From<Float64Type<'c>> for Type<'c> {
 pub struct BoolType<'c>(Type<'c>);
 
 impl<'c> BoolType<'c> {
+    /// The type, uniqued in the context.
     #[must_use]
     pub fn new(context: &'c Context) -> Self {
         // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
@@ -76,6 +81,7 @@ impl<'c> BoolType<'c> {
         }
     }
 
+    /// The view of a type, when it is this type.
     #[must_use]
     pub fn from_type(ty: Type<'c>) -> Option<Self> {
         // SAFETY: `ty` is a live type; the query only reads it.
@@ -94,6 +100,7 @@ impl<'c> From<BoolType<'c>> for Type<'c> {
 pub struct StrType<'c>(Type<'c>);
 
 impl<'c> StrType<'c> {
+    /// The type, uniqued in the context.
     #[must_use]
     pub fn new(context: &'c Context) -> Self {
         // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
@@ -104,6 +111,7 @@ impl<'c> StrType<'c> {
         }
     }
 
+    /// The view of a type, when it is this type.
     #[must_use]
     pub fn from_type(ty: Type<'c>) -> Option<Self> {
         // SAFETY: `ty` is a live type; the query only reads it.
@@ -122,6 +130,7 @@ impl<'c> From<StrType<'c>> for Type<'c> {
 pub struct UnitType<'c>(Type<'c>);
 
 impl<'c> UnitType<'c> {
+    /// The type, uniqued in the context.
     #[must_use]
     pub fn new(context: &'c Context) -> Self {
         // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
@@ -132,6 +141,7 @@ impl<'c> UnitType<'c> {
         }
     }
 
+    /// The view of a type, when it is this type.
     #[must_use]
     pub fn from_type(ty: Type<'c>) -> Option<Self> {
         // SAFETY: `ty` is a live type; the query only reads it.
@@ -150,6 +160,7 @@ impl<'c> From<UnitType<'c>> for Type<'c> {
 pub struct ListType<'c>(Type<'c>);
 
 impl<'c> ListType<'c> {
+    /// The type, uniqued in the context.
     #[must_use]
     pub fn new(context: &'c Context, inner: Type<'c>) -> Self {
         // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
@@ -161,12 +172,14 @@ impl<'c> ListType<'c> {
         }
     }
 
+    /// The view of a type, when it is this type.
     #[must_use]
     pub fn from_type(ty: Type<'c>) -> Option<Self> {
         // SAFETY: `ty` is a live type; the query only reads it.
         unsafe { yuzu_mlir_sys::yzuTypeIsListType(ty.to_raw()) }.then_some(Self(ty))
     }
 
+    /// The type of each element.
     #[must_use]
     pub fn inner(&self) -> Type<'c> {
         // SAFETY: the inner type is a parameter of a uniqued type, so it lives as long as the context.
@@ -185,6 +198,7 @@ impl<'c> From<ListType<'c>> for Type<'c> {
 pub struct StructType<'c>(Type<'c>);
 
 impl<'c> StructType<'c> {
+    /// The type, uniqued in the context.
     #[must_use]
     pub fn new(context: &'c Context, name: &str) -> Self {
         // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
@@ -196,6 +210,7 @@ impl<'c> StructType<'c> {
         }
     }
 
+    /// The view of a type, when it is this type.
     #[must_use]
     pub fn from_type(ty: Type<'c>) -> Option<Self> {
         // SAFETY: `ty` is a live type; the query only reads it.

@@ -5,9 +5,8 @@ use crate::ops::yz::CmpOp;
 
 /// The comparison a `yz.cmp` asks for.
 ///
-/// The C++ folder reads the same six spellings, so a name that disagreed
-/// would not fail — it would quietly stop folding. Both sides answering to
-/// one list is the point.
+/// The op's attribute admits the same six spellings, so the verifier, the
+/// C++ folder and this enum read one list.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CmpPredicate {
     Equal,

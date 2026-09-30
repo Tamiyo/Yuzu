@@ -278,7 +278,8 @@ fn parse_args(records: &serde_json::Map<String, Json>, record: &Json, full_name:
             if is("Attr") {
                 assert!(
                     !is("DefaultValuedAttr") && !is("DefaultValuedOptionalAttr"),
-                    "`{full_name}` argument `{name}` has a default value: its accessor would expect an attribute the op may not hold"
+                    "`{full_name}` argument `{name}` has a default value: \
+                     its accessor would expect an attribute the op may not hold"
                 );
                 Arg::Attr {
                     name,
@@ -292,7 +293,8 @@ fn parse_args(records: &serde_json::Map<String, Json>, record: &Json, full_name:
             } else {
                 assert!(
                     !is("Optional"),
-                    "`{full_name}` operand `{name}` is optional: the generated index scheme cannot represent it"
+                    "`{full_name}` operand `{name}` is optional: \
+                     the generated index scheme cannot represent it"
                 );
                 Arg::Operand {
                     name,
@@ -304,7 +306,7 @@ fn parse_args(records: &serde_json::Map<String, Json>, record: &Json, full_name:
                 }
             }
         })
-    .collect()
+        .collect()
 }
 
 /// Rejects an op whose accessors the generated index scheme cannot give,

@@ -10,6 +10,7 @@ use melior::ir::{Type, TypeLike};
 pub struct UnresolvedType<'c>(Type<'c>);
 
 impl<'c> UnresolvedType<'c> {
+    /// The type, uniqued in the context.
     #[must_use]
     pub fn new(context: &'c Context) -> Self {
         // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
@@ -20,6 +21,7 @@ impl<'c> UnresolvedType<'c> {
         }
     }
 
+    /// The view of a type, when it is this type.
     #[must_use]
     pub fn from_type(ty: Type<'c>) -> Option<Self> {
         // SAFETY: `ty` is a live type; the query only reads it.
@@ -38,6 +40,7 @@ impl<'c> From<UnresolvedType<'c>> for Type<'c> {
 pub struct ErrorType<'c>(Type<'c>);
 
 impl<'c> ErrorType<'c> {
+    /// The type, uniqued in the context.
     #[must_use]
     pub fn new(context: &'c Context) -> Self {
         // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
@@ -48,6 +51,7 @@ impl<'c> ErrorType<'c> {
         }
     }
 
+    /// The view of a type, when it is this type.
     #[must_use]
     pub fn from_type(ty: Type<'c>) -> Option<Self> {
         // SAFETY: `ty` is a live type; the query only reads it.
@@ -66,6 +70,7 @@ impl<'c> From<ErrorType<'c>> for Type<'c> {
 pub struct QueryType<'c>(Type<'c>);
 
 impl<'c> QueryType<'c> {
+    /// The type, uniqued in the context.
     #[must_use]
     pub fn new(context: &'c Context) -> Self {
         // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
@@ -76,6 +81,7 @@ impl<'c> QueryType<'c> {
         }
     }
 
+    /// The view of a type, when it is this type.
     #[must_use]
     pub fn from_type(ty: Type<'c>) -> Option<Self> {
         // SAFETY: `ty` is a live type; the query only reads it.
@@ -94,6 +100,7 @@ impl<'c> From<QueryType<'c>> for Type<'c> {
 pub struct RefType<'c>(Type<'c>);
 
 impl<'c> RefType<'c> {
+    /// The type, uniqued in the context.
     #[must_use]
     pub fn new(context: &'c Context, element: Type<'c>) -> Self {
         // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
@@ -105,6 +112,7 @@ impl<'c> RefType<'c> {
         }
     }
 
+    /// The view of a type, when it is this type.
     #[must_use]
     pub fn from_type(ty: Type<'c>) -> Option<Self> {
         // SAFETY: `ty` is a live type; the query only reads it.
@@ -130,6 +138,7 @@ impl<'c> From<RefType<'c>> for Type<'c> {
 pub struct ParamType<'c>(Type<'c>);
 
 impl<'c> ParamType<'c> {
+    /// The type, uniqued in the context.
     #[must_use]
     pub fn new(context: &'c Context, name: &str) -> Self {
         // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
@@ -141,6 +150,7 @@ impl<'c> ParamType<'c> {
         }
     }
 
+    /// The view of a type, when it is this type.
     #[must_use]
     pub fn from_type(ty: Type<'c>) -> Option<Self> {
         // SAFETY: `ty` is a live type; the query only reads it.

@@ -6,7 +6,7 @@
 
 use melior::ir::attribute::{BoolAttribute, FloatAttribute, IntegerAttribute, StringAttribute};
 use melior::ir::operation::{OperationLike, OperationRef};
-use melior::ir::{Attribute, BlockLike, Module, RegionLike, Value, ValueLike};
+use melior::ir::{Attribute, BlockLike, Module, RegionLike, Type, Value, ValueLike};
 use melior::{
     Context, Error, GreedyRewriteDriverConfig, PatternRewriter, RewritePattern, RewritePatternSet,
     RewriterBase, apply_patterns_and_fold_greedily, create_op_rewrite_pattern,
@@ -47,15 +47,18 @@ fn pattern(context: &Context, root: &str, rewrite: Rewrite) -> RewritePattern {
         1,
         context,
         move |_, op, rewriter| {
-            // SAFETY: the driver calls a pattern with a live op and the live
-            // rewriter of the rewrite in progress, for this call only. The
-            // context owns both and outlives the rewrite.
-            unsafe {
-                let rewriter = PatternRewriter::from_raw(rewriter);
-                let base = rewriter.as_rewriter_base();
-                let context = base.context().to_ref();
-                rewrite(context, OperationRef::from_raw(op), base)
-            }
+            // SAFETY: the driver calls a pattern with the rewriter of the
+            // rewrite in progress, which is live for this call.
+            let rewriter = unsafe { PatternRewriter::from_raw(rewriter) };
+            let base = rewriter.as_rewriter_base();
+            let handle = base.context();
+            // SAFETY: the reference points into `handle`, which lives until
+            // this call returns, and nothing keeps the reference longer.
+            let context = unsafe { handle.to_ref() };
+            // SAFETY: the driver calls a pattern with an op that is live for
+            // this call.
+            let op = unsafe { OperationRef::from_raw(op) };
+            rewrite(context, op, base)
         },
         &[],
     )
@@ -68,8 +71,8 @@ fn pattern(context: &Context, root: &str, rewrite: Rewrite) -> RewritePattern {
 /// differently, and the dialect leaves overflow to the engine. Two constants
 /// of the same sign are safe: the intermediate sum lies between `x` and the
 /// final one, so it overflows only when the final one does. Mixed signs are
-/// not, since `x + 1 - 1` can overflow at the first step and not at all when
-/// reassociated.
+/// not, since `(x + 1) + -1` can overflow at the first step and not at all
+/// when reassociated.
 fn reassociate_add<'c>(
     context: &'c Context,
     op: OperationRef<'c, '_>,
@@ -140,10 +143,19 @@ fn fold_membership<'c>(
     };
 
     let found = match list.as_yz() {
-        Some(YzOp::ConstantList(constants)) => constants
-            .values()
-            .elements()
-            .any(|element| same_value(value, element) == Some(true)),
+        // A value of another kind than the elements decides nothing.
+        Some(YzOp::ConstantList(constants)) => {
+            let Some(found) = constants
+                .values()
+                .elements()
+                .try_fold(false, |found, element| {
+                    Some(found || same_value(value, element)?)
+                })
+            else {
+                return false;
+            };
+            found
+        }
         Some(YzOp::List(elements)) => {
             let mut decided = true;
             let mut found = false;
@@ -211,6 +223,9 @@ fn merge_projects<'c>(
         .expect("a verified project has its body");
     let yield_ = body.terminator().expect("a project's body ends in a yield");
     let columns: Vec<Value> = yield_.operands().collect();
+    if columns.len() != rest.argument_count() {
+        return false;
+    }
 
     rewriter.start_op_modification(inner);
     rewriter.erase_op(yield_);
@@ -234,7 +249,7 @@ fn constant<'c>(value: Value<'c, '_>) -> Option<Attribute<'c>> {
 }
 
 /// The integer a value holds when a `yz.constant_int` makes it, with its type.
-fn constant_int<'c>(value: Value<'c, '_>) -> Option<(i64, melior::ir::Type<'c>)> {
+fn constant_int<'c>(value: Value<'c, '_>) -> Option<(i64, Type<'c>)> {
     let owner = op_result(value)?.owner();
     let Some(YzOp::ConstantInt(constant)) = owner.as_yz() else {
         return None;

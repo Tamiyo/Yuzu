@@ -133,11 +133,11 @@ def Yz_ListOp : Yz_Op<"list", [Pure]> {
 
 // Arithmetic. One op per surface operator, polymorphic over the numeric
 // types the way the language's operators are; folds dispatch on the
-// literal's kind. The constraints also admit !yzl.unresolved, the type an
-// operand has until InferTypes stamps it concrete, !yzl.param, the type an
-// operand of a generic body has until InlineCalls substitutes the call's
-// types, and !yzl.error, the type InferTypes stamps on a value an error left
-// behind, so operand types are spelled individually.
+// literal's kind. Operand types are spelled individually, because the
+// constraints admit three more types. An operand has !yzl.unresolved until
+// InferTypes stamps it concrete. An operand of a generic body has
+// !yzl.param until InlineCalls substitutes the call's types. A value an
+// error left behind has !yzl.error.
 
 def Yz_NumericType : Type<
     CPred<"::llvm::isa<::yuzu::yz::Int64Type, ::yuzu::yz::Float64Type, "

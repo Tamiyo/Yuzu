@@ -5,8 +5,6 @@
 #include <optional>
 
 #include "mlir/IR/Builders.h"
-#include "mlir/IR/Matchers.h"
-#include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -68,16 +66,31 @@ mlir::OpFoldResult ConstantBoolOp::fold(FoldAdaptor) { return getValueAttr(); }
 mlir::OpFoldResult ConstantStrOp::fold(FoldAdaptor) { return getValueAttr(); }
 mlir::OpFoldResult ConstantListOp::fold(FoldAdaptor) { return getValuesAttr(); }
 
+// Whether an attribute is what a constant of the element type holds. A bool
+// is an integer attribute of one bit, so an int64 excludes it by its width.
+static bool holdsConstantOf(mlir::Type element, mlir::Attribute value) {
+  if (llvm::isa<Int64Type>(element)) {
+    auto integer = llvm::dyn_cast<mlir::IntegerAttr>(value);
+    return integer && integer.getType().isSignlessInteger(64);
+  }
+  if (llvm::isa<Float64Type>(element)) {
+    auto real = llvm::dyn_cast<mlir::FloatAttr>(value);
+    return real && real.getType().isF64();
+  }
+  if (llvm::isa<BoolType>(element))
+    return llvm::isa<mlir::BoolAttr>(value);
+  if (llvm::isa<StrType>(element))
+    return llvm::isa<mlir::StringAttr>(value);
+  return false;
+}
+
 // Each value is what the element type's constant op would hold.
 mlir::LogicalResult ConstantListOp::verify() {
   mlir::Type element = llvm::cast<ListType>(getType()).getInner();
   for (auto [index, value] : llvm::enumerate(getValues())) {
-    bool fits = (llvm::isa<Int64Type>(element) && llvm::isa<mlir::IntegerAttr>(value)) ||
-                (llvm::isa<Float64Type>(element) && llvm::isa<mlir::FloatAttr>(value)) ||
-                (llvm::isa<BoolType>(element) && llvm::isa<mlir::BoolAttr>(value)) ||
-                (llvm::isa<StrType>(element) && llvm::isa<mlir::StringAttr>(value));
-    if (!fits)
-      return emitOpError("value ") << index << " is not a constant of " << element;
+    if (!holdsConstantOf(element, value))
+      return emitOpError("value ")
+             << index << " is not a constant of " << element;
   }
   return mlir::success();
 }
@@ -264,17 +277,22 @@ mlir::OpFoldResult NegOp::fold(FoldAdaptor adaptor) {
   return {};
 }
 
+// The predicate is one of the spellings its attribute admits.
 template <typename T>
-static std::optional<bool> comparePredicate(llvm::StringRef predicate, T lhs,
-                                            T rhs) {
-  return llvm::StringSwitch<std::optional<bool>>(predicate)
-      .Case("eq", lhs == rhs)
-      .Case("ne", lhs != rhs)
-      .Case("lt", lhs < rhs)
-      .Case("le", lhs <= rhs)
-      .Case("gt", lhs > rhs)
-      .Case("ge", lhs >= rhs)
-      .Default(std::nullopt);
+static bool comparePredicate(llvm::StringRef predicate, T lhs, T rhs) {
+  if (predicate == "eq")
+    return lhs == rhs;
+  if (predicate == "ne")
+    return lhs != rhs;
+  if (predicate == "lt")
+    return lhs < rhs;
+  if (predicate == "le")
+    return lhs <= rhs;
+  if (predicate == "gt")
+    return lhs > rhs;
+  if (predicate == "ge")
+    return lhs >= rhs;
+  llvm_unreachable("a verified yz.cmp has a known predicate");
 }
 
 mlir::OpFoldResult CmpOp::fold(FoldAdaptor adaptor) {
@@ -282,7 +300,7 @@ mlir::OpFoldResult CmpOp::fold(FoldAdaptor adaptor) {
   // -1, so bools are read first, as false before true. Integers compare as
   // integers: above 2^53 a double stands for more than one of them, so
   // comparing through one answers a different question than the engine will.
-  std::optional<bool> value;
+  bool value;
   if (auto lhs = llvm::dyn_cast_if_present<mlir::BoolAttr>(adaptor.getLhs())) {
     auto rhs = llvm::dyn_cast_if_present<mlir::BoolAttr>(adaptor.getRhs());
     if (!rhs)
@@ -305,9 +323,7 @@ mlir::OpFoldResult CmpOp::fold(FoldAdaptor adaptor) {
   } else {
     return {};
   }
-  if (!value)
-    return {};
-  return mlir::BoolAttr::get(getContext(), *value);
+  return mlir::BoolAttr::get(getContext(), value);
 }
 
 static mlir::OpFoldResult foldBoolBinary(mlir::MLIRContext *context,

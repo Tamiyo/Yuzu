@@ -41,6 +41,10 @@ def Yzr_FilterOp
 
 def Yzr_ProjectOp : Yzr_Op<"project", [IsolatedFromAbove, Pure]> {
   let summary = "replace the row with the yielded values";
+  let description = [{
+    A project whose input is another project, used only there, canonicalizes
+    to one project. The pattern is `merge_projects` in `yuzu_mlir::rewrite`.
+  }];
   let arguments = (ins Yzr_RowType:$input);
   let results = (outs Yzr_RowType:$result);
   let regions = (region SizedRegion<1>:$body);

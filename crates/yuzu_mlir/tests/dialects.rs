@@ -448,6 +448,36 @@ fn canonicalized(source: &str) -> String {
 }
 
 #[test]
+fn membership_folds_only_against_elements_of_its_kind() {
+    let folded = canonicalized(
+        r"
+module {
+  yz.func @f () -> (!yz.bool, !yz.bool) {
+    %two = yz.constant_int 2
+    %half = yz.constant_float 5.000000e-01
+    %list = yz.constant_list [1, 2] : <!yz.int64>
+    %a = yz.in %two, %list : !yz.int64, !yz.list<!yz.int64> -> !yz.bool
+    %b = yz.in %half, %list : !yz.float64, !yz.list<!yz.int64> -> !yz.bool
+    yz.return %a, %b : !yz.bool, !yz.bool
+  }
+}
+",
+    );
+    expect![[r"
+        module {
+          yz.func @f () -> (!yz.bool, !yz.bool) {
+            %0 = yz.constant_float 5.000000e-01
+            %1 = yz.constant_list [1, 2] : <!yz.int64>
+            %2 = yz.constant_bool true
+            %3 = yz.in %0, %1 : !yz.float64, !yz.list<!yz.int64> -> !yz.bool
+            yz.return %2, %3 : !yz.bool, !yz.bool
+          }
+        }
+    "]]
+    .assert_eq(&folded);
+}
+
+#[test]
 fn an_integer_power_folds_by_squaring_and_a_float_power_does_not_fold() {
     let folded = canonicalized(
         r"
@@ -528,6 +558,8 @@ fn a_constant_list_holds_constants_of_its_element_type() {
     assert!(verifies(&list(r#""a", "b""#, "!yz.str")));
     assert!(!verifies(&list(r#"1, "b""#, "!yz.int64")));
     assert!(!verifies(&list("1.5", "!yz.int64")));
+    assert!(!verifies(&list("true", "!yz.int64")));
+    assert!(!verifies(&list("1.5 : f32", "!yz.float64")));
 }
 
 #[test]
