@@ -384,6 +384,82 @@ mod tests {
     }
 
     #[test]
+    fn a_line_break_ends_an_expression_before_a_call() {
+        check_outline(
+            "let x = a\n(b)\n",
+            &expect![[r"
+            Root
+              LetStmt
+                Ident
+                IdentExpr
+                  Ident
+              ExprStmt
+                ParenExpr
+                  IdentExpr
+                    Ident
+        "]],
+        );
+    }
+
+    #[test]
+    fn a_line_break_ends_an_expression_before_a_sign_it_starts() {
+        check_outline(
+            "let x = a\n-b\nlet y = a\n    - b\n",
+            &expect![[r"
+            Root
+              LetStmt
+                Ident
+                IdentExpr
+                  Ident
+              ExprStmt
+                UnaryExpr
+                  IdentExpr
+                    Ident
+              LetStmt
+                Ident
+                BinaryExpr
+                  IdentExpr
+                    Ident
+                  IdentExpr
+                    Ident
+        "]],
+        );
+    }
+
+    #[test]
+    fn a_token_no_statement_starts_with_carries_an_expression_on() {
+        check_outline(
+            "let x = m\n    .f(1)\nfrom t\n|> where a > 1\n    and b < 2\n",
+            &expect![[r"
+                Root
+                  LetStmt
+                    Ident
+                    CallExpr
+                      FieldAccessExpr
+                        IdentExpr
+                          Ident
+                        Ident
+                      ArgList
+                        IntLiteral
+                  ExprStmt
+                    Pipeline
+                      FromSource
+                        Ident
+                      WhereStage
+                        BinaryExpr
+                          BinaryExpr
+                            IdentExpr
+                              Ident
+                            IntLiteral
+                          BinaryExpr
+                            IdentExpr
+                              Ident
+                            IntLiteral
+            "]],
+        );
+    }
+
+    #[test]
     fn a_narrowed_pub_before_no_declaration_is_one_error() {
         check_outline(
             "pub(mod) impl T {}\n",

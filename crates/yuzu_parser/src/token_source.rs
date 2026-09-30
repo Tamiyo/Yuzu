@@ -60,13 +60,22 @@ impl<'t, 'input> TokenSource<'t, 'input> {
     }
 
     /// Whether the trivia before the next token holds a line break.
-    pub(crate) fn newline_before(&mut self) -> bool {
+    pub(crate) fn at_line_start(&mut self) -> bool {
         self.eat_trivia();
         self.tokens[..self.cursor]
             .iter()
             .rev()
             .take_while(|token| token.kind.is_trivia())
             .any(|token| token.kind == TokenKind::Newline)
+    }
+
+    /// Whether trivia follows the next token, as a space after the `-` of
+    /// `a - b` does.
+    pub(crate) fn is_spaced_after(&mut self) -> bool {
+        self.eat_trivia();
+        self.tokens
+            .get(self.cursor + 1)
+            .is_some_and(|token| token.kind.is_trivia())
     }
 
     fn peek_kind_raw(&self) -> Option<TokenKind> {
@@ -133,13 +142,24 @@ mod tests {
     }
 
     #[test]
+    fn a_space_after_the_next_token_is_seen() {
+        let tokens = lex("- b -c");
+        let mut source = TokenSource::new(&tokens);
+
+        assert!(source.is_spaced_after());
+        source.next_token();
+        source.next_token();
+        assert!(!source.is_spaced_after());
+    }
+
+    #[test]
     fn a_line_break_before_the_next_token_is_seen() {
         let tokens = lex("a b\n  c");
         let mut source = TokenSource::new(&tokens);
 
         source.next_token();
-        assert!(!source.newline_before());
+        assert!(!source.at_line_start());
         source.next_token();
-        assert!(source.newline_before());
+        assert!(source.at_line_start());
     }
 }

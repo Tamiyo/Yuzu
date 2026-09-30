@@ -111,7 +111,12 @@ impl<'t, 'input> Parser<'t, 'input> {
 
     /// Whether a line break comes before the next token.
     pub(crate) fn at_line_start(&mut self) -> bool {
-        self.source.newline_before()
+        self.source.at_line_start()
+    }
+
+    /// Whether trivia follows the next token.
+    pub(crate) fn is_spaced_after(&mut self) -> bool {
+        self.source.is_spaced_after()
     }
 
     pub(crate) fn at_end(&mut self) -> bool {

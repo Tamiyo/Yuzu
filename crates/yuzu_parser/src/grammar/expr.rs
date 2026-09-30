@@ -81,8 +81,11 @@ pub(crate) fn parse_expr(p: &mut Parser) -> Option<CompletedMarker> {
 fn parse_expr_binding_power(p: &mut Parser, minimum_binding_power: u8) -> Option<CompletedMarker> {
     let mut lhs = parse_lhs(p)?;
 
+    // A line break ends the expression before a token that can start one:
+    // `(b)` or `-b` on a new line is a new statement. A token no statement
+    // starts with, as `.`, `|>` or `and`, carries it on.
     loop {
-        if p.at(TokenKind::LeftParen) {
+        if p.at(TokenKind::LeftParen) && !p.at_line_start() {
             let marker = p.precede(lhs);
             parse_arg_list(p);
             lhs = p.complete(marker, SyntaxKind::CallExpr);
@@ -100,6 +103,10 @@ fn parse_expr_binding_power(p: &mut Parser, minimum_binding_power: u8) -> Option
         let Some(op) = parse_bin_op(p) else {
             break;
         };
+        // A sign is a prefix unless a space follows it, as in `- b`.
+        if matches!(op, BinOp::Add | BinOp::Sub) && p.at_line_start() && !p.is_spaced_after() {
+            break;
+        }
 
         let (left_binding_power, right_binding_power) = op.binding_power();
         if left_binding_power < minimum_binding_power {
