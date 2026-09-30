@@ -5,13 +5,14 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyo3_stub_gen::define_stub_info_gatherer;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyfunction, gen_stub_pymethods};
+use yuzu_driver::modules::Origin;
 use yuzu_driver::stdlib::Engine;
 
 pyo3_stub_gen::create_exception!(
     yuzu,
     CompileError,
     PyValueError,
-    "A program that did not compile. The message holds its diagnostics."
+    "A compile that failed: the program, or the target it names. The message says why."
 );
 
 #[gen_stub_pyclass]
@@ -56,9 +57,14 @@ fn compile<'py>(
     // The compiler keeps its state on the thread, so other Python threads
     // run while it works.
     let plan = py.detach(|| {
-        yuzu_driver::compile("<python>", source, &options, &resolver)
-            .into_plan()
-            .map(|plan| plan.to_protobuf())
+        yuzu_driver::compile(
+            &Origin::Named("<python>".to_owned()),
+            source,
+            &options,
+            &resolver,
+        )
+        .into_plan()
+        .map(|plan| plan.to_protobuf())
     });
     match plan {
         Ok(plan) => Ok(PyBytes::new(py, &plan)),

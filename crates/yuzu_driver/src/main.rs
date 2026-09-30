@@ -3,7 +3,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 use yuzu_diagnostics::DiagnosticPrinter;
-use yuzu_driver::modules::{FsResolver, base_of};
+use yuzu_driver::modules::{FsResolver, Origin, base_of};
 use yuzu_driver::stdlib::Engine;
 use yuzu_driver::{CompileOptions, compile};
 
@@ -55,7 +55,7 @@ fn main() -> ExitCode {
         base: base_of(&cli.file),
     };
     let compilation = compile(
-        &cli.file.display().to_string(),
+        &Origin::File(cli.file.clone()),
         &source,
         &options,
         &resolver,

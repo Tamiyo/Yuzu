@@ -11,7 +11,7 @@ __all__ = [
 
 class CompileError(builtins.ValueError):
     r"""
-    A program that did not compile. The message holds its diagnostics.
+    A compile that failed: the program, or the target it names. The message says why.
     """
     ...
 

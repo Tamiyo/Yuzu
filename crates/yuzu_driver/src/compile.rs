@@ -7,7 +7,7 @@ use yuzu_diagnostics::{Diagnostic, DiagnosticPrinter, DiagnosticsEngine, SourceI
 use yuzu_substrait::Plan;
 
 use crate::index::IndexReader;
-use crate::modules::{self, ModuleResolver};
+use crate::modules::{self, ModuleResolver, Origin};
 use crate::stdlib::{self, Engine};
 
 /// What a compile is for, and which intermediate modules it keeps as text.
@@ -83,16 +83,16 @@ impl fmt::Display for CompileError {
 
 impl std::error::Error for CompileError {}
 
-/// Compiles a file: `name` is the name its diagnostics give it.
+/// Compiles the entry `source`, which came from `origin`.
 pub fn compile(
-    name: &str,
+    origin: &Origin,
     source: &str,
     options: &CompileOptions,
     resolver: &dyn ModuleResolver,
 ) -> Compilation {
     let mut diagnostics = DiagnosticsEngine::new();
     let mut sources = SourceMap::new();
-    let source_id = sources.add(name, source);
+    let source_id = origin.clone().add_to(&mut sources, source.into());
     let mut dumps = Dumps {
         keep_yzl: options.dump_yzl,
         keep_yzr: options.dump_yzr,
@@ -283,13 +283,13 @@ mod tests {
     use std::fmt::Write;
 
     use super::{CompileOptions, compile};
-    use crate::modules::MapResolver;
+    use crate::modules::{MapResolver, Origin};
 
     #[test]
     fn a_failed_compile_keeps_its_diagnostics_as_data() {
         let resolver = MapResolver(HashMap::new());
         let error = compile(
-            "test.yz",
+            &Origin::Named("test.yz".to_owned()),
             "let x: i64 = 1\n",
             &CompileOptions::default(),
             &resolver,
@@ -304,7 +304,12 @@ mod tests {
     fn the_dumps_are_kept_only_when_asked_for() {
         let resolver = MapResolver(HashMap::new());
         let source = "struct Row { a: int64 }\ntable t = Row\nfrom t\n";
-        let quiet = compile("test.yz", source, &CompileOptions::default(), &resolver);
+        let quiet = compile(
+            &Origin::Named("test.yz".to_owned()),
+            source,
+            &CompileOptions::default(),
+            &resolver,
+        );
         assert!(quiet.plan.is_some() && quiet.yzl.is_none() && quiet.yzr.is_none());
 
         let options = CompileOptions {
@@ -312,7 +317,12 @@ mod tests {
             dump_yzr: true,
             ..CompileOptions::default()
         };
-        let dumped = compile("test.yz", source, &options, &resolver);
+        let dumped = compile(
+            &Origin::Named("test.yz".to_owned()),
+            source,
+            &options,
+            &resolver,
+        );
         assert!(dumped.yzl.is_some_and(|yzl| yzl.contains("yzl.table")));
         assert!(dumped.yzr.is_some_and(|yzr| yzr.contains("yzr.output")));
     }
@@ -331,7 +341,12 @@ mod tests {
         }
         source.push_str("from t |> select f10(a) as v\n");
         let resolver = MapResolver(HashMap::new());
-        let compilation = compile("test.yz", &source, &CompileOptions::default(), &resolver);
+        let compilation = compile(
+            &Origin::Named("test.yz".to_owned()),
+            &source,
+            &CompileOptions::default(),
+            &resolver,
+        );
         assert!(
             compilation.diagnostics.is_empty(),
             "{:?}",
