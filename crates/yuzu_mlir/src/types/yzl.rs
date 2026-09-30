@@ -10,9 +10,10 @@ use melior::ir::{Type, TypeLike};
 pub struct UnresolvedType<'c>(Type<'c>);
 
 impl<'c> UnresolvedType<'c> {
-    /// The type, uniqued in the context.
+    /// The type, uniqued in the context, which must have loaded the dialects.
     #[must_use]
     pub fn new(context: &'c Context) -> Self {
+        super::debug_assert_loaded(context, "yzl.from");
         // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
         unsafe {
             Self(Type::from_raw(yuzu_mlir_sys::yzuUnresolvedTypeGet(
@@ -40,9 +41,10 @@ impl<'c> From<UnresolvedType<'c>> for Type<'c> {
 pub struct ErrorType<'c>(Type<'c>);
 
 impl<'c> ErrorType<'c> {
-    /// The type, uniqued in the context.
+    /// The type, uniqued in the context, which must have loaded the dialects.
     #[must_use]
     pub fn new(context: &'c Context) -> Self {
+        super::debug_assert_loaded(context, "yzl.from");
         // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
         unsafe {
             Self(Type::from_raw(yuzu_mlir_sys::yzuErrorTypeGet(
@@ -70,9 +72,10 @@ impl<'c> From<ErrorType<'c>> for Type<'c> {
 pub struct QueryType<'c>(Type<'c>);
 
 impl<'c> QueryType<'c> {
-    /// The type, uniqued in the context.
+    /// The type, uniqued in the context, which must have loaded the dialects.
     #[must_use]
     pub fn new(context: &'c Context) -> Self {
+        super::debug_assert_loaded(context, "yzl.from");
         // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
         unsafe {
             Self(Type::from_raw(yuzu_mlir_sys::yzuQueryTypeGet(
@@ -100,9 +103,10 @@ impl<'c> From<QueryType<'c>> for Type<'c> {
 pub struct RefType<'c>(Type<'c>);
 
 impl<'c> RefType<'c> {
-    /// The type, uniqued in the context.
+    /// The type, uniqued in the context, which must have loaded the dialects.
     #[must_use]
     pub fn new(context: &'c Context, element: Type<'c>) -> Self {
+        super::debug_assert_loaded(context, "yzl.from");
         // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
         unsafe {
             Self(Type::from_raw(yuzu_mlir_sys::yzuRefTypeGet(
@@ -138,9 +142,10 @@ impl<'c> From<RefType<'c>> for Type<'c> {
 pub struct ParamType<'c>(Type<'c>);
 
 impl<'c> ParamType<'c> {
-    /// The type, uniqued in the context.
+    /// The type, uniqued in the context, which must have loaded the dialects.
     #[must_use]
     pub fn new(context: &'c Context, name: &str) -> Self {
+        super::debug_assert_loaded(context, "yzl.from");
         // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
         unsafe {
             Self(Type::from_raw(yuzu_mlir_sys::yzuParamTypeGet(

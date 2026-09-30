@@ -2,6 +2,8 @@
 //!
 //! `new` builds one in a context, and `from_type` tells one apart. MLIR
 //! uniques a type in its context, so both return the same type every time.
+//! `new` needs a context that has loaded the dialects, as [`crate::context`]
+//! makes one; a debug build checks it, since MLIR does not.
 
 mod yz;
 mod yzl;
@@ -11,6 +13,16 @@ use melior::ir::Type;
 
 pub use yz::{BoolType, Float64Type, Int64Type, ListType, StrType, StructType, UnitType};
 pub use yzl::{ErrorType, ParamType, QueryType, RefType, UnresolvedType};
+
+/// Checks, in a debug build, that `context` has loaded the dialect whose op
+/// `op` is. MLIR builds a type of a dialect the context has not loaded with
+/// no check at all.
+fn debug_assert_loaded(context: &Context, op: &str) {
+    debug_assert!(
+        context.is_registered_operation(op),
+        "the context has not loaded the dialect of `{op}`; make it with `yuzu_mlir::context`"
+    );
+}
 
 /// A scalar type: how source spells it, the lookup returning it, and the
 /// test for it.
@@ -143,6 +155,13 @@ mod tests {
             |ty| ErrorType::from_type(ty).is_some(),
         ),
     ];
+
+    #[test]
+    #[should_panic(expected = "the context has not loaded the dialect")]
+    fn a_type_needs_a_context_that_loaded_its_dialect() {
+        let bare = Context::new();
+        let _ = Int64Type::new(&bare);
+    }
 
     #[test]
     fn each_singleton_is_itself_and_no_other() {

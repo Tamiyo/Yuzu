@@ -10,9 +10,10 @@ use melior::ir::{Type, TypeLike};
 pub struct Int64Type<'c>(Type<'c>);
 
 impl<'c> Int64Type<'c> {
-    /// The type, uniqued in the context.
+    /// The type, uniqued in the context, which must have loaded the dialects.
     #[must_use]
     pub fn new(context: &'c Context) -> Self {
+        super::debug_assert_loaded(context, "yz.constant_int");
         // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
         unsafe {
             Self(Type::from_raw(yuzu_mlir_sys::yzuInt64TypeGet(
@@ -40,9 +41,10 @@ impl<'c> From<Int64Type<'c>> for Type<'c> {
 pub struct Float64Type<'c>(Type<'c>);
 
 impl<'c> Float64Type<'c> {
-    /// The type, uniqued in the context.
+    /// The type, uniqued in the context, which must have loaded the dialects.
     #[must_use]
     pub fn new(context: &'c Context) -> Self {
+        super::debug_assert_loaded(context, "yz.constant_int");
         // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
         unsafe {
             Self(Type::from_raw(yuzu_mlir_sys::yzuFloat64TypeGet(
@@ -70,9 +72,10 @@ impl<'c> From<Float64Type<'c>> for Type<'c> {
 pub struct BoolType<'c>(Type<'c>);
 
 impl<'c> BoolType<'c> {
-    /// The type, uniqued in the context.
+    /// The type, uniqued in the context, which must have loaded the dialects.
     #[must_use]
     pub fn new(context: &'c Context) -> Self {
+        super::debug_assert_loaded(context, "yz.constant_int");
         // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
         unsafe {
             Self(Type::from_raw(yuzu_mlir_sys::yzuBoolTypeGet(
@@ -100,9 +103,10 @@ impl<'c> From<BoolType<'c>> for Type<'c> {
 pub struct StrType<'c>(Type<'c>);
 
 impl<'c> StrType<'c> {
-    /// The type, uniqued in the context.
+    /// The type, uniqued in the context, which must have loaded the dialects.
     #[must_use]
     pub fn new(context: &'c Context) -> Self {
+        super::debug_assert_loaded(context, "yz.constant_int");
         // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
         unsafe {
             Self(Type::from_raw(yuzu_mlir_sys::yzuStrTypeGet(
@@ -130,9 +134,10 @@ impl<'c> From<StrType<'c>> for Type<'c> {
 pub struct UnitType<'c>(Type<'c>);
 
 impl<'c> UnitType<'c> {
-    /// The type, uniqued in the context.
+    /// The type, uniqued in the context, which must have loaded the dialects.
     #[must_use]
     pub fn new(context: &'c Context) -> Self {
+        super::debug_assert_loaded(context, "yz.constant_int");
         // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
         unsafe {
             Self(Type::from_raw(yuzu_mlir_sys::yzuUnitTypeGet(
@@ -160,9 +165,10 @@ impl<'c> From<UnitType<'c>> for Type<'c> {
 pub struct ListType<'c>(Type<'c>);
 
 impl<'c> ListType<'c> {
-    /// The type, uniqued in the context.
+    /// The type, uniqued in the context, which must have loaded the dialects.
     #[must_use]
     pub fn new(context: &'c Context, inner: Type<'c>) -> Self {
+        super::debug_assert_loaded(context, "yz.constant_int");
         // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
         unsafe {
             Self(Type::from_raw(yuzu_mlir_sys::yzuListTypeGet(
@@ -198,9 +204,10 @@ impl<'c> From<ListType<'c>> for Type<'c> {
 pub struct StructType<'c>(Type<'c>);
 
 impl<'c> StructType<'c> {
-    /// The type, uniqued in the context.
+    /// The type, uniqued in the context, which must have loaded the dialects.
     #[must_use]
     pub fn new(context: &'c Context, name: &str) -> Self {
+        super::debug_assert_loaded(context, "yz.constant_int");
         // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
         unsafe {
             Self(Type::from_raw(yuzu_mlir_sys::yzuStructTypeGet(
