@@ -18,8 +18,8 @@ use yuzu_mlir::types::{
 };
 
 use crate::lower_ast_to_yzl::symbols::{
-    Binding, BindingKind, Declared, Field, FunctionKind, Lookup, Method, ModulePath, Overload,
-    Reference, Row, Target,
+    Binding, BindingKind, DeclarationKind, Declared, Field, FunctionKind, Lookup, Method,
+    ModulePath, Overload, Reference, Row,
 };
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 
@@ -38,6 +38,13 @@ enum Site<'m, 'c> {
 enum LocalKind {
     Let(Mutability),
     Param,
+}
+
+/// A parameter a function declares.
+struct Param<'c> {
+    name: &'c str,
+    range: TextRange,
+    ty: Type<'c>,
 }
 
 impl Site<'_, '_> {
@@ -83,7 +90,7 @@ impl<'c> AstToYzl<'c, '_> {
             return;
         };
 
-        if !self.was_hoisted(decl, name) {
+        if !self.is_hoisted(decl, name) {
             return;
         }
 
@@ -103,17 +110,16 @@ impl<'c> AstToYzl<'c, '_> {
             return;
         };
 
-        if !self.was_hoisted(decl, name) {
+        if !self.is_hoisted(decl, name) {
             return;
         }
 
         // An imported struct is held under the module that declared it,
         // whatever an `as` renamed it to here.
-        let row = if let Some(written) = decl.struct_name()
-            && let Some(struct_name) = self.read_ident(Some(written.clone()))
+        let row = if let Some((struct_name, used)) = self.read_ident_with_range(decl.struct_name())
         {
             if let Some((symbol, target)) = self.symbols.struct_symbol(struct_name) {
-                self.record(written.syntax().text_range(), struct_name, target);
+                self.record(used, struct_name, target);
                 symbol
             } else {
                 debug_assert!(
@@ -158,7 +164,7 @@ impl<'c> AstToYzl<'c, '_> {
         }
 
         if let Some(name) = self.read_ident(decl.name())
-            && !self.was_hoisted(decl, name)
+            && !self.is_hoisted(decl, name)
         {
             return;
         }
@@ -194,7 +200,7 @@ impl<'c> AstToYzl<'c, '_> {
         );
 
         let op = self.in_type_params(generics.clone(), |this| {
-            this.build_fn(decl, site, name, &generics, loc)
+            this.convert_fn_op(decl, site, name, &generics, loc)
         });
 
         if let Some(op) = op {
@@ -204,7 +210,7 @@ impl<'c> AstToYzl<'c, '_> {
 
     /// The `yzl.fn` for a declaration, with its type parameters in scope.
     /// `None` when a parameter could not be read.
-    fn build_fn(
+    fn convert_fn_op(
         &mut self,
         decl: &ast::FuncStmt,
         site: Site<'_, 'c>,
@@ -212,13 +218,9 @@ impl<'c> AstToYzl<'c, '_> {
         generics: &[&'c str],
         loc: Location<'c>,
     ) -> Option<Operation<'c>> {
-        // Trait bounds.
         let (bound_params, bound_traits) = self.read_bounds(decl);
 
-        // Params.
-        let mut param_names = Vec::new();
-        let mut param_ranges = Vec::new();
-        let mut param_types = Vec::new();
+        let mut params = Vec::new();
         let mut has_error = false;
         for param in decl.params() {
             let Some(name) = self.read_ident(param.name()) else {
@@ -235,12 +237,13 @@ impl<'c> AstToYzl<'c, '_> {
                 continue;
             };
 
-            param_names.push(name);
-            param_ranges.push(param.syntax().text_range());
-            param_types.push(ty);
+            params.push(Param {
+                name,
+                range: param.syntax().text_range(),
+                ty,
+            });
         }
 
-        // Early exit if there are any parameter errors.
         if has_error {
             return None;
         }
@@ -254,7 +257,7 @@ impl<'c> AstToYzl<'c, '_> {
         let body = Region::new();
         if let Some(block) = decl.body() {
             let ty = UnresolvedType::new(self.context).into();
-            let arguments = vec![(ty, loc); param_names.len()];
+            let arguments = vec![(ty, loc); params.len()];
             let entry = body.append_block(Block::new(&arguments));
 
             let mut locals = Locals::new();
@@ -262,7 +265,7 @@ impl<'c> AstToYzl<'c, '_> {
                 // Make a place for each parameter, with the type of the parameter.
                 // Put the argument in the place. The name of the parameter then gives the
                 // place, as the name of a `let` does.
-                for (index, name) in param_names.iter().enumerate() {
+                for (index, param) in params.iter().enumerate() {
                     let argument = entry
                         .argument(index)
                         .expect("the entry block has one argument per parameter")
@@ -270,26 +273,33 @@ impl<'c> AstToYzl<'c, '_> {
 
                     let place = this.emit_local(
                         entry,
-                        name,
+                        param.name,
                         LocalKind::Param,
-                        param_types[index],
+                        param.ty,
                         argument,
                         loc,
                     );
 
-                    this.bind_local(&mut locals, name, param_ranges[index], place);
+                    this.bind_local(&mut locals, param.name, param.range, place);
                 }
 
                 this.convert_block(entry, &mut locals, &block);
-                this.emit_final_return(entry, decl, name, result, &block);
+                if !ends_in_return(entry) {
+                    this.check_final_return(decl, name, result);
+                    this.emit_final_return(entry, result, block.syntax().text_range());
+                }
             });
         }
 
-        let symbol = self.symbol_in(site, name, param_names.len());
+        let symbol = self.symbol_in(site, name, params.len());
+        let param_types: Vec<Type<'c>> = params.iter().map(|param| param.ty).collect();
         let signature = FunctionType::new(self.context, &param_types, &[result]);
         let mut builder = yzl::FnOperationBuilder::new(self.context, loc)
             .sym_name(StringAttribute::new(self.context, symbol))
-            .params(ArrayAttribute::from_strings(self.context, param_names))
+            .params(ArrayAttribute::from_strings(
+                self.context,
+                params.iter().map(|param| param.name),
+            ))
             .signature(TypeAttribute::new(signature.into()))
             .body(body);
 
@@ -297,8 +307,8 @@ impl<'c> AstToYzl<'c, '_> {
             builder = builder.is_agg(Attribute::unit(self.context));
         }
 
-        if let Some(external_name) = decl.is_external().then_some(name) {
-            builder = builder.external_name(StringAttribute::new(self.context, external_name));
+        if decl.is_external() {
+            builder = builder.external_name(StringAttribute::new(self.context, name));
         }
 
         if !generics.is_empty() {
@@ -329,7 +339,7 @@ impl<'c> AstToYzl<'c, '_> {
             return;
         };
 
-        if !self.was_hoisted(decl, name) {
+        if !self.is_hoisted(decl, name) {
             return;
         }
 
@@ -360,15 +370,14 @@ impl<'c> AstToYzl<'c, '_> {
             return;
         }
 
-        let Some(trait_name) = decl
-            .trait_()
-            .and_then(|trait_ref| self.read_ident(trait_ref.name()))
+        let Some((trait_name, trait_used)) =
+            self.read_ident_with_range(decl.trait_().and_then(|trait_ref| trait_ref.name()))
         else {
             self.assert_syntax_error("`impl` is missing its trait");
             return;
         };
 
-        let Some(target) = self.read_ident(decl.ty()) else {
+        let Some((target, target_used)) = self.read_ident_with_range(decl.ty()) else {
             self.assert_syntax_error("`impl` is missing its type name");
             return;
         };
@@ -377,13 +386,20 @@ impl<'c> AstToYzl<'c, '_> {
         // agree on its symbol.
         let methods = match self.symbols.kind(trait_name) {
             Some(BindingKind::Trait { methods }) => methods.clone(),
-            _ => self.read_methods(decl.methods()),
+            None
+            | Some(
+                BindingKind::Struct { .. }
+                | BindingKind::Relation { .. }
+                | BindingKind::Func { .. }
+                | BindingKind::Let
+                | BindingKind::Module { .. }
+                | BindingKind::Pending
+                | BindingKind::Import { .. },
+            ) => self.read_methods(decl.methods()),
         };
 
         let trait_symbol = if let Some((symbol, declared)) = self.symbols.trait_symbol(trait_name) {
-            if let Some(written) = decl.trait_().and_then(|trait_ref| trait_ref.name()) {
-                self.record(written.syntax().text_range(), trait_name, declared);
-            }
+            self.record(trait_used, trait_name, declared);
             Some(symbol)
         } else {
             self.report(decl, &format!("unknown trait `{trait_name}`"));
@@ -391,9 +407,7 @@ impl<'c> AstToYzl<'c, '_> {
         };
 
         let target = if let Some((symbol, declared)) = self.symbols.struct_symbol(target) {
-            if let Some(written) = decl.ty() {
-                self.record(written.syntax().text_range(), target, declared);
-            }
+            self.record(target_used, target, declared);
             symbol
         } else {
             if types::scalar(self.context, target).is_none() {
@@ -467,7 +481,7 @@ impl<'c> AstToYzl<'c, '_> {
             self.diagnostics.emit(diagnostic);
         }
 
-        if !self.was_hoisted(decl, name) {
+        if !self.is_hoisted(decl, name) {
             return;
         }
 
@@ -675,7 +689,7 @@ impl<'c> AstToYzl<'c, '_> {
             return;
         };
 
-        let fields = self.read_field_names(decl.fields());
+        let fields = self.read_row_fields(decl.fields());
         self.bind_or_report(
             decl,
             name,
@@ -690,7 +704,7 @@ impl<'c> AstToYzl<'c, '_> {
         };
 
         let row = if decl.inline_fields().next().is_some() {
-            Row::from(self.read_field_names(decl.inline_fields()))
+            Row::from(self.read_row_fields(decl.inline_fields()))
         } else {
             let Some(declared) = self.read_ident(decl.struct_name()) else {
                 return;
@@ -707,18 +721,6 @@ impl<'c> AstToYzl<'c, '_> {
         };
 
         self.bind_or_report(decl, name, BindingKind::Relation { row }, decl.visibility());
-    }
-
-    /// Each field's name, and the field that declares it.
-    fn read_field_names(&self, fields: impl Iterator<Item = ast::StructField>) -> Vec<Field<'c>> {
-        fields
-            .filter_map(|field| {
-                Some(Field {
-                    name: self.read_ident(field.name())?,
-                    declared: Some(self.span(field.syntax().text_range())),
-                })
-            })
-            .collect()
     }
 
     fn hoist_trait(&mut self, decl: &ast::TraitStmt) {
@@ -805,10 +807,9 @@ impl<'c> AstToYzl<'c, '_> {
                     };
                     let path = self.read_path(&written);
                     self.record_module(written.syntax().text_range(), path, path);
-                    if let Some(alias) = import.alias()
-                        && let Some(spelling) = self.read_ident(Some(alias.clone()))
-                    {
-                        self.record_module(alias.syntax().text_range(), spelling, path);
+                    let alias = self.read_ident_with_range(import.alias());
+                    if let Some((spelling, used)) = alias {
+                        self.record_module(used, spelling, path);
                     }
 
                     let last = path
@@ -816,7 +817,7 @@ impl<'c> AstToYzl<'c, '_> {
                         .next()
                         .expect("a split yields at least one piece");
 
-                    let name = self.read_ident(import.alias()).unwrap_or(last);
+                    let name = alias.map_or(last, |(spelling, _)| spelling);
                     self.bind_or_report(
                         import,
                         name,
@@ -855,30 +856,27 @@ impl<'c> AstToYzl<'c, '_> {
     /// `visibility` is the import's own: a module passes on what it imports
     /// only when `pub` says so.
     fn bind_import(&mut self, path: &'c str, item: &ast::ImportItem, visibility: Visibility) {
-        let Some(name) = self.read_ident(item.name()) else {
+        let Some((name, used)) = self.read_ident_with_range(item.name()) else {
             self.assert_syntax_error("import item is missing its name");
             return;
         };
 
-        let Some((from, exported)) = self.resolve_export(item, path, name) else {
+        let Some((from, kind)) = self.resolve_export(item, path, name) else {
             return;
         };
 
-        let declared = Target {
-            at: from,
-            range: exported.text_range,
-        };
-        let alias = item.alias();
-        for written in item.name().into_iter().chain(alias.clone()) {
-            if let Some(spelling) = self.read_ident(Some(written.clone())) {
-                self.record(written.syntax().text_range(), spelling, declared);
+        let alias = self.read_ident_with_range(item.alias());
+        if let Some(declared) = self.symbols.target_in(from) {
+            self.record(used, name, declared);
+            if let Some((spelling, used)) = alias {
+                self.record(used, spelling, declared);
             }
         }
 
-        let local = self.read_ident(alias).unwrap_or(name);
+        let local = alias.map_or(name, |(spelling, _)| spelling);
 
         if self.symbols.binding(local).is_some() {
-            self.check_duplicate(item, exported.kind.name(), local);
+            self.check_duplicate(item, kind.name(), local);
             return;
         }
 
@@ -980,7 +978,7 @@ impl<'c> AstToYzl<'c, '_> {
         at: &impl AstNode,
         path: &'c str,
         name: &str,
-    ) -> Option<(Declared<'c>, Binding<'c>)> {
+    ) -> Option<(Declared<'c>, DeclarationKind)> {
         let module = ModulePath::from_path(path);
         if !self.symbols.contains_module(module) {
             self.report(at, &format!("`{path}` is not a module this file reads"));
@@ -1013,9 +1011,38 @@ impl<'c> AstToYzl<'c, '_> {
         let found = self
             .symbols
             .find_declared(module, name)
-            .map(|(declared, binding)| (declared, binding.clone()))
+            .map(|(declared, binding)| (declared, binding.kind.declaration_kind()))
             .expect("an import points at a declaration that exists");
         Some(found)
+    }
+
+    /// The slot of the place an assignment writes, when the name written at
+    /// `written` is one.
+    fn resolve_place(
+        &mut self,
+        node: &impl AstNode,
+        name: &str,
+        written: TextRange,
+    ) -> Option<usize> {
+        let message = match self.symbols.lookup(Reference::unqualified(name)) {
+            Lookup::Local { slot, declared } => {
+                self.record_local(written, name, declared);
+                return Some(slot);
+            }
+            Lookup::Lost => return None,
+            Lookup::Column { .. } | Lookup::Ambiguous | Lookup::NarrowedAway => {
+                format!("`{name}` is a column; `set` is how a query writes one")
+            }
+            Lookup::Let { .. } => {
+                format!("`{name}` is a module-level binding and cannot be assigned")
+            }
+            Lookup::NotAValue(what) => format!("`{name}` is a {what}, not a binding"),
+            Lookup::NotYet => format!("`{name}` is bound further down the file"),
+            Lookup::Unknown => format!("unresolved identifier `{name}`"),
+        };
+
+        self.report(node, &message);
+        None
     }
 
     /// One entry per `(parameter, trait)` pair.
@@ -1033,7 +1060,7 @@ impl<'c> AstToYzl<'c, '_> {
             }
 
             for trait_ref in bound.traits() {
-                let Some(name) = self.read_ident(trait_ref.name()) else {
+                let Some((name, used)) = self.read_ident_with_range(trait_ref.name()) else {
                     self.assert_syntax_error("trait reference is missing its name");
                     continue;
                 };
@@ -1044,9 +1071,7 @@ impl<'c> AstToYzl<'c, '_> {
                     self.report(&trait_ref, &format!("unknown trait `{name}`"));
                     continue;
                 };
-                if let Some(written) = trait_ref.name() {
-                    self.record(written.syntax().text_range(), name, declared);
-                }
+                self.record(used, name, declared);
 
                 subjects.push(subject);
                 traits.push(bound_trait);
@@ -1067,40 +1092,6 @@ impl<'c> AstToYzl<'c, '_> {
             .collect()
     }
 
-    /// The methods of a trait or an implementation, less each one that
-    /// takes as many arguments as an earlier method of its name.
-    fn check_methods(
-        &mut self,
-        methods: impl Iterator<Item = ast::FuncStmt>,
-    ) -> Vec<ast::FuncStmt> {
-        let mut kept = Vec::new();
-        let mut seen: Vec<(Method<'c>, TextRange)> = Vec::new();
-        for decl in methods {
-            // `convert_method` reports a missing name.
-            if let Some(name) = self.read_ident(decl.name()) {
-                let method = Method {
-                    name,
-                    arity: decl.params().count(),
-                };
-
-                if let Some(&(_, other)) = seen.iter().find(|(earlier, _)| *earlier == method) {
-                    let message = format!(
-                        "the method `{name}` with {} parameter(s) is already defined",
-                        method.arity
-                    );
-                    self.report_duplicate(&decl, &message, other);
-                    continue;
-                }
-
-                seen.push((method, decl.syntax().text_range()));
-            }
-
-            kept.push(decl);
-        }
-
-        kept
-    }
-
     /// `!yzl.error` for an annotation that names no type, so inference takes
     /// it as the error it is rather than as a type to infer.
     fn read_type_annotation(&mut self, annotation: ast::TypeAnnotation) -> Type<'c> {
@@ -1112,7 +1103,7 @@ impl<'c> AstToYzl<'c, '_> {
             }
         };
 
-        let Some(name) = self.read_ident(named.name()) else {
+        let Some((name, used)) = self.read_ident_with_range(named.name()) else {
             self.assert_syntax_error("type is missing its name");
             return ErrorType::new(self.context).into();
         };
@@ -1137,9 +1128,7 @@ impl<'c> AstToYzl<'c, '_> {
         }
 
         if let Some((symbol, declared)) = self.symbols.struct_symbol(name) {
-            if let Some(written) = named.name() {
-                self.record(written.syntax().text_range(), name, declared);
-            }
+            self.record(used, name, declared);
             return StructType::new(self.context, symbol).into();
         }
 
@@ -1151,33 +1140,35 @@ impl<'c> AstToYzl<'c, '_> {
         self.symbols.intern(&path.to_dotted())
     }
 
-    /// The slot of the place an assignment writes, when the name written at
-    /// `written` is one.
-    fn resolve_place(
-        &mut self,
-        node: &impl AstNode,
-        name: &str,
-        written: TextRange,
-    ) -> Option<usize> {
-        let message = match self.symbols.lookup(Reference::unqualified(name)) {
-            Lookup::Local { slot, declared } => {
-                self.record_local(written, name, declared);
-                return Some(slot);
-            }
-            Lookup::Lost => return None,
-            Lookup::Column { .. } | Lookup::Ambiguous | Lookup::NarrowedAway => {
-                format!("`{name}` is a column; `set` is how a query writes one")
-            }
-            Lookup::Let(..) => {
-                format!("`{name}` is a module-level binding and cannot be assigned")
-            }
-            Lookup::NotAValue(what) => format!("`{name}` is a {what}, not a binding"),
-            Lookup::NotYet => format!("`{name}` is bound further down the file"),
-            Lookup::Unknown => format!("unresolved identifier `{name}`"),
-        };
+    /// Each field's name, and the field that declares it.
+    fn read_row_fields(&self, fields: impl Iterator<Item = ast::StructField>) -> Vec<Field<'c>> {
+        fields
+            .filter_map(|field| {
+                Some(Field {
+                    name: self.read_ident(field.name())?,
+                    declared: Some(self.span(field.syntax().text_range())),
+                })
+            })
+            .collect()
+    }
 
-        self.report(node, &message);
-        None
+    fn read_fields(
+        &mut self,
+        fields: impl Iterator<Item = ast::StructField>,
+    ) -> (Vec<&'c str>, Vec<Type<'c>>) {
+        let mut names = Vec::new();
+        let mut types = Vec::new();
+        for field in fields {
+            let (Some(name), Some(ty)) = (self.read_ident(field.name()), field.ty()) else {
+                self.assert_syntax_error("struct field is missing its name or type");
+                continue;
+            };
+
+            names.push(name);
+            types.push(self.read_type_annotation(ty));
+        }
+
+        (names, types)
     }
 
     /// Declares a place for a local variable and stores its first value.
@@ -1210,50 +1201,12 @@ impl<'c> AstToYzl<'c, '_> {
         place
     }
 
-    fn read_fields(
-        &mut self,
-        fields: impl Iterator<Item = ast::StructField>,
-    ) -> (Vec<&'c str>, Vec<Type<'c>>) {
-        let mut names = Vec::new();
-        let mut types = Vec::new();
-        for field in fields {
-            let (Some(name), Some(ty)) = (self.read_ident(field.name()), field.ty()) else {
-                self.assert_syntax_error("struct field is missing its name or type");
-                continue;
-            };
-
-            names.push(name);
-            types.push(self.read_type_annotation(ty));
-        }
-
-        (names, types)
-    }
-
-    /// The `return` a body that does not end in one gets: none of a value in
-    /// a unit function, and a hole after a report in any other.
-    fn emit_final_return<'a>(
-        &mut self,
-        entry: BlockRef<'c, 'a>,
-        decl: &ast::FuncStmt,
-        name: &str,
-        result: Type<'c>,
-        body: &ast::BlockStmt,
-    ) {
-        if ends_in_return(entry) {
-            return;
-        }
-
-        let range = body.syntax().text_range();
+    /// The `return` a body at `range` that does not end in one gets: none of
+    /// a value in a unit function, and a hole in any other.
+    fn emit_final_return<'a>(&self, entry: BlockRef<'c, 'a>, result: Type<'c>, range: TextRange) {
         let values = if UnitType::from_type(result).is_some() {
             Vec::new()
         } else {
-            if ErrorType::from_type(result).is_none() {
-                let message = format!(
-                    "`{name}` must end with a `return` of `{}`",
-                    types::name(result)
-                );
-                self.report(decl, &message);
-            }
             vec![self.emit_hole(entry, range, ErrorType::new(self.context).into())]
         };
 
@@ -1283,6 +1236,54 @@ impl<'c> AstToYzl<'c, '_> {
         }
 
         block.append_operation(struct_);
+    }
+
+    /// Reports a body that does not end in a `return` when the function
+    /// has a value to return. An unknown result type was reported already.
+    fn check_final_return(&mut self, decl: &ast::FuncStmt, name: &str, result: Type<'c>) {
+        if UnitType::from_type(result).is_some() || ErrorType::from_type(result).is_some() {
+            return;
+        }
+        let message = format!(
+            "`{name}` must end with a `return` of `{}`",
+            types::name(result)
+        );
+        self.report(decl, &message);
+    }
+
+    /// The methods of a trait or an implementation, less each one that
+    /// takes as many arguments as an earlier method of its name.
+    fn check_methods(
+        &mut self,
+        methods: impl Iterator<Item = ast::FuncStmt>,
+    ) -> Vec<ast::FuncStmt> {
+        let mut kept = Vec::new();
+        let mut seen: Vec<(Method<'c>, TextRange)> = Vec::new();
+        for decl in methods {
+            // A method with no name is a syntax error, which the parser
+            // reported.
+            if let Some(name) = self.read_ident(decl.name()) {
+                let method = Method {
+                    name,
+                    arity: decl.params().count(),
+                };
+
+                if let Some(&(_, other)) = seen.iter().find(|(earlier, _)| *earlier == method) {
+                    let message = format!(
+                        "the method `{name}` with {} parameter(s) is already defined",
+                        method.arity
+                    );
+                    self.report_duplicate(&decl, &message, other);
+                    continue;
+                }
+
+                seen.push((method, decl.syntax().text_range()));
+            }
+
+            kept.push(decl);
+        }
+
+        kept
     }
 
     fn check_declaration_at_file_level(&mut self, node: &impl AstNode) -> bool {
@@ -1348,7 +1349,7 @@ impl<'c> AstToYzl<'c, '_> {
 
     /// Whether the hoist bound this declaration. When it did not, it
     /// reported why.
-    fn was_hoisted(&self, node: &impl AstNode, name: &str) -> bool {
+    fn is_hoisted(&self, node: &impl AstNode, name: &str) -> bool {
         let hoisted = self
             .symbols
             .binding(name)

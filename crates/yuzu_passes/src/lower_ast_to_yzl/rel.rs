@@ -32,7 +32,7 @@ impl<'c> AstToYzl<'c, '_> {
         block: BlockRef<'c, 'a>,
         pipeline: &ast::Pipeline,
     ) -> (Value<'c, 'a>, Row<'c>) {
-        let (mut value, row) = if let Some(from) = pipeline.source() {
+        let (value, row) = if let Some(from) = pipeline.source() {
             self.convert_from(block, &from)
         } else {
             let hole = self.hole_and_report(
@@ -44,12 +44,11 @@ impl<'c> AstToYzl<'c, '_> {
             (hole, Row::lost())
         };
 
-        let ((), row) = self.in_relation(row, |this| {
-            for stage in pipeline.stages() {
-                value = this.convert_stage(block, value, &stage);
-            }
-        });
-        (value, row)
+        self.in_relation(row, |this| {
+            pipeline.stages().fold(value, |value, stage| {
+                this.convert_stage(block, value, &stage)
+            })
+        })
     }
 
     fn convert_stage<'a>(
@@ -84,7 +83,7 @@ impl<'c> AstToYzl<'c, '_> {
         from: &ast::FromSource,
     ) -> (Value<'c, 'a>, Row<'c>) {
         let loc = self.location(from);
-        let Some(source) = self.read_ident(from.relation()) else {
+        let Some((source, used)) = self.read_ident_with_range(from.relation()) else {
             let hole = self.hole_and_assert(
                 block,
                 from,
@@ -103,9 +102,7 @@ impl<'c> AstToYzl<'c, '_> {
             );
             return (hole, Row::lost());
         };
-        if let Some(relation) = from.relation() {
-            self.record(relation.syntax().text_range(), source, target);
-        }
+        self.record(used, source, target);
 
         let mut value = block
             .append_operation(
@@ -237,11 +234,8 @@ impl<'c> AstToYzl<'c, '_> {
         let mut keys: Vec<usize> = Vec::new();
         let mut key_fields: Vec<Field<'c>> = Vec::new();
         for item in agg.group_by().into_iter().flat_map(|group| group.items()) {
-            let Some(written) = item.column() else {
+            let Some((column, used)) = self.read_ident_with_range(item.column()) else {
                 self.assert_syntax_error("group by key is missing its column");
-                continue;
-            };
-            let Some(column) = self.read_ident(Some(written.clone())) else {
                 continue;
             };
 
@@ -251,14 +245,10 @@ impl<'c> AstToYzl<'c, '_> {
                 qualifier,
                 name: column,
             };
-            let used = written.syntax().text_range();
             if let Some(index) = self.resolve_column(&item, used, "group key", reference) {
                 keys.push(index);
                 key_fields.push(match self.read_ident(item.alias()) {
-                    Some(alias) => Field {
-                        name: alias,
-                        declared: Some(self.span(item.syntax().text_range())),
-                    },
+                    Some(alias) => self.field_at(alias, item.syntax().text_range()),
                     None => Field {
                         name: column,
                         declared: self.symbols.row().declared(index),
@@ -332,8 +322,8 @@ impl<'c> AstToYzl<'c, '_> {
         let mut to: Vec<&'c str> = Vec::new();
         let mut renames = Vec::new();
         for item in rename.items() {
-            let (Some(old), Some(new)) = (
-                self.read_ident(item.column()),
+            let (Some((old, used)), Some(new)) = (
+                self.read_ident_with_range(item.column()),
                 self.read_ident(item.alias()),
             ) else {
                 self.assert_syntax_error("rename item is missing a column name");
@@ -346,15 +336,8 @@ impl<'c> AstToYzl<'c, '_> {
                 qualifier,
                 name: old,
             };
-            let used = item.column().map_or_else(
-                || item.syntax().text_range(),
-                |column| column.syntax().text_range(),
-            );
             if let Some(index) = self.resolve_column(&item, used, "column", reference) {
-                let field = Field {
-                    name: new,
-                    declared: Some(self.span(item.syntax().text_range())),
-                };
+                let field = self.field_at(new, item.syntax().text_range());
                 renames.push((index, field));
                 from.push(reference.to_string());
                 to.push(new);
@@ -402,7 +385,7 @@ impl<'c> AstToYzl<'c, '_> {
             ast::JoinKind::Right => JoinKind::Right,
             ast::JoinKind::Full => JoinKind::Full,
         };
-        let Some(relation) = self.read_ident(join.relation()) else {
+        let Some((relation, used)) = self.read_ident_with_range(join.relation()) else {
             return self.hole_and_assert(
                 block,
                 join,
@@ -420,28 +403,29 @@ impl<'c> AstToYzl<'c, '_> {
                 QueryType::new(self.context).into(),
             );
         };
-        if let Some(written) = join.relation() {
-            self.record(written.syntax().text_range(), relation, target);
-        }
+        self.record(used, relation, target);
 
         let mut using: Vec<&'c str> = Vec::new();
         if let Some(clause) = join.using() {
-            using = clause
-                .columns()
-                .filter_map(|column| self.read_ident(Some(column)))
-                .collect();
-            if using.is_empty() {
-                self.report(&clause, "`using` needs at least one column");
-            }
-
-            for column in &using {
-                let column = Reference::unqualified(column);
-                if !self.symbols.row().has_column(column) || !rhs.has_column(column) {
+            for column in clause.columns() {
+                let Some(name) = self.read_name(&column) else {
+                    continue;
+                };
+                let reference = Reference::unqualified(name);
+                if !self.symbols.row().has_column(reference) || !rhs.has_column(reference) {
                     self.report(
                         &clause,
-                        &format!("column {column} not present in both relations"),
+                        &format!("column {reference} not present in both relations"),
                     );
+                } else if let ColumnLookup::Unique(index) = self.symbols.column(reference)
+                    && let Some(declared) = self.symbols.row().declared(index)
+                {
+                    self.record_declared(column.syntax().text_range(), name, declared);
                 }
+                using.push(name);
+            }
+            if using.is_empty() {
+                self.report(&clause, "`using` needs at least one column");
             }
         }
 
@@ -494,15 +478,11 @@ impl<'c> AstToYzl<'c, '_> {
         let mut columns: Vec<usize> = Vec::new();
         let mut items = Vec::new();
         for item in set.items() {
-            let Some(written) = item.column() else {
+            let Some((name, used)) = self.read_ident_with_range(item.column()) else {
                 self.assert_syntax_error("set item is missing its column");
                 continue;
             };
-            let Some(name) = self.read_ident(Some(written.clone())) else {
-                continue;
-            };
 
-            let used = written.syntax().text_range();
             let Some(index) =
                 self.resolve_column(&item, used, "column", Reference::unqualified(name))
             else {
@@ -560,7 +540,7 @@ impl<'c> AstToYzl<'c, '_> {
         let loc = self.location(drop);
         let mut names: Vec<&'c str> = Vec::new();
         for column in drop.columns() {
-            let Some(name) = self.read_ident(Some(column.clone())) else {
+            let Some(name) = self.read_name(&column) else {
                 self.assert_syntax_error("`drop` is missing a column name");
                 continue;
             };
@@ -617,10 +597,7 @@ impl<'c> AstToYzl<'c, '_> {
                 _ => None,
             };
             let field = match (alias, read) {
-                (Some(alias), _) => Field {
-                    name: alias,
-                    declared: Some(self.span(*range)),
-                },
+                (Some(alias), _) => self.field_at(alias, *range),
                 (None, Some(read)) => Field {
                     name: read.name,
                     declared: match self.symbols.column(read) {

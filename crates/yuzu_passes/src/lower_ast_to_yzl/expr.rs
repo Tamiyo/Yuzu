@@ -1,6 +1,7 @@
 //! Expressions: each becomes `yz` scalar ops, or a `yzl.call` when a name
 //! resolves to something callable.
 
+use melior::Context;
 use melior::ir::attribute::{
     ArrayAttribute, BoolAttribute, FlatSymbolRefAttribute, FloatAttribute, IntegerAttribute,
     StringAttribute,
@@ -17,6 +18,38 @@ use yuzu_mlir::types::{BoolType, Float64Type, Int64Type, ListType, StrType, Unre
 use crate::lower_ast_to_yzl::symbols::{BindingKind, Callable, FunctionKind, Lookup, Reference};
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 use crate::operators;
+
+/// The value a literal writes, as the attribute of the constant op that
+/// holds it.
+#[derive(Clone, Copy)]
+enum Constant<'c> {
+    Int(IntegerAttribute<'c>),
+    Float(FloatAttribute<'c>),
+    Bool(BoolAttribute<'c>),
+    Str(StringAttribute<'c>),
+}
+
+impl<'c> Constant<'c> {
+    fn ty(self, context: &'c Context) -> Type<'c> {
+        match self {
+            Constant::Int(_) => Int64Type::new(context).into(),
+            Constant::Float(_) => Float64Type::new(context).into(),
+            Constant::Bool(_) => BoolType::new(context).into(),
+            Constant::Str(_) => StrType::new(context).into(),
+        }
+    }
+}
+
+impl<'c> From<Constant<'c>> for Attribute<'c> {
+    fn from(constant: Constant<'c>) -> Self {
+        match constant {
+            Constant::Int(value) => value.into(),
+            Constant::Float(value) => value.into(),
+            Constant::Bool(value) => value.into(),
+            Constant::Str(value) => value.into(),
+        }
+    }
+}
 
 impl<'c> AstToYzl<'c, '_> {
     pub(super) fn convert_expr<'a>(
@@ -50,48 +83,25 @@ impl<'c> AstToYzl<'c, '_> {
         literal: &ast::Literal,
     ) -> Value<'c, 'a> {
         let loc = self.location(literal);
-        let operation = match literal {
-            ast::Literal::IntLiteral(int) => {
-                let Some(value) = self.read_int64(int) else {
-                    return self.emit_hole(
-                        block,
-                        int.syntax().text_range(),
-                        UnresolvedType::new(self.context).into(),
-                    );
-                };
-                yz::constant_int(
-                    self.context,
-                    Int64Type::new(self.context).into(),
-                    IntegerAttribute::from_i64(self.context, value),
-                    loc,
-                )
-                .into()
-            }
-            ast::Literal::FloatLiteral(float) => yz::constant_float(
-                self.context,
-                Float64Type::new(self.context).into(),
-                FloatAttribute::new(
-                    self.context,
-                    Type::float64(self.context),
-                    float.value().unwrap_or_default(),
-                ),
-                loc,
-            )
-            .into(),
-            ast::Literal::BoolLiteral(boolean) => yz::constant_bool(
-                self.context,
-                BoolType::new(self.context).into(),
-                BoolAttribute::new(self.context, boolean.value().unwrap_or_default()),
-                loc,
-            )
-            .into(),
-            ast::Literal::StringLiteral(string) => yz::constant_str(
-                self.context,
-                StrType::new(self.context).into(),
-                StringAttribute::new(self.context, &string.to_value().unwrap_or_default()),
-                loc,
-            )
-            .into(),
+        if let ast::Literal::IntLiteral(int) = literal
+            && self.read_int64(int).is_none()
+        {
+            return self.emit_hole(
+                block,
+                int.syntax().text_range(),
+                UnresolvedType::new(self.context).into(),
+            );
+        }
+        let constant = self
+            .read_constant(literal)
+            .expect("an integer literal was read as an `int64` above");
+
+        let ty = constant.ty(self.context);
+        let operation = match constant {
+            Constant::Int(value) => yz::constant_int(self.context, ty, value, loc).into(),
+            Constant::Float(value) => yz::constant_float(self.context, ty, value, loc).into(),
+            Constant::Bool(value) => yz::constant_bool(self.context, ty, value, loc).into(),
+            Constant::Str(value) => yz::constant_str(self.context, ty, value, loc).into(),
         };
 
         block.append_operation(operation).first_result()
@@ -155,7 +165,7 @@ impl<'c> AstToYzl<'c, '_> {
             );
         };
 
-        let Some(field) = self.read_ident(access.field()) else {
+        let Some((field, used)) = self.read_ident_with_range(access.field()) else {
             return self.hole_and_assert(
                 block,
                 access,
@@ -168,10 +178,6 @@ impl<'c> AstToYzl<'c, '_> {
             qualifier: Some(base),
             name: field,
         };
-        let used = access.field().map_or_else(
-            || access.syntax().text_range(),
-            |field| field.syntax().text_range(),
-        );
         self.convert_reference(block, locals, access, used, reference, loc)
     }
 
@@ -381,15 +387,15 @@ impl<'c> AstToYzl<'c, '_> {
             .map(|arg| self.convert_expr(block, locals, &arg))
             .collect();
 
-        let provided_arity = operands.len();
-        let Some(callable) = self.symbols.callable(callee, provided_arity) else {
+        let given = operands.len();
+        let Some(callable) = self.symbols.callable(callee, given) else {
             // A call that takes the wrong number of arguments still names the
             // function, as it does while the arguments are being typed.
             if let Some(target) = self.symbols.target_of(callee) {
                 self.record(callee_range, callee, target);
             }
             let message = if let Some(arities) = self.symbols.arities(callee) {
-                arity_mismatch(callee, &arities, provided_arity)
+                arity_mismatch(callee, &arities, given)
             } else {
                 match self.symbols.kind(callee) {
                     Some(BindingKind::Pending) => {
@@ -439,7 +445,9 @@ impl<'c> AstToYzl<'c, '_> {
             None => None,
         };
 
-        let (Some((base, base_range)), Some(name)) = (base, self.read_ident(access.field())) else {
+        let (Some((base, base_range)), Some((name, used))) =
+            (base, self.read_ident_with_range(access.field()))
+        else {
             return self.hole_and_assert(
                 block,
                 call,
@@ -465,7 +473,7 @@ impl<'c> AstToYzl<'c, '_> {
             .map(|arg| self.convert_expr(block, locals, &arg))
             .collect();
 
-        let Some((at, binding)) = self.resolve_export(call, path, name) else {
+        let Some((at, kind)) = self.resolve_export(call, path, name) else {
             return self.emit_hole(
                 block,
                 call.syntax().text_range(),
@@ -475,14 +483,12 @@ impl<'c> AstToYzl<'c, '_> {
 
         let given = operands.len();
         let Some(callable) = self.symbols.callable_in(at, given) else {
-            if let Some(field) = access.field()
-                && let Some(target) = self.symbols.target_in(at)
-            {
-                self.record(field.syntax().text_range(), name, target);
+            if let Some(target) = self.symbols.target_in(at) {
+                self.record(used, name, target);
             }
             let message = match self.symbols.arities_in(at) {
                 Some(arities) => arity_mismatch(name, &arities, given),
-                None => format!("`{name}` is a {}, not a function", binding.kind),
+                None => format!("`{name}` is a {kind}, not a function"),
             };
             return self.hole_and_report(
                 block,
@@ -492,9 +498,7 @@ impl<'c> AstToYzl<'c, '_> {
             );
         };
 
-        if let Some(field) = access.field() {
-            self.record(field.syntax().text_range(), name, callable.target);
-        }
+        self.record(used, name, callable.target);
         self.emit_call(block, callable, &operands, loc)
     }
 
@@ -519,77 +523,6 @@ impl<'c> AstToYzl<'c, '_> {
                     self.context,
                     UnresolvedType::new(self.context).into(),
                     &values,
-                    loc,
-                )
-                .into(),
-            )
-            .first_result()
-    }
-
-    /// The values of a list whose elements are all literals of one kind,
-    /// with the kind's type. Any other list is lowered element by element,
-    /// so inference reports a mix of kinds as it reports any other.
-    fn read_constant_list(&self, list: &ast::ListExpr) -> Option<(Type<'c>, Vec<Attribute<'c>>)> {
-        let mut element: Option<Type<'c>> = None;
-        let mut values = Vec::new();
-        for expr in list.elements() {
-            let ast::Expr::Literal(literal) = expr else {
-                return None;
-            };
-
-            let (ty, value): (Type<'c>, Attribute<'c>) = match &literal {
-                ast::Literal::IntLiteral(int) => (
-                    Int64Type::new(self.context).into(),
-                    IntegerAttribute::from_i64(
-                        self.context,
-                        int.value().and_then(|value| i64::try_from(value).ok())?,
-                    )
-                    .into(),
-                ),
-                ast::Literal::FloatLiteral(float) => (
-                    Float64Type::new(self.context).into(),
-                    FloatAttribute::new(
-                        self.context,
-                        Type::float64(self.context),
-                        float.value().unwrap_or_default(),
-                    )
-                    .into(),
-                ),
-                ast::Literal::BoolLiteral(boolean) => (
-                    BoolType::new(self.context).into(),
-                    BoolAttribute::new(self.context, boolean.value().unwrap_or_default()).into(),
-                ),
-                ast::Literal::StringLiteral(string) => (
-                    StrType::new(self.context).into(),
-                    StringAttribute::new(self.context, &string.to_value().unwrap_or_default())
-                        .into(),
-                ),
-            };
-
-            if element.is_some_and(|element| element != ty) {
-                return None;
-            }
-
-            element = Some(ty);
-            values.push(value);
-        }
-
-        Some((element?, values))
-    }
-
-    fn emit_constant_list<'a>(
-        &self,
-        block: BlockRef<'c, 'a>,
-        element: Type<'c>,
-        values: &[Attribute<'c>],
-        loc: Location<'c>,
-    ) -> Value<'c, 'a> {
-        block
-            .append_operation(
-                yz::constant_list(
-                    self.context,
-                    ListType::new(self.context, element).into(),
-                    ArrayAttribute::new(self.context, values),
                     loc,
                 )
                 .into(),
@@ -646,7 +579,7 @@ impl<'c> AstToYzl<'c, '_> {
                 );
                 return block.append_operation(load.into()).first_result();
             }
-            Lookup::Let(symbol, target) => {
+            Lookup::Let { symbol, target } => {
                 self.record(used, name, target);
                 return self.emit_call(block, Callable::constant(symbol, target), &[], loc);
             }
@@ -666,8 +599,7 @@ impl<'c> AstToYzl<'c, '_> {
                 )
             }
             Lookup::NotAValue(what) => {
-                // Still the name of a declaration, as a function is before
-                // its call is typed.
+                // The name still names a declaration. Record it for the editor.
                 if let Some(path) = self.symbols.module_of(name) {
                     self.record_module(used, name, path);
                 } else if let Some(target) = self.symbols.target_of(name) {
@@ -685,6 +617,74 @@ impl<'c> AstToYzl<'c, '_> {
             node.syntax().text_range(),
             UnresolvedType::new(self.context).into(),
         )
+    }
+
+    /// The values of a list whose elements are all literals of one kind,
+    /// with the kind's type. Any other list is lowered element by element,
+    /// so inference reports a mix of kinds as it reports any other.
+    fn read_constant_list(&self, list: &ast::ListExpr) -> Option<(Type<'c>, Vec<Attribute<'c>>)> {
+        let mut element: Option<Type<'c>> = None;
+        let mut values = Vec::new();
+        for expr in list.elements() {
+            let ast::Expr::Literal(literal) = expr else {
+                return None;
+            };
+
+            let constant = self.read_constant(&literal)?;
+            let ty = constant.ty(self.context);
+            if element.is_some_and(|element| element != ty) {
+                return None;
+            }
+
+            element = Some(ty);
+            values.push(constant.into());
+        }
+
+        Some((element?, values))
+    }
+
+    /// The value a literal writes. `None` for an integer that `int64` cannot
+    /// hold.
+    fn read_constant(&self, literal: &ast::Literal) -> Option<Constant<'c>> {
+        Some(match literal {
+            ast::Literal::IntLiteral(int) => {
+                let value = i64::try_from(int.value()?).ok()?;
+                Constant::Int(IntegerAttribute::from_i64(self.context, value))
+            }
+            ast::Literal::FloatLiteral(float) => Constant::Float(FloatAttribute::new(
+                self.context,
+                Type::float64(self.context),
+                float.value().unwrap_or_default(),
+            )),
+            ast::Literal::BoolLiteral(boolean) => Constant::Bool(BoolAttribute::new(
+                self.context,
+                boolean.value().unwrap_or_default(),
+            )),
+            ast::Literal::StringLiteral(string) => Constant::Str(StringAttribute::new(
+                self.context,
+                &string.to_value().unwrap_or_default(),
+            )),
+        })
+    }
+
+    fn emit_constant_list<'a>(
+        &self,
+        block: BlockRef<'c, 'a>,
+        element: Type<'c>,
+        values: &[Attribute<'c>],
+        loc: Location<'c>,
+    ) -> Value<'c, 'a> {
+        block
+            .append_operation(
+                yz::constant_list(
+                    self.context,
+                    ListType::new(self.context, element).into(),
+                    ArrayAttribute::new(self.context, values),
+                    loc,
+                )
+                .into(),
+            )
+            .first_result()
     }
 
     fn emit_call<'a>(
@@ -711,7 +711,7 @@ impl<'c> AstToYzl<'c, '_> {
 
 /// The message for a call to a function none of whose overloads takes
 /// `given` arguments.
-fn arity_mismatch(name: &str, arities: &[usize], provided_arity: usize) -> String {
+fn arity_mismatch(name: &str, arities: &[usize], given: usize) -> String {
     let expected = match arities {
         [] => unreachable!("`{name}` has an overload wherever its name is visible"),
         [only] => only.to_string(),
@@ -721,7 +721,7 @@ fn arity_mismatch(name: &str, arities: &[usize], provided_arity: usize) -> Strin
         }
     };
 
-    format!("`{name}` expects {expected} argument(s), found {provided_arity}")
+    format!("`{name}` expects {expected} argument(s), found {given}")
 }
 
 #[cfg(test)]

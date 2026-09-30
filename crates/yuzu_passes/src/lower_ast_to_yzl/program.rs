@@ -9,7 +9,7 @@ use yuzu_mlir::ir::operation::OperationExt;
 use yuzu_mlir::ods::yzl;
 use yuzu_mlir::types::QueryType;
 
-use crate::lower_ast_to_yzl::symbols::ModulePath;
+use crate::lower_ast_to_yzl::symbols::{ModulePath, SymbolTable};
 use crate::lower_ast_to_yzl::{AstToYzl, Locals};
 
 /// One file of the program; the entry file has no module.
@@ -57,6 +57,14 @@ impl File {
     pub fn set_lowering(&mut self, lowering: Lowering) {
         self.lowering = lowering;
     }
+
+    /// The module this file is, with its path interned in `symbols`.
+    pub(super) fn module_path<'c>(&self, symbols: &SymbolTable<'c>) -> ModulePath<'c> {
+        match self.module.as_deref() {
+            Some(path) => ModulePath::from_path(symbols.intern(path)),
+            None => ModulePath::entry(),
+        }
+    }
 }
 
 impl<'c> AstToYzl<'c, '_> {
@@ -79,12 +87,9 @@ impl<'c> AstToYzl<'c, '_> {
                 let mut locals = Locals::new();
                 for stmt in file.root.stmts() {
                     if file.lowering == Lowering::OnDemand
-                        && let Some(name) = this.read_ident(on_demand_name(&stmt))
+                        && let Some((name, arity)) = on_demand_name(&stmt)
+                        && let Some(name) = this.read_name(&name)
                     {
-                        let arity = match &stmt {
-                            ast::Stmt::FuncStmt(decl) => Some(decl.params().count()),
-                            _ => None,
-                        };
                         on_demand
                             .entry(this.symbols.module().declares(name))
                             .or_default()
@@ -148,7 +153,7 @@ impl<'c> AstToYzl<'c, '_> {
     /// file the bound library already holds is not bound again.
     pub(super) fn bind_names(&mut self, files: &[File]) {
         for file in files {
-            let module = self.file_module(file);
+            let module = file.module_path(&self.symbols);
             if self.symbols.is_library_module(module) {
                 continue;
             }
@@ -166,7 +171,7 @@ impl<'c> AstToYzl<'c, '_> {
     fn in_file<T>(&mut self, file: &File, walk: impl FnOnce(&mut Self) -> T) -> T {
         self.source_id = file.source_id;
         self.file = StringAttribute::new(self.context, self.sources.name(file.source_id));
-        let module = self.file_module(file);
+        let module = file.module_path(&self.symbols);
         self.symbols.enter_module(module);
 
         let result = walk(self);
@@ -177,24 +182,18 @@ impl<'c> AstToYzl<'c, '_> {
         );
         result
     }
-
-    fn file_module(&self, file: &File) -> ModulePath<'c> {
-        match file.module.as_deref() {
-            Some(module) => ModulePath::from_path(self.symbols.intern(module)),
-            None => ModulePath::entry(),
-        }
-    }
 }
 
-/// The name of a declaration that can wait until a reference names it. A
-/// `let` cannot: the hoist leaves it pending, and a lookup of a pending
-/// `let` is reported until its body is lowered.
-fn on_demand_name(stmt: &ast::Stmt) -> Option<ast::Ident> {
+/// The name of a declaration that can wait until a reference names it, and
+/// its parameter count when it is a function. A `let` cannot wait: the hoist
+/// leaves it pending, and a lookup of a pending `let` is reported until its
+/// body is lowered.
+fn on_demand_name(stmt: &ast::Stmt) -> Option<(ast::Ident, Option<usize>)> {
     match stmt {
-        ast::Stmt::StructStmt(decl) => decl.name(),
-        ast::Stmt::TableStmt(decl) => decl.name(),
-        ast::Stmt::FuncStmt(decl) => decl.name(),
-        ast::Stmt::TraitStmt(decl) => decl.name(),
+        ast::Stmt::StructStmt(decl) => Some((decl.name()?, None)),
+        ast::Stmt::TableStmt(decl) => Some((decl.name()?, None)),
+        ast::Stmt::FuncStmt(decl) => Some((decl.name()?, Some(decl.params().count()))),
+        ast::Stmt::TraitStmt(decl) => Some((decl.name()?, None)),
         ast::Stmt::LetStmt(_)
         | ast::Stmt::ImplStmt(_)
         | ast::Stmt::ExprStmt(_)

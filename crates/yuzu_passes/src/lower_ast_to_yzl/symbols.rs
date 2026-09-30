@@ -8,7 +8,7 @@ use std::fmt;
 
 use melior::Context;
 use melior::ir::attribute::StringAttribute;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use text_size::TextRange;
 use yuzu_ast::ast::Visibility;
 use yuzu_diagnostics::Span;
@@ -411,6 +411,16 @@ pub(super) struct Target<'c> {
     pub(super) range: TextRange,
 }
 
+impl<'c> Target<'c> {
+    /// The whole declaration `binding` makes at `at`.
+    pub(super) fn of(at: Declared<'c>, binding: &Binding<'_>) -> Self {
+        Self {
+            at,
+            range: binding.text_range,
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(super) enum Lookup<'c> {
     Column {
@@ -421,7 +431,10 @@ pub(super) enum Lookup<'c> {
         slot: usize,
         declared: TextRange,
     },
-    Let(&'c str, Target<'c>),
+    Let {
+        symbol: &'c str,
+        target: Target<'c>,
+    },
     Ambiguous,
     NarrowedAway,
     NotAValue(DeclarationKind),
@@ -531,9 +544,9 @@ impl<'c> SymbolTable<'c> {
         }
     }
 
-    /// A name as the context holds it. This is the one place the pass
-    /// interns: a name read from the syntax, a module path, and a symbol
-    /// the module qualifies all come through here.
+    /// A name as the context holds it. This and [`Self::intern_fmt`] are
+    /// the only places the pass interns: a name read from the syntax, a
+    /// module path, and a symbol the module qualifies all come through them.
     pub(super) fn intern(&self, text: &str) -> &'c str {
         StringAttribute::new(self.context, text).value()
     }
@@ -579,19 +592,10 @@ impl<'c> SymbolTable<'c> {
         self.overload_symbol(self.symbol(at), arity, is_overloaded)
     }
 
-    /// The symbol a reference names, recorded as a use.
-    fn refer(&mut self, at: Declared<'c>) -> &'c str {
-        self.used.push(Use { at, arity: None });
-        self.symbol(at)
-    }
-
-    /// The symbol a call names, recorded as a use of the overload that takes
-    /// `arity` arguments.
-    fn refer_call(&mut self, at: Declared<'c>, arity: usize) -> &'c str {
-        self.used.push(Use {
-            at,
-            arity: Some(arity),
-        });
+    /// The symbol a reference names, recorded as a use. A call gives the
+    /// `arity` of the overload it uses; any other reference uses them all.
+    fn refer(&mut self, at: Declared<'c>, arity: Option<usize>) -> &'c str {
+        self.used.push(Use { at, arity });
         self.symbol(at)
     }
 
@@ -774,29 +778,26 @@ impl<'c> SymbolTable<'c> {
     }
 
     pub(super) fn struct_symbol(&mut self, name: &str) -> Option<(&'c str, Target<'c>)> {
-        let (at, binding) = self.find(name)?;
-        if !matches!(binding.kind, BindingKind::Struct { .. }) {
-            return None;
-        }
-
-        let target = Target {
-            at,
-            range: binding.text_range,
-        };
-        Some((self.refer(at), target))
+        self.symbol_of_kind(name, DeclarationKind::Struct)
     }
 
     pub(super) fn trait_symbol(&mut self, name: &str) -> Option<(&'c str, Target<'c>)> {
+        self.symbol_of_kind(name, DeclarationKind::Trait)
+    }
+
+    /// The symbol `name` names, recorded as a use, when it declares a `kind`.
+    fn symbol_of_kind(
+        &mut self,
+        name: &str,
+        kind: DeclarationKind,
+    ) -> Option<(&'c str, Target<'c>)> {
         let (at, binding) = self.find(name)?;
-        if !matches!(binding.kind, BindingKind::Trait { .. }) {
+        if binding.kind.declaration_kind() != kind {
             return None;
         }
 
-        let target = Target {
-            at,
-            range: binding.text_range,
-        };
-        Some((self.refer(at), target))
+        let target = Target::of(at, binding);
+        Some((self.refer(at, None), target))
     }
 
     pub(super) fn module_of(&self, name: &str) -> Option<&'c str> {
@@ -827,11 +828,8 @@ impl<'c> SymbolTable<'c> {
             row.qualify(alias);
         }
 
-        let target = Target {
-            at,
-            range: binding.text_range,
-        };
-        Some((self.refer(at), row, target))
+        let target = Target::of(at, binding);
+        Some((self.refer(at, None), row, target))
     }
 
     /// What a call names with `given` arguments: a `let`, or the overload
@@ -839,11 +837,8 @@ impl<'c> SymbolTable<'c> {
     pub(super) fn callable(&mut self, name: &str, given: usize) -> Option<Callable<'c>> {
         let (at, binding) = self.find(name)?;
         if matches!(binding.kind, BindingKind::Let) {
-            let target = Target {
-                at,
-                range: binding.text_range,
-            };
-            return Some(Callable::constant(self.refer(at), target));
+            let target = Target::of(at, binding);
+            return Some(Callable::constant(self.refer(at, None), target));
         }
 
         self.callable_in(at, given)
@@ -867,7 +862,7 @@ impl<'c> SymbolTable<'c> {
             at,
             range: overload.text_range,
         };
-        let symbol = self.refer_call(at, given);
+        let symbol = self.refer(at, Some(given));
         Some(Callable {
             symbol: self.overload_symbol(symbol, given, is_overloaded),
             source: overload.source,
@@ -891,15 +886,22 @@ impl<'c> SymbolTable<'c> {
                 .flat_map(|declared| declared.iter())
         };
         let mut visible: Vec<Visible<'c>> = Vec::new();
+        let mut seen: FxHashSet<&'c str> = FxHashSet::default();
         let mut add = |name: &'c str, binding: &Binding<'c>, is_own: bool| {
             let declared = match &binding.kind {
                 BindingKind::Import { from } => match self.find_in(*from) {
                     Some((_, origin)) => &origin.kind,
                     None => return,
                 },
-                kind => kind,
+                kind @ (BindingKind::Struct { .. }
+                | BindingKind::Relation { .. }
+                | BindingKind::Func { .. }
+                | BindingKind::Trait { .. }
+                | BindingKind::Let
+                | BindingKind::Module { .. }
+                | BindingKind::Pending) => kind,
             };
-            if visible.iter().any(|seen| seen.name == name) {
+            if !seen.insert(name) {
                 return;
             }
             visible.push(Visible {
@@ -908,7 +910,13 @@ impl<'c> SymbolTable<'c> {
                 is_exported: is_own && binding.visibility == Visibility::Public,
                 module: match declared {
                     BindingKind::Module { path } => Some(*path),
-                    _ => None,
+                    BindingKind::Struct { .. }
+                    | BindingKind::Relation { .. }
+                    | BindingKind::Func { .. }
+                    | BindingKind::Trait { .. }
+                    | BindingKind::Let
+                    | BindingKind::Pending
+                    | BindingKind::Import { .. } => None,
                 },
             });
         };
@@ -1124,11 +1132,11 @@ impl<'c> SymbolTable<'c> {
             | BindingKind::Import { .. }) => return Lookup::NotAValue(kind.declaration_kind()),
         }
 
-        let target = Target {
-            at,
-            range: binding.text_range,
-        };
-        Lookup::Let(self.refer(at), target)
+        let target = Target::of(at, binding);
+        Lookup::Let {
+            symbol: self.refer(at, None),
+            target,
+        }
     }
 
     pub(super) fn column(&self, reference: Reference<'_>) -> ColumnLookup {
@@ -1369,7 +1377,10 @@ mod tests {
         bind_let(&mut symbols, "cap");
         bind_let(&mut symbols, "id");
 
-        assert!(matches!(symbols.lookup(bare("cap")), Lookup::Let("cap", _)));
+        assert!(matches!(
+            symbols.lookup(bare("cap")),
+            Lookup::Let { symbol: "cap", .. }
+        ));
         symbols.open_block();
         symbols.bind_local("cap", 0, TextRange::default());
         assert_eq!(
@@ -1397,7 +1408,10 @@ mod tests {
             }
         );
         symbols.close();
-        assert!(matches!(symbols.lookup(bare("cap")), Lookup::Let("cap", _)));
+        assert!(matches!(
+            symbols.lookup(bare("cap")),
+            Lookup::Let { symbol: "cap", .. }
+        ));
         open_relation(&mut symbols, "t");
         assert_eq!(
             symbols.lookup(bare("id")),
@@ -1427,7 +1441,10 @@ mod tests {
         );
         assert_eq!(symbols.lookup(bare("x")), Lookup::Unknown);
         assert_eq!(symbols.lookup(bare("local")), Lookup::Unknown);
-        assert!(matches!(symbols.lookup(bare("cap")), Lookup::Let("cap", _)));
+        assert!(matches!(
+            symbols.lookup(bare("cap")),
+            Lookup::Let { symbol: "cap", .. }
+        ));
     }
 
     #[test]

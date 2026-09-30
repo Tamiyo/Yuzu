@@ -12,7 +12,9 @@ use yuzu_mlir::ir::location::LocationExt;
 use yuzu_mlir::ir::operation::OperationExt;
 use yuzu_mlir::ods::yzl;
 
-use crate::lower_ast_to_yzl::symbols::{DeclarationKind, ModulePath, Row, SymbolTable, Target};
+use crate::lower_ast_to_yzl::symbols::{
+    DeclarationKind, Field, ModulePath, Row, SymbolTable, Target,
+};
 
 mod expr;
 mod program;
@@ -31,6 +33,7 @@ pub struct NameUse<'a> {
     /// The name as written. An alias spells it differently from the
     /// declaration it names.
     pub spelling: &'a str,
+    /// What the name names.
     pub target: NameTarget<'a>,
 }
 
@@ -55,10 +58,13 @@ pub enum NameKind {
     Module,
 }
 
-/// Told each name the lowering resolves, so an editor sees the names the
-/// IR does not keep: an import, an alias, a trait in a bound. It is also
-/// told the names in scope, for completion.
+/// A listener that the lowering tells each name it resolves.
+///
+/// An editor sees through it the names the IR does not keep: an import, an
+/// alias, a trait in a bound. The lowering also tells it the names in scope,
+/// for completion.
 pub trait NameListener {
+    /// A name the program wrote, and what it names.
     fn on_name(&mut self, name: NameUse<'_>);
 
     /// The columns the expressions of the stage at `stage` can read.
@@ -114,7 +120,8 @@ pub fn lower_ast_to_yzl<'c>(
     lower_ast_to_yzl_with_listener(context, sources, files, diagnostics, library, &mut Silent)
 }
 
-/// [`lower_ast_to_yzl`], telling `listener` each name it resolves.
+/// [`lower_ast_to_yzl`], telling `listener` each name it resolves, the
+/// columns each stage can read and the names each file can use.
 ///
 /// # Panics
 ///
@@ -138,7 +145,7 @@ pub fn lower_ast_to_yzl_with_listener<'c>(
         listener,
     );
     let module = lowerer.lower(files, entry);
-    lowerer.report_files(files);
+    lowerer.record_files(files);
     module
 }
 
@@ -216,13 +223,7 @@ impl<'c, 'd> AstToYzl<'c, 'd> {
         let symbols = SymbolTable::new(context, library);
         let module_files = files
             .iter()
-            .map(|file| {
-                let module = match file.module.as_deref() {
-                    Some(path) => ModulePath::from_path(symbols.intern(path)),
-                    None => ModulePath::entry(),
-                };
-                (module, file.source_id)
-            })
+            .map(|file| (file.module_path(&symbols), file.source_id))
             .collect();
         Self {
             context,
@@ -260,12 +261,9 @@ impl<'c> AstToYzl<'c, '_> {
     }
 
     /// Tells the listener the names each file's top level can use.
-    fn report_files(&mut self, files: &[File]) {
+    fn record_files(&mut self, files: &[File]) {
         for file in files {
-            let module = match file.module.as_deref() {
-                Some(path) => ModulePath::from_path(self.symbols.intern(path)),
-                None => ModulePath::entry(),
-            };
+            let module = file.module_path(&self.symbols);
             let visible = self.symbols.visible_in(module);
             let module_files = &self.module_files;
             let mut names = visible.iter().filter_map(|visible| {
@@ -315,14 +313,7 @@ impl<'c> AstToYzl<'c, '_> {
 
     /// Tells the listener that the name at `used` names a local of this file.
     fn record_local(&mut self, used: TextRange, name: &str, declared: TextRange) {
-        self.listener.on_name(NameUse {
-            used: self.span(used),
-            spelling: name,
-            target: NameTarget::Declaration {
-                at: self.span(declared),
-                name,
-            },
-        });
+        self.record_declared(used, name, self.span(declared));
     }
 
     /// Tells the listener that the name at `used` names a module.
@@ -477,7 +468,26 @@ impl<'c> AstToYzl<'c, '_> {
 
     /// A name the source wrote, interned for the rest of the pass.
     fn read_ident(&self, ident: Option<ast::Ident>) -> Option<&'c str> {
-        let token = ident?.token()?;
+        self.read_name(&ident?)
+    }
+
+    /// A name the source wrote, and where it wrote it.
+    fn read_ident_with_range(&self, ident: Option<ast::Ident>) -> Option<(&'c str, TextRange)> {
+        let ident = ident?;
+        Some((self.read_name(&ident)?, ident.syntax().text_range()))
+    }
+
+    /// A field that the item at `range` declares under `name`.
+    fn field_at(&self, name: &'c str, range: TextRange) -> Field<'c> {
+        Field {
+            name,
+            declared: Some(self.span(range)),
+        }
+    }
+
+    /// [`Self::read_ident`] for a name already in hand.
+    fn read_name(&self, ident: &ast::Ident) -> Option<&'c str> {
+        let token = ident.token()?;
         Some(self.symbols.intern(token.text()))
     }
 
