@@ -36,6 +36,7 @@ pub fn infer_types<'c>(context: &'c Context, module: &mut Module<'c>) {
         pending: Vec::new(),
         caller: None,
         instances: FxHashMap::default(),
+        reported_unresolved: false,
     };
 
     inferrer.infer_block(module.body());
@@ -158,6 +159,8 @@ struct TypeInferrer<'c, 'd> {
     caller: Option<&'c str>,
     /// The type variables each generic call minted, in declaration order.
     instances: FxHashMap<ValueId, Instance<'c>>,
+    /// Whether stamping reported a value it could not type.
+    reported_unresolved: bool,
 }
 
 impl<'c> TypeInferrer<'c, '_> {
@@ -736,8 +739,14 @@ impl<'c> TypeInferrer<'c, '_> {
 
             if matches!(op.as_yzl(), Some(YzlOp::Local(_))) {
                 let term = self.place_term(result);
-                if let Some(element) = self.resolve(term) {
-                    result.set_type(RefType::new(self.context, element).into());
+                match self.resolve(term) {
+                    Some(element) => result.set_type(RefType::new(self.context, element).into()),
+                    // The place takes its initializer's type, and the
+                    // initializer comes first, so it was reported there.
+                    None => debug_assert!(
+                        self.reported_unresolved,
+                        "a place is left untyped only after its initializer is reported"
+                    ),
                 }
                 continue;
             }
@@ -747,10 +756,13 @@ impl<'c> TypeInferrer<'c, '_> {
                 Some(ty) => result.set_type(ty),
                 // A hole was already reported by the parse.
                 None if matches!(op.as_yzl(), Some(YzlOp::Missing(_))) => {}
-                None => emit_error(
-                    op.location(),
-                    "the type of this expression could not be inferred",
-                ),
+                None => {
+                    self.reported_unresolved = true;
+                    emit_error(
+                        op.location(),
+                        "the type of this expression could not be inferred",
+                    );
+                }
             }
 
             self.stamp_type_args(&mut op, result.id());
@@ -1417,6 +1429,64 @@ from t
                 5 | let xs = []
                   |          ^^
             "]],
+        );
+    }
+
+    #[test]
+    fn a_local_nothing_pinned_down_is_reported() {
+        check(
+            r"
+struct Row { a: int64 }
+table t = Row
+
+def f() -> int64 {
+    let xs = []
+    return 1
+}
+
+from t
+|> select f() as v
+",
+            &expect![[r"
+                error: the type of this expression could not be inferred
+                 --> test.yz:6:14
+                  |
+                6 |     let xs = []
+                  |              ^^
+            "]],
+        );
+    }
+
+    #[test]
+    fn an_empty_list_takes_its_annotation() {
+        check(
+            r"
+struct Row { a: int64 }
+table t = Row
+
+let xs: List[int64] = []
+
+from t
+|> where a in xs
+",
+            &expect![[r#"
+                module {
+                  yzl.struct @Row ["a"] : [!yz.int64] {sym_visibility = "private"}
+                  yzl.table @t of @Row {sym_visibility = "private"}
+                  yzl.const @xs : !yz.list<!yz.int64> {
+                    %2 = yzl.list[] : () -> !yz.list<!yz.int64>
+                    yzl.yield %2 : !yz.list<!yz.int64>
+                  } {sym_visibility = "private"}
+                  %0 = yzl.from @t
+                  %1 = yzl.where %0 {
+                  ^bb0(%arg0: !yz.int64):
+                    %2 = yzl.call @xs() : () -> !yz.list<!yz.int64> {callee_source = "const"}
+                    %3 = yz.in %arg0, %2 : !yz.int64, !yz.list<!yz.int64> -> !yz.bool
+                    yzl.yield %3 : !yz.bool
+                  }
+                  yzl.output %1
+                }
+            "#]],
         );
     }
 
