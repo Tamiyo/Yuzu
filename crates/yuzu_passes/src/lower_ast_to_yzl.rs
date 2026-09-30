@@ -22,7 +22,7 @@ mod rel;
 mod stmt;
 mod symbols;
 
-pub use program::{File, Lowering};
+pub use program::{DeclarationLowering, File};
 pub use symbols::{BoundLibrary, PRELUDE};
 
 /// A name the program wrote, and what it names.
@@ -202,6 +202,14 @@ struct AstToYzl<'c, 'd> {
 /// the symbol table because each borrows the block being built.
 type Locals<'c, 'a> = Vec<Value<'c, 'a>>;
 
+/// A name as the program wrote it: its interned text, and where the file
+/// being lowered writes it.
+#[derive(Clone, Copy, Debug)]
+struct Name<'c> {
+    text: &'c str,
+    range: TextRange,
+}
+
 /// What a declaration is, as a completion shows it. The scope follows an
 /// import to what it names, so an import has no kind.
 fn name_kind(kind: DeclarationKind) -> Option<NameKind> {
@@ -288,30 +296,23 @@ impl<'c> AstToYzl<'c, '_> {
         }
     }
 
-    /// Tells the listener that the name at `used` in this file names a
-    /// declaration, through the file's own import of it when there is one.
-    fn record(&mut self, used: TextRange, spelling: &str, target: Target<'c>) {
-        let alias = self.symbols.import_alias(spelling);
-        self.record_through(used, spelling, target, alias);
+    /// Tells the listener that `name` names a declaration, through the
+    /// file's own import of it when there is one.
+    fn record(&mut self, name: Name<'_>, target: Target<'c>) {
+        let alias = self.symbols.import_alias(name.text);
+        self.record_through(name, target, alias);
     }
 
-    /// Tells the listener that the name at `used` in this file names a
-    /// declaration, through the import at `alias` that renamed it. A
-    /// declaration in a module that this run did not read has no file. A
-    /// bound library is an example.
-    fn record_through(
-        &mut self,
-        used: TextRange,
-        spelling: &str,
-        target: Target<'c>,
-        alias: Option<TextRange>,
-    ) {
+    /// Tells the listener that `name` names a declaration, through the
+    /// import at `alias` that renamed it. A declaration in a module that
+    /// this run did not read has no file. A bound library is an example.
+    fn record_through(&mut self, name: Name<'_>, target: Target<'c>, alias: Option<TextRange>) {
         let Some(&source_id) = self.module_files.get(&target.at.module) else {
             return;
         };
         self.listener.on_name(NameUse {
-            used: self.span(used),
-            spelling,
+            used: self.span(name.range),
+            spelling: name.text,
             alias: alias.map(|alias| self.span(alias)),
             target: NameTarget::Declaration {
                 at: Span {
@@ -323,20 +324,23 @@ impl<'c> AstToYzl<'c, '_> {
         });
     }
 
-    /// Tells the listener that the name at `used` names what `declared`
-    /// declares, under the same name: a column.
-    fn record_declared(&mut self, used: TextRange, name: &str, declared: Span) {
+    /// Tells the listener that `name` names what `declared` declares,
+    /// under the same name: a column.
+    fn record_declared(&mut self, name: Name<'_>, declared: Span) {
         self.listener.on_name(NameUse {
-            used: self.span(used),
-            spelling: name,
-            target: NameTarget::Declaration { at: declared, name },
+            used: self.span(name.range),
+            spelling: name.text,
+            target: NameTarget::Declaration {
+                at: declared,
+                name: name.text,
+            },
             alias: None,
         });
     }
 
-    /// Tells the listener that the name at `used` names a local of this file.
-    fn record_local(&mut self, used: TextRange, name: &str, declared: TextRange) {
-        self.record_declared(used, name, self.span(declared));
+    /// Tells the listener that `name` names a local of this file.
+    fn record_local(&mut self, name: Name<'_>, declared: TextRange) {
+        self.record_declared(name, self.span(declared));
     }
 
     /// Tells the listener that this file declares `name` at `declared`.
@@ -344,13 +348,13 @@ impl<'c> AstToYzl<'c, '_> {
         self.listener.on_declaration(self.span(declared), name);
     }
 
-    fn record_module(&mut self, used: TextRange, spelling: &str, path: &'c str) {
+    fn record_module(&mut self, name: Name<'_>, path: &'c str) {
         let Some(&source_id) = self.module_files.get(&ModulePath::from_path(path)) else {
             return;
         };
         self.listener.on_name(NameUse {
-            used: self.span(used),
-            spelling,
+            used: self.span(name.range),
+            spelling: name.text,
             target: NameTarget::Module {
                 file: source_id,
                 path,
@@ -494,15 +498,15 @@ impl<'c> AstToYzl<'c, '_> {
         (at.line, at.col)
     }
 
-    /// A name the source wrote, interned for the rest of the pass.
+    /// The text of a name the source wrote, interned for the rest of the
+    /// pass.
     fn read_ident(&self, ident: Option<ast::Ident>) -> Option<&'c str> {
-        self.read_name(&ident?)
+        Some(self.name_of(&ident?)?.text)
     }
 
-    /// A name the source wrote, and where it wrote it.
-    fn read_ident_with_range(&self, ident: Option<ast::Ident>) -> Option<(&'c str, TextRange)> {
-        let ident = ident?;
-        Some((self.read_name(&ident)?, ident.syntax().text_range()))
+    /// A name the source wrote, with where it wrote it.
+    fn read_name(&self, ident: Option<ast::Ident>) -> Option<Name<'c>> {
+        self.name_of(&ident?)
     }
 
     /// A field that the item at `range` declares under `name`.
@@ -514,10 +518,13 @@ impl<'c> AstToYzl<'c, '_> {
         }
     }
 
-    /// [`Self::read_ident`] for a name already in hand.
-    fn read_name(&self, ident: &ast::Ident) -> Option<&'c str> {
+    /// [`Self::read_name`] for a name already in hand.
+    fn name_of(&self, ident: &ast::Ident) -> Option<Name<'c>> {
         let token = ident.token()?;
-        Some(self.symbols.intern(token.text()))
+        Some(Name {
+            text: self.symbols.intern(token.text()),
+            range: ident.syntax().text_range(),
+        })
     }
 
     fn name(&self) -> &str {

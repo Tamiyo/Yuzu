@@ -14,7 +14,7 @@ use std::sync::Arc;
 use yuzu_ast::ast;
 use yuzu_ast::ast::AstNode;
 use yuzu_diagnostics::{DiagnosticBuilder, DiagnosticsEngine, SourceId, SourceMap, Span};
-use yuzu_passes::{File, Lowering};
+use yuzu_passes::{DeclarationLowering, File};
 use yuzu_syntax::{GreenNode, SyntaxNode};
 
 use crate::stdlib::{self, Engine};
@@ -314,7 +314,7 @@ pub(crate) fn load_program(
             .iter_mut()
             .find(|file| file.module() == Some(path))
     {
-        file.set_lowering(Lowering::Eager);
+        file.set_decl_lowering(DeclarationLowering::Eager);
     }
     Loaded {
         files: loader.files,
@@ -486,7 +486,7 @@ impl Loader<'_> {
         self.loaded.insert(path.to_string());
         let mut file = File::new(source_id, Some(path.to_string()), root);
         if stdlib::is_library_path(path) {
-            file.set_lowering(Lowering::OnDemand);
+            file.set_decl_lowering(DeclarationLowering::OnDemand);
         }
 
         self.files.push(file);

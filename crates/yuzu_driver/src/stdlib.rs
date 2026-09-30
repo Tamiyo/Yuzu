@@ -377,7 +377,7 @@ mod tests {
 
     use melior::ir::operation::OperationLike;
     use yuzu_diagnostics::{DiagnosticsEngine, SourceMap};
-    use yuzu_passes::Lowering;
+    use yuzu_passes::DeclarationLowering;
 
     use super::{Engine, MODULES, install, resolve_under, trees};
     use crate::modules::{self, MapResolver, Origin};
@@ -441,7 +441,7 @@ mod tests {
         )
         .expect("the library loads");
         for file in &mut files {
-            file.set_lowering(Lowering::Eager);
+            file.set_decl_lowering(DeclarationLowering::Eager);
         }
 
         let context = yuzu_mlir::context();

@@ -18,17 +18,15 @@ pub struct File {
     pub(crate) source_id: SourceId,
     pub(crate) module: Option<String>,
     pub(crate) root: ast::Root,
-    pub(crate) lowering: Lowering,
+    pub(crate) decl_lowering: DeclarationLowering,
 }
 
-/// When a file's declarations are lowered.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Lowering {
-    /// All of them, so an error in one that nothing uses is still reported.
+pub enum DeclarationLowering {
+    /// Lower all declarations unconditionally.
     Eager,
-    /// Each function, struct, table and trait only when a reference names
-    /// it. The library is lowered this way: a program uses a few of its
-    /// functions, and a declaration no one names would only be removed again.
+
+    /// Lower declarations only when referenced.
     OnDemand,
 }
 
@@ -39,7 +37,7 @@ impl File {
             source_id,
             module,
             root,
-            lowering: Lowering::Eager,
+            decl_lowering: DeclarationLowering::Eager,
         }
     }
 
@@ -54,16 +52,16 @@ impl File {
         self.module.as_deref()
     }
 
-    pub fn set_lowering(&mut self, lowering: Lowering) {
-        self.lowering = lowering;
-    }
-
     /// The module this file is, with its path interned in `symbols`.
     pub(super) fn module_path<'c>(&self, symbols: &SymbolTable<'c>) -> ModulePath<'c> {
         match self.module.as_deref() {
             Some(path) => ModulePath::from_path(symbols.intern(path)),
             None => ModulePath::entry(),
         }
+    }
+
+    pub fn set_decl_lowering(&mut self, decl_lowering: DeclarationLowering) {
+        self.decl_lowering = decl_lowering;
     }
 }
 
@@ -79,6 +77,7 @@ impl<'c> AstToYzl<'c, '_> {
         self.bind_names(files);
 
         let body = module.body();
+
         // Each declaration waits under its name, with its parameter count when
         // it is a function, for a reference to name it.
         let mut on_demand: FxHashMap<_, Vec<_>> = FxHashMap::default();
@@ -86,9 +85,9 @@ impl<'c> AstToYzl<'c, '_> {
             self.in_file(file, |this| {
                 let mut locals = Locals::new();
                 for stmt in file.root.stmts() {
-                    if file.lowering == Lowering::OnDemand
+                    if file.decl_lowering == DeclarationLowering::OnDemand
                         && let Some((name, arity)) = on_demand_name(&stmt)
-                        && let Some(name) = this.read_name(&name)
+                        && let Some(name) = this.name_of(&name).map(|name| name.text)
                     {
                         on_demand
                             .entry(this.symbols.module().declares(name))

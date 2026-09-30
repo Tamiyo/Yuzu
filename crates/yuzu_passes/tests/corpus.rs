@@ -4,7 +4,7 @@ use melior::ir::operation::OperationLike;
 use yuzu_ast::ast;
 use yuzu_ast::ast::AstNode;
 use yuzu_diagnostics::{DiagnosticsEngine, SourceMap};
-use yuzu_passes::{File, Lowering, lower_ast_to_yzl};
+use yuzu_passes::{DeclarationLowering, File, lower_ast_to_yzl};
 
 const CORPUS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../python/tests");
 
@@ -30,7 +30,7 @@ fn prelude(sources: &mut SourceMap, diagnostics: &mut DiagnosticsEngine) -> File
     let root = ast::Root::cast(yuzu_parser::parse_text(text, diagnostics, source_id))
         .expect("a parse always yields a root");
     let mut file = File::new(source_id, Some(yuzu_passes::PRELUDE.to_string()), root);
-    file.set_lowering(Lowering::OnDemand);
+    file.set_decl_lowering(DeclarationLowering::OnDemand);
     file
 }
 

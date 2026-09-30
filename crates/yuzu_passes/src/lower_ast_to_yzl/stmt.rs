@@ -21,12 +21,9 @@ use crate::lower_ast_to_yzl::symbols::{
     Binding, BindingKind, DeclarationKind, Declared, Field, FunctionKind, Lookup, Method,
     ModulePath, Overload, Reference, Row,
 };
-use crate::lower_ast_to_yzl::{AstToYzl, Locals};
+use crate::lower_ast_to_yzl::{AstToYzl, Locals, Name};
 
-/// Where a `fn` is written, which decides the generics its surroundings
-/// supply, whether it needs a body, and the symbol it is built under. A
-/// method carries the methods of its trait, which say whether its name is
-/// overloaded.
+/// The site where a function is declared.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Site<'m, 'c> {
     AtModule,
@@ -115,10 +112,10 @@ impl<'c> AstToYzl<'c, '_> {
 
         // An imported struct is held under the module that declared it,
         // whatever an `as` renamed it to here.
-        let row = if let Some((struct_name, used)) = self.read_ident_with_range(decl.struct_name())
-        {
+        let row = if let Some(written) = self.read_name(decl.struct_name()) {
+            let struct_name = written.text;
             if let Some((symbol, target)) = self.symbols.struct_symbol(struct_name) {
-                self.record(used, struct_name, target);
+                self.record(written, target);
                 symbol
             } else {
                 debug_assert!(
@@ -194,7 +191,7 @@ impl<'c> AstToYzl<'c, '_> {
         if site != Site::AtModule && decl.visibility() == Visibility::Public {
             self.report(
                 decl,
-                "a method is as visible as its trait, so it takes no `pub`",
+                "trait methods cannot have visibility modifiers, they are always `pub`",
             );
         }
 
@@ -254,7 +251,7 @@ impl<'c> AstToYzl<'c, '_> {
         }
 
         // A function that declares no result returns unit.
-        let result = match decl.result() {
+        let return_ty = match decl.result() {
             Some(result) => self.read_type_annotation(result),
             None => UnitType::new(self.context).into(),
         };
@@ -285,20 +282,20 @@ impl<'c> AstToYzl<'c, '_> {
                         loc,
                     );
 
-                    this.bind_local(&mut locals, param.name, param.range, place);
+                    this.bind_local(param.name, &mut locals, param.range, place);
                 }
 
                 this.convert_block(entry, &mut locals, &block);
                 if !ends_in_return(entry) {
-                    this.check_final_return(decl, name, result);
-                    this.emit_final_return(entry, result, block.syntax().text_range());
+                    this.check_final_return(decl, name, return_ty);
+                    this.emit_final_return(entry, return_ty, block.syntax().text_range());
                 }
             });
         }
 
         let symbol = self.symbol_in(site, name, params.len());
         let param_types: Vec<Type<'c>> = params.iter().map(|param| param.ty).collect();
-        let signature = FunctionType::new(self.context, &param_types, &[result]);
+        let signature = FunctionType::new(self.context, &param_types, &[return_ty]);
         let mut builder = yzl::FnOperationBuilder::new(self.context, loc)
             .sym_name(StringAttribute::new(self.context, symbol))
             .params(ArrayAttribute::from_strings(
@@ -375,17 +372,18 @@ impl<'c> AstToYzl<'c, '_> {
             return;
         }
 
-        let Some((trait_name, trait_used)) =
-            self.read_ident_with_range(decl.trait_().and_then(|trait_ref| trait_ref.name()))
+        let Some(written_trait) =
+            self.read_name(decl.trait_().and_then(|trait_ref| trait_ref.name()))
         else {
             self.assert_syntax_error("`impl` is missing its trait");
             return;
         };
 
-        let Some((target, target_used)) = self.read_ident_with_range(decl.ty()) else {
+        let Some(written_target) = self.read_name(decl.ty()) else {
             self.assert_syntax_error("`impl` is missing its type name");
             return;
         };
+        let (trait_name, target) = (written_trait.text, written_target.text);
 
         // A method is overloaded when its trait overloads it, so the two
         // agree on its symbol.
@@ -404,7 +402,7 @@ impl<'c> AstToYzl<'c, '_> {
         };
 
         let trait_symbol = if let Some((symbol, declared)) = self.symbols.trait_symbol(trait_name) {
-            self.record(trait_used, trait_name, declared);
+            self.record(written_trait, declared);
             Some(symbol)
         } else {
             self.report(decl, &format!("unknown trait `{trait_name}`"));
@@ -412,7 +410,7 @@ impl<'c> AstToYzl<'c, '_> {
         };
 
         let target = if let Some((symbol, declared)) = self.symbols.struct_symbol(target) {
-            self.record(target_used, target, declared);
+            self.record(written_target, declared);
             symbol
         } else {
             if types::scalar(self.context, target).is_none() {
@@ -472,7 +470,7 @@ impl<'c> AstToYzl<'c, '_> {
             let kind = LocalKind::Let(decl.mutability());
             let value = self.convert_expr(block, locals, &expr);
             let place = self.emit_local(block, name, kind, element, value, loc);
-            self.bind_local(locals, name, decl.syntax().text_range(), place);
+            self.bind_local(name, locals, decl.syntax().text_range(), place);
             return;
         }
 
@@ -548,9 +546,7 @@ impl<'c> AstToYzl<'c, '_> {
         }
 
         let target = match assign.target() {
-            Some(ast::Expr::IdentExpr(ident)) => self
-                .read_ident(ident.name())
-                .map(|name| (name, ident.syntax().text_range())),
+            Some(ast::Expr::IdentExpr(ident)) => self.read_name(ident.name()),
             Some(target) => {
                 self.report(&target, "only a name can be assigned to");
                 return;
@@ -558,7 +554,7 @@ impl<'c> AstToYzl<'c, '_> {
             None => None,
         };
 
-        let Some((name, written)) = target else {
+        let Some(written) = target else {
             self.assert_syntax_error("assignment is missing its target");
             return;
         };
@@ -568,7 +564,7 @@ impl<'c> AstToYzl<'c, '_> {
             return;
         };
 
-        let Some(slot) = self.resolve_place(assign, name, written) else {
+        let Some(slot) = self.resolve_place(assign, written) else {
             return;
         };
 
@@ -799,8 +795,9 @@ impl<'c> AstToYzl<'c, '_> {
                     let Some(written) = import.path() else {
                         continue;
                     };
-                    let path = self.read_path(&written);
-                    self.record_module(written.syntax().text_range(), path, path);
+                    let written = self.read_path(&written);
+                    let path = written.text;
+                    self.record_module(written, path);
 
                     for item in import.items() {
                         self.bind_import(path, &item, import.visibility());
@@ -810,11 +807,12 @@ impl<'c> AstToYzl<'c, '_> {
                     let Some(written) = import.path() else {
                         continue;
                     };
-                    let path = self.read_path(&written);
-                    self.record_module(written.syntax().text_range(), path, path);
-                    let alias = self.read_ident_with_range(import.alias());
-                    if let Some((spelling, used)) = alias {
-                        self.record_module(used, spelling, path);
+                    let written = self.read_path(&written);
+                    let path = written.text;
+                    self.record_module(written, path);
+                    let alias = self.read_name(import.alias());
+                    if let Some(alias) = alias {
+                        self.record_module(alias, path);
                     }
 
                     let last = path
@@ -822,7 +820,7 @@ impl<'c> AstToYzl<'c, '_> {
                         .next()
                         .expect("a split yields at least one piece");
 
-                    let name = alias.map_or(last, |(spelling, _)| spelling);
+                    let name = alias.map_or(last, |alias| alias.text);
                     self.bind_or_report(
                         import,
                         name,
@@ -861,25 +859,26 @@ impl<'c> AstToYzl<'c, '_> {
     /// `visibility` is the import's own: a module passes on what it imports
     /// only when `pub` says so.
     fn bind_import(&mut self, path: &'c str, item: &ast::ImportItem, visibility: Visibility) {
-        let Some((name, used)) = self.read_ident_with_range(item.name()) else {
+        let Some(written) = self.read_name(item.name()) else {
             self.assert_syntax_error("import item is missing its name");
             return;
         };
+        let name = written.text;
 
         let Some((from, kind)) = self.resolve_export(item, path, name) else {
             return;
         };
 
-        let alias = self.read_ident_with_range(item.alias());
+        let alias = self.read_name(item.alias());
         if let Some(declared) = self.symbols.target_in(from) {
-            self.record_through(used, name, declared, None);
-            if let Some((spelling, used)) = alias {
+            self.record_through(written, declared, None);
+            if let Some(alias) = alias {
                 let item = item.syntax().text_range();
-                self.record_through(used, spelling, declared, Some(item));
+                self.record_through(alias, declared, Some(item));
             }
         }
 
-        let local = alias.map_or(name, |(spelling, _)| spelling);
+        let local = alias.map_or(name, |alias| alias.text);
 
         if self.symbols.binding(local).is_some() {
             self.check_duplicate(item, kind.name(), local);
@@ -978,8 +977,8 @@ impl<'c> AstToYzl<'c, '_> {
     /// Binds a name to a place the body has declared at `declared`.
     fn bind_local<'a>(
         &mut self,
-        locals: &mut Locals<'c, 'a>,
         name: &'c str,
+        locals: &mut Locals<'c, 'a>,
         declared: TextRange,
         place: Value<'c, 'a>,
     ) {
@@ -1035,15 +1034,11 @@ impl<'c> AstToYzl<'c, '_> {
 
     /// The slot of the place an assignment writes, when the name written at
     /// `written` is one.
-    fn resolve_place(
-        &mut self,
-        node: &impl AstNode,
-        name: &str,
-        written: TextRange,
-    ) -> Option<usize> {
+    fn resolve_place(&mut self, node: &impl AstNode, written: Name<'_>) -> Option<usize> {
+        let name = written.text;
         let message = match self.symbols.lookup(Reference::unqualified(name)) {
             Lookup::Local { slot, declared } => {
-                self.record_local(written, name, declared);
+                self.record_local(written, declared);
                 return Some(slot);
             }
             Lookup::Lost => return None,
@@ -1077,10 +1072,11 @@ impl<'c> AstToYzl<'c, '_> {
             }
 
             for trait_ref in bound.traits() {
-                let Some((name, used)) = self.read_ident_with_range(trait_ref.name()) else {
+                let Some(written) = self.read_name(trait_ref.name()) else {
                     self.assert_syntax_error("trait reference is missing its name");
                     continue;
                 };
+                let name = written.text;
 
                 // A bound names the trait's symbol, the one its `impl`s are
                 // recorded under: in a module the two are not spelled alike.
@@ -1088,7 +1084,7 @@ impl<'c> AstToYzl<'c, '_> {
                     self.report(&trait_ref, &format!("unknown trait `{name}`"));
                     continue;
                 };
-                self.record(used, name, declared);
+                self.record(written, declared);
 
                 subjects.push(subject);
                 traits.push(bound_trait);
@@ -1120,10 +1116,11 @@ impl<'c> AstToYzl<'c, '_> {
             }
         };
 
-        let Some((name, used)) = self.read_ident_with_range(named.name()) else {
+        let Some(written) = self.read_name(named.name()) else {
             self.assert_syntax_error("type is missing its name");
             return ErrorType::new(self.context).into();
         };
+        let name = written.text;
 
         if self.symbols.is_type_param(name) {
             return ParamType::new(self.context, name).into();
@@ -1145,7 +1142,7 @@ impl<'c> AstToYzl<'c, '_> {
         }
 
         if let Some((symbol, declared)) = self.symbols.struct_symbol(name) {
-            self.record(used, name, declared);
+            self.record(written, declared);
             return StructType::new(self.context, symbol).into();
         }
 
@@ -1153,8 +1150,11 @@ impl<'c> AstToYzl<'c, '_> {
         ErrorType::new(self.context).into()
     }
 
-    fn read_path(&self, path: &ast::ModulePath) -> &'c str {
-        self.symbols.intern(&path.to_dotted())
+    fn read_path(&self, path: &ast::ModulePath) -> Name<'c> {
+        Name {
+            text: self.symbols.intern(&path.to_dotted()),
+            range: path.syntax().text_range(),
+        }
     }
 
     /// Each field's name, and the field that declares it.
@@ -1220,8 +1220,13 @@ impl<'c> AstToYzl<'c, '_> {
 
     /// Ends a body at `range` that has no final `return`. A unit function
     /// returns no value, and any other function returns a hole.
-    fn emit_final_return<'a>(&self, entry: BlockRef<'c, 'a>, result: Type<'c>, range: TextRange) {
-        let values = if UnitType::from_type(result).is_some() {
+    fn emit_final_return<'a>(
+        &self,
+        entry: BlockRef<'c, 'a>,
+        return_ty: Type<'c>,
+        range: TextRange,
+    ) {
+        let values = if UnitType::from_type(return_ty).is_some() {
             Vec::new()
         } else {
             vec![self.emit_hole(entry, range, ErrorType::new(self.context).into())]
@@ -1257,13 +1262,13 @@ impl<'c> AstToYzl<'c, '_> {
 
     /// Reports a body that does not end in a `return` when the function
     /// has a value to return. An unknown result type already has a report.
-    fn check_final_return(&mut self, decl: &ast::FuncStmt, name: &str, result: Type<'c>) {
-        if UnitType::from_type(result).is_some() || ErrorType::from_type(result).is_some() {
+    fn check_final_return(&mut self, decl: &ast::FuncStmt, name: &str, return_ty: Type<'c>) {
+        if UnitType::from_type(return_ty).is_some() || ErrorType::from_type(return_ty).is_some() {
             return;
         }
         let message = format!(
             "`{name}` must end with a `return` of `{}`",
-            types::name(result)
+            types::name(return_ty)
         );
         self.report(decl, &message);
     }
@@ -1923,7 +1928,7 @@ external def upper(s: str) -> str
     #[test]
     fn a_method_takes_a_prefix_but_no_pub() {
         expect![[r"
-            error: a method is as visible as its trait, so it takes no `pub`
+            error: trait methods cannot have visibility modifiers, they are always `pub`
              --> test.yz:2:5
               |
             2 |     pub def show(x: Self) -> str

@@ -6,7 +6,7 @@ use yuzu_ast::ast;
 use yuzu_ast::ast::AstNode;
 use yuzu_diagnostics::{DiagnosticPrinter, DiagnosticsEngine, SourceId, SourceMap};
 
-use crate::{File, Lowering};
+use crate::{DeclarationLowering, File};
 
 /// The aggregates the library's prelude brings into every file, declared
 /// as the engine's own, since a test compiles without the library.
@@ -39,7 +39,7 @@ pub(crate) fn lower<'c>(context: &'c Context, program: &Program) -> Lowered<'c> 
         Some(crate::PRELUDE.to_string()),
         parsed(&sources, prelude_id, &mut diagnostics),
     );
-    prelude.set_lowering(Lowering::OnDemand);
+    prelude.set_decl_lowering(DeclarationLowering::OnDemand);
     let files: Vec<File> = std::iter::once(prelude)
         .chain(program.iter().map(|&(name, module, source)| {
             let source_id = sources.add(name.to_string(), source.to_string());

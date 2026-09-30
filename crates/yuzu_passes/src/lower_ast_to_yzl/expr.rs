@@ -7,7 +7,6 @@ use melior::ir::attribute::{
     StringAttribute,
 };
 use melior::ir::{Attribute, BlockLike, BlockRef, Location, Type, Value};
-use text_size::TextRange;
 use yuzu_ast::ast::{self, AstNode, BinOp, UnaryOp};
 use yuzu_mlir::attributes::CmpPredicate;
 use yuzu_mlir::ir::attribute::integer::IntegerAttributeExt;
@@ -16,7 +15,7 @@ use yuzu_mlir::ods::{yz, yzl};
 use yuzu_mlir::types::{BoolType, Float64Type, Int64Type, ListType, StrType, UnresolvedType};
 
 use crate::lower_ast_to_yzl::symbols::{BindingKind, Callable, FunctionKind, Lookup, Reference};
-use crate::lower_ast_to_yzl::{AstToYzl, Locals};
+use crate::lower_ast_to_yzl::{AstToYzl, Locals, Name};
 use crate::operators;
 
 /// The value a literal writes, as the attribute of the constant op that
@@ -113,7 +112,7 @@ impl<'c> AstToYzl<'c, '_> {
         locals: &Locals<'c, 'a>,
         ident: &ast::IdentExpr,
     ) -> Value<'c, 'a> {
-        let Some(name) = self.read_ident(ident.name()) else {
+        let Some(name) = self.read_name(ident.name()) else {
             return self.hole_and_assert(
                 block,
                 ident,
@@ -123,15 +122,7 @@ impl<'c> AstToYzl<'c, '_> {
         };
 
         let loc = self.location(ident);
-        let used = ident.syntax().text_range();
-        self.convert_reference(
-            block,
-            locals,
-            ident,
-            used,
-            Reference::unqualified(name),
-            loc,
-        )
+        self.convert_reference(block, locals, ident, None, name, loc)
     }
 
     /// `t.a` is a qualified column reference, not a load.
@@ -165,7 +156,7 @@ impl<'c> AstToYzl<'c, '_> {
             );
         };
 
-        let Some((field, used)) = self.read_ident_with_range(access.field()) else {
+        let Some(field) = self.read_name(access.field()) else {
             return self.hole_and_assert(
                 block,
                 access,
@@ -174,11 +165,7 @@ impl<'c> AstToYzl<'c, '_> {
             );
         };
 
-        let reference = Reference {
-            qualifier: Some(base),
-            name: field,
-        };
-        self.convert_reference(block, locals, access, used, reference, loc)
+        self.convert_reference(block, locals, access, Some(base), field, loc)
     }
 
     fn convert_binary<'a>(
@@ -347,9 +334,9 @@ impl<'c> AstToYzl<'c, '_> {
     ) -> Value<'c, 'a> {
         let loc = self.location(call);
 
-        let (callee, callee_range) = match call.callee() {
-            Some(ast::Expr::IdentExpr(ident)) => match self.read_ident(ident.name()) {
-                Some(callee) => (callee, ident.syntax().text_range()),
+        let callee = match call.callee() {
+            Some(ast::Expr::IdentExpr(ident)) => match self.read_name(ident.name()) {
+                Some(callee) => callee,
                 None => {
                     return self.hole_and_assert(
                         block,
@@ -388,13 +375,14 @@ impl<'c> AstToYzl<'c, '_> {
             .collect();
 
         let given = operands.len();
-        let Some(callable) = self.symbols.callable(callee, given) else {
+        let Some(callable) = self.symbols.callable(callee.text, given) else {
             // A call with the wrong number of arguments still names the
             // function. The name stays resolved while the user types the
             // arguments.
-            if let Some(target) = self.symbols.target_of(callee) {
-                self.record(callee_range, callee, target);
+            if let Some(target) = self.symbols.target_of(callee.text) {
+                self.record(callee, target);
             }
+            let callee = callee.text;
             let message = if let Some(arities) = self.symbols.arities(callee) {
                 arity_mismatch(callee, &arities, given)
             } else {
@@ -419,7 +407,7 @@ impl<'c> AstToYzl<'c, '_> {
             );
         };
 
-        self.record(callee_range, callee, callable.target);
+        self.record(callee, callable.target);
         self.emit_call(block, callable, &operands, loc)
     }
 
@@ -432,9 +420,7 @@ impl<'c> AstToYzl<'c, '_> {
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         let base = match access.base() {
-            Some(ast::Expr::IdentExpr(ident)) => self
-                .read_ident(ident.name())
-                .map(|base| (base, ident.syntax().text_range())),
+            Some(ast::Expr::IdentExpr(ident)) => self.read_name(ident.name()),
             Some(_) => {
                 return self.hole_and_report(
                     block,
@@ -446,9 +432,7 @@ impl<'c> AstToYzl<'c, '_> {
             None => None,
         };
 
-        let (Some((base, base_range)), Some((name, used))) =
-            (base, self.read_ident_with_range(access.field()))
-        else {
+        let (Some(base), Some(function)) = (base, self.read_name(access.field())) else {
             return self.hole_and_assert(
                 block,
                 call,
@@ -457,15 +441,16 @@ impl<'c> AstToYzl<'c, '_> {
             );
         };
 
-        let Some(path) = self.symbols.module_of(base) else {
+        let Some(path) = self.symbols.module_of(base.text) else {
             return self.hole_and_report(
                 block,
                 call,
-                &format!("`{base}` is not a module"),
+                &format!("`{}` is not a module", base.text),
                 UnresolvedType::new(self.context).into(),
             );
         };
-        self.record_module(base_range, base, path);
+        self.record_module(base, path);
+        let name = function.text;
 
         let operands: Vec<Value> = call
             .args()
@@ -485,7 +470,7 @@ impl<'c> AstToYzl<'c, '_> {
         let given = operands.len();
         let Some(callable) = self.symbols.callable_in(at, given) else {
             if let Some(target) = self.symbols.target_in(at) {
-                self.record_through(used, name, target, None);
+                self.record_through(function, target, None);
             }
             let message = match self.symbols.arities_in(at) {
                 Some(arities) => arity_mismatch(name, &arities, given),
@@ -499,7 +484,7 @@ impl<'c> AstToYzl<'c, '_> {
             );
         };
 
-        self.record_through(used, name, callable.target, None);
+        self.record_through(function, callable.target, None);
         self.emit_call(block, callable, &operands, loc)
     }
 
@@ -555,15 +540,16 @@ impl<'c> AstToYzl<'c, '_> {
         block: BlockRef<'c, 'a>,
         locals: &Locals<'c, 'a>,
         node: &impl AstNode,
-        used: TextRange,
-        reference: Reference<'_>,
+        qualifier: Option<&str>,
+        written: Name<'_>,
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
-        let name = reference.name;
+        let name = written.text;
+        let reference = Reference { qualifier, name };
         let message = match self.symbols.lookup(reference) {
             Lookup::Column { index, declared } => {
                 if let Some(declared) = declared {
-                    self.record_declared(used, name, declared);
+                    self.record_declared(written, declared);
                 }
                 return block
                     .argument(index)
@@ -571,7 +557,7 @@ impl<'c> AstToYzl<'c, '_> {
                     .into();
             }
             Lookup::Local { slot, declared } => {
-                self.record_local(used, name, declared);
+                self.record_local(written, declared);
                 let load = yzl::load(
                     self.context,
                     UnresolvedType::new(self.context).into(),
@@ -581,7 +567,7 @@ impl<'c> AstToYzl<'c, '_> {
                 return block.append_operation(load.into()).first_result();
             }
             Lookup::Let { symbol, target } => {
-                self.record(used, name, target);
+                self.record(written, target);
                 return self.emit_call(block, Callable::constant(symbol, target), &[], loc);
             }
             Lookup::Lost => {
@@ -602,9 +588,9 @@ impl<'c> AstToYzl<'c, '_> {
             Lookup::NotAValue(what) => {
                 // The name still names a declaration. Record it for the editor.
                 if let Some(path) = self.symbols.module_of(name) {
-                    self.record_module(used, name, path);
+                    self.record_module(written, path);
                 } else if let Some(target) = self.symbols.target_of(name) {
-                    self.record(used, name, target);
+                    self.record(written, target);
                 }
                 format!("`{reference}` is a {what}, not a value")
             }

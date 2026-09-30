@@ -15,7 +15,7 @@ use yuzu_mlir::ods::yzl;
 use yuzu_mlir::types::{QueryType, UnresolvedType};
 
 use crate::lower_ast_to_yzl::symbols::{ColumnLookup, Field, Reference, Row};
-use crate::lower_ast_to_yzl::{AstToYzl, Locals};
+use crate::lower_ast_to_yzl::{AstToYzl, Locals, Name};
 
 /// A stage item as the source wrote it.
 struct Item<'c> {
@@ -85,7 +85,7 @@ impl<'c> AstToYzl<'c, '_> {
         from: &ast::FromSource,
     ) -> (Value<'c, 'a>, Row<'c>) {
         let loc = self.location(from);
-        let Some((source, used)) = self.read_ident_with_range(from.relation()) else {
+        let Some(written) = self.read_name(from.relation()) else {
             let hole = self.hole_and_assert(
                 block,
                 from,
@@ -95,16 +95,16 @@ impl<'c> AstToYzl<'c, '_> {
             return (hole, Row::lost());
         };
 
-        let Some((symbol, mut row, target)) = self.symbols.relation(source, None) else {
+        let Some((symbol, mut row, target)) = self.symbols.relation(written.text, None) else {
             let hole = self.hole_and_report(
                 block,
                 from,
-                &format!("`{source}` is not a relation"),
+                &format!("`{}` is not a relation", written.text),
                 QueryType::new(self.context).into(),
             );
             return (hole, Row::lost());
         };
-        self.record(used, source, target);
+        self.record(written, target);
 
         let mut value = block
             .append_operation(
@@ -236,23 +236,18 @@ impl<'c> AstToYzl<'c, '_> {
         let mut keys: Vec<usize> = Vec::new();
         let mut key_fields: Vec<Field<'c>> = Vec::new();
         for item in agg.group_by().into_iter().flat_map(|group| group.items()) {
-            let Some((column, used)) = self.read_ident_with_range(item.column()) else {
+            let Some(column) = self.read_name(item.column()) else {
                 self.assert_syntax_error("group by key is missing its column");
                 continue;
             };
 
             let qualifier = self.read_ident(item.qualifier());
-
-            let reference = Reference {
-                qualifier,
-                name: column,
-            };
-            if let Some(index) = self.resolve_column(&item, used, "group key", reference) {
+            if let Some(index) = self.resolve_column(&item, "group key", qualifier, column) {
                 keys.push(index);
                 key_fields.push(match self.read_ident(item.alias()) {
                     Some(alias) => self.field_at(alias, item.syntax().text_range()),
                     None => Field {
-                        name: column,
+                        name: column.text,
                         declared: self.symbols.row().declared(index),
                     },
                 });
@@ -324,23 +319,21 @@ impl<'c> AstToYzl<'c, '_> {
         let mut to: Vec<&'c str> = Vec::new();
         let mut renames = Vec::new();
         for item in rename.items() {
-            let (Some((old, used)), Some(new)) = (
-                self.read_ident_with_range(item.column()),
-                self.read_ident(item.alias()),
-            ) else {
+            let (Some(old), Some(new)) =
+                (self.read_name(item.column()), self.read_ident(item.alias()))
+            else {
                 self.assert_syntax_error("rename item is missing a column name");
                 continue;
             };
 
             let qualifier = self.read_ident(item.qualifier());
-
-            let reference = Reference {
-                qualifier,
-                name: old,
-            };
-            if let Some(index) = self.resolve_column(&item, used, "column", reference) {
+            if let Some(index) = self.resolve_column(&item, "column", qualifier, old) {
                 let field = self.field_at(new, item.syntax().text_range());
                 renames.push((index, field));
+                let reference = Reference {
+                    qualifier,
+                    name: old.text,
+                };
                 from.push(reference.to_string());
                 to.push(new);
             }
@@ -388,7 +381,7 @@ impl<'c> AstToYzl<'c, '_> {
             ast::JoinKind::Right => JoinKind::Right,
             ast::JoinKind::Full => JoinKind::Full,
         };
-        let Some((relation, used)) = self.read_ident_with_range(join.relation()) else {
+        let Some(written) = self.read_name(join.relation()) else {
             return self.hole_and_assert(
                 block,
                 join,
@@ -398,15 +391,15 @@ impl<'c> AstToYzl<'c, '_> {
         };
 
         let alias = self.read_ident(join.alias());
-        let Some((rhs_symbol, rhs, target)) = self.symbols.relation(relation, alias) else {
+        let Some((rhs_symbol, rhs, target)) = self.symbols.relation(written.text, alias) else {
             return self.hole_and_report(
                 block,
                 join,
-                &format!("`{relation}` is not a relation"),
+                &format!("`{}` is not a relation", written.text),
                 QueryType::new(self.context).into(),
             );
         };
-        self.record(used, relation, target);
+        self.record(written, target);
 
         // A `using` column is one column on each side, merged into one.
         let mut using: Vec<&'c str> = Vec::new();
@@ -414,19 +407,19 @@ impl<'c> AstToYzl<'c, '_> {
         let mut right_keys: Vec<usize> = Vec::new();
         if let Some(clause) = join.using() {
             for column in clause.columns() {
-                let Some(name) = self.read_name(&column) else {
+                let Some(written) = self.name_of(&column) else {
                     continue;
                 };
+                let name = written.text;
                 let reference = Reference::unqualified(name);
                 match (self.symbols.column(reference), rhs.column(reference)) {
                     (ColumnLookup::Unique(left), ColumnLookup::Unique(right)) => {
                         // The name names the column on both sides. The left
                         // column comes first, because it declares the merged
                         // column.
-                        let used = column.syntax().text_range();
                         let sides = [self.symbols.row().declared(left), rhs.declared(right)];
                         for declared in sides.into_iter().flatten() {
-                            self.record_declared(used, name, declared);
+                            self.record_declared(written, declared);
                         }
                         using.push(name);
                         left_keys.push(left);
@@ -501,20 +494,18 @@ impl<'c> AstToYzl<'c, '_> {
         let mut columns: Vec<usize> = Vec::new();
         let mut items = Vec::new();
         for item in set.items() {
-            let Some((name, used)) = self.read_ident_with_range(item.column()) else {
+            let Some(name) = self.read_name(item.column()) else {
                 self.assert_syntax_error("set item is missing its column");
                 continue;
             };
 
-            let Some(index) =
-                self.resolve_column(&item, used, "column", Reference::unqualified(name))
-            else {
+            let Some(index) = self.resolve_column(&item, "column", None, name) else {
                 continue;
             };
 
             columns.push(index);
             items.push(Item {
-                alias: Some(name),
+                alias: Some(name.text),
                 expr: item.value(),
                 range: item.syntax().text_range(),
             });
@@ -565,17 +556,14 @@ impl<'c> AstToYzl<'c, '_> {
         // Where each dropped column is in the input row, least first.
         let mut dropped: Vec<usize> = Vec::new();
         for column in drop.columns() {
-            let Some(name) = self.read_name(&column) else {
+            let Some(name) = self.name_of(&column) else {
                 self.assert_syntax_error("`drop` is missing a column name");
                 continue;
             };
 
-            let used = column.syntax().text_range();
-            if let Some(index) =
-                self.resolve_column(&column, used, "column", Reference::unqualified(name))
-            {
+            if let Some(index) = self.resolve_column(&column, "column", None, name) {
                 self.symbols.remove(index);
-                names.push(name);
+                names.push(name.text);
                 let mut at = index;
                 for &earlier in &dropped {
                     if earlier <= at {
@@ -747,18 +735,23 @@ impl<'c> AstToYzl<'c, '_> {
         region.append_block(Block::new(&arguments))
     }
 
-    /// The column `reference` names, which `used` writes.
+    /// The column `column` names, under `qualifier` when the source writes
+    /// one.
     fn resolve_column(
         &mut self,
         node: &impl AstNode,
-        used: TextRange,
         what: &str,
-        reference: Reference<'_>,
+        qualifier: Option<&str>,
+        column: Name<'_>,
     ) -> Option<usize> {
+        let reference = Reference {
+            qualifier,
+            name: column.text,
+        };
         let message = match self.symbols.column(reference) {
             ColumnLookup::Unique(index) => {
                 if let Some(declared) = self.symbols.row().declared(index) {
-                    self.record_declared(used, reference.name, declared);
+                    self.record_declared(column, declared);
                 }
                 return Some(index);
             }
