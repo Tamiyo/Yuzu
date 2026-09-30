@@ -1,8 +1,8 @@
-//! What a call's function takes, while its arguments are being written.
+//! What a call's function takes, while its arguments are written.
 //!
-//! The call is found in the text as it is now, since the check that
-//! resolves its function may be older than the `(` just typed; the
-//! function's name was written before, so the check has it.
+//! The call is found in the current text, because the check can be older
+//! than the `(` that was just typed. The function's name was written
+//! before, so the check has it.
 
 use text_size::{TextRange, TextSize};
 use yuzu_ast::ast::{self, AstNode};
@@ -13,16 +13,16 @@ use crate::Checked;
 use crate::file_structure;
 use crate::names::{DeclarationKind, node_at};
 
-/// A call around a position: where its function's name is written, and
-/// which of its arguments the position is in, counted from zero.
+/// A call around a position. It holds where its function's name is written,
+/// and which argument holds the position, counted from zero.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CallSite {
     pub callee: TextRange,
     pub argument: usize,
 }
 
-/// The overloads a call may mean, and the one and the parameter the
-/// position is at.
+/// The overloads a call can mean, the active overload, and the parameter
+/// at the position.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SignatureHelp {
     pub signatures: Vec<Signature>,
@@ -30,15 +30,15 @@ pub struct SignatureHelp {
     pub active_parameter: usize,
 }
 
-/// One overload: its header, and where each parameter is in it.
+/// One overload, with its header and the place of each parameter in it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Signature {
     pub label: String,
     pub parameters: Vec<TextRange>,
 }
 
-/// The innermost call whose argument list holds `offset`: after its `(`,
-/// and not after its `)`.
+/// The innermost call whose argument list holds `offset`, after its `(` and
+/// not after its `)`.
 pub(crate) fn call_at(root: &SyntaxNode, offset: TextSize) -> Option<CallSite> {
     let token = root.token_at_offset(offset).left_biased()?;
     token.parent_ancestors().find_map(|node| {
@@ -97,7 +97,7 @@ pub(crate) fn signature_help(
     let named = ast::FuncStmt::cast(node_at(&root, resolution.declaration.range)?)?;
     let name = named.name()?.token()?.text().to_owned();
 
-    // An overload is a function of the same name beside it.
+    // An overload is a function with the same name in the same file.
     let overloads: Vec<ast::FuncStmt> = named
         .syntax()
         .parent()?
@@ -130,8 +130,8 @@ pub(crate) fn signature_help(
     })
 }
 
-/// A function's header, rebuilt from its parts so each parameter's place in
-/// it is known: `def f(x: int64, y: int64) -> int64`.
+/// A function's header, made again from its parts so that the place of
+/// each parameter is known. An example is `def f(x: int64, y: int64) -> int64`.
 fn signature(func: &ast::FuncStmt) -> Signature {
     let header = file_structure::header(func);
     let before_params = header.find('(').map_or(header.as_str(), |at| &header[..at]);

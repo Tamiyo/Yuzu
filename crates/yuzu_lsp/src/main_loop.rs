@@ -38,7 +38,7 @@ use crate::{RunError, handlers};
 ///
 /// # Panics
 ///
-/// Panics if the initialize result does not serialize, which it always does.
+/// Panics if the initialize result does not serialize.
 pub fn run(connection: &Connection) -> Result<(), RunError> {
     let (id, params) = connection.initialize_start().map_err(RunError::protocol)?;
     let params: InitializeParams =
@@ -197,8 +197,7 @@ impl GlobalState<'_> {
         }
     }
 
-    /// Answers a request. A handler that panics answers with an error, and
-    /// the server goes on.
+    /// Answers a request.
     fn respond<R>(&self, request: Request, handler: fn(&Self, &R::Params) -> R::Result) -> Response
     where
         R: lsp_types::request::Request,
@@ -223,7 +222,7 @@ impl GlobalState<'_> {
         answer::<R>(request, |params| handler(self, params))
     }
 
-    /// As [`Self::respond`], for a handler that keeps what it answered.
+    /// As [`Self::respond`], for a handler that changes the state.
     fn respond_mut<R>(
         &mut self,
         request: Request,
@@ -253,9 +252,8 @@ impl GlobalState<'_> {
     }
 }
 
-/// Parses a request's params and answers with what `handler` makes of
-/// them. A handler that panics answers with an error, and the server goes
-/// on.
+/// Parses a request's params and answers with the result of `handler`. A
+/// handler that panics answers with an error, and the server continues.
 fn answer<R>(
     request: Request,
     handler: impl FnOnce(&R::Params) -> Result<R::Result, String>,

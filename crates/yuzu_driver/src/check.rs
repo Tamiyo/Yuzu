@@ -39,10 +39,9 @@ pub struct Checked {
 
 /// Checks the program `focus` belongs to, for the default engine.
 ///
-/// The library comes from where the resolver's [`LibrarySource`] says: the
-/// cache a compile uses, a cache of the installed files, or, when the
-/// resolver holds a copy of a library module of its own, read afresh so
-/// that copy is the one read.
+/// The resolver's [`LibrarySource`] tells where the library comes from. It is
+/// the cache a compile uses, a cache of the installed files, or the
+/// resolver's own copy. The check reads that copy again each time.
 pub fn check(focus: Focus<'_>, resolver: &dyn ModuleResolver) -> Checked {
     let engine = Engine::default();
     let made_up;
@@ -58,8 +57,8 @@ pub fn check(focus: Focus<'_>, resolver: &dyn ModuleResolver) -> Checked {
         }
     };
 
-    // The library a compile reuses, when the resolver holds no copy of its
-    // own: it is not read, parsed or bound again for each check.
+    // When the resolver has no copy of its own, the check uses the library of
+    // a compile. It does not read, parse or bind the library again.
     let library = match resolver.library_source() {
         LibrarySource::BuiltIn => Some(Library::for_thread(engine)),
         LibrarySource::Installed(root) => Some(Library::for_thread_under(engine, root)),

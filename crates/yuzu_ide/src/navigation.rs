@@ -16,7 +16,7 @@ pub struct FileRange {
 }
 
 /// A name's declaration and its uses. A declaration or a use in a file with
-/// no path, such as a library module built into the compiler, is left out.
+/// no path is not included. A library module in the compiler is an example.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct References {
     pub declaration: Option<FileRange>,

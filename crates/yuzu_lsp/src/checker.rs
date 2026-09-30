@@ -15,15 +15,14 @@ use crate::RunError;
 /// they stop at is checked.
 const DEBOUNCE: Duration = Duration::from_millis(50);
 
-/// Open documents to check, as a snapshot saw them, each with the version
-/// of its text. The first is checked first. A newer request replaces an
-/// older one, so each request holds every document not yet checked since
-/// what it read last changed.
+/// Open documents to check, from one snapshot, each with the version of its
+/// text. The first document is checked first. A newer request replaces an
+/// older one. Thus each request holds every stale document.
 pub(crate) struct CheckRequest {
     pub(crate) analysis: Analysis,
     pub(crate) files: Vec<(FileId, i32)>,
-    /// The request's number; a check it makes covers each change made
-    /// before it.
+    /// The request's number. A check from this request includes each change
+    /// made before the request.
     pub(crate) generation: u64,
 }
 
@@ -35,8 +34,8 @@ pub(crate) enum CheckResult {
         generation: u64,
         checked: Box<Checked>,
     },
-    /// The check panicked. The thread stops after it sends this, since the
-    /// compiler's state on the thread cannot be trusted.
+    /// The check panicked. The thread stops after it sends this result,
+    /// because the compiler's state on the thread is not reliable.
     Panicked {
         file_id: FileId,
         version: i32,
@@ -44,7 +43,6 @@ pub(crate) enum CheckResult {
     },
 }
 
-/// The checker thread stopped.
 #[derive(Debug)]
 pub(crate) struct Stopped;
 
@@ -122,7 +120,6 @@ fn serve(incoming: &Receiver<CheckRequest>, outgoing: &Sender<CheckResult>) {
     }
 }
 
-/// The message a panic was raised with.
 pub(crate) fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     if let Some(message) = payload.downcast_ref::<&str>() {
         (*message).to_owned()

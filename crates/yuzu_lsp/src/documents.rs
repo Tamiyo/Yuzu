@@ -30,9 +30,9 @@ pub(crate) struct Document {
 pub(crate) struct OutsideText(pub(crate) lsp_types::Range);
 
 impl Document {
-    /// Applies each change in order, each against the text the one before
-    /// left. A range the text does not hold stops the rest, which would be
-    /// relative to an edit that did not happen.
+    /// Applies each change in order, to the text that the change before it
+    /// made. A range outside the text stops the other changes, because they
+    /// are relative to an edit that did not occur.
     pub(crate) fn apply_changes(
         &mut self,
         changes: Vec<TextDocumentContentChangeEvent>,
@@ -179,7 +179,6 @@ impl GlobalState<'_> {
         self.request_check(Some(file_id))
     }
 
-    /// Publishes the errors the parse of a document found.
     pub(crate) fn publish_syntax_diagnostics(&self, file_id: FileId) -> Result<(), RunError> {
         let document = &self.documents[&file_id];
         let diagnostics = self

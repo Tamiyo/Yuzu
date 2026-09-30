@@ -19,7 +19,7 @@ pub(crate) fn inlay_hints(checked: &Checked, source: SourceId, range: TextRange)
     let Some(root) = checked.syntax(source) else {
         return Vec::new();
     };
-    // A subtree outside the range is skipped whole.
+    // The walk skips all of a subtree outside the range.
     let mut hints = Vec::new();
     let mut walk = root.preorder();
     while let Some(event) = walk.next() {

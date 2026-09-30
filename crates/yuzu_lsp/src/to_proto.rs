@@ -37,9 +37,9 @@ pub(crate) fn range(line_index: &LineIndex, range: TextRange) -> Range {
     )
 }
 
-/// The files a check read, as the protocol names them: each one's URL, and
-/// its line index built once from the text the check read. A source with
-/// no file on disk has no URL.
+/// The files a check read, as the protocol names them. Each file has its
+/// URL and a line index of the text the check read. A source with no file
+/// on disk has no URL.
 pub(crate) struct CheckedFiles<'c> {
     checked: &'c Checked,
     encoding: PositionEncoding,

@@ -78,8 +78,8 @@ pub(crate) fn semantic_tokens_full(
     Some(SemanticTokensResult::Tokens(tokens.clone()))
 }
 
-/// What changed since the tokens the client names, when the server still
-/// holds them; all the tokens when it does not.
+/// The changes since the tokens the client names, when the server still has
+/// them. Otherwise, all the tokens.
 pub(crate) fn semantic_tokens_full_delta(
     state: &mut GlobalState,
     params: &SemanticTokensDeltaParams,
@@ -103,8 +103,8 @@ pub(crate) fn semantic_tokens_full_delta(
 }
 
 /// The syntax's highlights, with each resolved use highlighted as its
-/// declaration. The uses come from the last check, carried over to the
-/// text the document has now.
+/// declaration. The uses come from the last check, mapped to the current
+/// text.
 fn highlight_tokens(state: &GlobalState, url: &Url) -> Option<SemanticTokens> {
     let (file_id, document) = state.document(url)?;
     let mut highlights = state.analysis().highlight(file_id)?;
@@ -186,9 +186,9 @@ pub(crate) fn hover(state: &GlobalState, params: &HoverParams) -> Option<Hover> 
     })
 }
 
-/// The names that fit at a position. Where the position is, is read from
-/// the document's text now; the names come from the last check, which may
-/// be older, by where the stage around the position starts.
+/// The names that fit at a position. The site comes from the current text.
+/// The names come from the last check, which can be older. They are found
+/// by where the stage around the position starts.
 pub(crate) fn completion(
     state: &GlobalState,
     params: &CompletionParams,
@@ -222,7 +222,7 @@ pub(crate) fn completion(
     Some(CompletionResponse::Array(items))
 }
 
-/// How the text a document has now maps onto the text its check read.
+/// How the current text of a document maps to the text its check read.
 fn to_checked(document: &Document, checked: &Checked, file_id: FileId) -> Option<TextShift> {
     Some(TextShift::between(
         &document.text,
@@ -260,7 +260,7 @@ pub(crate) fn prepare_rename(
     ))))
 }
 
-/// Writes the new name over the declaration and each use that spells it.
+/// Writes the new name over the declaration and its uses.
 pub(crate) fn rename(
     state: &GlobalState,
     params: &RenameParams,
@@ -269,7 +269,7 @@ pub(crate) fn rename(
     let edits = checked
         .rename(position, &params.new_name)
         .map_err(|error| error.to_string())?;
-    // An open file edited since the check has moved under the edits.
+    // The edits do not fit an open file that changed after the check.
     for edit in &edits {
         if let Ok(url) = Url::from_file_path(&edit.path)
             && let Some((_, open)) = state.document(&url)
@@ -298,9 +298,9 @@ pub(crate) fn rename(
     }))
 }
 
-/// The document a position is in, its check while that check read the text
-/// the document has now, and the position as an offset in it; or why not,
-/// for a request that changes files.
+/// The document a position is in, its current check, and the position as
+/// an offset. The error tells a request that changes files why there is
+/// none.
 fn fresh_position<'s>(
     state: &'s GlobalState,
     params: &TextDocumentPositionParams,
@@ -318,8 +318,8 @@ fn fresh_position<'s>(
 }
 
 /// The overloads of the function a call names. The call is found in the
-/// text the document has now, and its function's name is carried back to
-/// the text the last check read, which resolved it.
+/// current text. The function's name is then mapped back to the text of the
+/// last check, which resolved it.
 pub(crate) fn signature_help(
     state: &GlobalState,
     params: &SignatureHelpParams,
@@ -361,13 +361,13 @@ pub(crate) fn signature_help(
     })
 }
 
-/// The hints of the last check in the requested range, carried over to the
-/// text the document has now.
+/// The hints of the last check in the requested range, mapped to the
+/// current text.
 pub(crate) fn inlay_hint(state: &GlobalState, params: &InlayHintParams) -> Option<Vec<InlayHint>> {
     let (file_id, document, checked, shift) = state.last_check(&params.text_document.uri)?;
     let requested = from_proto::text_range(&document.line_index, params.range)?;
-    // The requested range in the checked text; the whole of it, when the
-    // range touches what was edited.
+    // The requested range in the checked text. It is all of the text when the
+    // range touches the edit.
     let checked_text = checked.file_text(file_id)?;
     let in_checked = to_checked(document, checked, file_id)
         .and_then(|back| back.map(requested))
@@ -398,8 +398,8 @@ fn inlay_hint_at(document: &Document, offset: TextSize, label: String) -> InlayH
     }
 }
 
-/// The document a position is in, its check while that check read the text
-/// the document has now, and the position as an offset in it.
+/// The document a position is in, its current check, and the position as
+/// an offset.
 fn checked_position<'s>(
     state: &'s GlobalState,
     params: &TextDocumentPositionParams,

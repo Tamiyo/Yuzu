@@ -639,7 +639,6 @@ fn signature_help_reads_a_call_the_check_has_not_seen() {
     client.open(text);
     client.notification::<PublishDiagnostics>();
 
-    // `(` is typed after `f`; the check read `f` alone.
     client.notify::<DidChangeTextDocument>(DidChangeTextDocumentParams {
         text_document: VersionedTextDocumentIdentifier::new(url(), 2),
         content_changes: vec![TextDocumentContentChangeEvent {

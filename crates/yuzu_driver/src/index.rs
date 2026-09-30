@@ -1,10 +1,10 @@
 //! What the IR knows about a program's names and types, kept as plain data
 //! so it outlives the MLIR context it was read from.
 //!
-//! References are what the lowering told its [`NameListener`] as it
-//! resolved each name, since the IR keeps no import or alias. Types are
-//! read from the IR after inference; an op's location is the range the
-//! lowering made it from, so both are keyed by source range.
+//! The references come from the lowering's [`NameListener`], because the IR
+//! keeps no import or alias. The types come from the IR after inference.
+//! An op's location is the range the lowering made it from. Thus both are
+//! keyed by source range.
 
 use melior::ir::operation::{OperationLike, OperationRef};
 use melior::ir::{Module, Type, Value, ValueLike};
@@ -22,14 +22,13 @@ use yuzu_mlir::types::{self, ErrorType, QueryType, RefType, UnresolvedType};
 use yuzu_passes::{NameKind, NameListener, NameTarget, NameUse, ScopeEntry};
 
 /// A name the program uses, and what it names. `at` is the name as
-/// written; `target` covers the whole declaration, or the start of a
-/// module's file.
+/// written. `target` is all of the declaration, or the start of a module's
+/// file.
 #[derive(Clone, Debug)]
 pub struct Reference {
     pub at: Span,
     pub target: Span,
-    /// The name as the declaration spells it, which an alias does not; a
-    /// module's path.
+    /// The name as the declaration spells it, or a module's path.
     pub name: String,
     pub kind: TargetKind,
     /// The import item that renamed the declaration in the file of `at`,
@@ -37,7 +36,7 @@ pub struct Reference {
     pub alias: Option<Span>,
 }
 
-/// A declaration the program wrote: all of its syntax, and the name it
+/// A declaration the program wrote, with all of its syntax and the name it
 /// declares.
 #[derive(Clone, Debug)]
 pub struct Declaration {
@@ -105,20 +104,20 @@ pub struct Index {
     pub modules: FxHashMap<String, SourceId>,
 }
 
-/// Builds an index: from the names the lowering reports as it resolves
-/// them, and from the module after lowering and after inference.
+/// Builds an index from the names the lowering reports, and from the module
+/// after lowering and after inference.
 pub(crate) struct IndexReader<'s> {
     sources: &'s SourceMap,
     index: Index,
     /// Each local's declaration, and the value it first stores.
     initializers: FxHashMap<Span, Span>,
-    /// The names recorded so far, each with what it names. The lowering may
-    /// resolve a name twice, as the hoist and the walk both read a
-    /// signature. One name can also name two declarations, as the `a` of
+    /// The names recorded so far, each with what it names. The lowering can
+    /// resolve a name two times, because the hoist and the walk both read a
+    /// signature. One name can name two declarations. For example, the `a` of
     /// `using (a)` names a column on each side.
     recorded: FxHashSet<(Span, Span)>,
-    /// The declarations recorded so far; the hoist and the walk may both
-    /// read one.
+    /// The declarations recorded so far. The hoist and the walk can both read
+    /// one declaration.
     declared: FxHashSet<Span>,
 }
 
@@ -206,8 +205,8 @@ impl<'s> IndexReader<'s> {
         self.index
     }
 
-    /// Each local's initializer, from the module as the lowering left it,
-    /// while each local is still a place that its first store fills.
+    /// Each local's initializer. It is read from the module after lowering,
+    /// when each local is still a place that its first store fills.
     pub(crate) fn read_lowered(&mut self, module: &Module<'_>) {
         for op in module.body().operations() {
             self.read_initializers(op);
@@ -235,7 +234,7 @@ impl<'s> IndexReader<'s> {
                 })
             })
             .collect();
-        // The map holds them in no order; a reader wants the source's.
+        // The map has no order. A reader wants the source order.
         initialized.sort_unstable_by_key(|typed| (typed.at.source_id, typed.at.range.start()));
         self.index.types.extend(initialized);
     }

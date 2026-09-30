@@ -1,7 +1,8 @@
-//! Renaming a name: its declaration and each use that spells it.
+//! Renames a name, with its declaration and its uses.
 //!
-//! An alias spells the name another way, so renaming the declaration leaves
-//! the alias as it is, and renaming the alias renames it in its file alone.
+//! The lowering tells which uses go through an import alias. A rename of
+//! the declaration does not change the alias. A rename of the alias changes
+//! only the alias and the uses that go through it.
 
 use std::fmt;
 use std::path::PathBuf;
@@ -25,8 +26,8 @@ pub enum RenameError {
     Module,
     /// The new name is not one identifier.
     NotAnIdentifier(String),
-    /// A declaration or a use is in a file that cannot be written, as the
-    /// library's files are.
+    /// A declaration or a use is in a file that cannot be written, such as a
+    /// library file.
     ReadOnly(PathBuf),
     /// A declaration or a use is in a source with no file.
     NoFile,
@@ -72,7 +73,7 @@ pub(crate) fn rename(
     }
 
     let (_, names) = renamed(checked, source, offset)?;
-    // Each file is asked once whether it can be written.
+    // The check for a writable file occurs one time for each file.
     let mut writable: FxHashMap<SourceId, bool> = FxHashMap::default();
     names
         .into_iter()
@@ -117,8 +118,8 @@ fn renamed(
         return Ok((here, names));
     }
 
-    // A declaration renames each declaration linked to it, and every use
-    // not through an alias.
+    // A declaration renames each declaration linked to it, and each use that
+    // does not go through an alias.
     let mut names = linked(checked, at.declared);
     for declaration in 0..names.len() {
         for resolution in checked.resolutions() {
@@ -133,8 +134,8 @@ fn renamed(
     Ok((here, names))
 }
 
-/// A declaration and each one that shares a use with it, as the `a` of
-/// `using (a)` names a column on each side of a join.
+/// A declaration and each declaration that shares a use with it. For
+/// example, the `a` of `using (a)` names a column on each side of a join.
 fn linked(checked: &Checked, declared: Name) -> Vec<Name> {
     let mut linked = vec![declared];
     let mut next = 0;

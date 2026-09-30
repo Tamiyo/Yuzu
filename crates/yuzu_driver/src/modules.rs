@@ -32,8 +32,8 @@ pub(crate) struct Submodule {
 pub enum Origin {
     /// A file, read from this path.
     File(PathBuf),
-    /// A source with no file, by the name a diagnostic shows for it: a
-    /// library module built into the compiler, or a text held in memory.
+    /// A source with no file, by the name a diagnostic shows for it. It is a
+    /// library module in the compiler, or a text in memory.
     Named(String),
 }
 
@@ -51,7 +51,7 @@ impl Origin {
 #[derive(Debug)]
 pub struct ModuleSource {
     pub origin: Origin,
-    /// Shared, so a text held elsewhere is not copied.
+    /// Shared, so that the text is not copied.
     pub source: Arc<str>,
     /// A tree the resolver parsed from `source` before, without errors, so
     /// the loader does not parse it again. With `None` the loader parses.
@@ -80,9 +80,9 @@ pub trait ModuleResolver {
         Ok(None)
     }
 
-    /// Where a check may take the whole library from without reading it
-    /// again. A resolver that holds a copy of a library module of its own
-    /// says [`LibrarySource::Own`], so that copy is read.
+    /// Where a check can get all of the library without reading it again. A
+    /// resolver with its own copy of a library module gives
+    /// [`LibrarySource::Own`], so the check reads that copy.
     fn library_source(&self) -> LibrarySource<'_> {
         LibrarySource::BuiltIn
     }
@@ -95,7 +95,7 @@ pub enum LibrarySource<'r> {
     BuiltIn,
     /// The files [`crate::stdlib::install`] wrote under this folder.
     Installed(&'r Path),
-    /// The resolver's own copies, read afresh for each check.
+    /// The resolver's own copies, which each check reads again.
     Own,
 }
 
@@ -107,7 +107,7 @@ pub struct Unreadable {
 }
 
 impl Unreadable {
-    /// A module file that exists but could not be read, and why.
+    /// The error for `file`, with its cause.
     #[must_use]
     pub fn new(file: PathBuf, error: std::io::Error) -> Self {
         Self { file, error }
@@ -138,8 +138,8 @@ impl std::error::Error for Unreadable {
     }
 }
 
-/// The key of the entry file among the modules' submodules: it belongs to
-/// no module, so its path is empty.
+/// The key of the entry file among the submodules. The entry file is in no
+/// module, so its path is empty.
 pub(crate) const ENTRY: &str = "";
 
 /// The file that marks a directory as a module and declares what it holds.
@@ -568,11 +568,11 @@ pub enum Location {
     Module { base: PathBuf, path: String },
 }
 
-/// Where a file sits, read from the module markers around it.
+/// Where a file is, read from the module markers around it.
 ///
-/// Up through the directories that hold one, the first that does not is
-/// where the program's module paths start. The reverse of
-/// [`FsResolver::candidates`].
+/// The search goes up through the directories that hold a marker. The first
+/// directory with no marker is where the program's module paths start. This
+/// is the reverse of [`FsResolver::candidates`].
 #[must_use]
 pub fn locate(file: &Path) -> Location {
     let directory = file.parent().unwrap_or(Path::new(""));

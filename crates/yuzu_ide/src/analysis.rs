@@ -69,16 +69,16 @@ impl AnalysisHost {
         }
     }
 
-    /// Where [`crate::install_library`] wrote the library. A check
-    /// then reads the library from those files, so a reference into it
-    /// goes to a file. Without one, it reads the copy in the compiler.
+    /// Where [`crate::install_library`] wrote the library. A check then reads
+    /// the library from those files, so a reference into it goes to a file.
+    /// Without a root, a check reads the copy in the compiler.
     pub fn set_library_root(&mut self, root: Option<&Path>) {
         self.library_root = root.map(Arc::from);
     }
 
-    /// Tells the host which files changed on disk. A module marker added or
-    /// removed moves the files around it into or out of a module, so each
-    /// saved file's place in its program is found again.
+    /// Tells the host which files changed on disk. A new or removed module
+    /// marker moves the files around it into or out of a module. Thus the
+    /// host finds the place of each saved file again.
     pub fn files_changed(&mut self, changed: &[PathBuf]) {
         let moved = changed
             .iter()
@@ -173,7 +173,7 @@ impl Analysis {
         Some(folding_ranges::folding_ranges(&file.syntax(), file.text()))
     }
 
-    /// Where a position is, for completion, from the text as it is now.
+    /// Where a position is, for completion, from the current text.
     #[must_use]
     pub fn completion_site(&self, position: FilePosition) -> Option<CompletionSite> {
         Some(completion::completion_site(
@@ -182,8 +182,8 @@ impl Analysis {
         ))
     }
 
-    /// The call whose arguments a position is in, from the text as it is
-    /// now; a check may not have read it yet.
+    /// The call whose arguments a position is in, from the current text. A
+    /// check possibly did not read this text yet.
     #[must_use]
     pub fn call_at(&self, position: FilePosition) -> Option<CallSite> {
         signature_help::call_at(&self.file(position.file_id)?.syntax(), position.offset)
@@ -236,7 +236,7 @@ impl ParsedFile {
         &self.text
     }
 
-    /// The text, shared rather than copied.
+    /// The text, shared so that it is not copied.
     pub(crate) fn shared_text(&self) -> Arc<str> {
         Arc::clone(&self.text)
     }

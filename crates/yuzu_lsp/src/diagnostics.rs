@@ -13,8 +13,7 @@ use crate::to_proto::CheckedFiles;
 use crate::{RunError, to_proto};
 
 impl GlobalState<'_> {
-    /// Takes one document's check. A check of a text the document no longer
-    /// has is dropped.
+    /// Takes one document's check. It drops a check of an older text.
     pub(crate) fn on_checked(&mut self, result: CheckResult) -> Result<(), RunError> {
         match result {
             CheckResult::Checked {
@@ -41,16 +40,16 @@ impl GlobalState<'_> {
         }
     }
 
-    /// The checker thread went away without a word: it starts again.
+    /// The checker thread stopped with no result. A new thread starts.
     pub(crate) fn on_checker_lost(&mut self) -> Result<(), RunError> {
         self.log_error("the checker stopped; it starts again".to_owned())?;
         self.checker = Checker::spawn()?;
         self.request_check(None)
     }
 
-    /// Publishes what a document's check found in the document itself. A
-    /// file that is not open takes its diagnostics from one open document's
-    /// check, so a file two checks share is not reported twice.
+    /// Publishes the diagnostics a document's check found in the document. A
+    /// file that is not open gets its diagnostics from one open document's
+    /// check. Thus two checks that read a file do not report it two times.
     fn on_document_checked(
         &mut self,
         file_id: FileId,
@@ -108,8 +107,8 @@ impl GlobalState<'_> {
         Ok(())
     }
 
-    /// The document keeps its syntax errors, and is not checked again until
-    /// its text changes. The rest are checked on a new thread.
+    /// The document keeps its syntax errors. It is not checked again until its
+    /// text changes. The other documents are checked on a new thread.
     fn on_check_panicked(
         &mut self,
         file_id: FileId,

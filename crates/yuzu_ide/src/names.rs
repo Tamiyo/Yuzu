@@ -1,6 +1,6 @@
 //! The references in a check's index, with each declaration narrowed to
 //! the name it declares. The lowering gives the name each use wrote, and
-//! the whole declaration it names.
+//! all of the declaration it names.
 
 use rustc_hash::FxHashMap;
 use text_size::TextRange;
@@ -28,8 +28,8 @@ pub(crate) struct Resolution {
     /// The whole declaration, as the index gives it.
     pub(crate) declaration: Span,
     pub(crate) kind: DeclarationKind,
-    /// The name an import gave the declaration, which the use goes
-    /// through: the `y` of `x as y`.
+    /// The name an import gave the declaration, when the use goes through it.
+    /// It is the `y` of `x as y`.
     pub(crate) alias: Option<Name>,
 }
 
@@ -87,8 +87,8 @@ pub(crate) fn resolutions(references: &[Reference], trees: &Trees) -> Vec<Resolu
         .collect()
 }
 
-/// Each declaration in the index, as a use of itself, so that a
-/// declaration no name uses is still found.
+/// Each declaration in the index, as a use of itself. Thus a declaration
+/// that no name uses is found.
 pub(crate) fn declarations(declarations: &[Declaration], trees: &Trees) -> Vec<Resolution> {
     declarations
         .iter()
@@ -111,7 +111,7 @@ pub(crate) fn declarations(declarations: &[Declaration], trees: &Trees) -> Vec<R
         .collect()
 }
 
-/// The new name an import item gives: the `y` of `x as y`.
+/// The new name an import item gives, the `y` of `x as y`.
 fn alias_name(root: &SyntaxNode, item: Span) -> Option<Name> {
     let alias = ast::ImportItem::cast(node_at(root, item.range)?)?
         .alias()?
@@ -146,8 +146,8 @@ fn nodes_at(root: &SyntaxNode, range: TextRange) -> impl Iterator<Item = SyntaxN
         .take_while(move |node| node.text_range() == range)
 }
 
-/// Where a declaration spells `name`: the one of its own `Ident`s that
-/// does, as `group by b as c` holds two.
+/// The `Ident` of a declaration that spells `name`. A declaration can hold
+/// two, as `group by b as c` does.
 fn declared_name(root: &SyntaxNode, range: TextRange, name: &str) -> Option<TextRange> {
     node_at(root, range)?
         .children()

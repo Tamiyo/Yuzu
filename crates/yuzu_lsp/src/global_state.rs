@@ -71,8 +71,8 @@ impl GlobalState<'_> {
         self.connection
             .sender
             .send(message)
-            // A send fails only when the client is gone; the error holds
-            // nothing but the unsent message.
+            // A send fails only when the client is gone. The error holds only
+            // the message that was not sent.
             .map_err(|_unsent| RunError::disconnected())
     }
 
@@ -165,24 +165,23 @@ impl GlobalState<'_> {
         self.document(url).is_some()
     }
 
-    /// An open document and its last check, while that check read the text
-    /// the document has now. An answer from an older check would point at
-    /// offsets that have moved.
+    /// An open document and its last check, when that check read the current
+    /// text. An answer from an older check points at offsets that moved.
     pub(crate) fn fresh_check(&self, url: &Url) -> Option<(FileId, &Document, &Checked)> {
         let (file_id, document) = self.document(url)?;
         let (version, checked) = self.checks.get(&file_id)?;
         (*version == document.version).then_some((file_id, document, checked))
     }
 
-    /// An open document and its last check, whatever text that check read.
+    /// An open document and its last check, of any text.
     pub(crate) fn latest_check(&self, url: &Url) -> Option<(FileId, &Document, &Checked)> {
         let (file_id, document) = self.document(url)?;
         let (_, checked) = self.checks.get(&file_id)?;
         Some((file_id, document, checked))
     }
 
-    /// An open document, its last check, and how the text that check read
-    /// maps onto the document's text now.
+    /// An open document, its last check, and how the text of that check maps
+    /// to the current text.
     pub(crate) fn last_check(&self, url: &Url) -> Option<(FileId, &Document, &Checked, TextShift)> {
         let (file_id, document, checked) = self.latest_check(url)?;
         let shift = TextShift::between(checked.file_text(file_id)?, &document.text);

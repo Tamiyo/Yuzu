@@ -119,9 +119,9 @@ impl SemanticTokensBuilder {
     }
 }
 
-/// The one edit that turns `old` into `new`: what lies between the tokens
-/// both start with and the tokens both end with. The protocol counts in
-/// numbers, and each token is five of them.
+/// The one edit that changes `old` into `new`. It replaces the part between
+/// the tokens that both start with and the tokens that both end with. The
+/// protocol counts numbers, and each token is five numbers.
 pub(crate) fn diff(old: &[SemanticToken], new: &[SemanticToken]) -> Vec<SemanticTokensEdit> {
     let start = new
         .iter()

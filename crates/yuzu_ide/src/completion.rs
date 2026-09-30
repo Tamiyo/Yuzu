@@ -1,9 +1,9 @@
 //! The names that fit where the cursor is.
 //!
-//! Where the cursor is, is read from the text as it is now, since the check
-//! may be older than what was just typed. The check's names are found by
-//! what was written before the edit: a file's names by the file, a stage's
-//! columns by where the stage starts.
+//! The site comes from the current text, because the check can be older
+//! than the last edit. The check's names are found by text from before the
+//! edit. A file's names are found by the file, and a stage's columns by
+//! where the stage starts.
 
 use text_size::TextSize;
 use yuzu_ast::ast::{self, AstNode, Visibility};
@@ -64,9 +64,9 @@ impl CompletionSite {
         }
     }
 
-    /// What fits here from the text alone: its keywords, the locals written
-    /// before it, and the types every program has. A file not checked yet
-    /// gets these.
+    /// What fits here from the text alone. These are its keywords, the locals
+    /// written before it, and the types of every program. A file that is not
+    /// checked yet gets these.
     #[must_use]
     pub fn syntax_completions(&self) -> Vec<CompletionItem> {
         let mut items = Vec::new();
@@ -89,7 +89,7 @@ impl CompletionSite {
     }
 }
 
-/// Adds an item unless one of its name is there already.
+/// Adds an item, if no item has its name.
 fn push_item(items: &mut Vec<CompletionItem>, label: &str, kind: CompletionKind) {
     if !items.iter().any(|item| item.label == label) {
         items.push(CompletionItem {
@@ -245,8 +245,8 @@ fn site_after(before: &SyntaxToken) -> Option<CompletionSite> {
             Some(CompletionSite::expecting(ExpectedNames::Relation))
         }
         SyntaxKind::Arrow => Some(CompletionSite::expecting(ExpectedNames::Type)),
-        // A `:` or a `[` opens a type only in a type's syntax; in a struct
-        // literal or a list it opens a value.
+        // A `:` or a `[` starts a type only in the syntax of a type. In a struct
+        // literal or a list, it starts a value.
         SyntaxKind::Colon | SyntaxKind::LeftSquare => {
             match before.parent().map(|node| node.kind()) {
                 Some(
@@ -275,7 +275,7 @@ pub(crate) fn completions(
     let mut add = |label: &str, kind: CompletionKind| push_item(&mut items, label, kind);
 
     let index = checked.index();
-    // A module's names: through a name that names it, or by its path.
+    // A module's names, found by a name of the module or by its path.
     let module_file = match &site.expected {
         ExpectedNames::MemberOf(base) => index
             .scopes

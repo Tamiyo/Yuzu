@@ -269,7 +269,7 @@ pub(crate) fn check(
     checked
 }
 
-/// How many checks a file on disk stays cached without being read.
+/// How many checks a file on disk stays in the cache when no check reads it.
 const KEEP_UNREAD: u64 = 64;
 
 /// Files read from disk, each parsed once for each text it has had. The
@@ -334,8 +334,8 @@ impl DiskCache {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, DiskState> {
-        // A panic while the lock is held leaves each entry whole, so a
-        // poisoned cache still holds only sound entries.
+        // A panic during the lock does not change an entry. Thus a poisoned
+        // cache holds only correct entries.
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
@@ -423,9 +423,9 @@ impl ModuleResolver for Overlay<'_> {
         self.read(self.files.candidates(path))
     }
 
-    /// An open library file, or a check of the library's own files, is a
-    /// copy of the library to read afresh; otherwise the cached library is
-    /// the one read, from where it was installed when it was.
+    /// An open library file, or a check of the library's own files, is a copy
+    /// that the check reads again. Otherwise, the check uses the cached
+    /// library, from where it was installed, if it was installed.
     fn library_source(&self) -> LibrarySource<'_> {
         match (
             &self.library_files,

@@ -1,7 +1,6 @@
-//! Ranges in the text a check read, carried over to a document's newer text.
-//! A range before the edited part keeps its place, a range after it moves
-//! with the edit, and a range that touches it is dropped until the next
-//! check.
+//! Maps ranges in the text a check read to a document's newer text. A range
+//! before the edit stays in its place. A range after the edit moves with
+//! it. A range that touches the edit is dropped until the next check.
 
 use text_size::{TextRange, TextSize};
 
@@ -40,8 +39,8 @@ impl TextShift {
         }
     }
 
-    /// Where `range` of the old text is in the new text, when the edit left
-    /// it whole.
+    /// Where `range` of the old text is in the new text, when the edit does
+    /// not touch it.
     pub(crate) fn map(&self, range: TextRange) -> Option<TextRange> {
         if range.end() <= self.prefix {
             Some(range)

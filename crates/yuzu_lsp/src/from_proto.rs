@@ -7,9 +7,9 @@ use text_size::{TextRange, TextSize};
 
 use crate::line_index::{LineIndex, PositionEncoding};
 
-/// A position's offset. A character past the end of its line means the end
-/// of the line, as the protocol says; a line past the end of the text has no
-/// offset.
+/// A position's offset. A character after the end of its line means the end
+/// of the line, as the protocol says. A line after the end of the text has
+/// no offset.
 pub(crate) fn offset(line_index: &LineIndex, position: Position) -> Option<TextSize> {
     let line = line_index.index.line(position.line)?;
     let line_col = match line_index.encoding {
