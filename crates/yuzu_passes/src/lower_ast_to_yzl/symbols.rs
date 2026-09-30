@@ -51,6 +51,9 @@ struct Column<'c> {
     qualifier: Option<&'c str>,
     name: &'c str,
     declared: Option<Span>,
+    /// One side's own copy of a column a `using` join merged: only a
+    /// qualified name reaches it, and the relation's output leaves it out.
+    is_hidden: bool,
 }
 
 /// A column's name, and the syntax that named it: a struct's field, or a
@@ -64,9 +67,10 @@ pub(super) struct Field<'c> {
 impl<'c> Column<'c> {
     fn matches(&self, reference: Reference<'_>) -> bool {
         self.name == reference.name
-            && reference
-                .qualifier
-                .is_none_or(|qualifier| self.qualifier == Some(qualifier))
+            && match reference.qualifier {
+                Some(qualifier) => self.qualifier == Some(qualifier),
+                None => !self.is_hidden,
+            }
     }
 
     fn reference(&self) -> Reference<'c> {
@@ -139,8 +143,34 @@ impl<'c> Row<'c> {
         self.columns.is_empty()
     }
 
+    /// The names of the columns the relation outputs.
     pub(super) fn names(&self) -> impl Iterator<Item = &'c str> + use<'_, 'c> {
-        self.columns.iter().map(|column| column.name)
+        self.visible().map(|(_, column)| column.name)
+    }
+
+    /// Whether the row holds a column only a qualified name reaches.
+    pub(super) fn has_hidden(&self) -> bool {
+        self.columns.iter().any(|column| column.is_hidden)
+    }
+
+    /// The positions and names of the columns the relation outputs.
+    pub(super) fn visible_fields(&self) -> impl Iterator<Item = (usize, Field<'c>)> + use<'_, 'c> {
+        self.visible().map(|(index, column)| {
+            (
+                index,
+                Field {
+                    name: column.name,
+                    declared: column.declared,
+                },
+            )
+        })
+    }
+
+    fn visible(&self) -> impl Iterator<Item = (usize, &Column<'c>)> {
+        self.columns
+            .iter()
+            .enumerate()
+            .filter(|(_, column)| !column.is_hidden)
     }
 
     /// The syntax that named the column at `index`.
@@ -149,7 +179,7 @@ impl<'c> Row<'c> {
     }
 
     pub(super) fn references(&self) -> impl Iterator<Item = Reference<'c>> + use<'_, 'c> {
-        self.columns.iter().map(Column::reference)
+        self.visible().map(|(_, column)| column.reference())
     }
 
     pub(super) fn column(&self, reference: Reference<'_>) -> ColumnLookup {
@@ -191,6 +221,59 @@ impl<'c> Row<'c> {
         removed
     }
 
+    /// The row a `using` join of this row and `rhs` produces: see
+    /// [`yuzu_mlir::ops::using_join_order`]. Each merged column is declared
+    /// where the left row declares it.
+    pub(super) fn join_using(
+        self,
+        rhs: Row<'c>,
+        left_keys: &[usize],
+        right_keys: &[usize],
+    ) -> Row<'c> {
+        let schema = if rhs.schema == Schema::Lost {
+            Schema::Lost
+        } else {
+            self.schema
+        };
+        let order = yuzu_mlir::ops::using_join_order(
+            self.columns.len(),
+            rhs.columns.len(),
+            left_keys,
+            right_keys,
+        );
+        let joined: Vec<Column<'c>> = self.columns.into_iter().chain(rhs.columns).collect();
+        let merged = left_keys.len();
+        let copies_start = order.len() - 2 * merged;
+        let columns = order
+            .iter()
+            .enumerate()
+            .map(|(at, &from)| {
+                let column = joined[from];
+                if at < merged {
+                    Column {
+                        qualifier: None,
+                        is_hidden: false,
+                        ..column
+                    }
+                } else if at >= copies_start {
+                    Column {
+                        is_hidden: true,
+                        ..column
+                    }
+                } else {
+                    column
+                }
+            })
+            .collect();
+        Self::from_columns(columns, schema)
+    }
+
+    /// The row without the columns only a qualified name reaches.
+    fn without_hidden(&self) -> Row<'c> {
+        let columns = self.visible().map(|(_, &column)| column).collect();
+        Self::from_columns(columns, self.schema)
+    }
+
     pub(super) fn append(&mut self, other: Row<'c>) {
         self.columns.extend(other.columns);
         if other.schema == Schema::Lost {
@@ -208,6 +291,7 @@ impl<'c> From<Vec<Field<'c>>> for Row<'c> {
                 qualifier: None,
                 name: field.name,
                 declared: field.declared,
+                is_hidden: false,
             })
             .collect();
         Self::from_columns(columns, Schema::Known)
@@ -1210,6 +1294,18 @@ impl<'c> SymbolTable<'c> {
 
     pub(super) fn concat(&mut self, rhs: Row<'c>) {
         self.row_mut().append(rhs);
+    }
+
+    pub(super) fn join_using(&mut self, rhs: Row<'c>, left_keys: &[usize], right_keys: &[usize]) {
+        let row = self.row_mut();
+        *row = std::mem::take(row).join_using(rhs, left_keys, right_keys);
+    }
+
+    /// Leaves out the columns only a qualified name reaches, which the
+    /// relation does not output.
+    pub(super) fn drop_hidden(&mut self) {
+        let row = self.row_mut();
+        *row = row.without_hidden();
     }
 }
 

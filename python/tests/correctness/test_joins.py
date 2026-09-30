@@ -118,9 +118,8 @@ def test_qualified_rename_names_one_side():
 # --- `using` carries one copy of each key ---
 
 
-def test_using_carries_both_sides_columns():
-    """`using` only constrains the rows; both copies of the key survive, so a
-    bare reference to it is ambiguous and each side names its own."""
+def test_using_keeps_each_sides_copy_under_its_name():
+    """Each side's own key stays reachable through its alias."""
     query = """
         from employees e
         |> join departments d using (dept_id)
@@ -129,16 +128,24 @@ def test_using_carries_both_sides_columns():
     assert rows(query) == sorted_rows((1, 1, "alice"), (2, 2, "bob"), (1, 1, "carol"))
 
 
-def test_bare_using_key_is_ambiguous():
+def test_a_bare_using_key_is_the_one_merged_column():
     query = """
         from employees e
         |> join departments d using (dept_id)
-        |> select dept_id
+        |> select dept_id, e.name as who
     """
-    assert (
-        error_of(query)
-        == "error: column `dept_id` is ambiguous; qualify it with a relation alias"
-    )
+    assert rows(query) == sorted_rows((1, "alice"), (2, "bob"), (1, "carol"))
+
+
+def test_using_puts_the_merged_key_first():
+    """The key once, then the other left columns, then the other right ones;
+    the sides' own copies of the key are not output."""
+    query = """
+        from employees e
+        |> join departments d using (dept_id)
+        |> where e.name == "alice"
+    """
+    assert rows(query) == [(1, "e1", "alice", 1, 120000, True, 1.5, "d1", "eng")]
 
 
 def test_using_with_several_keys():
@@ -157,6 +164,30 @@ def test_outer_join_using_preserves_unmatched_rows():
         |> select e.name as who, d.name as dept
     """
     assert rows(query) == sorted_rows(*MATCHED, ("dan", None))
+
+
+def test_a_right_join_using_takes_the_right_key():
+    query = """
+        from employees e
+        |> right join departments d using (dept_id)
+        |> select dept_id, e.name as who
+    """
+    assert rows(query) == sorted_rows((1, "alice"), (1, "carol"), (2, "bob"), (3, None))
+
+
+def test_a_full_join_using_takes_the_key_of_either_side():
+    query = """
+        from employees e
+        |> full join departments d using (dept_id)
+        |> select dept_id, e.name as who, d.name as dept
+    """
+    assert rows(query) == sorted_rows(
+        (1, "alice", "eng"),
+        (1, "carol", "eng"),
+        (2, "bob", "sales"),
+        (9, "dan", None),
+        (3, None, "ops"),
+    )
 
 
 # --- later stages see the joined row ---

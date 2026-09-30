@@ -44,10 +44,12 @@ impl<'c> AstToYzl<'c, '_> {
             (hole, Row::lost())
         };
 
+        let loc = self.location(pipeline);
         self.in_relation(row, |this| {
-            pipeline.stages().fold(value, |value, stage| {
+            let value = pipeline.stages().fold(value, |value, stage| {
                 this.convert_stage(block, value, &stage)
-            })
+            });
+            this.emit_visible_columns(block, value, loc)
         })
     }
 
@@ -368,6 +370,7 @@ impl<'c> AstToYzl<'c, '_> {
             return input;
         };
 
+        let input = self.emit_visible_columns(block, input, loc);
         self.symbols.alias(alias);
         self.emit_alias(block, input, alias, loc)
     }
@@ -405,34 +408,51 @@ impl<'c> AstToYzl<'c, '_> {
         };
         self.record(used, relation, target);
 
+        // A `using` column is one column on each side, merged into one.
         let mut using: Vec<&'c str> = Vec::new();
+        let mut left_keys: Vec<usize> = Vec::new();
+        let mut right_keys: Vec<usize> = Vec::new();
         if let Some(clause) = join.using() {
             for column in clause.columns() {
                 let Some(name) = self.read_name(&column) else {
                     continue;
                 };
                 let reference = Reference::unqualified(name);
-                if !self.symbols.row().has_column(reference) || !rhs.has_column(reference) {
-                    self.report(
+                match (self.symbols.column(reference), rhs.column(reference)) {
+                    (ColumnLookup::Unique(left), ColumnLookup::Unique(right)) => {
+                        // The name is both sides' column: the left one first,
+                        // where the merged column is declared.
+                        let used = column.syntax().text_range();
+                        let sides = [self.symbols.row().declared(left), rhs.declared(right)];
+                        for declared in sides.into_iter().flatten() {
+                            self.record_declared(used, name, declared);
+                        }
+                        using.push(name);
+                        left_keys.push(left);
+                        right_keys.push(right);
+                    }
+                    (ColumnLookup::Absent, _) | (_, ColumnLookup::Absent) => self.report(
                         &clause,
                         &format!("column {reference} not present in both relations"),
-                    );
-                } else if let ColumnLookup::Unique(index) = self.symbols.column(reference)
-                    && let Some(declared) = self.symbols.row().declared(index)
-                {
-                    self.record_declared(column.syntax().text_range(), name, declared);
+                    ),
+                    (ColumnLookup::Ambiguous, _) | (_, ColumnLookup::Ambiguous) => self.report(
+                        &column,
+                        &format!("`{name}` names more than one column on one side of the join"),
+                    ),
+                    (ColumnLookup::Lost, _) | (_, ColumnLookup::Lost) => {}
                 }
-                using.push(name);
             }
             if using.is_empty() {
                 self.assert_syntax_error("`using` has no column");
             }
         }
 
-        // The condition sees both rows, so the row moves first.
-        self.symbols.concat(rhs);
         let on = Region::new();
-        if join.using().is_none() {
+        if join.using().is_some() {
+            self.symbols.join_using(rhs, &left_keys, &right_keys);
+        } else {
+            // The condition sees both rows, so the row moves first.
+            self.symbols.concat(rhs);
             match join.on() {
                 None => self.assert_syntax_error("`join` is missing its `on` or `using` clause"),
                 Some(clause) => match clause.condition() {
@@ -457,8 +477,10 @@ impl<'c> AstToYzl<'c, '_> {
             builder = builder.rhs_alias(StringAttribute::new(self.context, alias));
         }
         if !using.is_empty() {
-            let columns = ArrayAttribute::from_strings(self.context, &using);
-            builder = builder.using_columns(columns);
+            builder = builder
+                .using_columns(ArrayAttribute::from_strings(self.context, &using))
+                .left_keys(ArrayAttribute::from_indices(self.context, left_keys))
+                .right_keys(ArrayAttribute::from_indices(self.context, right_keys));
         }
 
         block
@@ -660,6 +682,52 @@ impl<'c> AstToYzl<'c, '_> {
             .first_result()
     }
 
+    /// Leaves out the columns only a qualified name reaches, when the row
+    /// holds any: a relation does not output them.
+    fn emit_visible_columns<'a>(
+        &mut self,
+        block: BlockRef<'c, 'a>,
+        input: Value<'c, 'a>,
+        loc: Location<'c>,
+    ) -> Value<'c, 'a> {
+        if !self.symbols.row().has_hidden() {
+            return input;
+        }
+
+        let region = Region::new();
+        let body = self.stage_block(&region, loc);
+        let (indices, names): (Vec<usize>, Vec<&'c str>) = self
+            .symbols
+            .row()
+            .visible_fields()
+            .map(|(index, field)| (index, field.name))
+            .unzip();
+        let values: Vec<Value> = indices
+            .iter()
+            .map(|&index| {
+                body.argument(index)
+                    .expect("the block has an argument for each column")
+                    .into()
+            })
+            .collect();
+        body.append_operation(yzl::r#yield(self.context, &values, loc).into());
+        self.symbols.drop_hidden();
+
+        block
+            .append_operation(
+                yzl::select(
+                    self.context,
+                    QueryType::new(self.context).into(),
+                    input,
+                    region,
+                    ArrayAttribute::from_strings(self.context, names),
+                    loc,
+                )
+                .into(),
+            )
+            .first_result()
+    }
+
     /// The row's columns are the block arguments, typed by inference later.
     fn stage_block<'r>(&self, region: &'r Region<'c>, loc: Location<'c>) -> BlockRef<'c, 'r> {
         let width = self.symbols.row().len();
@@ -706,6 +774,106 @@ mod tests {
     use expect_test::expect;
 
     use crate::test_support::{check, check_yzr, lowered, reported};
+
+    #[test]
+    fn a_using_join_merges_each_named_column() {
+        check_yzr(
+            r"
+struct Left { id: int64, tag: str }
+table t = Left
+struct Right { extra: int64, id: int64 }
+table u = Right
+
+from t as l
+|> join u as r using (id)
+|> select id, tag, extra, l.id as li, r.id as ri
+",
+            &expect![[r#"
+                module {
+                  yz.struct @Left ["id", "tag"] : [!yz.int64, !yz.str]
+                  yz.struct @Right ["extra", "id"] : [!yz.int64, !yz.int64]
+                  %0 = yzr.table @t : !yz.struct<@Left>
+                  %1 = yzr.table @u : !yz.struct<@Right>
+                  yz.struct @row ["id", "tag", "extra", "id"] : [!yz.int64, !yz.str, !yz.int64, !yz.int64]
+                  %2 = yzr.join "inner", %0, %1 {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.str, %arg2: !yz.int64, %arg3: !yz.int64):
+                    %5 = yz.cmp "eq", %arg0, %arg3 : !yz.int64, !yz.int64 -> !yz.bool
+                    yzr.yield %5 : !yz.bool
+                  } : !yz.struct<@Left>, !yz.struct<@Right> -> !yz.struct<@row>
+                  yz.struct @row_0 ["id", "tag", "extra", "id", "id"] : [!yz.int64, !yz.str, !yz.int64, !yz.int64, !yz.int64]
+                  %3 = yzr.project %2 {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.str, %arg2: !yz.int64, %arg3: !yz.int64):
+                    yzr.yield %arg0, %arg1, %arg2, %arg0, %arg3 : !yz.int64, !yz.str, !yz.int64, !yz.int64, !yz.int64
+                  } : !yz.struct<@row> -> !yz.struct<@row_0>
+                  yz.struct @row_1 ["id", "tag", "extra", "li", "ri"] : [!yz.int64, !yz.str, !yz.int64, !yz.int64, !yz.int64]
+                  %4 = yzr.project %3 {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.str, %arg2: !yz.int64, %arg3: !yz.int64, %arg4: !yz.int64):
+                    yzr.yield %arg0, %arg1, %arg2, %arg3, %arg4 : !yz.int64, !yz.str, !yz.int64, !yz.int64, !yz.int64
+                  } : !yz.struct<@row_0> -> !yz.struct<@row_1>
+                  yzr.output %4 : !yz.struct<@row_1>
+                }
+            "#]],
+        );
+    }
+
+    #[test]
+    fn a_full_join_using_takes_the_key_of_either_side() {
+        check_yzr(
+            r"
+struct Left { id: int64, tag: str }
+table t = Left
+struct Right { extra: int64, id: int64 }
+table u = Right
+
+from t
+|> full join u using (id)
+",
+            &expect![[r#"
+                module {
+                  yz.struct @Left ["id", "tag"] : [!yz.int64, !yz.str]
+                  yz.struct @Right ["extra", "id"] : [!yz.int64, !yz.int64]
+                  %0 = yzr.table @t : !yz.struct<@Left>
+                  %1 = yzr.table @u : !yz.struct<@Right>
+                  yz.struct @row ["id", "tag", "extra", "id"] : [!yz.int64, !yz.str, !yz.int64, !yz.int64]
+                  %2 = yzr.join "full", %0, %1 {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.str, %arg2: !yz.int64, %arg3: !yz.int64):
+                    %5 = yz.cmp "eq", %arg0, %arg3 : !yz.int64, !yz.int64 -> !yz.bool
+                    yzr.yield %5 : !yz.bool
+                  } : !yz.struct<@Left>, !yz.struct<@Right> -> !yz.struct<@row>
+                  yz.struct @row_0 ["id", "tag", "extra", "id", "id"] : [!yz.int64, !yz.str, !yz.int64, !yz.int64, !yz.int64]
+                  %3 = yzr.project %2 {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.str, %arg2: !yz.int64, %arg3: !yz.int64):
+                    %5 = yz.coalesce %arg0, %arg3 : !yz.int64, !yz.int64 -> !yz.int64
+                    yzr.yield %5, %arg1, %arg2, %arg0, %arg3 : !yz.int64, !yz.str, !yz.int64, !yz.int64, !yz.int64
+                  } : !yz.struct<@row> -> !yz.struct<@row_0>
+                  yz.struct @row_1 ["id", "tag", "extra"] : [!yz.int64, !yz.str, !yz.int64]
+                  %4 = yzr.project %3 {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.str, %arg2: !yz.int64, %arg3: !yz.int64, %arg4: !yz.int64):
+                    yzr.yield %arg0, %arg1, %arg2 : !yz.int64, !yz.str, !yz.int64
+                  } : !yz.struct<@row_0> -> !yz.struct<@row_1>
+                  yzr.output %4 : !yz.struct<@row_1>
+                }
+            "#]],
+        );
+    }
+
+    #[test]
+    fn using_columns_of_two_types_are_reported() {
+        check(
+            "struct Left { id: int64 }\ntable t = Left\nstruct Right { id: str }\ntable u = Right\nfrom t |> join u using (id)\n",
+            |context, module| {
+                crate::infer_types(context, module);
+                String::new()
+            },
+            &expect![[r"
+                error: expected `int64`, found `str`
+                 --> test.yz:5:8
+                  |
+                5 | from t |> join u using (id)
+                  |        ^^^^^^^^^^^^^^^^^^^^
+            "]],
+        );
+    }
 
     #[test]
     fn a_limit_past_int64_is_reported() {

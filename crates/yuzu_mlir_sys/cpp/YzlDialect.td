@@ -223,11 +223,20 @@ def Yzl_AliasOp : Yzl_Op<"alias", [Pure]> {
 
 def Yzl_JoinOp : Yzl_Op<"join", [IsolatedFromAbove, Pure]> {
   let summary = "join a named relation onto the query";
+  let description = [{
+    With `using`, `left_keys` and `right_keys` give where each named column
+    is in the left row and in the right row. The joined row is then each
+    named column once, the other left columns, the other right columns, and
+    last the two sides' own copies of the named columns, which only a
+    qualified name reaches.
+  }];
   let arguments = (ins Yzl_QueryType:$lhs,
                        Yuzu_StrEnumAttr<["inner", "left", "right", "full"]>:$kind,
                        FlatSymbolRefAttr:$rhs,
                        OptionalAttr<StrAttr>:$rhs_alias,
-                       OptionalAttr<StrArrayAttr>:$using_columns);
+                       OptionalAttr<StrArrayAttr>:$using_columns,
+                       OptionalAttr<I64ArrayAttr>:$left_keys,
+                       OptionalAttr<I64ArrayAttr>:$right_keys);
   let results = (outs Yzl_QueryType:$result);
   let regions = (region AnyRegion:$on);
   let assemblyFormat =

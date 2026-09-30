@@ -30,6 +30,7 @@ pub(crate) enum Func {
     And,
     Or,
     Not,
+    Coalesce,
 }
 
 /// Map a primitive op's function to its Substrait extension function.
@@ -50,6 +51,7 @@ pub(crate) fn function_target(func: Func) -> (&'static str, &'static str) {
         Func::And => (BOOLEAN_URN, "and"),
         Func::Or => (BOOLEAN_URN, "or"),
         Func::Not => (BOOLEAN_URN, "not"),
+        Func::Coalesce => (COMPARISON_URN, "coalesce"),
     }
 }
 

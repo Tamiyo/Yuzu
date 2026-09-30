@@ -483,8 +483,41 @@ impl<'c> TypeInferrer<'c, '_> {
                 row.extend(self.yield_terms(op));
                 self.record_row(op, row);
             }
-            Some(YzlOp::Join(_)) => {
-                let row = self.input_row(op);
+            Some(YzlOp::Join(join)) => {
+                let left = self.input_row(op);
+                let rhs = join.rhs().value();
+                let right = declared
+                    .rows
+                    .get(rhs)
+                    .or_else(|| self.relations.get(rhs))
+                    .cloned()
+                    .unwrap_or_default();
+                let (left_width, right_width) = (left.len(), right.len());
+                let mut row = left;
+                row.extend(right);
+
+                if let Some((left_keys, right_keys)) = join.using_keys() {
+                    for (&left_key, &right_key) in left_keys.iter().zip(&right_keys) {
+                        if let (Some(&lhs), Some(&rhs)) =
+                            (row.get(left_key), row.get(left_width + right_key))
+                        {
+                            self.unify(op, lhs, rhs);
+                        }
+                    }
+                    let order = yuzu_mlir::ops::using_join_order(
+                        left_width,
+                        right_width,
+                        &left_keys,
+                        &right_keys,
+                    );
+                    let joined = order
+                        .iter()
+                        .filter_map(|&at| row.get(at).copied())
+                        .collect();
+                    self.record_row(op, joined);
+                    return;
+                }
+
                 self.infer_regions(op, &row, &[]);
                 let boolean = BoolType::new(self.context).into();
                 self.expect_yield(op, boolean, "`on` condition");

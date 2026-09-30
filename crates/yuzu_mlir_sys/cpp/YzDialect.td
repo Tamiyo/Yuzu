@@ -277,6 +277,18 @@ def Yz_NotOp : Yz_Op<"not", [Pure]> {
   let hasFolder = 1;
 }
 
+def Yz_CoalesceOp : Yz_Op<"coalesce", [Pure]> {
+  let summary = "the first operand that is not null";
+  let description = [{
+    A full join `using` a column gives the column from whichever side has
+    the row, so the one column holds the key of every row.
+  }];
+  let arguments = (ins AnyType:$lhs, AnyType:$rhs);
+  let results = (outs AnyType:$result);
+  let assemblyFormat =
+      "$lhs `,` $rhs `:` type($lhs) `,` type($rhs) `->` type($result) attr-dict";
+}
+
 // Functions.
 
 def Yz_FuncOp : Yz_Op<"func", [Symbol, IsolatedFromAbove]> {

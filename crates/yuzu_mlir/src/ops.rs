@@ -15,3 +15,39 @@ impl yzl::FnOp<'_, '_> {
         self.external_name().is_some()
     }
 }
+
+impl yzl::JoinOp<'_, '_> {
+    /// For a `using` join, where each column it names is in the left row and
+    /// in the right row.
+    #[must_use]
+    pub fn using_keys(&self) -> Option<(Vec<usize>, Vec<usize>)> {
+        use crate::ir::attribute::array::ArrayAttributeExt;
+
+        let left = self.left_keys()?.indices().collect();
+        let right = self.right_keys()?.indices().collect();
+        Some((left, right))
+    }
+}
+
+/// The row a `using` join produces, as positions in the left row followed by
+/// the right row.
+///
+/// First each named column once, at its left position; then the other left
+/// columns; then the other right columns; last the left's and the right's own
+/// copies of the named columns.
+#[must_use]
+pub fn using_join_order(
+    left_width: usize,
+    right_width: usize,
+    left_keys: &[usize],
+    right_keys: &[usize],
+) -> Vec<usize> {
+    let right_keys: Vec<usize> = right_keys.iter().map(|&key| left_width + key).collect();
+    let mut order = left_keys.to_vec();
+    order.extend((0..left_width).filter(|index| !left_keys.contains(index)));
+    order
+        .extend((left_width..left_width + right_width).filter(|index| !right_keys.contains(index)));
+    order.extend_from_slice(left_keys);
+    order.extend_from_slice(&right_keys);
+    order
+}

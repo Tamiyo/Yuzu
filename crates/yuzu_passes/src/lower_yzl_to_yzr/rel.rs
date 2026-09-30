@@ -2,7 +2,8 @@ use melior::IrRewriter;
 use melior::ir::attribute::{DenseI64ArrayAttribute, StringAttribute, TypeAttribute};
 use melior::ir::operation::{OperationLike, OperationRef};
 use melior::ir::r#type::FunctionType;
-use melior::ir::{Block, BlockLike, Region, RegionLike, Value};
+use melior::ir::{Block, BlockLike, Location, Region, RegionLike, Value};
+use yuzu_mlir::attributes::JoinKind;
 use yuzu_mlir::ir::attribute::array::ArrayAttributeExt;
 use yuzu_mlir::ir::attribute::string;
 use yuzu_mlir::ir::block::BlockExt;
@@ -333,10 +334,10 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         let left_width = row.len();
         row.extend(right.iter().copied());
 
-        let region = match stage.using_columns() {
-            Some(columns) => {
-                let columns: Vec<&str> = columns.strings().collect();
-                self.join_keys(op, &columns, left_width, &row)
+        let using = stage.using_keys();
+        let region = match &using {
+            Some((left_keys, right_keys)) => {
+                self.join_keys(left_keys, right_keys, left_width, &row, op.location())
             }
             None => {
                 self.convert_region(stage.on(), &row, op.location(), Yielded::Body)
@@ -358,7 +359,20 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             .into(),
         );
 
-        self.record_stage(op, joined.first_result(), row);
+        match using {
+            None => self.record_stage(op, joined.first_result(), row),
+            Some((left_keys, right_keys)) => {
+                let (region, merged) = self.merge_using(
+                    stage.kind(),
+                    &left_keys,
+                    &right_keys,
+                    left_width,
+                    &row,
+                    op.location(),
+                );
+                self.project(op, symbols, joined.first_result(), region, merged);
+            }
+        }
     }
 
     fn convert_limit(&mut self, op: OperationRef<'c, '_>, stage: LimitOp<'c, '_>) {
@@ -517,29 +531,17 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
     /// means.
     fn join_keys(
         &mut self,
-        op: OperationRef<'c, '_>,
-        columns: &[&str],
+        left_keys: &[usize],
+        right_keys: &[usize],
         left_width: usize,
         row: &[Column<'c>],
+        location: Location<'c>,
     ) -> Region<'c> {
-        let location = op.location();
         let region = Region::new();
         let body = row_block(&region, row, location);
 
         let mut condition: Option<Value<'c, '_>> = None;
-        for column in columns {
-            let left = row[..left_width]
-                .iter()
-                .position(|(name, _)| name == column);
-            let right = row[left_width..]
-                .iter()
-                .position(|(name, _)| name == column)
-                .map(|index| index + left_width);
-            let (Some(left), Some(right)) = (left, right) else {
-                report(op, &format!("`{column}` is not present in both relations"));
-                continue;
-            };
-
+        for (&left, &right) in left_keys.iter().zip(right_keys) {
             let equal = body.append_operation(
                 yz::cmp(
                     self.context,
@@ -547,7 +549,7 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
                     body.argument(left)
                         .expect("the left column is in range")
                         .into(),
-                    body.argument(right)
+                    body.argument(left_width + right)
                         .expect("the right column is in range")
                         .into(),
                     StringAttribute::new(self.context, "eq"),
@@ -577,6 +579,64 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
         body.append_operation(yzr::r#yield(self.context, &yielded, location).into());
 
         region
+    }
+
+    /// The joined row in the order a `using` join gives it: see
+    /// [`yuzu_mlir::ops::using_join_order`]. A merged column holds the key of
+    /// the side that has the row: the left for an inner or a left join, the
+    /// right for a right join, and whichever has it for a full join.
+    fn merge_using(
+        &mut self,
+        kind: JoinKind,
+        left_keys: &[usize],
+        right_keys: &[usize],
+        left_width: usize,
+        row: &[Column<'c>],
+        location: Location<'c>,
+    ) -> (Region<'c>, Row<'c>) {
+        let region = Region::new();
+        let body = row_block(&region, row, location);
+        let column = |index: usize| -> Value<'c, '_> {
+            body.argument(index)
+                .expect("the joined row holds the column")
+                .into()
+        };
+        let order = yuzu_mlir::ops::using_join_order(
+            left_width,
+            row.len() - left_width,
+            left_keys,
+            right_keys,
+        );
+
+        let mut yielded: Vec<Value<'c, '_>> = Vec::with_capacity(order.len());
+        for (at, &index) in order.iter().enumerate() {
+            // The first columns are the merged ones, one for each key.
+            let Some(&right_key) = right_keys.get(at) else {
+                yielded.push(column(index));
+                continue;
+            };
+            let right = left_width + right_key;
+            yielded.push(match kind {
+                JoinKind::Inner | JoinKind::Left => column(index),
+                JoinKind::Right => column(right),
+                JoinKind::Full => body
+                    .append_operation(
+                        yz::coalesce(
+                            self.context,
+                            row[index].1,
+                            column(index),
+                            column(right),
+                            location,
+                        )
+                        .into(),
+                    )
+                    .first_result(),
+            });
+        }
+        body.append_operation(yzr::r#yield(self.context, &yielded, location).into());
+
+        let merged = order.iter().map(|&index| row[index]).collect();
+        (region, merged)
     }
 }
 
@@ -694,12 +754,22 @@ from t
                   yz.struct @row ["id", "tag", "part", "id", "part", "extra"] : [!yz.int64, !yz.str, !yz.int64, !yz.int64, !yz.int64, !yz.int64]
                   %2 = yzr.join "inner", %0, %1 {
                   ^bb0(%arg0: !yz.int64, %arg1: !yz.str, %arg2: !yz.int64, %arg3: !yz.int64, %arg4: !yz.int64, %arg5: !yz.int64):
-                    %3 = yz.cmp "eq", %arg0, %arg3 : !yz.int64, !yz.int64 -> !yz.bool
-                    %4 = yz.cmp "eq", %arg2, %arg4 : !yz.int64, !yz.int64 -> !yz.bool
-                    %5 = yz.and %3, %4 : !yz.bool, !yz.bool -> !yz.bool
-                    yzr.yield %5 : !yz.bool
+                    %5 = yz.cmp "eq", %arg0, %arg3 : !yz.int64, !yz.int64 -> !yz.bool
+                    %6 = yz.cmp "eq", %arg2, %arg4 : !yz.int64, !yz.int64 -> !yz.bool
+                    %7 = yz.and %5, %6 : !yz.bool, !yz.bool -> !yz.bool
+                    yzr.yield %7 : !yz.bool
                   } : !yz.struct<@Row>, !yz.struct<@Other> -> !yz.struct<@row>
-                  yzr.output %2 : !yz.struct<@row>
+                  yz.struct @row_0 ["id", "part", "tag", "extra", "id", "part", "id", "part"] : [!yz.int64, !yz.int64, !yz.str, !yz.int64, !yz.int64, !yz.int64, !yz.int64, !yz.int64]
+                  %3 = yzr.project %2 {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.str, %arg2: !yz.int64, %arg3: !yz.int64, %arg4: !yz.int64, %arg5: !yz.int64):
+                    yzr.yield %arg0, %arg2, %arg1, %arg5, %arg0, %arg2, %arg3, %arg4 : !yz.int64, !yz.int64, !yz.str, !yz.int64, !yz.int64, !yz.int64, !yz.int64, !yz.int64
+                  } : !yz.struct<@row> -> !yz.struct<@row_0>
+                  yz.struct @row_1 ["id", "part", "tag", "extra"] : [!yz.int64, !yz.int64, !yz.str, !yz.int64]
+                  %4 = yzr.project %3 {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.int64, %arg2: !yz.str, %arg3: !yz.int64, %arg4: !yz.int64, %arg5: !yz.int64, %arg6: !yz.int64, %arg7: !yz.int64):
+                    yzr.yield %arg0, %arg1, %arg2, %arg3 : !yz.int64, !yz.int64, !yz.str, !yz.int64
+                  } : !yz.struct<@row_0> -> !yz.struct<@row_1>
+                  yzr.output %4 : !yz.struct<@row_1>
                 }
             "#]],
         );
@@ -825,17 +895,27 @@ from big
                   %0 = yzr.table @t : !yz.struct<@Row>
                   %1 = yzr.filter %0 : !yz.struct<@Row> {
                   ^bb0(%arg0: !yz.int64, %arg1: !yz.int64):
-                    %3 = yz.constant_int 10
-                    %4 = yz.cmp "gt", %arg0, %3 : !yz.int64, !yz.int64 -> !yz.bool
-                    yzr.yield %4 : !yz.bool
+                    %5 = yz.constant_int 10
+                    %6 = yz.cmp "gt", %arg0, %5 : !yz.int64, !yz.int64 -> !yz.bool
+                    yzr.yield %6 : !yz.bool
                   }
                   yz.struct @row ["a", "b", "a", "b"] : [!yz.int64, !yz.int64, !yz.int64, !yz.int64]
                   %2 = yzr.join "inner", %1, %1 {
                   ^bb0(%arg0: !yz.int64, %arg1: !yz.int64, %arg2: !yz.int64, %arg3: !yz.int64):
-                    %3 = yz.cmp "eq", %arg0, %arg2 : !yz.int64, !yz.int64 -> !yz.bool
-                    yzr.yield %3 : !yz.bool
+                    %5 = yz.cmp "eq", %arg0, %arg2 : !yz.int64, !yz.int64 -> !yz.bool
+                    yzr.yield %5 : !yz.bool
                   } : !yz.struct<@Row>, !yz.struct<@Row> -> !yz.struct<@row>
-                  yzr.output %2 : !yz.struct<@row>
+                  yz.struct @row_0 ["a", "b", "b", "a", "a"] : [!yz.int64, !yz.int64, !yz.int64, !yz.int64, !yz.int64]
+                  %3 = yzr.project %2 {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.int64, %arg2: !yz.int64, %arg3: !yz.int64):
+                    yzr.yield %arg0, %arg1, %arg3, %arg0, %arg2 : !yz.int64, !yz.int64, !yz.int64, !yz.int64, !yz.int64
+                  } : !yz.struct<@row> -> !yz.struct<@row_0>
+                  yz.struct @row_1 ["a", "b", "b"] : [!yz.int64, !yz.int64, !yz.int64]
+                  %4 = yzr.project %3 {
+                  ^bb0(%arg0: !yz.int64, %arg1: !yz.int64, %arg2: !yz.int64, %arg3: !yz.int64, %arg4: !yz.int64):
+                    yzr.yield %arg0, %arg1, %arg2 : !yz.int64, !yz.int64, !yz.int64
+                  } : !yz.struct<@row_0> -> !yz.struct<@row_1>
+                  yzr.output %4 : !yz.struct<@row_1>
                 }
             "#]],
         );

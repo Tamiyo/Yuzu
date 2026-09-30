@@ -102,6 +102,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
             YzOp::And(_) => self.translate_call(op, Func::And, values),
             YzOp::Or(_) => self.translate_call(op, Func::Or, values),
             YzOp::Not(_) => self.translate_call(op, Func::Not, values),
+            YzOp::Coalesce(_) => self.translate_call(op, Func::Coalesce, values),
             YzOp::Cmp(compare) => {
                 self.translate_call(op, functions::of_predicate(compare.predicate()), values)
             }
