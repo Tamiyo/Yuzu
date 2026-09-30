@@ -2,7 +2,7 @@ use yuzu_lexer::token_kind::TokenKind;
 use yuzu_syntax::SyntaxKind;
 
 use crate::grammar::expr::parse_expr;
-use crate::grammar::{Trailing, delimited, parse_ident};
+use crate::grammar::{Trailing, delimited_non_empty, parse_ident};
 use crate::parser::{Parser, marker::CompletedMarker};
 use crate::token_set::TokenSet;
 
@@ -273,8 +273,7 @@ fn parse_join_using(p: &mut Parser) {
     let m = p.start();
     p.expect(TokenKind::UsingKw);
     p.expect(TokenKind::LeftParen);
-    // An empty list is left to lowering to report.
-    delimited(p, TokenKind::RightParen, Trailing::Forbidden, |p| {
+    delimited_non_empty(p, TokenKind::RightParen, Trailing::Forbidden, |p| {
         parse_ident(p);
     });
     p.expect(TokenKind::RightParen);

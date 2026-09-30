@@ -4,8 +4,17 @@ use yuzu_syntax::SyntaxKind;
 use crate::grammar::expr::parse_expr;
 use crate::grammar::rel::parse_query;
 use crate::grammar::ty::parse_type;
-use crate::grammar::{Trailing, delimited, parse_ident, parse_stmts};
+use crate::grammar::{Trailing, delimited, delimited_non_empty, parse_ident, parse_stmts};
 use crate::parser::{Parser, marker::CompletedMarker};
+use crate::token_set::TokenSet;
+
+/// The tokens a function can start with, its prefixes included.
+const FUNC_START: TokenSet = TokenSet::new(&[
+    TokenKind::PubKw,
+    TokenKind::ExternalKw,
+    TokenKind::AggKw,
+    TokenKind::DefKw,
+]);
 
 pub(crate) fn parse_stmt(p: &mut Parser) -> Option<CompletedMarker> {
     // `pub` prefixes a declaration, so what follows it decides which one this
@@ -198,20 +207,12 @@ fn parse_block_stmt(p: &mut Parser) -> CompletedMarker {
 
 fn parse_func_stmt(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
-    parse_visibility(p);
-
-    if p.at(TokenKind::ExternalKw) {
-        p.bump();
-    }
-    if p.at(TokenKind::AggKw) {
-        p.bump();
-    }
-    p.expect(TokenKind::DefKw);
+    parse_func_prefix(p);
     parse_ident(p);
 
     if p.at(TokenKind::LeftSquare) {
         p.bump();
-        delimited(p, TokenKind::RightSquare, Trailing::Forbidden, |p| {
+        delimited_non_empty(p, TokenKind::RightSquare, Trailing::Forbidden, |p| {
             parse_type_param(p);
         });
         p.expect(TokenKind::RightSquare);
@@ -282,22 +283,34 @@ fn parse_trait_stmt(p: &mut Parser) -> CompletedMarker {
 /// in it.
 fn parse_methods(p: &mut Parser, mut method: impl FnMut(&mut Parser)) {
     while !p.at(TokenKind::RightCurly) && !p.at_end() {
-        if p.at(TokenKind::DefKw) {
+        if p.at_any(FUNC_START) {
             method(p);
             continue;
         }
         p.error_in_place();
         let m = p.start();
-        while !p.at(TokenKind::DefKw) && !p.at(TokenKind::RightCurly) && !p.at_end() {
+        while !p.at_any(FUNC_START) && !p.at(TokenKind::RightCurly) && !p.at_end() {
             p.bump();
         }
         p.complete(m, SyntaxKind::Error);
     }
 }
 
+/// `pub`, `external` and `agg`, each when present, then `def`.
+fn parse_func_prefix(p: &mut Parser) {
+    parse_visibility(p);
+    if p.at(TokenKind::ExternalKw) {
+        p.bump();
+    }
+    if p.at(TokenKind::AggKw) {
+        p.bump();
+    }
+    p.expect(TokenKind::DefKw);
+}
+
 fn parse_trait_method(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
-    p.expect(TokenKind::DefKw);
+    parse_func_prefix(p);
     parse_ident(p);
     p.expect(TokenKind::LeftParen);
     delimited(p, TokenKind::RightParen, Trailing::Forbidden, |p| {

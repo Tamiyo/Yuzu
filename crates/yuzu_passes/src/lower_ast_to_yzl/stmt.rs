@@ -192,6 +192,12 @@ impl<'c> AstToYzl<'c, '_> {
             }
             _ => {}
         }
+        if site != Site::AtModule && decl.visibility() == Visibility::Public {
+            self.report(
+                decl,
+                "a method is as visible as its trait, so it takes no `pub`",
+            );
+        }
 
         let mut generics: Vec<&'c str> = site.generics().to_vec();
         generics.extend(
@@ -1900,6 +1906,19 @@ external def upper(s: str) -> str
         "]]
         .assert_eq(&reported(
             "trait Show {\n    def show(x: Self) -> str\n}\n\nimpl Show for int64 { def show(x: Self) -> str }\n",
+        ));
+    }
+
+    #[test]
+    fn a_method_takes_a_prefix_but_no_pub() {
+        expect![[r"
+            error: a method is as visible as its trait, so it takes no `pub`
+             --> test.yz:2:5
+              |
+            2 |     pub def show(x: Self) -> str
+              |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        "]].assert_eq(&reported(
+            "trait Show {\n    pub def show(x: Self) -> str\n}\n\nimpl Show for int64 {\n    external def show(x: Self) -> str\n}\n",
         ));
     }
 

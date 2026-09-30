@@ -72,6 +72,21 @@ const LIST_ENDS: TokenSet = TokenSet::new(&[
     TokenKind::LeftCurly,
 ]);
 
+/// [`delimited`] for a list that needs an item, such as generics: an empty
+/// one is reported where its first item should be.
+pub(crate) fn delimited_non_empty(
+    p: &mut Parser,
+    close: TokenKind,
+    trailing: Trailing,
+    mut item: impl FnMut(&mut Parser),
+) {
+    // Peeked, not asked: `close` is no item, so it joins no expected set.
+    if p.peek_kind() == Some(close) {
+        item(p);
+    }
+    delimited(p, close, trailing, item);
+}
+
 /// The items of a bracketed list, up to the `close` the caller then takes.
 /// A missing comma is reported and the next item still parses, and a token
 /// no item can start is reported and skipped.
@@ -291,7 +306,7 @@ mod tests {
                   LetStmt
                     Ident
                     IntLiteral
-                9..12 expected one of `}`, `def`, found `let`
+                9..12 expected one of `}`, `agg`, `def`, `external`, `pub`, found `let`
             "]],
         );
     }
@@ -332,6 +347,43 @@ mod tests {
     }
 
     #[test]
+    fn a_method_starts_as_a_function_does() {
+        check_outline(
+            "impl Show for int64 {\n    pub def a() -> int64 { return 1 }\n    agg def b(x: int64) -> int64 { return x }\n    external def c() -> str\n}\n",
+            &expect![[r"
+                Root
+                  ImplStmt
+                    TraitRef
+                      Ident
+                    Ident
+                    FuncStmt
+                      Ident
+                      NamedTypeAnnotation
+                        Ident
+                      BlockStmt
+                        ReturnStmt
+                          IntLiteral
+                    FuncStmt
+                      Ident
+                      FuncParam
+                        Ident
+                        NamedTypeAnnotation
+                          Ident
+                      NamedTypeAnnotation
+                        Ident
+                      BlockStmt
+                        ReturnStmt
+                          IdentExpr
+                            Ident
+                    FuncStmt
+                      Ident
+                      NamedTypeAnnotation
+                        Ident
+            "]],
+        );
+    }
+
+    #[test]
     fn a_narrowed_pub_before_no_declaration_is_one_error() {
         check_outline(
             "pub(mod) impl T {}\n",
@@ -342,6 +394,43 @@ mod tests {
                     Ident
                 9..13 expected a declaration after `pub`, found `impl`
             "]],
+        );
+    }
+
+    #[test]
+    fn an_empty_type_parameter_list_expects_a_parameter() {
+        check_outline(
+            "def f[]() -> int64 { return 1 }\n",
+            &expect![[r"
+            Root
+              FuncStmt
+                Ident
+                TypeParam
+                NamedTypeAnnotation
+                  Ident
+                BlockStmt
+                  ReturnStmt
+                    IntLiteral
+            6..7 expected identifier, found `]`
+        "]],
+        );
+    }
+
+    #[test]
+    fn an_empty_using_list_expects_a_column() {
+        check_outline(
+            "from t |> join u using ()\n",
+            &expect![[r"
+            Root
+              ExprStmt
+                Pipeline
+                  FromSource
+                    Ident
+                  JoinStage
+                    Ident
+                    JoinUsing
+            24..25 expected identifier, found `)`
+        "]],
         );
     }
 

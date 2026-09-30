@@ -425,7 +425,7 @@ impl<'c> AstToYzl<'c, '_> {
                 using.push(name);
             }
             if using.is_empty() {
-                self.report(&clause, "`using` needs at least one column");
+                self.assert_syntax_error("`using` has no column");
             }
         }
 

@@ -1,7 +1,7 @@
 use yuzu_lexer::token_kind::TokenKind;
 use yuzu_syntax::SyntaxKind;
 
-use crate::grammar::{Trailing, delimited, parse_ident};
+use crate::grammar::{Trailing, delimited, delimited_non_empty, parse_ident};
 use crate::parser::{Parser, marker::CompletedMarker};
 
 pub(crate) fn parse_type(p: &mut Parser) -> CompletedMarker {
@@ -18,11 +18,7 @@ fn parse_named_type(p: &mut Parser) -> CompletedMarker {
 
     if p.at(TokenKind::LeftSquare) {
         p.bump();
-        // Peeked, not asked: `]` is no type, so it joins no expected set.
-        if p.peek_kind() == Some(TokenKind::RightSquare) {
-            parse_type(p);
-        }
-        delimited(p, TokenKind::RightSquare, Trailing::Forbidden, |p| {
+        delimited_non_empty(p, TokenKind::RightSquare, Trailing::Forbidden, |p| {
             parse_type(p);
         });
         p.expect(TokenKind::RightSquare);
