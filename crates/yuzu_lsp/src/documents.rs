@@ -151,8 +151,14 @@ impl GlobalState<'_> {
     /// A file changed on disk, where an open document may import it.
     pub(crate) fn on_did_change_watched_files(
         &mut self,
-        _params: DidChangeWatchedFilesParams,
+        params: DidChangeWatchedFilesParams,
     ) -> Result<(), RunError> {
+        let changed: Vec<PathBuf> = params
+            .changes
+            .into_iter()
+            .filter_map(|change| change.uri.to_file_path().ok())
+            .collect();
+        self.host.files_changed(&changed);
         self.request_check(None)
     }
 

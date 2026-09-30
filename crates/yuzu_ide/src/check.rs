@@ -76,12 +76,20 @@ impl Checked {
 
     /// The file a source was read from. `None` for a library module built
     /// into the compiler, and for the entry a module's check makes up.
+    ///
+    /// # Panics
+    ///
+    /// If `source` is not one of this check's sources.
     #[must_use]
     pub fn path(&self, source: SourceId) -> Option<&Path> {
         self.inner.sources.path(source)
     }
 
     /// A source's text, as the check read it.
+    ///
+    /// # Panics
+    ///
+    /// If `source` is not one of this check's sources.
     #[must_use]
     pub fn text(&self, source: SourceId) -> &str {
         self.inner.sources.text(source)
@@ -96,8 +104,13 @@ impl Checked {
     /// The text of a file as this check read it, by its path.
     #[must_use]
     pub fn path_text(&self, path: &Path) -> Option<&str> {
-        let source = self.inner.sources.file_id(path)?;
-        Some(self.text(source))
+        Some(self.text(self.source_of(path)?))
+    }
+
+    /// The source this check read a file as.
+    #[must_use]
+    pub fn source_of(&self, path: &Path) -> Option<SourceId> {
+        self.inner.sources.file_id(path)
     }
 
     /// Where the name at a position is declared.

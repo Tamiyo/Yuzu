@@ -79,7 +79,7 @@ pub fn run(connection: &Connection) -> Result<(), RunError> {
         ))?,
         None => {}
     }
-    if capabilities::watches_files(&params.capabilities) {
+    if capabilities::supports_watched_files(&params.capabilities) {
         state.send_request::<RegisterCapability>(RegistrationParams {
             registrations: vec![capabilities::watched_files_registration()],
         })?;

@@ -126,11 +126,17 @@ impl GlobalState<'_> {
         (*version == document.version).then_some((file_id, document, checked))
     }
 
+    /// An open document and its last check, whatever text that check read.
+    pub(crate) fn latest_check(&self, url: &Url) -> Option<(FileId, &Document, &Checked)> {
+        let (file_id, document) = self.document(url)?;
+        let (_, checked) = self.checks.get(&file_id)?;
+        Some((file_id, document, checked))
+    }
+
     /// An open document, its last check, and how the text that check read
     /// maps onto the document's text now.
     pub(crate) fn last_check(&self, url: &Url) -> Option<(FileId, &Document, &Checked, TextShift)> {
-        let (file_id, document) = self.document(url)?;
-        let (_, checked) = self.checks.get(&file_id)?;
+        let (file_id, document, checked) = self.latest_check(url)?;
         let shift = TextShift::between(checked.file_text(file_id)?, &document.text);
         Some((file_id, document, checked, shift))
     }

@@ -26,7 +26,7 @@ pub(crate) fn offset(line_index: &LineIndex, position: Position) -> Option<TextS
         )?,
     };
     let end_of_line = if line.end() < line_index.index.len() {
-        line.end() - TextSize::from(1)
+        line.end() - line_index.line_ending_len(position.line)
     } else {
         line.end()
     };
@@ -62,5 +62,18 @@ mod tests {
             );
             assert_eq!(offset(&index, Position::new(2, 0)), None);
         }
+    }
+
+    #[test]
+    fn a_crlf_line_ends_before_its_carriage_return() {
+        let index = LineIndex::new("let a = 1\r\nlet b", PositionEncoding::Utf8);
+        assert_eq!(
+            offset(&index, Position::new(0, 99)),
+            Some(TextSize::from(9))
+        );
+        assert_eq!(
+            offset(&index, Position::new(1, 99)),
+            Some(TextSize::from(16))
+        );
     }
 }

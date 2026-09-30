@@ -81,16 +81,19 @@ pub(crate) fn resolution_at(
 
 /// The declaration of the name at a position, and each of its uses.
 fn names(checked: &Checked, source: SourceId, offset: TextSize) -> Option<(Name, Vec<Name>)> {
-    let resolutions = checked.resolutions();
-    let at = resolution_at(resolutions, source, offset)?;
+    let at = resolution_at(checked.resolutions(), source, offset)?;
+    Some((at.declared, uses_of(checked, at.declared)))
+}
 
+/// Each place a declaration's name is used, once.
+pub(crate) fn uses_of(checked: &Checked, declared: Name) -> Vec<Name> {
     let mut uses: Vec<Name> = Vec::new();
-    for resolution in resolutions {
-        if resolution.declared == at.declared && !uses.contains(&resolution.used) {
+    for resolution in checked.resolutions() {
+        if resolution.declared == declared && !uses.contains(&resolution.used) {
             uses.push(resolution.used);
         }
     }
-    Some((at.declared, uses))
+    uses
 }
 
 fn file_range(checked: &Checked, name: Name) -> Option<FileRange> {

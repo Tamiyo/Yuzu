@@ -15,11 +15,16 @@ use crate::Checked;
 
 /// Where the cursor is, as the text around it says.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag says whether one kind of name fits here"
+)]
 pub struct CompletionSite {
     /// Where the stage the cursor is in starts, when it is in one.
     pub stage: Option<TextSize>,
     /// The locals and parameters written before the cursor that it can read.
     pub locals: Vec<(String, CompletionKind)>,
+    /// The keywords that can start what is written here.
     pub keywords: &'static [&'static str],
     /// Whether a function or a module-level `let` fits here.
     pub takes_value: bool,
@@ -30,12 +35,14 @@ pub struct CompletionSite {
     pub import_from: Option<String>,
     /// Whether a relation fits: after `from` or `join`.
     pub takes_relation: bool,
-    /// Whether a type fits: after `:`, `->` or `[`.
+    /// Whether a type fits: after `->`, or after `:` or `[` in a type.
     pub takes_type: bool,
+    /// Whether a trait fits: after the `:` of a bound.
+    pub takes_trait: bool,
 }
 
 impl CompletionSite {
-    fn with_keywords(keywords: &'static [&'static str]) -> Self {
+    fn keywords_only(keywords: &'static [&'static str]) -> Self {
         CompletionSite {
             stage: None,
             locals: Vec::new(),
@@ -45,7 +52,42 @@ impl CompletionSite {
             import_from: None,
             takes_relation: false,
             takes_type: false,
+            takes_trait: false,
         }
+    }
+
+    /// What fits here from the text alone: its keywords, the locals written
+    /// before it, and the types every program has. A file not checked yet
+    /// gets these.
+    #[must_use]
+    pub fn syntax_completions(&self) -> Vec<CompletionItem> {
+        let mut items = Vec::new();
+        self.add_syntax_items(&mut |label, kind| push_item(&mut items, label, kind));
+        items
+    }
+
+    fn add_syntax_items(&self, add: &mut dyn FnMut(&str, CompletionKind)) {
+        for keyword in self.keywords {
+            add(keyword, CompletionKind::Keyword);
+        }
+        if self.takes_type {
+            for ty in BUILTIN_TYPES {
+                add(ty, CompletionKind::Type);
+            }
+        }
+        for (name, kind) in self.locals.iter().rev() {
+            add(name, *kind);
+        }
+    }
+}
+
+/// Adds an item unless one of its name is there already.
+fn push_item(items: &mut Vec<CompletionItem>, label: &str, kind: CompletionKind) {
+    if !items.iter().any(|item| item.label == label) {
+        items.push(CompletionItem {
+            label: label.to_owned(),
+            kind,
+        });
     }
 }
 
@@ -120,32 +162,8 @@ pub(crate) fn completion_site(root: &SyntaxNode, offset: TextSize) -> Completion
         }),
     };
 
-    let before_kind = before.as_ref().map(SyntaxToken::kind);
-    match before_kind {
-        Some(SyntaxKind::Pipe) => return CompletionSite::with_keywords(STAGE_KEYWORDS),
-        Some(SyntaxKind::Dot) => {
-            let base = before
-                .as_ref()
-                .and_then(previous_significant)
-                .filter(|base| base.kind() == SyntaxKind::Identifier);
-            return CompletionSite {
-                member_of: base.map(|base| base.text().to_owned()),
-                ..CompletionSite::with_keywords(&[])
-            };
-        }
-        Some(SyntaxKind::FromKw | SyntaxKind::JoinKw) => {
-            return CompletionSite {
-                takes_relation: true,
-                ..CompletionSite::with_keywords(&[])
-            };
-        }
-        Some(SyntaxKind::Colon | SyntaxKind::Arrow | SyntaxKind::LeftSquare) => {
-            return CompletionSite {
-                takes_type: true,
-                ..CompletionSite::with_keywords(&[])
-            };
-        }
-        _ => {}
+    if let Some(site) = before.as_ref().and_then(site_after) {
+        return site;
     }
 
     let anchor = typed
@@ -162,7 +180,7 @@ pub(crate) fn completion_site(root: &SyntaxNode, offset: TextSize) -> Completion
     {
         return CompletionSite {
             import_from: import.path().map(|path| path.to_dotted()),
-            ..CompletionSite::with_keywords(&[])
+            ..CompletionSite::keywords_only(&[])
         };
     }
 
@@ -187,7 +205,51 @@ pub(crate) fn completion_site(root: &SyntaxNode, offset: TextSize) -> Completion
         stage,
         locals,
         takes_value: stage.is_some() || body.is_some() || !starts_statement,
-        ..CompletionSite::with_keywords(keywords)
+        ..CompletionSite::keywords_only(keywords)
+    }
+}
+
+/// The site right after `before`, when that token alone decides it.
+fn site_after(before: &SyntaxToken) -> Option<CompletionSite> {
+    match before.kind() {
+        SyntaxKind::Pipe => Some(CompletionSite::keywords_only(STAGE_KEYWORDS)),
+        SyntaxKind::Dot => {
+            let base =
+                previous_significant(before).filter(|base| base.kind() == SyntaxKind::Identifier);
+            Some(CompletionSite {
+                member_of: base.map(|base| base.text().to_owned()),
+                ..CompletionSite::keywords_only(&[])
+            })
+        }
+        SyntaxKind::FromKw | SyntaxKind::JoinKw => Some(CompletionSite {
+            takes_relation: true,
+            ..CompletionSite::keywords_only(&[])
+        }),
+        SyntaxKind::Arrow => Some(CompletionSite {
+            takes_type: true,
+            ..CompletionSite::keywords_only(&[])
+        }),
+        // A `:` or a `[` opens a type only in a type's syntax; in a struct
+        // literal or a list it opens a value.
+        SyntaxKind::Colon | SyntaxKind::LeftSquare => {
+            match before.parent().map(|node| node.kind()) {
+                Some(
+                    SyntaxKind::FuncParam
+                    | SyntaxKind::LetStmt
+                    | SyntaxKind::StructField
+                    | SyntaxKind::NamedTypeAnnotation,
+                ) => Some(CompletionSite {
+                    takes_type: true,
+                    ..CompletionSite::keywords_only(&[])
+                }),
+                Some(SyntaxKind::TypeBound) => Some(CompletionSite {
+                    takes_trait: true,
+                    ..CompletionSite::keywords_only(&[])
+                }),
+                _ => None,
+            }
+        }
+        _ => None,
     }
 }
 
@@ -198,14 +260,7 @@ pub(crate) fn completions(
     site: &CompletionSite,
 ) -> Vec<CompletionItem> {
     let mut items: Vec<CompletionItem> = Vec::new();
-    let mut add = |label: &str, kind: CompletionKind| {
-        if !items.iter().any(|item| item.label == label) {
-            items.push(CompletionItem {
-                label: label.to_owned(),
-                kind,
-            });
-        }
-    };
+    let mut add = |label: &str, kind: CompletionKind| push_item(&mut items, label, kind);
 
     let index = checked.index();
     // A module's names: through a name that names it, or by its path.
@@ -233,19 +288,12 @@ pub(crate) fn completions(
         return items;
     }
 
-    for keyword in site.keywords {
-        add(keyword, CompletionKind::Keyword);
-    }
-    if site.takes_type {
-        for ty in BUILTIN_TYPES {
-            add(ty, CompletionKind::Type);
-        }
-    }
+    site.add_syntax_items(&mut add);
     let wanted = |kind: ScopeKind| match kind {
         ScopeKind::Function | ScopeKind::Binding | ScopeKind::Module => site.takes_value,
         ScopeKind::Relation => site.takes_relation,
         ScopeKind::Struct => site.takes_type,
-        ScopeKind::Trait => false,
+        ScopeKind::Trait => site.takes_trait,
     };
     if let Some(stage) = site.stage
         && let Some(row) = index
@@ -256,9 +304,6 @@ pub(crate) fn completions(
         for column in &row.columns {
             add(column, CompletionKind::Column);
         }
-    }
-    for (name, kind) in site.locals.iter().rev() {
-        add(name, *kind);
     }
     for name in index.scopes.get(&source).into_iter().flatten() {
         if wanted(name.kind) {
@@ -333,8 +378,7 @@ fn locals_before(func: &ast::FuncStmt, offset: TextSize) -> Vec<(String, Complet
 mod tests {
     use expect_test::{Expect, expect};
 
-    use crate::FilePosition;
-    use crate::test_support::{FILE, analysis, checked, cursor};
+    use crate::test_support::{FILE, analysis, at, checked, cursor};
 
     fn check(fixture: &str, expected: &Expect) {
         check_with(&[], fixture, expected);
@@ -344,10 +388,7 @@ mod tests {
         let (text, offset) = cursor(fixture);
         let (_tree, checked) = checked(files, &text);
         let site = analysis(&text)
-            .completion_site(FilePosition {
-                file_id: FILE,
-                offset,
-            })
+            .completion_site(at(offset))
             .expect("the file is open");
         let rendered: Vec<String> = checked
             .completions(FILE, &site)
@@ -486,5 +527,73 @@ mod tests {
                 Type List
                 Struct Row"]],
         );
+    }
+
+    #[test]
+    fn a_list_takes_values_not_types() {
+        check(
+            &PROGRAM.replacen("let y = x * 2", "let y = [$0x]", 1),
+            &expect![[r"
+                Parameter x
+                Binding cap
+                Function double
+                Binding ENGINE
+                Function avg
+                Function count
+                Function count_distinct
+                Function max
+                Function min
+                Function pow
+                Function shift_left
+                Function shift_right
+                Function sum"]],
+        );
+    }
+
+    #[test]
+    fn a_struct_literal_field_takes_a_value() {
+        check(
+            &format!("struct Row {{ a: int64 }}\n{PROGRAM}").replacen(
+                "let y = x * 2",
+                "let y = Row { a: $0x }",
+                1,
+            ),
+            &expect![[r"
+                Parameter x
+                Binding cap
+                Function double
+                Binding ENGINE
+                Function avg
+                Function count
+                Function count_distinct
+                Function max
+                Function min
+                Function pow
+                Function shift_left
+                Function shift_right
+                Function sum"]],
+        );
+    }
+
+    #[test]
+    fn a_bound_takes_the_traits() {
+        check(
+            "trait Numeric {\n    def zero(x: Self) -> Self\n}\ndef id[T](x: T) -> T where T: $0 { return x }\n",
+            &expect!["Trait Numeric"],
+        );
+    }
+
+    #[test]
+    fn a_file_not_checked_yet_still_has_its_keywords() {
+        let (text, offset) = cursor(&format!("{PROGRAM}from t |> $0\n"));
+        let site = analysis(&text)
+            .completion_site(at(offset))
+            .expect("the file is open");
+        let labels: Vec<String> = site
+            .syntax_completions()
+            .into_iter()
+            .map(|item| item.label)
+            .collect();
+        assert!(labels.contains(&"where".to_owned()), "{labels:?}");
     }
 }

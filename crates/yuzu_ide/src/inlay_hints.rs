@@ -1,5 +1,6 @@
 //! The type inference gave each `let` the program wrote without one.
 
+use rowan::WalkEvent;
 use text_size::{TextRange, TextSize};
 use yuzu_ast::ast::{self, AstNode};
 use yuzu_diagnostics::{SourceId, Span};
@@ -18,22 +19,38 @@ pub(crate) fn inlay_hints(checked: &Checked, source: SourceId, range: TextRange)
     let Some(root) = checked.syntax(source) else {
         return Vec::new();
     };
-    root.descendants()
-        .filter(|node| node.text_range().intersect(range).is_some())
-        .filter_map(ast::LetStmt::cast)
-        .filter(|binding| binding.type_annotation().is_none())
-        .filter_map(|binding| {
-            let name = binding.name()?;
-            let ty = checked.type_at(Span {
-                source_id: source,
-                range: binding.syntax().text_range(),
-            })?;
-            Some(InlayHint {
-                offset: name.syntax().text_range().end(),
-                label: format!(": {ty}"),
-            })
-        })
-        .collect()
+    // A subtree outside the range is skipped whole.
+    let mut hints = Vec::new();
+    let mut walk = root.preorder();
+    while let Some(event) = walk.next() {
+        let WalkEvent::Enter(node) = event else {
+            continue;
+        };
+        if node.text_range().intersect(range).is_none() {
+            walk.skip_subtree();
+            continue;
+        }
+        let Some(binding) = ast::LetStmt::cast(node) else {
+            continue;
+        };
+        if binding.type_annotation().is_some() {
+            continue;
+        }
+        let Some(name) = binding.name() else {
+            continue;
+        };
+        let Some(ty) = checked.type_at(Span {
+            source_id: source,
+            range: binding.syntax().text_range(),
+        }) else {
+            continue;
+        };
+        hints.push(InlayHint {
+            offset: name.syntax().text_range().end(),
+            label: format!(": {ty}"),
+        });
+    }
+    hints
 }
 
 #[cfg(test)]

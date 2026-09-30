@@ -37,34 +37,38 @@ pub struct Checked {
     pub syntax: Vec<(SourceId, GreenNode)>,
 }
 
-/// Checks the program `focus` belongs to, for the `DataFusion` engine.
+/// Checks the program `focus` belongs to, for the default engine.
 ///
 /// The library comes from where the resolver's [`LibrarySource`] says: the
 /// cache a compile uses, a cache of the installed files, or, when the
 /// resolver holds a copy of a library module of its own, read afresh so
 /// that copy is the one read.
 pub fn check(focus: Focus<'_>, resolver: &dyn ModuleResolver) -> Checked {
-    let made_up = Origin::Named("<check>".to_owned());
+    let engine = Engine::default();
+    let made_up;
     let (origin, source, syntax, module) = match focus {
         Focus::Entry {
             origin,
             source,
             syntax,
         } => (origin, source, syntax.cloned(), None),
-        Focus::Module(path) => (&made_up, "", None, Some(path)),
+        Focus::Module(path) => {
+            made_up = Origin::Named("<check>".to_owned());
+            (&made_up, "", None, Some(path))
+        }
     };
 
     // The library a compile reuses, when the resolver holds no copy of its
     // own: it is not read, parsed or bound again for each check.
     let library = match resolver.library_source() {
-        LibrarySource::BuiltIn => Some(Library::for_thread(Engine::DataFusion)),
-        LibrarySource::Installed(root) => Some(Library::for_thread_under(Engine::DataFusion, root)),
+        LibrarySource::BuiltIn => Some(Library::for_thread(engine)),
+        LibrarySource::Installed(root) => Some(Library::for_thread_under(engine, root)),
         LibrarySource::Own => None,
     };
 
     let mut sources = SourceMap::new();
     let mut diagnostics = DiagnosticsEngine::new();
-    let entry = origin.clone().add_to(&mut sources, source.into());
+    let entry = origin.add_to(&mut sources, source.into());
     let modules::Loaded { files, trees, .. } = modules::load_program(
         modules::EntryFile {
             source: entry,
@@ -73,15 +77,13 @@ pub fn check(focus: Focus<'_>, resolver: &dyn ModuleResolver) -> Checked {
         &mut sources,
         &mut diagnostics,
         resolver,
-        Engine::DataFusion,
+        engine,
         library.as_deref(),
         module,
     );
 
     let mut reader = IndexReader::new(&sources);
-    let bound = library
-        .is_some()
-        .then(|| stdlib::bound_library(Engine::DataFusion));
+    let bound = library.is_some().then(|| stdlib::bound_library(engine));
     in_thread_context(|context| {
         lower_and_check(
             context,
@@ -138,13 +140,7 @@ mod tests {
     }
 
     fn rendered(checked: &Checked) -> String {
-        let printer = DiagnosticPrinter::new(&checked.sources);
-        checked
-            .diagnostics
-            .iter()
-            .map(|diagnostic| printer.render(diagnostic))
-            .collect::<Vec<_>>()
-            .join("\n")
+        DiagnosticPrinter::new(&checked.sources).render_all(&checked.diagnostics)
     }
 
     #[test]

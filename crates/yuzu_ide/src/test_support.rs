@@ -15,7 +15,6 @@ pub(crate) fn analysis(text: &str) -> Analysis {
     host.analysis()
 }
 
-/// Files written under a directory of their own, removed on drop.
 pub(crate) struct Tree(pub(crate) PathBuf);
 
 impl Tree {
@@ -41,7 +40,6 @@ impl Drop for Tree {
     }
 }
 
-/// A fixture's text without its `$0`, and the offset the marker was at.
 pub(crate) fn cursor(fixture: &str) -> (String, TextSize) {
     let offset = fixture
         .find("$0")
@@ -50,7 +48,6 @@ pub(crate) fn cursor(fixture: &str) -> (String, TextSize) {
     (fixture.replacen("$0", "", 1), offset)
 }
 
-/// A position in the file a test checks.
 pub(crate) fn at(offset: TextSize) -> FilePosition {
     FilePosition {
         file_id: FILE,
@@ -58,7 +55,6 @@ pub(crate) fn at(offset: TextSize) -> FilePosition {
     }
 }
 
-/// `main.yz` checked with `text` open, beside `files` on disk.
 pub(crate) fn checked(files: &[(&str, &str)], text: &str) -> (Tree, Checked) {
     let tree = Tree::new(files);
     let main = tree.0.join("main.yz");
@@ -71,7 +67,6 @@ pub(crate) fn checked(files: &[(&str, &str)], text: &str) -> (Tree, Checked) {
     (tree, checked)
 }
 
-/// A range as `file:text`, for a test to read.
 pub(crate) fn render(checked: &Checked, path: &Path, range: text_size::TextRange) -> String {
     let file = path.file_name().unwrap().to_string_lossy();
     let text = checked.path_text(path).unwrap();

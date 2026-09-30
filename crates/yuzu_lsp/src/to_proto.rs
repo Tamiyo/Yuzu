@@ -1,8 +1,6 @@
 //! Analysis answers to protocol types. Every offset here comes from the
 //! analysis of the same text the line index was built from.
 
-use std::path::PathBuf;
-
 use line_index::WideEncoding;
 use lsp_types::{
     DiagnosticRelatedInformation, DiagnosticSeverity, DocumentSymbol, FoldingRange,
@@ -39,15 +37,16 @@ pub(crate) fn range(line_index: &LineIndex, range: TextRange) -> Range {
     )
 }
 
-/// Ranges in the files a check read, as protocol locations. Each file's
-/// line index is built once, from the text the check read.
-pub(crate) struct Locations<'c> {
+/// The files a check read, as the protocol names them: each one's URL, and
+/// its line index built once from the text the check read. A source with
+/// no file on disk has no URL.
+pub(crate) struct CheckedFiles<'c> {
     checked: &'c Checked,
     encoding: PositionEncoding,
-    files: FxHashMap<PathBuf, (Url, LineIndex)>,
+    files: FxHashMap<SourceId, Option<(Url, LineIndex)>>,
 }
 
-impl<'c> Locations<'c> {
+impl<'c> CheckedFiles<'c> {
     pub(crate) fn new(checked: &'c Checked, encoding: PositionEncoding) -> Self {
         Self {
             checked,
@@ -56,14 +55,27 @@ impl<'c> Locations<'c> {
         }
     }
 
+    /// Reads a source's file, when it has one, for [`Self::get`].
+    pub(crate) fn load(&mut self, source: SourceId) {
+        let (checked, encoding) = (self.checked, self.encoding);
+        self.files.entry(source).or_insert_with(|| {
+            let url = Url::from_file_path(checked.path(source)?).ok()?;
+            Some((url, LineIndex::new(checked.text(source), encoding)))
+        });
+    }
+
+    /// A source's file, once [`Self::load`] read it.
+    pub(crate) fn get(&self, source: SourceId) -> Option<(&Url, &LineIndex)> {
+        self.files
+            .get(&source)?
+            .as_ref()
+            .map(|(url, line_index)| (url, line_index))
+    }
+
     pub(crate) fn location(&mut self, target: &FileRange) -> Option<Location> {
-        if !self.files.contains_key(&target.path) {
-            let text = self.checked.path_text(&target.path)?;
-            let url = Url::from_file_path(&target.path).ok()?;
-            let line_index = LineIndex::new(text, self.encoding);
-            self.files.insert(target.path.clone(), (url, line_index));
-        }
-        let (url, line_index) = &self.files[&target.path];
+        let source = self.checked.source_of(&target.path)?;
+        self.load(source);
+        let (url, line_index) = self.get(source)?;
         Some(Location::new(url.clone(), range(line_index, target.range)))
     }
 }

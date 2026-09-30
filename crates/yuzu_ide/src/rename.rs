@@ -6,6 +6,7 @@
 use std::fmt;
 use std::path::PathBuf;
 
+use rustc_hash::FxHashMap;
 use text_size::{TextRange, TextSize};
 use yuzu_diagnostics::SourceId;
 use yuzu_lexer::lexer::Lexer;
@@ -13,7 +14,7 @@ use yuzu_lexer::token_kind::TokenKind;
 
 use crate::Checked;
 use crate::names::{DeclarationKind, Name};
-use crate::navigation::{FileRange, resolution_at};
+use crate::navigation::{FileRange, resolution_at, uses_of};
 
 /// Why a name cannot be renamed.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -40,7 +41,9 @@ impl fmt::Display for RenameError {
             RenameError::ReadOnly(path) => {
                 write!(f, "`{}` cannot be changed", path.display())
             }
-            RenameError::NoFile => f.write_str("a use of this name is in no file"),
+            RenameError::NoFile => {
+                f.write_str("the name is declared or used in the compiler's own copy of a file")
+            }
         }
     }
 }
@@ -69,11 +72,16 @@ pub(crate) fn rename(
     }
 
     let (_, names) = renamed(checked, source, offset)?;
+    // Each file is asked once whether it can be written.
+    let mut writable: FxHashMap<SourceId, bool> = FxHashMap::default();
     names
         .into_iter()
         .map(|name| {
             let path = checked.path(name.source).ok_or(RenameError::NoFile)?;
-            if std::fs::metadata(path).is_ok_and(|metadata| metadata.permissions().readonly()) {
+            let is_writable = *writable.entry(name.source).or_insert_with(|| {
+                !std::fs::metadata(path).is_ok_and(|metadata| metadata.permissions().readonly())
+            });
+            if !is_writable {
                 return Err(RenameError::ReadOnly(path.to_path_buf()));
             }
             Ok(FileRange {
@@ -103,20 +111,14 @@ fn renamed(
     // A declaration's name renames every use that spells it; an alias's,
     // only its own spellings in its file.
     let is_alias = spelling != declared;
-    let mut names: Vec<Name> = Vec::new();
-    if !is_alias {
-        names.push(at.declared);
-    }
-    for resolution in checked.resolutions() {
-        let used = resolution.used;
-        if resolution.declared == at.declared
-            && text(checked, used) == spelling
-            && (!is_alias || used.source == source)
-            && !names.contains(&used)
-        {
-            names.push(used);
-        }
-    }
+    let uses = uses_of(checked, at.declared)
+        .into_iter()
+        .filter(|used| text(checked, *used) == spelling && (!is_alias || used.source == source));
+    let names = (!is_alias)
+        .then_some(at.declared)
+        .into_iter()
+        .chain(uses)
+        .collect();
     Ok((here, names))
 }
 

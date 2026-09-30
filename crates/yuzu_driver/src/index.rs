@@ -92,7 +92,8 @@ pub struct Index {
     pub modules: FxHashMap<String, SourceId>,
 }
 
-/// Reads an index from the module at the two points a check passes.
+/// Builds an index: from the names the lowering reports as it resolves
+/// them, and from the module after lowering and after inference.
 pub(crate) struct IndexReader<'s> {
     sources: &'s SourceMap,
     index: Index,
@@ -197,15 +198,17 @@ impl<'s> IndexReader<'s> {
             .iter()
             .map(|typed| (typed.at, typed.ty.as_str()))
             .collect();
-        let initialized: Vec<Typed> = std::mem::take(&mut self.initializers)
+        let mut initialized: Vec<Typed> = std::mem::take(&mut self.initializers)
             .into_iter()
             .filter_map(|(declaration, initializer)| {
                 Some(Typed {
                     at: declaration,
-                    ty: types.get(&initializer)?.to_string(),
+                    ty: (*types.get(&initializer)?).to_owned(),
                 })
             })
             .collect();
+        // The map holds them in no order; a reader wants the source's.
+        initialized.sort_unstable_by_key(|typed| (typed.at.source_id, typed.at.range.start()));
         self.index.types.extend(initialized);
     }
 

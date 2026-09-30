@@ -128,7 +128,7 @@ fn refresh(supported: Option<bool>) -> Refresh {
 }
 
 /// Whether the client lets the server ask it to watch files.
-pub(crate) fn watches_files(client: &ClientCapabilities) -> bool {
+pub(crate) fn supports_watched_files(client: &ClientCapabilities) -> bool {
     client
         .workspace
         .as_ref()

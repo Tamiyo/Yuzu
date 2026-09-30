@@ -7,7 +7,7 @@ use rustc_hash::FxHashMap;
 use text_size::TextRange;
 use yuzu_ast::ast::{AstNode, Root};
 use yuzu_diagnostics::{Diagnostic, DiagnosticsEngine, SourceMap};
-use yuzu_driver::modules::{Location, locate};
+use yuzu_driver::modules::{Location, MARKER, locate};
 use yuzu_syntax::{GreenNode, SyntaxNode};
 
 use crate::check::{self, DiskCache, Document};
@@ -74,6 +74,22 @@ impl AnalysisHost {
     /// goes to a file. Without one, it reads the copy in the compiler.
     pub fn set_library_root(&mut self, root: Option<&Path>) {
         self.library_root = root.map(Arc::from);
+    }
+
+    /// Tells the host which files changed on disk. A module marker added or
+    /// removed moves the files around it into or out of a module, so each
+    /// saved file's place in its program is found again.
+    pub fn files_changed(&mut self, changed: &[PathBuf]) {
+        let moved = changed
+            .iter()
+            .any(|path| path.file_name().is_some_and(|name| name == MARKER));
+        if !moved {
+            return;
+        }
+        let paths = Arc::make_mut(&mut self.paths);
+        for saved in paths.values_mut() {
+            *saved = SavedFile::new(std::mem::take(&mut saved.path));
+        }
     }
 
     /// A snapshot of the files as they are now, for a request to read.
@@ -247,4 +263,31 @@ pub(crate) fn parse(text: &str) -> (SyntaxNode, Vec<Diagnostic>) {
     let mut engine = DiagnosticsEngine::new();
     let root = yuzu_parser::parse_text(text, &mut engine, source_id);
     (root, engine.into_diagnostics())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::test_support::{FILE, Tree};
+    use crate::{AnalysisHost, Change};
+    use yuzu_driver::modules::Location;
+
+    #[test]
+    fn a_marker_added_moves_an_open_file_into_a_module() {
+        let tree = Tree::new(&[("helpers/two.yz", "pub def two() -> int64 { return 2 }\n")]);
+        let path = tree.0.join("helpers/two.yz");
+        let mut host = AnalysisHost::default();
+        let mut change = Change::default();
+        change.set_file(FILE, Some("pub def two() -> int64 { return 2 }\n".into()));
+        change.set_path(FILE, Some(path.clone()));
+        host.apply_change(change);
+        assert!(matches!(host.paths[&FILE].location, Location::Entry { .. }));
+
+        let marker = tree.0.join("helpers/mod.yz");
+        std::fs::write(&marker, "pub mod two\n").unwrap();
+        host.files_changed(&[marker]);
+        assert!(matches!(
+            host.paths[&FILE].location,
+            Location::Module { .. }
+        ));
+    }
 }

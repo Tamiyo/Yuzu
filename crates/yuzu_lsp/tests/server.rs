@@ -130,12 +130,16 @@ impl Client {
     }
 }
 
-/// A directory of files for a test, removed on drop.
 struct TempDir(std::path::PathBuf);
 
 impl TempDir {
     fn new(files: &[(&str, &str)]) -> Self {
-        let root = std::env::temp_dir().join(format!("yuzu-lsp-{}", std::process::id()));
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "yuzu-lsp-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
         std::fs::create_dir_all(&root).unwrap();
         for (name, text) in files {
             std::fs::write(root.join(name), text).unwrap();
@@ -367,8 +371,8 @@ fn a_position_past_the_end_of_its_line_is_its_end() {
             partial_result_params: PartialResultParams::default(),
         })
         .expect("the server answers for each position");
-    let starts: Vec<Position> = ranges.iter().map(|range| range.range.end).collect();
-    assert_eq!(starts, [Position::new(0, 9), Position::new(1, 9)]);
+    let ends: Vec<Position> = ranges.iter().map(|range| range.range.end).collect();
+    assert_eq!(ends, [Position::new(0, 9), Position::new(1, 9)]);
     client.shutdown();
 }
 
@@ -476,5 +480,100 @@ fn a_let_gets_its_type_as_a_hint() {
         })
         .collect();
     expect!["1:9 : int64"].assert_eq(&rendered.join("\n"));
+    client.shutdown();
+}
+
+#[test]
+fn a_rename_edits_the_declaration_and_its_uses() {
+    let mut client = Client::start(ClientCapabilities::default());
+    client.open(CHECKED);
+    client.notification::<PublishDiagnostics>();
+
+    let edit = client
+        .request::<lsp_types::request::Rename>(lsp_types::RenameParams {
+            text_document_position: position_params(2, 11),
+            new_name: "z".to_owned(),
+            work_done_progress_params: WorkDoneProgressParams::default(),
+        })
+        .expect("the server renames a local");
+    let changes = edit.changes.expect("the edit names its files");
+    let mut ranges: Vec<Range> = changes[&url()].iter().map(|edit| edit.range).collect();
+    ranges.sort_by_key(|range| (range.start.line, range.start.character));
+    assert_eq!(
+        ranges,
+        [
+            Range::new(Position::new(1, 8), Position::new(1, 9)),
+            Range::new(Position::new(2, 11), Position::new(2, 12)),
+        ]
+    );
+    client.shutdown();
+}
+
+#[test]
+fn a_rename_the_server_refuses_says_why() {
+    let mut client = Client::start(ClientCapabilities::default());
+    client.open(CHECKED);
+    client.notification::<PublishDiagnostics>();
+
+    let response = client.raw_request(
+        "textDocument/rename",
+        lsp_types::RenameParams {
+            text_document_position: position_params(2, 11),
+            new_name: "let".to_owned(),
+            work_done_progress_params: WorkDoneProgressParams::default(),
+        },
+    );
+    let error = response
+        .response_result
+        .expect_err("the server refuses the rename");
+    assert_eq!(error.message, "`let` is not a name");
+    client.shutdown();
+}
+
+#[test]
+fn a_body_completes_its_locals() {
+    let mut client = Client::start(ClientCapabilities::default());
+    client.open(CHECKED);
+    client.notification::<PublishDiagnostics>();
+
+    let response = client.request::<lsp_types::request::Completion>(lsp_types::CompletionParams {
+        text_document_position: position_params(2, 11),
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    });
+    let Some(lsp_types::CompletionResponse::Array(items)) = response else {
+        panic!("the server answers with a list");
+    };
+    let labels: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
+    assert!(labels.contains(&"y") && labels.contains(&"x"), "{labels:?}");
+    client.shutdown();
+}
+
+#[test]
+fn signature_help_reads_a_call_the_check_has_not_seen() {
+    let mut client = Client::start(ClientCapabilities::default());
+    let text =
+        "def f(x: int64) -> int64 { return x }\ntable t = { a: int64 }\nfrom t |> select f as v\n";
+    client.open(text);
+    client.notification::<PublishDiagnostics>();
+
+    // `(` is typed after `f`; the check read `f` alone.
+    client.notify::<DidChangeTextDocument>(DidChangeTextDocumentParams {
+        text_document: VersionedTextDocumentIdentifier::new(url(), 2),
+        content_changes: vec![TextDocumentContentChangeEvent {
+            range: Some(Range::new(Position::new(2, 18), Position::new(2, 18))),
+            range_length: None,
+            text: "(".to_owned(),
+        }],
+    });
+    let help = client
+        .request::<lsp_types::request::SignatureHelpRequest>(lsp_types::SignatureHelpParams {
+            context: None,
+            text_document_position_params: position_params(2, 19),
+            work_done_progress_params: WorkDoneProgressParams::default(),
+        })
+        .expect("the server finds the call");
+    assert_eq!(help.signatures[0].label, "def f(x: int64) -> int64");
     client.shutdown();
 }

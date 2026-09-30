@@ -39,15 +39,15 @@ pub enum Origin {
 
 impl Origin {
     /// Adds a source from this origin to `sources`.
-    pub(crate) fn add_to(self, sources: &mut SourceMap, text: Arc<str>) -> SourceId {
+    pub(crate) fn add_to(&self, sources: &mut SourceMap, text: Arc<str>) -> SourceId {
         match self {
-            Origin::File(path) => sources.add_file(&path, text),
-            Origin::Named(name) => sources.add(name, text),
+            Origin::File(path) => sources.add_file(path, text),
+            Origin::Named(name) => sources.add(name.as_str(), text),
         }
     }
 }
 
-/// A module's source, and the name to show for it in a diagnostic.
+/// A module's source, and where it came from.
 #[derive(Debug)]
 pub struct ModuleSource {
     pub origin: Origin,
@@ -62,6 +62,8 @@ pub struct ModuleSource {
 /// module under that path, which the loader reports against the import that
 /// asked for it.
 pub trait ModuleResolver {
+    /// The source of the program's module at `path`, when there is one.
+    ///
     /// # Errors
     ///
     /// When the module's file exists but cannot be read.
@@ -105,9 +107,16 @@ pub struct Unreadable {
 }
 
 impl Unreadable {
+    /// A module file that exists but could not be read, and why.
     #[must_use]
     pub fn new(file: PathBuf, error: std::io::Error) -> Self {
         Self { file, error }
+    }
+
+    /// Why the file could not be read.
+    #[must_use]
+    pub fn error(&self) -> &std::io::Error {
+        &self.error
     }
 
     /// The file that could not be read.
@@ -288,7 +297,7 @@ pub(crate) fn load_program(
         .insert(ENTRY.to_owned(), submodules(&root));
     match library {
         Some(library) => loader.install(library),
-        None => loader.load_path(yuzu_passes::PRELUDE, &root, entry, ""),
+        None => loader.load_path(yuzu_passes::PRELUDE, &root, entry, ENTRY),
     }
 
     if let Some(path) = focus {

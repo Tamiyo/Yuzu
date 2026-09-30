@@ -4,13 +4,12 @@ use lsp_types::notification::PublishDiagnostics;
 use lsp_types::request::{InlayHintRefreshRequest, SemanticTokensRefresh};
 use lsp_types::{PublishDiagnosticsParams, Url};
 use rustc_hash::{FxHashMap, FxHashSet};
-use yuzu_diagnostics::SourceId;
 use yuzu_ide::{Checked, FileId};
 
 use crate::capabilities::Refresh;
 use crate::checker::{CheckResult, Checker};
 use crate::global_state::GlobalState;
-use crate::line_index::{LineIndex, PositionEncoding};
+use crate::to_proto::CheckedFiles;
 use crate::{RunError, to_proto};
 
 impl GlobalState<'_> {
@@ -55,7 +54,14 @@ impl GlobalState<'_> {
         }
         self.failed.remove(&file_id);
 
-        let files = CheckedFiles::new(&checked, self.encoding);
+        let mut files = CheckedFiles::new(&checked, self.encoding);
+        for label in checked
+            .diagnostics()
+            .iter()
+            .flat_map(|diagnostic| &diagnostic.labels)
+        {
+            files.load(label.span.source_id);
+        }
         let mut own = Vec::new();
         let mut closed: FxHashMap<Url, Vec<lsp_types::Diagnostic>> = FxHashMap::default();
         for diagnostic in checked.diagnostics() {
@@ -135,45 +141,5 @@ impl GlobalState<'_> {
             ))?;
         }
         Ok(())
-    }
-}
-
-/// The files a check read, for the diagnostics that point into them.
-struct CheckedFiles {
-    files: FxHashMap<SourceId, (Url, LineIndex)>,
-}
-
-impl CheckedFiles {
-    /// The files the diagnostics' labels name; a source with no file on
-    /// disk has no URL and is left out.
-    fn new(checked: &Checked, encoding: PositionEncoding) -> Self {
-        let mut files = FxHashMap::default();
-        let labels = checked
-            .diagnostics()
-            .iter()
-            .flat_map(|diagnostic| &diagnostic.labels);
-        for label in labels {
-            let source = label.span.source_id;
-            if files.contains_key(&source) {
-                continue;
-            }
-            let Some(url) = checked
-                .path(source)
-                .and_then(|path| Url::from_file_path(path).ok())
-            else {
-                continue;
-            };
-            files.insert(
-                source,
-                (url, LineIndex::new(checked.text(source), encoding)),
-            );
-        }
-        CheckedFiles { files }
-    }
-
-    fn get(&self, source: SourceId) -> Option<(&Url, &LineIndex)> {
-        self.files
-            .get(&source)
-            .map(|(url, line_index)| (url, line_index))
     }
 }

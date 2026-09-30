@@ -15,12 +15,12 @@ use lsp_types::{
 };
 use rustc_hash::FxHashSet;
 use text_size::{TextRange, TextSize};
-use yuzu_ide::{CallSite, Checked, CompletionKind, FilePosition, HlRange};
+use yuzu_ide::{CallSite, Checked, CompletionKind, FileId, FilePosition, HlRange};
 
 use crate::documents::Document;
 use crate::global_state::GlobalState;
 use crate::text_shift::TextShift;
-use crate::to_proto::Locations;
+use crate::to_proto::CheckedFiles;
 use crate::{from_proto, to_proto};
 
 pub(crate) fn document_symbol(
@@ -101,7 +101,7 @@ pub(crate) fn goto_definition(
 ) -> Option<GotoDefinitionResponse> {
     let (_, checked, position) = checked_position(state, &params.text_document_position_params)?;
     let target = checked.goto_definition(position)?;
-    let location = Locations::new(checked, state.encoding).location(&target)?;
+    let location = CheckedFiles::new(checked, state.encoding).location(&target)?;
     Some(GotoDefinitionResponse::Scalar(location))
 }
 
@@ -111,7 +111,7 @@ pub(crate) fn references(state: &GlobalState, params: &ReferenceParams) -> Optio
     let declaration = references
         .declaration
         .filter(|_| params.context.include_declaration);
-    let mut locations = Locations::new(checked, state.encoding);
+    let mut locations = CheckedFiles::new(checked, state.encoding);
     let found = declaration
         .iter()
         .chain(&references.uses)
@@ -158,18 +158,24 @@ pub(crate) fn completion(
     params: &CompletionParams,
 ) -> Option<CompletionResponse> {
     let position = &params.text_document_position;
-    let (file_id, document, checked, _) = state.last_check(&position.text_document.uri)?;
+    let (file_id, document) = state.document(&position.text_document.uri)?;
     let offset = from_proto::offset(&document.line_index, position.position)?;
     let mut site = state
         .analysis()
         .completion_site(FilePosition { file_id, offset })?;
-    let back = TextShift::between(&document.text, checked.file_text(file_id)?);
-    site.stage = site
-        .stage
-        .and_then(|stage| back.map(TextRange::empty(stage)))
-        .map(TextRange::start);
-    let items = checked
-        .completions(file_id, &site)
+    // A document not checked yet still has its keywords and locals.
+    let items = match state.latest_check(&position.text_document.uri) {
+        Some((_, _, checked)) => {
+            let back = to_checked(document, checked, file_id)?;
+            site.stage = site
+                .stage
+                .and_then(|stage| back.map(TextRange::empty(stage)))
+                .map(TextRange::start);
+            checked.completions(file_id, &site)
+        }
+        None => site.syntax_completions(),
+    };
+    let items = items
         .into_iter()
         .map(|item| lsp_types::CompletionItem {
             label: item.label,
@@ -178,6 +184,14 @@ pub(crate) fn completion(
         })
         .collect();
     Some(CompletionResponse::Array(items))
+}
+
+/// How the text a document has now maps onto the text its check read.
+fn to_checked(document: &Document, checked: &Checked, file_id: FileId) -> Option<TextShift> {
+    Some(TextShift::between(
+        &document.text,
+        checked.file_text(file_id)?,
+    ))
 }
 
 fn completion_kind(kind: CompletionKind) -> CompletionItemKind {
@@ -200,7 +214,7 @@ pub(crate) fn prepare_rename(
     state: &GlobalState,
     params: &TextDocumentPositionParams,
 ) -> Result<Option<PrepareRenameResponse>, String> {
-    let (document, checked, position) = checked_position(state, params).ok_or(NOT_CHECKED)?;
+    let (document, checked, position) = fresh_position(state, params)?;
     let range = checked
         .prepare_rename(position)
         .map_err(|error| error.to_string())?;
@@ -215,12 +229,23 @@ pub(crate) fn rename(
     state: &GlobalState,
     params: &RenameParams,
 ) -> Result<Option<WorkspaceEdit>, String> {
-    let (_, checked, position) =
-        checked_position(state, &params.text_document_position).ok_or(NOT_CHECKED)?;
+    let (_, checked, position) = fresh_position(state, &params.text_document_position)?;
     let edits = checked
         .rename(position, &params.new_name)
         .map_err(|error| error.to_string())?;
-    let mut locations = Locations::new(checked, state.encoding);
+    // An open file edited since the check has moved under the edits.
+    for edit in &edits {
+        if let Ok(url) = Url::from_file_path(&edit.path)
+            && let Some((_, open)) = state.document(&url)
+            && checked.path_text(&edit.path) != Some(open.text.as_str())
+        {
+            return Err(format!(
+                "`{}` changed since it was last checked; try again",
+                edit.path.display()
+            ));
+        }
+    }
+    let mut locations = CheckedFiles::new(checked, state.encoding);
     let mut changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
     for edit in &edits {
         let location = locations
@@ -237,8 +262,24 @@ pub(crate) fn rename(
     }))
 }
 
-/// Why a request that changes files is refused before the check catches up.
-const NOT_CHECKED: &str = "the file is not checked since its last change; try again";
+/// The document a position is in, its check while that check read the text
+/// the document has now, and the position as an offset in it; or why not,
+/// for a request that changes files.
+fn fresh_position<'s>(
+    state: &'s GlobalState,
+    params: &TextDocumentPositionParams,
+) -> Result<(&'s Document, &'s Checked, FilePosition), String> {
+    let url = &params.text_document.uri;
+    if !state.is_open(url) {
+        return Err("the file is not open".to_owned());
+    }
+    let (file_id, document, checked) = state
+        .fresh_check(url)
+        .ok_or("the file is not checked since its last change; try again")?;
+    let offset = from_proto::offset(&document.line_index, params.position)
+        .ok_or("the position is past the end of the file")?;
+    Ok((document, checked, FilePosition { file_id, offset }))
+}
 
 /// The overloads of the function a call names. The call is found in the
 /// text the document has now, and its function's name is carried back to
@@ -248,10 +289,10 @@ pub(crate) fn signature_help(
     params: &SignatureHelpParams,
 ) -> Option<SignatureHelp> {
     let position = &params.text_document_position_params;
-    let (file_id, document, checked, _) = state.last_check(&position.text_document.uri)?;
+    let (file_id, document, checked) = state.latest_check(&position.text_document.uri)?;
     let offset = from_proto::offset(&document.line_index, position.position)?;
     let site = state.analysis().call_at(FilePosition { file_id, offset })?;
-    let back = TextShift::between(&document.text, checked.file_text(file_id)?);
+    let back = to_checked(document, checked, file_id)?;
     let site = CallSite {
         callee: back.map(site.callee)?,
         argument: site.argument,
@@ -289,9 +330,14 @@ pub(crate) fn signature_help(
 pub(crate) fn inlay_hint(state: &GlobalState, params: &InlayHintParams) -> Option<Vec<InlayHint>> {
     let (file_id, document, checked, shift) = state.last_check(&params.text_document.uri)?;
     let requested = from_proto::text_range(&document.line_index, params.range)?;
-    let checked_text = TextRange::up_to(TextSize::of(checked.file_text(file_id)?));
+    // The requested range in the checked text; the whole of it, when the
+    // range touches what was edited.
+    let checked_text = checked.file_text(file_id)?;
+    let in_checked = to_checked(document, checked, file_id)
+        .and_then(|back| back.map(requested))
+        .unwrap_or_else(|| TextRange::up_to(TextSize::of(checked_text)));
     let hints = checked
-        .inlay_hints(file_id, checked_text)
+        .inlay_hints(file_id, in_checked)
         .into_iter()
         .filter_map(|hint| {
             let offset = shift.map(TextRange::empty(hint.offset))?.start();

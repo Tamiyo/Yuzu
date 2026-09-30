@@ -114,7 +114,7 @@ pub(crate) fn signature_help(
     let resolved = overloads
         .iter()
         .position(|func| func.syntax() == named.syntax())
-        .unwrap_or_default();
+        .expect("a function is one of its own overloads");
     let takes_argument = |at: usize| signatures[at].parameters.len() > site.argument;
     let active_signature = if takes_argument(resolved) {
         resolved
@@ -159,17 +159,13 @@ fn signature(func: &ast::FuncStmt) -> Signature {
 mod tests {
     use expect_test::{Expect, expect};
 
-    use crate::FilePosition;
-    use crate::test_support::{FILE, checked, cursor};
+    use crate::test_support::{FILE, at, checked, cursor};
 
     fn check(fixture: &str, expected: &Expect) {
         let (text, offset) = cursor(fixture);
         let (_tree, checked) = checked(&[], &text);
         let help = crate::test_support::analysis(&text)
-            .call_at(FilePosition {
-                file_id: FILE,
-                offset,
-            })
+            .call_at(at(offset))
             .and_then(|site| checked.signature_help(FILE, site));
         let rendered = help.map(|help| {
             let lines: Vec<String> = help
@@ -240,10 +236,7 @@ mod tests {
         let (_tree, checked) = checked(&[], &read);
         let (now, offset) = cursor(&read.replace("select f as v", "select f($0 as v"));
         let site = crate::test_support::analysis(&now)
-            .call_at(FilePosition {
-                file_id: FILE,
-                offset,
-            })
+            .call_at(at(offset))
             .expect("the position is in a call");
         let help = checked
             .signature_help(FILE, site)
