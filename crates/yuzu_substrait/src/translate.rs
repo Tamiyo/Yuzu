@@ -18,14 +18,13 @@ use yuzu_mlir::ir::attribute::array::ArrayAttributeExt;
 use yuzu_mlir::ir::block::BlockExt;
 use yuzu_mlir::ir::operation::{OperationCast, OperationExt};
 use yuzu_mlir::ir::symbol_table::SymbolTable;
-use yuzu_mlir::ir::value::{ValueId, op_result};
-use yuzu_mlir::ops::yz::YzOp;
+use yuzu_mlir::ir::value::{ValueExt, ValueId, op_result};
+use yuzu_mlir::ops::yz::{StructOp, YzOp};
 use yuzu_mlir::ops::yzr::YzrOp;
 use yuzu_mlir::types::StructType;
 
 use crate::Plan;
 use crate::extensions::Extensions;
-use yuzu_mlir::ir::value::ValueExt;
 
 mod expr;
 mod functions;
@@ -122,28 +121,32 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         Some(op_result(value)?.owner())
     }
 
+    /// What `read` takes from the `yz.struct` that declares a row type.
+    fn read_declaration<R>(
+        &self,
+        ty: Type<'c>,
+        read: impl FnOnce(StructOp<'c, '_>) -> R,
+    ) -> Option<R> {
+        let declaration = self.symbols.lookup(StructType::from_type(ty)?.name())?;
+        match declaration.as_yz()? {
+            YzOp::Struct(item) => Some(read(item)),
+            _ => None,
+        }
+    }
+
     /// The names and types of a row, from the `yz.struct` that declares it.
     fn row(&self, ty: Type<'c>) -> Option<(Vec<&'c str>, Vec<Type<'c>>)> {
-        let declaration = self.symbols.lookup(StructType::from_type(ty)?.name())?;
-        let YzOp::Struct(item) = declaration.as_yz()? else {
-            return None;
-        };
-
-        Some((
-            item.names().strings().collect(),
-            item.types().types().collect(),
-        ))
+        self.read_declaration(ty, |item| {
+            (
+                item.names().strings().collect(),
+                item.types().types().collect(),
+            )
+        })
     }
 
     /// How many columns a relation's row has.
     fn width(&self, value: Value<'c, 'a>) -> Option<usize> {
-        let declaration = self
-            .symbols
-            .lookup(StructType::from_type(value.r#type())?.name())?;
-        let YzOp::Struct(item) = declaration.as_yz()? else {
-            return None;
-        };
-        Some(item.names().len())
+        self.read_declaration(value.r#type(), |item| item.names().len())
     }
 }
 
@@ -156,6 +159,8 @@ fn report(op: OperationRef<'_, '_>, message: &str) {
 #[cfg(test)]
 pub(crate) mod test_support {
     use expect_test::Expect;
+    use melior::Context;
+    use melior::ir::Module;
     use yuzu_ast::ast;
     use yuzu_ast::ast::AstNode;
     use yuzu_diagnostics::{DiagnosticPrinter, DiagnosticsEngine, SourceMap};
@@ -166,6 +171,8 @@ pub(crate) mod test_support {
     /// comes out, so a test reads the plan the compiler would hand an
     /// engine — not one assembled by hand.
     fn compile(source: &str) -> (Option<String>, String) {
+        type Group = for<'c> fn(&'c Context, &mut Module<'c>);
+
         let context = yuzu_mlir::context();
         let mut sources = SourceMap::new();
         let mut diagnostics = DiagnosticsEngine::new();
@@ -194,16 +201,33 @@ pub(crate) mod test_support {
             None,
         );
 
-        yuzu_mlir::diagnostics::capture(&context, &sources, &mut diagnostics, || {
-            yuzu_passes::check_mutability(&module);
-            yuzu_passes::infer_types(&context, &mut module);
-            yuzu_passes::promote_locals(&context, &mut module);
-            yuzu_passes::check_aggregates(&module);
-            yuzu_passes::inline_calls(&context, &mut module);
-            yuzu_passes::lower_yzl_to_yzr(&context, &mut module);
-            yuzu_passes::simplify_yzr(&context, &mut module);
-            yuzu_passes::legalize_operators(&context, &mut module);
-        });
+        // Each group runs only on what the one before left without error, as
+        // in the driver: a pass may take its predecessors' work as settled.
+        let groups: [Group; 3] = [
+            |context, module| {
+                yuzu_passes::check_mutability(module);
+                yuzu_passes::infer_types(context, module);
+                yuzu_passes::promote_locals(context, module);
+                yuzu_passes::check_aggregates(module);
+            },
+            |context, module| {
+                yuzu_passes::inline_calls(context, module);
+                yuzu_passes::remove_dead_symbols(context, module);
+            },
+            |context, module| {
+                yuzu_passes::lower_yzl_to_yzr(context, module);
+                yuzu_passes::simplify_yzr(context, module);
+                yuzu_passes::legalize_operators(context, module);
+            },
+        ];
+        for group in groups {
+            if diagnostics.has_errors() {
+                break;
+            }
+            yuzu_mlir::diagnostics::capture(&context, &sources, &mut diagnostics, || {
+                group(&context, &mut module);
+            });
+        }
         let plan = if diagnostics.diagnostics().is_empty() {
             yuzu_mlir::diagnostics::capture(&context, &sources, &mut diagnostics, || {
                 super::translate(&context, &module)

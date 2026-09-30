@@ -77,11 +77,11 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         op: OperationRef<'c, '_>,
         values: &FxHashMap<ValueId, Expression>,
     ) -> Option<Expression> {
-        let Some(value) = op.as_yz() else {
+        let Some(yz) = op.as_yz() else {
             report(op, "this has no Substrait equivalent");
             return None;
         };
-        match value {
+        match yz {
             YzOp::ConstantInt(constant) => {
                 Some(literal(LiteralType::I64(constant.value().value())))
             }
@@ -146,8 +146,7 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         self.translate_function(op, urn, base, values)
     }
 
-    /// A call, with the signature Substrait names its overload by: the
-    /// argument type codes, joined.
+    /// A call of the function `base` declares under `urn`.
     fn translate_function(
         &mut self,
         op: OperationRef<'c, '_>,
@@ -156,8 +155,11 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         values: &FxHashMap<ValueId, Expression>,
     ) -> Option<Expression> {
         let operands: Vec<Value<'c, '_>> = op.operands().collect();
-        let (anchor, arguments, output) =
-            self.translate_arguments(op, urn, base, &operands, values)?;
+        let Application {
+            anchor,
+            arguments,
+            output,
+        } = self.translate_arguments(op, urn, base, &operands, values)?;
         Some(Expression {
             rex_type: Some(RexType::ScalarFunction(ScalarFunction {
                 function_reference: anchor,
@@ -169,10 +171,17 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
     }
 }
 
+/// A function applied to its arguments, as a call or a measure writes it.
+pub(crate) struct Application {
+    /// The anchor the function is declared under.
+    pub(crate) anchor: u32,
+    pub(crate) arguments: Vec<FunctionArgument>,
+    pub(crate) output: Type,
+}
+
 impl<'c> Translator<'c, '_, '_> {
-    /// A function's arguments, the anchor it is declared under, and its
-    /// result type. Substrait names an overload by its argument type codes,
-    /// joined.
+    /// A function applied to its arguments. Substrait names an overload by
+    /// its argument type codes, joined.
     pub(crate) fn translate_arguments(
         &mut self,
         op: OperationRef<'c, '_>,
@@ -180,7 +189,7 @@ impl<'c> Translator<'c, '_, '_> {
         base: &str,
         arguments: &[Value<'c, '_>],
         values: &FxHashMap<ValueId, Expression>,
-    ) -> Option<(u32, Vec<FunctionArgument>, Type)> {
+    ) -> Option<Application> {
         let mut signature = Vec::with_capacity(arguments.len());
         let mut emitted = Vec::with_capacity(arguments.len());
         for &argument in arguments {
@@ -203,7 +212,11 @@ impl<'c> Translator<'c, '_, '_> {
         let anchor = self
             .extensions
             .register(urn, format!("{base}:{}", signature.join("_")));
-        Some((anchor, emitted, output))
+        Some(Application {
+            anchor,
+            arguments: emitted,
+            output,
+        })
     }
 }
 

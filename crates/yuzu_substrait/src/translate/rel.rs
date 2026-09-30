@@ -22,7 +22,7 @@ use yuzu_mlir::ir::value::{ValueExt, ValueId};
 use yuzu_mlir::ops::yzr::YzrOp;
 
 use crate::proto::{emit_common, field_index, literal, nullable, selection};
-use crate::translate::expr::{Region, yielded};
+use crate::translate::expr::{Application, Region, yielded};
 use crate::translate::functions;
 use crate::translate::types::emit_type;
 use crate::translate::{Translator, report};
@@ -236,12 +236,15 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
         arguments: &[Value<'c, '_>],
         values: &FxHashMap<ValueId, Expression>,
     ) -> Option<Measure> {
-        let (anchor, emitted, output) =
-            self.translate_arguments(op, func.urn, &func.base, arguments, values)?;
+        let Application {
+            anchor,
+            arguments,
+            output,
+        } = self.translate_arguments(op, func.urn, &func.base, arguments, values)?;
         Some(Measure {
             measure: Some(AggregateFunction {
                 function_reference: anchor,
-                arguments: emitted,
+                arguments,
                 output_type: Some(output),
                 phase: AggregationPhase::InitialToResult as i32,
                 invocation: func.invocation as i32,

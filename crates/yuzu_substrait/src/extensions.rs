@@ -61,26 +61,23 @@ pub(crate) const COUNT: (&str, &str) = (AGGREGATE_GENERIC_URN, "count");
 #[derive(Default)]
 pub(crate) struct Extensions {
     urns: Vec<&'static str>,
-    functions: Vec<(u32, String)>,
     /// Each function's anchor, by where it is declared and its name.
-    anchors: FxHashMap<(&'static str, String), u32>,
+    functions: FxHashMap<(&'static str, String), u32>,
 }
 
 impl Extensions {
     /// Intern a `(urn, name)` function; returns its function anchor.
     pub(crate) fn register(&mut self, urn: &'static str, name: String) -> u32 {
-        let entry = match self.anchors.entry((urn, name)) {
-            Entry::Occupied(declared) => return *declared.get(),
-            Entry::Vacant(entry) => entry,
-        };
-        let index = if let Some(index) = self.urns.iter().position(|&candidate| candidate == urn) {
-            index
-        } else {
-            self.urns.push(urn);
-            self.urns.len() - 1
-        };
-        self.functions.push((anchor(index), entry.key().1.clone()));
-        *entry.insert(anchor(self.functions.len() - 1))
+        let next = anchor(self.functions.len());
+        match self.functions.entry((urn, name)) {
+            Entry::Occupied(declared) => *declared.get(),
+            Entry::Vacant(entry) => {
+                if !self.urns.contains(&urn) {
+                    self.urns.push(urn);
+                }
+                *entry.insert(next)
+            }
+        }
     }
 
     pub(crate) fn urns(&self) -> Vec<SimpleExtensionUrn> {
@@ -94,18 +91,33 @@ impl Extensions {
             .collect()
     }
 
+    /// The functions, in the order they were registered.
     pub(crate) fn declarations(&self) -> Vec<SimpleExtensionDeclaration> {
-        self.functions
+        let mut functions: Vec<(u32, &'static str, &str)> = self
+            .functions
             .iter()
-            .enumerate()
-            .map(|(index, (urn_anchor, name))| SimpleExtensionDeclaration {
+            .map(|((urn, name), &function_anchor)| (function_anchor, *urn, name.as_str()))
+            .collect();
+        functions.sort_unstable_by_key(|&(function_anchor, ..)| function_anchor);
+        functions
+            .into_iter()
+            .map(|(function_anchor, urn, name)| SimpleExtensionDeclaration {
                 mapping_type: Some(MappingType::ExtensionFunction(ExtensionFunction {
-                    extension_urn_reference: *urn_anchor,
-                    function_anchor: anchor(index),
-                    name: name.clone(),
+                    extension_urn_reference: self.urn_anchor(urn),
+                    function_anchor,
+                    name: name.to_owned(),
                 })),
             })
             .collect()
+    }
+
+    fn urn_anchor(&self, urn: &str) -> u32 {
+        let index = self
+            .urns
+            .iter()
+            .position(|&declared| declared == urn)
+            .expect("a registered function's urn is declared");
+        anchor(index)
     }
 }
 
@@ -117,8 +129,7 @@ fn anchor(index: usize) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Extensions, function_target};
-    use crate::extensions::Func;
+    use super::{Extensions, Func, function_target};
 
     #[test]
     fn a_function_used_twice_is_declared_once() {
