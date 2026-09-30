@@ -3,10 +3,10 @@
 //! the whole declaration it names.
 
 use rustc_hash::FxHashMap;
-use text_size::{TextRange, TextSize};
+use text_size::TextRange;
 use yuzu_ast::ast::{self, AstNode, Mutability};
 use yuzu_diagnostics::{SourceId, Span};
-use yuzu_driver::index::{Reference, TargetKind};
+use yuzu_driver::index::{Declaration, Reference, TargetKind};
 use yuzu_syntax::{GreenNode, SyntaxKind, SyntaxNode};
 
 /// A name's place in one of a check's sources.
@@ -28,6 +28,9 @@ pub(crate) struct Resolution {
     /// The whole declaration, as the index gives it.
     pub(crate) declaration: Span,
     pub(crate) kind: DeclarationKind,
+    /// The name an import gave the declaration, which the use goes
+    /// through: the `y` of `x as y`.
+    pub(crate) alias: Option<Name>,
 }
 
 /// What a resolved name is declared as.
@@ -62,6 +65,10 @@ pub(crate) fn resolutions(references: &[Reference], trees: &Trees) -> Vec<Resolu
                     (declared, declaration_kind(&declaring(&root, declared)?)?)
                 }
             };
+            let alias = match reference.alias {
+                Some(item) => Some(alias_name(&root(item.source_id)?, item)?),
+                None => None,
+            };
             Some(Resolution {
                 reference: Some(at),
                 used: Name {
@@ -74,50 +81,44 @@ pub(crate) fn resolutions(references: &[Reference], trees: &Trees) -> Vec<Resolu
                 },
                 declaration: reference.target,
                 kind,
+                alias,
             })
         })
         .collect()
 }
 
-/// The declaration whose name is at `offset`, from the syntax alone. A
-/// stage's item is left out, as it can name a column and not declare one.
-pub(crate) fn declaration_at(
-    root: &SyntaxNode,
-    source: SourceId,
-    offset: TextSize,
-) -> Option<Resolution> {
-    let token = root
-        .token_at_offset(offset)
-        .find(|token| token.kind() == SyntaxKind::Identifier)?;
-    let ident = token
-        .parent()
-        .filter(|node| node.kind() == SyntaxKind::Ident)?;
-    let declaring = ident.parent()?;
-    if !matches!(
-        declaring.kind(),
-        SyntaxKind::FuncParam
-            | SyntaxKind::LetStmt
-            | SyntaxKind::FuncStmt
-            | SyntaxKind::TableStmt
-            | SyntaxKind::StructStmt
-            | SyntaxKind::TraitStmt
-            | SyntaxKind::StructField
-    ) {
-        return None;
-    }
-    let declared = Name {
-        source,
-        range: token.text_range(),
-    };
-    Some(Resolution {
-        reference: None,
-        used: declared,
-        declared,
-        declaration: Span {
-            source_id: source,
-            range: declaring.text_range(),
-        },
-        kind: declaration_kind(&declaring)?,
+/// Each declaration in the index, as a use of itself, so that a
+/// declaration no name uses is still found.
+pub(crate) fn declarations(declarations: &[Declaration], trees: &Trees) -> Vec<Resolution> {
+    declarations
+        .iter()
+        .filter_map(|declaration| {
+            let root = SyntaxNode::new_root(trees.get(&declaration.at.source_id)?.clone());
+            let range = declared_name(&root, declaration.at.range, &declaration.name)?;
+            let declared = Name {
+                source: declaration.at.source_id,
+                range,
+            };
+            Some(Resolution {
+                reference: None,
+                used: declared,
+                declared,
+                declaration: declaration.at,
+                kind: declaration_kind(&declaring(&root, range)?)?,
+                alias: None,
+            })
+        })
+        .collect()
+}
+
+/// The new name an import item gives: the `y` of `x as y`.
+fn alias_name(root: &SyntaxNode, item: Span) -> Option<Name> {
+    let alias = ast::ImportItem::cast(node_at(root, item.range)?)?
+        .alias()?
+        .token()?;
+    Some(Name {
+        source: item.source_id,
+        range: alias.text_range(),
     })
 }
 

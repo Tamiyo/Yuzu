@@ -6,7 +6,7 @@ use text_size::{TextRange, TextSize};
 use yuzu_diagnostics::SourceId;
 
 use crate::Checked;
-use crate::names::{self, Name, Resolution};
+use crate::names::{Name, Resolution};
 
 /// A range in a file on disk.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -78,8 +78,13 @@ pub(crate) fn resolution_at(
                 .iter()
                 .find(|resolution| on(resolution.declared))
         })
+        .or_else(|| {
+            checked
+                .declarations()
+                .iter()
+                .find(|declaration| on(declaration.declared))
+        })
         .copied()
-        .or_else(|| names::declaration_at(&checked.syntax(source)?, source, offset))
 }
 
 /// The declaration of the name at a position, and each of its uses.
@@ -297,6 +302,14 @@ from t |> select double(a) + cap + two() as v
             &expect![[r"
                 main.yz:id 46..48
                 main.yz:id 92..94"]],
+        );
+    }
+
+    #[test]
+    fn a_column_no_stage_reads_has_its_declaration() {
+        check_references(
+            &PROGRAM.replacen("as v", "as $0v", 1),
+            &expect!["main.yz:v 169..170"],
         );
     }
 

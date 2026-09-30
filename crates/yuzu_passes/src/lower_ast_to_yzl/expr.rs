@@ -484,7 +484,7 @@ impl<'c> AstToYzl<'c, '_> {
         let given = operands.len();
         let Some(callable) = self.symbols.callable_in(at, given) else {
             if let Some(target) = self.symbols.target_in(at) {
-                self.record(used, name, target);
+                self.record_through(used, name, target, None);
             }
             let message = match self.symbols.arities_in(at) {
                 Some(arities) => arity_mismatch(name, &arities, given),
@@ -498,7 +498,7 @@ impl<'c> AstToYzl<'c, '_> {
             );
         };
 
-        self.record(used, name, callable.target);
+        self.record_through(used, name, callable.target, None);
         self.emit_call(block, callable, &operands, loc)
     }
 

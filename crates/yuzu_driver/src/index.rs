@@ -32,6 +32,17 @@ pub struct Reference {
     /// module's path.
     pub name: String,
     pub kind: TargetKind,
+    /// The import item that renamed the declaration in the file of `at`,
+    /// when the name goes through one.
+    pub alias: Option<Span>,
+}
+
+/// A declaration the program wrote: all of its syntax, and the name it
+/// declares.
+#[derive(Clone, Debug)]
+pub struct Declaration {
+    pub at: Span,
+    pub name: String,
 }
 
 /// What a reference names.
@@ -85,6 +96,7 @@ pub enum ScopeKind {
 #[derive(Debug, Default)]
 pub struct Index {
     pub references: Vec<Reference>,
+    pub declarations: Vec<Declaration>,
     pub types: Vec<Typed>,
     pub rows: Vec<StageRow>,
     /// The names each file's top level can use, by the file's source.
@@ -105,6 +117,9 @@ pub(crate) struct IndexReader<'s> {
     /// signature. One name can also name two declarations, as the `a` of
     /// `using (a)` names a column on each side.
     recorded: FxHashSet<(Span, Span)>,
+    /// The declarations recorded so far; the hoist and the walk may both
+    /// read one.
+    declared: FxHashSet<Span>,
 }
 
 impl NameListener for IndexReader<'_> {
@@ -128,7 +143,17 @@ impl NameListener for IndexReader<'_> {
             target,
             name: declared.to_owned(),
             kind,
+            alias: name.alias,
         });
+    }
+
+    fn on_declaration(&mut self, at: Span, name: &str) {
+        if self.declared.insert(at) {
+            self.index.declarations.push(Declaration {
+                at,
+                name: name.to_owned(),
+            });
+        }
     }
 
     fn on_row(&mut self, stage: Span, columns: &mut dyn Iterator<Item = &str>) {
@@ -173,6 +198,7 @@ impl<'s> IndexReader<'s> {
             index: Index::default(),
             initializers: FxHashMap::default(),
             recorded: FxHashSet::default(),
+            declared: FxHashSet::default(),
         }
     }
 

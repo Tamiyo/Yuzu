@@ -105,25 +105,28 @@ fn renamed(
 
     let on_use = at.used.source == source && at.used.range.contains_inclusive(offset);
     let here = if on_use { at.used } else { at.declared };
-    let spelling = text(checked, here);
-    let declared = text(checked, at.declared);
 
-    // A declaration's name renames every use that spells it, and each
-    // declaration linked to it; an alias's, only its own spellings in its
-    // file.
-    let is_alias = spelling != declared;
-    if is_alias {
-        let names = uses_of(checked, at.declared)
-            .into_iter()
-            .filter(|used| used.source == source && text(checked, *used) == spelling)
-            .collect();
+    // An alias renames only itself and the names that go through it.
+    if let Some(alias) = at.alias {
+        let mut names = vec![alias];
+        for resolution in checked.resolutions() {
+            if resolution.alias == Some(alias) && !names.contains(&resolution.used) {
+                names.push(resolution.used);
+            }
+        }
         return Ok((here, names));
     }
+
+    // A declaration renames each declaration linked to it, and every use
+    // not through an alias.
     let mut names = linked(checked, at.declared);
     for declaration in 0..names.len() {
-        for used in uses_of(checked, names[declaration]) {
-            if text(checked, used) == spelling && !names.contains(&used) {
-                names.push(used);
+        for resolution in checked.resolutions() {
+            if resolution.declared == names[declaration]
+                && resolution.alias.is_none()
+                && !names.contains(&resolution.used)
+            {
+                names.push(resolution.used);
             }
         }
     }
@@ -146,10 +149,6 @@ fn linked(checked: &Checked, declared: Name) -> Vec<Name> {
         }
     }
     linked
-}
-
-fn text(checked: &Checked, name: Name) -> &str {
-    &checked.text(name.source)[name.range]
 }
 
 /// Whether a text is one identifier, and so can name a declaration.

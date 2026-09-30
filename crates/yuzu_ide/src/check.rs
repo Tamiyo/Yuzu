@@ -37,6 +37,8 @@ pub struct Checked {
     files: FxHashMap<FileId, SourceId>,
     trees: Trees,
     resolutions: Vec<Resolution>,
+    /// Each declaration, as a use of itself.
+    declarations: Vec<Resolution>,
     /// Each type the index holds, by the span it belongs to.
     types: FxHashMap<Span, usize>,
 }
@@ -52,6 +54,7 @@ impl Checked {
             .collect();
         let trees: Trees = inner.syntax.iter().cloned().collect();
         let resolutions = names::resolutions(&inner.index.references, &trees);
+        let declarations = names::declarations(&inner.index.declarations, &trees);
         let types = inner
             .index
             .types
@@ -64,6 +67,7 @@ impl Checked {
             files,
             trees,
             resolutions,
+            declarations,
             types,
         }
     }
@@ -204,6 +208,10 @@ impl Checked {
 
     pub(crate) fn resolutions(&self) -> &[Resolution] {
         &self.resolutions
+    }
+
+    pub(crate) fn declarations(&self) -> &[Resolution] {
+        &self.declarations
     }
 
     /// The name a resolution resolves, as its declaration spells it.

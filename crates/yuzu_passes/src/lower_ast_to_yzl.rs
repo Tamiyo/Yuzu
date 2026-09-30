@@ -35,6 +35,9 @@ pub struct NameUse<'a> {
     pub spelling: &'a str,
     /// What the name names.
     pub target: NameTarget<'a>,
+    /// The import that renamed the declaration in this file, when the name
+    /// goes through one: all of its `x as y` item.
+    pub alias: Option<Span>,
 }
 
 /// What a name names.
@@ -66,6 +69,10 @@ pub enum NameKind {
 pub trait NameListener {
     /// A name the program wrote, and what it names.
     fn on_name(&mut self, name: NameUse<'_>);
+
+    /// A declaration the program wrote: all of its syntax, and the name it
+    /// declares. A declaration no name uses is here too.
+    fn on_declaration(&mut self, _at: Span, _name: &str) {}
 
     /// The columns the expressions of the stage at `stage` can read.
     fn on_row(&mut self, _stage: Span, _columns: &mut dyn Iterator<Item = &str>) {}
@@ -283,15 +290,30 @@ impl<'c> AstToYzl<'c, '_> {
     }
 
     /// Tells the listener that the name at `used` in this file names a
-    /// declaration. A declaration in a module this run did not read, as a
-    /// bound library's, has no file to point into.
+    /// declaration, through the file's own import of it when there is one.
     fn record(&mut self, used: TextRange, spelling: &str, target: Target<'c>) {
+        let alias = self.symbols.import_alias(spelling);
+        self.record_through(used, spelling, target, alias);
+    }
+
+    /// Tells the listener that the name at `used` in this file names a
+    /// declaration, through the import at `alias` that renamed it. A
+    /// declaration in a module this run did not read, as a bound library's,
+    /// has no file to point into.
+    fn record_through(
+        &mut self,
+        used: TextRange,
+        spelling: &str,
+        target: Target<'c>,
+        alias: Option<TextRange>,
+    ) {
         let Some(&source_id) = self.module_files.get(&target.at.module) else {
             return;
         };
         self.listener.on_name(NameUse {
             used: self.span(used),
             spelling,
+            alias: alias.map(|alias| self.span(alias)),
             target: NameTarget::Declaration {
                 at: Span {
                     source_id,
@@ -309,12 +331,18 @@ impl<'c> AstToYzl<'c, '_> {
             used: self.span(used),
             spelling: name,
             target: NameTarget::Declaration { at: declared, name },
+            alias: None,
         });
     }
 
     /// Tells the listener that the name at `used` names a local of this file.
     fn record_local(&mut self, used: TextRange, name: &str, declared: TextRange) {
         self.record_declared(used, name, self.span(declared));
+    }
+
+    /// Tells the listener that this file declares `name` at `declared`.
+    fn declare(&mut self, name: &str, declared: TextRange) {
+        self.listener.on_declaration(self.span(declared), name);
     }
 
     /// Tells the listener that the name at `used` names a module.
@@ -329,6 +357,7 @@ impl<'c> AstToYzl<'c, '_> {
                 file: source_id,
                 path,
             },
+            alias: None,
         });
     }
 
@@ -479,7 +508,8 @@ impl<'c> AstToYzl<'c, '_> {
     }
 
     /// A field that the item at `range` declares under `name`.
-    fn field_at(&self, name: &'c str, range: TextRange) -> Field<'c> {
+    fn field_at(&mut self, name: &'c str, range: TextRange) -> Field<'c> {
+        self.declare(name, range);
         Field {
             name,
             declared: Some(self.span(range)),

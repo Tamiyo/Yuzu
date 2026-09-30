@@ -873,9 +873,10 @@ impl<'c> AstToYzl<'c, '_> {
 
         let alias = self.read_ident_with_range(item.alias());
         if let Some(declared) = self.symbols.target_in(from) {
-            self.record(used, name, declared);
+            self.record_through(used, name, declared, None);
             if let Some((spelling, used)) = alias {
-                self.record(used, spelling, declared);
+                let item = item.syntax().text_range();
+                self.record_through(used, spelling, declared, Some(item));
             }
         }
 
@@ -889,7 +890,10 @@ impl<'c> AstToYzl<'c, '_> {
         self.symbols.bind(
             local,
             Binding {
-                kind: BindingKind::Import { from },
+                kind: BindingKind::Import {
+                    from,
+                    is_alias: alias.is_some(),
+                },
                 text_range: item.syntax().text_range(),
                 visibility,
             },
@@ -908,11 +912,17 @@ impl<'c> AstToYzl<'c, '_> {
             return;
         }
 
+        // A module is declared by its file, which the listener hears of by
+        // its path.
+        let text_range = node.syntax().text_range();
+        if !matches!(kind, BindingKind::Module { .. }) {
+            self.declare(name, text_range);
+        }
         self.symbols.bind(
             name,
             Binding {
                 kind,
-                text_range: node.syntax().text_range(),
+                text_range,
                 visibility,
             },
         );
@@ -962,6 +972,7 @@ impl<'c> AstToYzl<'c, '_> {
             return;
         }
 
+        self.declare(name, overload.text_range);
         self.symbols.add_overload(name, overload);
     }
 
@@ -973,6 +984,7 @@ impl<'c> AstToYzl<'c, '_> {
         declared: TextRange,
         place: Value<'c, 'a>,
     ) {
+        self.declare(name, declared);
         self.symbols.bind_local(name, locals.len(), declared);
         locals.push(place);
     }
@@ -1147,13 +1159,13 @@ impl<'c> AstToYzl<'c, '_> {
     }
 
     /// Each field's name, and the field that declares it.
-    fn read_row_fields(&self, fields: impl Iterator<Item = ast::StructField>) -> Vec<Field<'c>> {
+    fn read_row_fields(
+        &mut self,
+        fields: impl Iterator<Item = ast::StructField>,
+    ) -> Vec<Field<'c>> {
         fields
             .filter_map(|field| {
-                Some(Field {
-                    name: self.read_ident(field.name())?,
-                    declared: Some(self.span(field.syntax().text_range())),
-                })
+                Some(self.field_at(self.read_ident(field.name())?, field.syntax().text_range()))
             })
             .collect()
     }

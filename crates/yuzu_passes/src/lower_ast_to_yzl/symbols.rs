@@ -337,6 +337,8 @@ pub(super) enum BindingKind<'c> {
     /// written.
     Import {
         from: Declared<'c>,
+        /// Whether the import renames it, as `x as y` does.
+        is_alias: bool,
     },
 }
 
@@ -794,6 +796,13 @@ impl<'c> SymbolTable<'c> {
         self.declared_binding(self.module, name)
     }
 
+    /// The import item that renames a declaration to `name` in this file.
+    pub(super) fn import_alias(&self, name: &str) -> Option<TextRange> {
+        let binding = self.binding(name)?;
+        matches!(binding.kind, BindingKind::Import { is_alias: true, .. })
+            .then_some(binding.text_range)
+    }
+
     /// What a name in this file stands for, and where it was declared,
     /// following an import to the file that wrote it.
     /// A name the file does not declare or import is looked up among the
@@ -828,7 +837,7 @@ impl<'c> SymbolTable<'c> {
     pub(super) fn find_in(&self, at: Declared<'c>) -> Option<(Declared<'c>, &Binding<'c>)> {
         let (_, binding) = self.declared_in(at.module, at.name)?;
         match &binding.kind {
-            BindingKind::Import { from } => self.find_in(*from),
+            BindingKind::Import { from, .. } => self.find_in(*from),
             BindingKind::Struct { .. }
             | BindingKind::Relation { .. }
             | BindingKind::Func { .. }
@@ -973,7 +982,7 @@ impl<'c> SymbolTable<'c> {
         let mut seen: FxHashSet<&'c str> = FxHashSet::default();
         let mut add = |name: &'c str, binding: &Binding<'c>, is_own: bool| {
             let declared = match &binding.kind {
-                BindingKind::Import { from } => match self.find_in(*from) {
+                BindingKind::Import { from, .. } => match self.find_in(*from) {
                     Some((_, origin)) => &origin.kind,
                     None => return,
                 },
