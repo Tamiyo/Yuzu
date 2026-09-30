@@ -20,8 +20,19 @@ impl GlobalState<'_> {
             CheckResult::Checked {
                 file_id,
                 version,
+                generation,
                 checked,
-            } => self.on_document_checked(file_id, version, *checked),
+            } => {
+                // A change after the request leaves the document stale.
+                if self
+                    .stale
+                    .get(&file_id)
+                    .is_some_and(|&since| since <= generation)
+                {
+                    self.stale.remove(&file_id);
+                }
+                self.on_document_checked(file_id, version, *checked)
+            }
             CheckResult::Panicked {
                 file_id,
                 version,

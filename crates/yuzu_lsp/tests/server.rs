@@ -8,15 +8,16 @@ use lsp_types::notification::{
 };
 use lsp_types::request::{
     DocumentSymbolRequest, GotoDefinition, HoverRequest, Initialize, InlayHintRequest,
-    RegisterCapability, Request as _, SelectionRangeRequest, SemanticTokensFullRequest, Shutdown,
+    RegisterCapability, Request as _, SelectionRangeRequest, SemanticTokensFullDeltaRequest,
+    SemanticTokensFullRequest, Shutdown,
 };
 use lsp_types::{
     ClientCapabilities, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
     DocumentSymbolParams, DocumentSymbolResponse, GeneralClientCapabilities, InitializeParams,
     PartialResultParams, Position, PositionEncodingKind, PublishDiagnosticsParams, Range,
-    SemanticTokensParams, SemanticTokensResult, TextDocumentContentChangeEvent,
-    TextDocumentIdentifier, TextDocumentItem, Url, VersionedTextDocumentIdentifier,
-    WorkDoneProgressParams,
+    SemanticTokensDeltaParams, SemanticTokensFullDeltaResult, SemanticTokensParams,
+    SemanticTokensResult, TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
+    Url, VersionedTextDocumentIdentifier, WorkDoneProgressParams,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -299,6 +300,52 @@ fn semantic_tokens_are_sent_relative_to_the_one_before() {
 }
 
 #[test]
+fn a_delta_sends_only_the_tokens_that_changed() {
+    let mut client = Client::start(ClientCapabilities::default());
+    client.open("def f(x: int64) -> int64 {\n    return x\n}\n");
+    let result = client.request::<SemanticTokensFullRequest>(SemanticTokensParams {
+        text_document: document(),
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+    });
+    let Some(SemanticTokensResult::Tokens(tokens)) = result else {
+        panic!("the server sends the tokens whole");
+    };
+
+    client.notify::<DidChangeTextDocument>(DidChangeTextDocumentParams {
+        text_document: VersionedTextDocumentIdentifier::new(url(), 2),
+        content_changes: vec![TextDocumentContentChangeEvent {
+            range: Some(Range::new(Position::new(3, 0), Position::new(3, 0))),
+            range_length: None,
+            text: "let y = 1\n".to_owned(),
+        }],
+    });
+    let result = client.request::<SemanticTokensFullDeltaRequest>(SemanticTokensDeltaParams {
+        text_document: document(),
+        previous_result_id: tokens.result_id.expect("the tokens have a result id"),
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+    });
+    let Some(SemanticTokensFullDeltaResult::TokensDelta(delta)) = result else {
+        panic!("the server sends a delta");
+    };
+    let rendered: Vec<String> = delta
+        .edits
+        .iter()
+        .map(|edit| {
+            format!(
+                "at {} delete {} insert {}",
+                edit.start,
+                edit.delete_count,
+                edit.data.as_ref().map_or(0, Vec::len)
+            )
+        })
+        .collect();
+    expect!["at 30 delete 0 insert 3"].assert_eq(&rendered.join("\n"));
+    client.shutdown();
+}
+
+#[test]
 fn positions_count_utf16_unless_the_client_takes_utf8() {
     let text = "let s = \"日本\" let t = 1\n";
     let utf8 = ClientCapabilities {
@@ -356,6 +403,40 @@ fn an_error_in_an_imported_file_is_published_for_that_file() {
     let params = client.diagnostics_for(&helpers);
     assert_eq!(params.version, None);
     check_diagnostics(&params, &expect!["0:17-0:20 unknown type `i64`"]);
+    client.shutdown();
+}
+
+#[test]
+fn a_change_checks_again_the_files_that_import_it() {
+    const HELPERS: &str = "pub def two() -> int64 { return 2 }\n";
+    let dir = TempDir::new(&[("helpers.yz", HELPERS)]);
+    let main = Url::from_file_path(dir.0.join("main.yz")).unwrap();
+    let helpers = Url::from_file_path(dir.0.join("helpers.yz")).unwrap();
+
+    let client = Client::start(ClientCapabilities::default());
+    client.open_at(main.clone(), "from helpers import two\nlet x = two()\n");
+    client.open_at(helpers.clone(), HELPERS);
+    client.notify::<DidChangeTextDocument>(DidChangeTextDocumentParams {
+        text_document: VersionedTextDocumentIdentifier::new(helpers, 2),
+        content_changes: vec![TextDocumentContentChangeEvent {
+            range: Some(Range::new(Position::new(0, 0), Position::new(0, 4))),
+            range_length: None,
+            text: String::new(),
+        }],
+    });
+
+    let params = loop {
+        let params = client.diagnostics_for(&main);
+        if !params.diagnostics.is_empty() {
+            break params;
+        }
+    };
+    check_diagnostics(
+        &params,
+        &expect![[r"
+        0:20-0:23 `two` is not public; `helpers` keeps it to itself
+        1:8-1:13 unresolved identifier `two`"]],
+    );
     client.shutdown();
 }
 

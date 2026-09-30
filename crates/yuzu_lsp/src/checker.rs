@@ -16,10 +16,15 @@ use crate::RunError;
 const DEBOUNCE: Duration = Duration::from_millis(50);
 
 /// Open documents to check, as a snapshot saw them, each with the version
-/// of its text. The first is checked first.
+/// of its text. The first is checked first. A newer request replaces an
+/// older one, so each request holds every document not yet checked since
+/// what it read last changed.
 pub(crate) struct CheckRequest {
     pub(crate) analysis: Analysis,
     pub(crate) files: Vec<(FileId, i32)>,
+    /// The request's number; a check it makes covers each change made
+    /// before it.
+    pub(crate) generation: u64,
 }
 
 /// One document's check, with the version of the text it read.
@@ -27,6 +32,7 @@ pub(crate) enum CheckResult {
     Checked {
         file_id: FileId,
         version: i32,
+        generation: u64,
         checked: Box<Checked>,
     },
     /// The check panicked. The thread stops after it sends this, since the
@@ -96,6 +102,7 @@ fn serve(incoming: &Receiver<CheckRequest>, outgoing: &Sender<CheckResult>) {
                 Ok(Some(checked)) => CheckResult::Checked {
                     file_id,
                     version,
+                    generation: request.generation,
                     checked: Box::new(checked),
                 },
                 Ok(None) => continue,

@@ -9,9 +9,10 @@ use lsp_types::{
     FoldingRangeParams, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents,
     HoverParams, InlayHint, InlayHintKind, InlayHintLabel, InlayHintParams, Location,
     MarkupContent, MarkupKind, ParameterInformation, ParameterLabel, PrepareRenameResponse,
-    ReferenceParams, RenameParams, SelectionRange, SelectionRangeParams, SemanticTokensParams,
-    SemanticTokensResult, SignatureHelp, SignatureHelpParams, SignatureInformation,
-    TextDocumentPositionParams, TextEdit, Url, WorkspaceEdit,
+    ReferenceParams, RenameParams, SelectionRange, SelectionRangeParams, SemanticTokens,
+    SemanticTokensDelta, SemanticTokensDeltaParams, SemanticTokensFullDeltaResult,
+    SemanticTokensParams, SemanticTokensResult, SignatureHelp, SignatureHelpParams,
+    SignatureInformation, TextDocumentPositionParams, TextEdit, Url, WorkspaceEdit,
 };
 use rustc_hash::FxHashSet;
 use text_size::{TextRange, TextSize};
@@ -21,7 +22,7 @@ use crate::documents::Document;
 use crate::global_state::GlobalState;
 use crate::text_shift::TextShift;
 use crate::to_proto::CheckedFiles;
-use crate::{from_proto, to_proto};
+use crate::{from_proto, semantic_tokens, to_proto};
 
 pub(crate) fn document_symbol(
     state: &GlobalState,
@@ -65,14 +66,46 @@ pub(crate) fn selection_range(
         .collect()
 }
 
-/// The syntax's highlights, with each resolved use highlighted as its
-/// declaration. The uses come from the last check, carried over to the
-/// text the document has now.
+/// A document's semantic tokens, kept for a later delta request.
 pub(crate) fn semantic_tokens_full(
-    state: &GlobalState,
+    state: &mut GlobalState,
     params: &SemanticTokensParams,
 ) -> Option<SemanticTokensResult> {
     let url = &params.text_document.uri;
+    let tokens = highlight_tokens(state, url)?;
+    let (file_id, _) = state.document(url)?;
+    let tokens = state.remember_tokens(file_id, tokens);
+    Some(SemanticTokensResult::Tokens(tokens.clone()))
+}
+
+/// What changed since the tokens the client names, when the server still
+/// holds them; all the tokens when it does not.
+pub(crate) fn semantic_tokens_full_delta(
+    state: &mut GlobalState,
+    params: &SemanticTokensDeltaParams,
+) -> Option<SemanticTokensFullDeltaResult> {
+    let url = &params.text_document.uri;
+    let tokens = highlight_tokens(state, url)?;
+    let (file_id, _) = state.document(url)?;
+    let edits = state
+        .semantic_tokens
+        .get(&file_id)
+        .filter(|sent| sent.result_id.as_deref() == Some(params.previous_result_id.as_str()))
+        .map(|sent| semantic_tokens::diff(&sent.data, &tokens.data));
+    let tokens = state.remember_tokens(file_id, tokens);
+    Some(match edits {
+        Some(edits) => SemanticTokensFullDeltaResult::TokensDelta(SemanticTokensDelta {
+            result_id: tokens.result_id.clone(),
+            edits,
+        }),
+        None => SemanticTokensFullDeltaResult::Tokens(tokens.clone()),
+    })
+}
+
+/// The syntax's highlights, with each resolved use highlighted as its
+/// declaration. The uses come from the last check, carried over to the
+/// text the document has now.
+fn highlight_tokens(state: &GlobalState, url: &Url) -> Option<SemanticTokens> {
     let (file_id, document) = state.document(url)?;
     let mut highlights = state.analysis().highlight(file_id)?;
     if let Some((file_id, _, checked, shift)) = state.last_check(url) {
@@ -91,8 +124,11 @@ pub(crate) fn semantic_tokens_full(
         highlights.extend(uses);
         highlights.sort_by_key(|highlight| highlight.range.start());
     }
-    let tokens = to_proto::semantic_tokens(&document.text, &document.line_index, &highlights);
-    Some(SemanticTokensResult::Tokens(tokens))
+    Some(to_proto::semantic_tokens(
+        &document.text,
+        &document.line_index,
+        &highlights,
+    ))
 }
 
 pub(crate) fn goto_definition(

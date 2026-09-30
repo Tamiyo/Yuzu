@@ -4,7 +4,10 @@
 //! `boolean`, `table` and `mutable` are not standard; the VS Code extension
 //! declares them in its `package.json` beside the type each one falls back to.
 
-use lsp_types::{Range, SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens};
+use lsp_types::{
+    Range, SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens,
+    SemanticTokensEdit,
+};
 use yuzu_ide::{HlMod, HlMods, HlTag};
 
 const BOOLEAN: SemanticTokenType = SemanticTokenType::new("boolean");
@@ -116,12 +119,69 @@ impl SemanticTokensBuilder {
     }
 }
 
+/// The one edit that turns `old` into `new`: what lies between the tokens
+/// both start with and the tokens both end with. The protocol counts in
+/// numbers, and each token is five of them.
+pub(crate) fn diff(old: &[SemanticToken], new: &[SemanticToken]) -> Vec<SemanticTokensEdit> {
+    let start = new
+        .iter()
+        .zip(old)
+        .take_while(|(new, old)| new == old)
+        .count();
+    let (old, new) = (&old[start..], &new[start..]);
+    let end = new
+        .iter()
+        .rev()
+        .zip(old.iter().rev())
+        .take_while(|(new, old)| new == old)
+        .count();
+    let (old, new) = (&old[..old.len() - end], &new[..new.len() - end]);
+    if old.is_empty() && new.is_empty() {
+        return Vec::new();
+    }
+    let numbers = |tokens: usize| u32::try_from(5 * tokens).expect("fewer than 2^32 numbers");
+    vec![SemanticTokensEdit {
+        start: numbers(start),
+        delete_count: numbers(old.len()),
+        data: Some(new.to_vec()),
+    }]
+}
+
 #[cfg(test)]
 mod tests {
     use expect_test::expect;
-    use lsp_types::{Position, Range};
+    use lsp_types::{Position, Range, SemanticToken};
 
-    use super::SemanticTokensBuilder;
+    use super::{SemanticTokensBuilder, diff};
+
+    fn token(delta_start: u32) -> SemanticToken {
+        SemanticToken {
+            delta_start,
+            ..SemanticToken::default()
+        }
+    }
+
+    #[test]
+    fn a_change_in_the_middle_is_one_edit() {
+        let old = [token(1), token(2), token(3), token(4)];
+        let new = [token(1), token(9), token(9), token(9), token(4)];
+        let edits = diff(&old, &new);
+        assert_eq!(edits.len(), 1);
+        assert_eq!((edits[0].start, edits[0].delete_count), (5, 10));
+        assert_eq!(edits[0].data.as_deref(), Some(&new[1..4]));
+    }
+
+    #[test]
+    fn the_same_tokens_are_no_edit() {
+        let tokens = [token(1), token(2)];
+        assert!(diff(&tokens, &tokens).is_empty());
+    }
+
+    #[test]
+    fn tokens_added_at_the_end_delete_nothing() {
+        let edits = diff(&[token(1)], &[token(1), token(2)]);
+        assert_eq!((edits[0].start, edits[0].delete_count), (5, 0));
+    }
 
     fn on_line(line: u32, start: u32, end: u32) -> Range {
         Range::new(Position::new(line, start), Position::new(line, end))

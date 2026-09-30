@@ -46,7 +46,7 @@ pub(crate) fn server_capabilities(encoding: PositionEncoding) -> ServerCapabilit
                     token_types: semantic_tokens::TYPES.to_vec(),
                     token_modifiers: semantic_tokens::MODIFIERS.to_vec(),
                 },
-                full: Some(SemanticTokensFullOptions::Bool(true)),
+                full: Some(SemanticTokensFullOptions::Delta { delta: Some(true) }),
                 range: None,
                 ..SemanticTokensOptions::default()
             },

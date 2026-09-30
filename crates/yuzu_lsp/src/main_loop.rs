@@ -13,8 +13,8 @@ use lsp_types::notification::{
 use lsp_types::request::{
     Completion, DocumentHighlightRequest, DocumentSymbolRequest, FoldingRangeRequest,
     GotoDefinition, HoverRequest, InlayHintRequest, PrepareRenameRequest, References,
-    RegisterCapability, Rename, Request as _, SelectionRangeRequest, SemanticTokensFullRequest,
-    SignatureHelpRequest,
+    RegisterCapability, Rename, Request as _, SelectionRangeRequest,
+    SemanticTokensFullDeltaRequest, SemanticTokensFullRequest, SignatureHelpRequest,
 };
 use lsp_types::{InitializeParams, InitializeResult, RegistrationParams, ServerInfo};
 use rustc_hash::FxHashMap;
@@ -68,6 +68,10 @@ pub fn run(connection: &Connection) -> Result<(), RunError> {
         checks: FxHashMap::default(),
         closed_diagnostics: FxHashMap::default(),
         failed: FxHashMap::default(),
+        stale: FxHashMap::default(),
+        generation: 0,
+        semantic_tokens: FxHashMap::default(),
+        next_result_id: 0,
         inlay_hint_refresh: capabilities::inlay_hint_refresh(&params.capabilities),
         semantic_tokens_refresh: capabilities::semantic_tokens_refresh(&params.capabilities),
         next_request: 0,
@@ -141,9 +145,13 @@ impl GlobalState<'_> {
             SelectionRangeRequest::METHOD => {
                 self.respond::<SelectionRangeRequest>(request, handlers::selection_range)
             }
-            SemanticTokensFullRequest::METHOD => {
-                self.respond::<SemanticTokensFullRequest>(request, handlers::semantic_tokens_full)
-            }
+            SemanticTokensFullRequest::METHOD => self
+                .respond_mut::<SemanticTokensFullRequest>(request, handlers::semantic_tokens_full),
+            SemanticTokensFullDeltaRequest::METHOD => self
+                .respond_mut::<SemanticTokensFullDeltaRequest>(
+                    request,
+                    handlers::semantic_tokens_full_delta,
+                ),
             GotoDefinition::METHOD => {
                 self.respond::<GotoDefinition>(request, handlers::goto_definition)
             }
@@ -212,31 +220,21 @@ impl GlobalState<'_> {
         R::Params: DeserializeOwned,
         R::Result: Serialize,
     {
-        let params: R::Params = match serde_json::from_value(request.params) {
-            Ok(params) => params,
-            Err(error) => {
-                return Response::new_err(
-                    request.id,
-                    ErrorCode::InvalidParams as i32,
-                    format!("invalid {} params: {error}", R::METHOD),
-                );
-            }
-        };
-        match panic::catch_unwind(AssertUnwindSafe(|| handler(self, &params))) {
-            Ok(Ok(result)) => Response::new_ok(request.id, result),
-            Ok(Err(reason)) => {
-                Response::new_err(request.id, ErrorCode::RequestFailed as i32, reason)
-            }
-            Err(payload) => Response::new_err(
-                request.id,
-                ErrorCode::InternalError as i32,
-                format!(
-                    "{} panicked: {}",
-                    R::METHOD,
-                    panic_message(payload.as_ref())
-                ),
-            ),
-        }
+        answer::<R>(request, |params| handler(self, params))
+    }
+
+    /// As [`Self::respond`], for a handler that keeps what it answered.
+    fn respond_mut<R>(
+        &mut self,
+        request: Request,
+        handler: fn(&mut Self, &R::Params) -> R::Result,
+    ) -> Response
+    where
+        R: lsp_types::request::Request,
+        R::Params: DeserializeOwned,
+        R::Result: Serialize,
+    {
+        answer::<R>(request, |params| Ok(handler(self, params)))
     }
 
     fn notify<N>(
@@ -252,5 +250,42 @@ impl GlobalState<'_> {
             Ok(params) => handler(self, params),
             Err(error) => self.log_error(format!("invalid {} params: {error}", N::METHOD)),
         }
+    }
+}
+
+/// Parses a request's params and answers with what `handler` makes of
+/// them. A handler that panics answers with an error, and the server goes
+/// on.
+fn answer<R>(
+    request: Request,
+    handler: impl FnOnce(&R::Params) -> Result<R::Result, String>,
+) -> Response
+where
+    R: lsp_types::request::Request,
+    R::Params: DeserializeOwned,
+    R::Result: Serialize,
+{
+    let params: R::Params = match serde_json::from_value(request.params) {
+        Ok(params) => params,
+        Err(error) => {
+            return Response::new_err(
+                request.id,
+                ErrorCode::InvalidParams as i32,
+                format!("invalid {} params: {error}", R::METHOD),
+            );
+        }
+    };
+    match panic::catch_unwind(AssertUnwindSafe(|| handler(&params))) {
+        Ok(Ok(result)) => Response::new_ok(request.id, result),
+        Ok(Err(reason)) => Response::new_err(request.id, ErrorCode::RequestFailed as i32, reason),
+        Err(payload) => Response::new_err(
+            request.id,
+            ErrorCode::InternalError as i32,
+            format!(
+                "{} panicked: {}",
+                R::METHOD,
+                panic_message(payload.as_ref())
+            ),
+        ),
     }
 }

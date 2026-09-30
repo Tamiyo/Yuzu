@@ -132,6 +132,8 @@ impl GlobalState<'_> {
         self.documents.remove(&file_id);
         self.checks.remove(&file_id);
         self.failed.remove(&file_id);
+        self.stale.remove(&file_id);
+        self.semantic_tokens.remove(&file_id);
 
         let mut change = Change::default();
         change.set_file(file_id, None);

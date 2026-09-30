@@ -3,7 +3,7 @@
 
 use lsp_server::{Connection, Message, Notification, Request, RequestId};
 use lsp_types::notification::LogMessage;
-use lsp_types::{LogMessageParams, MessageType, Url};
+use lsp_types::{LogMessageParams, MessageType, SemanticTokens, Url};
 use rustc_hash::FxHashMap;
 use serde::Serialize;
 use yuzu_ide::{Analysis, AnalysisHost, Checked, FileId};
@@ -31,6 +31,17 @@ pub(crate) struct GlobalState<'c> {
     /// The version of each document whose check panicked. It is not checked
     /// again until its text changes.
     pub(crate) failed: FxHashMap<FileId, i32>,
+    /// Each open document whose last check read a file that changed since,
+    /// with the number of the last request that asked for it again. Only a
+    /// check from that request or a later one is current.
+    pub(crate) stale: FxHashMap<FileId, u64>,
+    /// The number of the last check request.
+    pub(crate) generation: u64,
+    /// The semantic tokens last sent for each open document, with the
+    /// result id a delta request names them by.
+    pub(crate) semantic_tokens: FxHashMap<FileId, SemanticTokens>,
+    /// The result id the next semantic tokens get.
+    pub(crate) next_result_id: u64,
     pub(crate) inlay_hint_refresh: Refresh,
     pub(crate) semantic_tokens_refresh: Refresh,
     /// The id of the next request the server sends the client.
@@ -72,31 +83,68 @@ impl GlobalState<'_> {
         })
     }
 
-    /// Asks the checker for every open document with a path, `first` before
-    /// the rest. A change to one file can change what another reports, so
-    /// each is checked again. A checker that stopped is started again.
-    pub(crate) fn request_check(&mut self, first: Option<FileId>) -> Result<(), RunError> {
+    /// Asks the checker for the open documents that `changed` can change:
+    /// the document itself, each one whose last check read it, and each one
+    /// not checked yet. `None` asks for every open document, as after a
+    /// change on disk. `changed` is checked first. A checker that stopped
+    /// is started again.
+    pub(crate) fn request_check(&mut self, changed: Option<FileId>) -> Result<(), RunError> {
+        self.generation += 1;
+        let changed_path =
+            changed.and_then(|file_id| self.documents.get(&file_id)?.path.as_deref());
+        for (&file_id, document) in &self.documents {
+            let reads_change = match (changed, changed_path) {
+                (None, _) => true,
+                (Some(changed), _) if changed == file_id => true,
+                (Some(_), Some(path)) => self
+                    .checks
+                    .get(&file_id)
+                    .is_none_or(|(_, checked)| checked.source_of(path).is_some()),
+                (Some(_), None) => !self.checks.contains_key(&file_id),
+            };
+            if reads_change && document.path.is_some() {
+                self.stale.insert(file_id, self.generation);
+            }
+        }
+        self.send_stale(changed)
+    }
+
+    /// Sends the checker every stale document, `first` before the rest.
+    fn send_stale(&mut self, first: Option<FileId>) -> Result<(), RunError> {
         let mut files: Vec<(FileId, i32)> = self
-            .documents
-            .iter()
-            .filter(|(_, document)| document.path.is_some())
+            .stale
+            .keys()
+            .filter_map(|file_id| Some((*file_id, self.documents.get(file_id)?)))
             .filter(|(file_id, document)| self.failed.get(file_id) != Some(&document.version))
-            .map(|(&file_id, document)| (file_id, document.version))
+            .map(|(file_id, document)| (file_id, document.version))
             .collect();
         files.sort_by_key(|&(file_id, _)| (Some(file_id) != first, file_id.0));
 
         let request = CheckRequest {
             analysis: self.analysis(),
             files,
+            generation: self.generation,
         };
         if let Err(stopped) = self.checker.request(request) {
             self.log_error(format!(
                 "the checker stopped ({stopped:?}); it starts again"
             ))?;
             self.checker = Checker::spawn()?;
-            return self.request_check(first);
+            return self.send_stale(first);
         }
         Ok(())
+    }
+
+    /// Keeps the tokens sent for a document, under a new result id.
+    pub(crate) fn remember_tokens(
+        &mut self,
+        file_id: FileId,
+        mut tokens: SemanticTokens,
+    ) -> &SemanticTokens {
+        self.next_result_id += 1;
+        tokens.result_id = Some(self.next_result_id.to_string());
+        self.semantic_tokens.insert(file_id, tokens);
+        &self.semantic_tokens[&file_id]
     }
 
     pub(crate) fn file_id(&mut self, url: &Url) -> FileId {
