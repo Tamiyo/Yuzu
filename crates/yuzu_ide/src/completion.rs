@@ -17,10 +17,6 @@ use crate::Checked;
 
 /// Where the cursor is, as the text around it says.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "each flag says whether one kind of name fits here"
-)]
 pub struct CompletionSite {
     /// Where the stage the cursor is in starts, when it is in one.
     pub stage: Option<TextSize>,
@@ -28,19 +24,27 @@ pub struct CompletionSite {
     pub locals: Vec<(String, CompletionKind)>,
     /// The keywords that can start what is written here.
     pub keywords: &'static [TokenKind],
-    /// Whether a function or a module-level `let` fits here.
-    pub takes_value: bool,
-    /// The name before the `.` the cursor is after: a module, whose
-    /// exported names fit.
-    pub member_of: Option<String>,
-    /// The module a `from .. import` names, whose exported names fit.
-    pub import_from: Option<String>,
-    /// Whether a relation fits: after `from` or `join`.
-    pub takes_relation: bool,
-    /// Whether a type fits: after `->`, or after `:` or `[` in a type.
-    pub takes_type: bool,
-    /// Whether a trait fits: after the `:` of a bound.
-    pub takes_trait: bool,
+    /// The declared names that fit here.
+    pub expected: ExpectedNames,
+}
+
+/// The declared names that fit where the cursor is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExpectedNames {
+    /// None: only keywords fit.
+    Nothing,
+    /// A function, a module-level `let` or a module.
+    Value,
+    /// A relation: after `from` or `join`.
+    Relation,
+    /// A type: after `->`, or after `:` or `[` in a type.
+    Type,
+    /// A trait: after the `:` of a bound.
+    Trait,
+    /// The names a module exports, after the name before the `.`.
+    MemberOf(String),
+    /// The names a module exports, in a `from .. import` of its path.
+    ImportFrom(String),
 }
 
 impl CompletionSite {
@@ -49,12 +53,14 @@ impl CompletionSite {
             stage: None,
             locals: Vec::new(),
             keywords,
-            takes_value: false,
-            member_of: None,
-            import_from: None,
-            takes_relation: false,
-            takes_type: false,
-            takes_trait: false,
+            expected: ExpectedNames::Nothing,
+        }
+    }
+
+    fn expecting(expected: ExpectedNames) -> Self {
+        CompletionSite {
+            expected,
+            ..CompletionSite::keywords_only(&[])
         }
     }
 
@@ -72,7 +78,7 @@ impl CompletionSite {
         for keyword in self.keywords {
             add(&keyword.to_string(), CompletionKind::Keyword);
         }
-        if self.takes_type {
+        if self.expected == ExpectedNames::Type {
             for ty in types::scalar_spellings().chain([types::LIST]) {
                 add(ty, CompletionKind::Type);
             }
@@ -187,10 +193,9 @@ pub(crate) fn completion_site(root: &SyntaxNode, offset: TextSize) -> Completion
             .find(|element| element.kind() == SyntaxKind::ImportKw)
         && keyword.text_range().end() <= offset
     {
-        return CompletionSite {
-            import_from: import.path().map(|path| path.to_dotted()),
-            ..CompletionSite::keywords_only(&[])
-        };
+        return CompletionSite::expecting(import.path().map_or(ExpectedNames::Nothing, |path| {
+            ExpectedNames::ImportFrom(path.to_dotted())
+        }));
     }
 
     let stage = anchor
@@ -210,11 +215,16 @@ pub(crate) fn completion_site(root: &SyntaxNode, offset: TextSize) -> Completion
         (None, Some(body)) => locals_before(body, offset),
         _ => Vec::new(),
     };
+    let expected = if stage.is_some() || body.is_some() || !starts_statement {
+        ExpectedNames::Value
+    } else {
+        ExpectedNames::Nothing
+    };
     CompletionSite {
         stage,
         locals,
-        takes_value: stage.is_some() || body.is_some() || !starts_statement,
-        ..CompletionSite::keywords_only(keywords)
+        keywords,
+        expected,
     }
 }
 
@@ -225,19 +235,16 @@ fn site_after(before: &SyntaxToken) -> Option<CompletionSite> {
         SyntaxKind::Dot => {
             let base =
                 previous_significant(before).filter(|base| base.kind() == SyntaxKind::Identifier);
-            Some(CompletionSite {
-                member_of: base.map(|base| base.text().to_owned()),
-                ..CompletionSite::keywords_only(&[])
-            })
+            Some(CompletionSite::expecting(
+                base.map_or(ExpectedNames::Nothing, |base| {
+                    ExpectedNames::MemberOf(base.text().to_owned())
+                }),
+            ))
         }
-        SyntaxKind::FromKw | SyntaxKind::JoinKw => Some(CompletionSite {
-            takes_relation: true,
-            ..CompletionSite::keywords_only(&[])
-        }),
-        SyntaxKind::Arrow => Some(CompletionSite {
-            takes_type: true,
-            ..CompletionSite::keywords_only(&[])
-        }),
+        SyntaxKind::FromKw | SyntaxKind::JoinKw => {
+            Some(CompletionSite::expecting(ExpectedNames::Relation))
+        }
+        SyntaxKind::Arrow => Some(CompletionSite::expecting(ExpectedNames::Type)),
         // A `:` or a `[` opens a type only in a type's syntax; in a struct
         // literal or a list it opens a value.
         SyntaxKind::Colon | SyntaxKind::LeftSquare => {
@@ -247,14 +254,10 @@ fn site_after(before: &SyntaxToken) -> Option<CompletionSite> {
                     | SyntaxKind::LetStmt
                     | SyntaxKind::StructField
                     | SyntaxKind::NamedTypeAnnotation,
-                ) => Some(CompletionSite {
-                    takes_type: true,
-                    ..CompletionSite::keywords_only(&[])
-                }),
-                Some(SyntaxKind::TypeBound) => Some(CompletionSite {
-                    takes_trait: true,
-                    ..CompletionSite::keywords_only(&[])
-                }),
+                ) => Some(CompletionSite::expecting(ExpectedNames::Type)),
+                Some(SyntaxKind::TypeBound) => {
+                    Some(CompletionSite::expecting(ExpectedNames::Trait))
+                }
                 _ => None,
             }
         }
@@ -273,19 +276,25 @@ pub(crate) fn completions(
 
     let index = checked.index();
     // A module's names: through a name that names it, or by its path.
-    let module_file = site
-        .member_of
-        .as_deref()
-        .and_then(|base| {
-            index
-                .scopes
-                .get(&source)?
-                .iter()
-                .find(|name| name.name == base && name.kind == ScopeKind::Module)?
-                .module_file
-        })
-        .or_else(|| index.modules.get(site.import_from.as_deref()?).copied());
-    if site.member_of.is_some() || site.import_from.is_some() {
+    let module_file = match &site.expected {
+        ExpectedNames::MemberOf(base) => index
+            .scopes
+            .get(&source)
+            .into_iter()
+            .flatten()
+            .find(|name| name.name == *base && name.kind == ScopeKind::Module)
+            .and_then(|name| name.module_file),
+        ExpectedNames::ImportFrom(path) => index.modules.get(path).copied(),
+        ExpectedNames::Nothing
+        | ExpectedNames::Value
+        | ExpectedNames::Relation
+        | ExpectedNames::Type
+        | ExpectedNames::Trait => None,
+    };
+    if matches!(
+        site.expected,
+        ExpectedNames::MemberOf(_) | ExpectedNames::ImportFrom(_)
+    ) {
         for name in module_file
             .and_then(|file| index.scopes.get(&file))
             .into_iter()
@@ -298,11 +307,14 @@ pub(crate) fn completions(
     }
 
     site.add_syntax_items(&mut add);
-    let wanted = |kind: ScopeKind| match kind {
-        ScopeKind::Function | ScopeKind::Binding | ScopeKind::Module => site.takes_value,
-        ScopeKind::Relation => site.takes_relation,
-        ScopeKind::Struct => site.takes_type,
-        ScopeKind::Trait => site.takes_trait,
+    let wanted = |kind: ScopeKind| {
+        let expected = match kind {
+            ScopeKind::Function | ScopeKind::Binding | ScopeKind::Module => ExpectedNames::Value,
+            ScopeKind::Relation => ExpectedNames::Relation,
+            ScopeKind::Struct => ExpectedNames::Type,
+            ScopeKind::Trait => ExpectedNames::Trait,
+        };
+        site.expected == expected
     };
     if let Some(stage) = site.stage
         && let Some(row) = index

@@ -25,7 +25,7 @@ mod test_support;
 
 pub use analysis::{Analysis, AnalysisHost, Change};
 pub use check::Checked;
-pub use completion::{CompletionItem, CompletionKind, CompletionSite};
+pub use completion::{CompletionItem, CompletionKind, CompletionSite, ExpectedNames};
 pub use file_structure::{StructureNode, StructureNodeKind};
 pub use folding_ranges::{Fold, FoldKind};
 pub use hover::HoverResult;
