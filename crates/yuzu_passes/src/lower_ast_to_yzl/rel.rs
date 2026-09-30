@@ -561,6 +561,8 @@ impl<'c> AstToYzl<'c, '_> {
     ) -> Value<'c, 'a> {
         let loc = self.location(drop);
         let mut names: Vec<&'c str> = Vec::new();
+        // Where each dropped column is in the input row, least first.
+        let mut dropped: Vec<usize> = Vec::new();
         for column in drop.columns() {
             let Some(name) = self.read_name(&column) else {
                 self.assert_syntax_error("`drop` is missing a column name");
@@ -573,6 +575,14 @@ impl<'c> AstToYzl<'c, '_> {
             {
                 self.symbols.remove(index);
                 names.push(name);
+                let mut at = index;
+                for &earlier in &dropped {
+                    if earlier <= at {
+                        at += 1;
+                    }
+                }
+                let position = dropped.partition_point(|&earlier| earlier < at);
+                dropped.insert(position, at);
             }
         }
 
@@ -584,6 +594,7 @@ impl<'c> AstToYzl<'c, '_> {
                     QueryType::new(self.context).into(),
                     input,
                     columns,
+                    ArrayAttribute::from_indices(self.context, dropped),
                     loc,
                 )
                 .into(),
@@ -876,6 +887,26 @@ from t
     }
 
     #[test]
+    fn a_later_stage_types_the_columns_a_drop_leaves() {
+        for query in [
+            "from t |> drop a |> where b > 1",
+            "from t |> drop c, a |> where b > d",
+            "from t |> drop b, c |> where d > 1",
+        ] {
+            check(
+                &format!(
+                    "struct Row {{ a: str, b: int64, c: str, d: int64 }}\ntable t = Row\n{query}\n"
+                ),
+                |context, module| {
+                    crate::infer_types(context, module);
+                    String::new()
+                },
+                &expect![""],
+            );
+        }
+    }
+
+    #[test]
     fn a_limit_past_int64_is_reported() {
         expect![[r"
             error: integer literal is out of range for `int64`
@@ -1035,7 +1066,7 @@ from t
                 %8 = yz.in %arg2, %7 : !yzl.unresolved, !yz.list<!yz.int64> -> !yzl.unresolved
                 yzl.yield %8 : !yzl.unresolved
               }
-              %5 = yzl.drop %4 ["rating"]
+              %5 = yzl.drop %4 ["rating"] {drop_cols = [3]}
               %6 = yzl.distinct %5
               yzl.output %6
             }

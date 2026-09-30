@@ -262,7 +262,11 @@ def Yzl_DistinctOp : Yzl_Op<"distinct", [Pure]> {
 
 def Yzl_DropOp : Yzl_Op<"drop", [Pure]> {
   let summary = "remove named columns; a pure name effect";
-  let arguments = (ins Yzl_QueryType:$input, StrArrayAttr:$columns);
+  let description = [{
+    `drop_cols` gives where each dropped column is in the input row.
+  }];
+  let arguments = (ins Yzl_QueryType:$input, StrArrayAttr:$columns,
+                       I64ArrayAttr:$drop_cols);
   let results = (outs Yzl_QueryType:$result);
   let assemblyFormat = "$input $columns attr-dict";
 }

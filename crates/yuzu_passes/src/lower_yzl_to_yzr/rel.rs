@@ -434,8 +434,10 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
             return;
         };
 
-        let dropped: Vec<&str> = stage.columns().strings().collect();
-        let kept = kept_columns(&dropped, &row);
+        let dropped: Vec<usize> = stage.drop_cols().indices().collect();
+        let kept: Vec<usize> = (0..row.len())
+            .filter(|index| !dropped.contains(index))
+            .collect();
 
         let region = self.column_region(&row, &kept, op.location());
         let produced = kept.iter().map(|&index| row[index]).collect();
@@ -643,24 +645,6 @@ impl<'c, 'a> YzlToYzr<'c, 'a> {
 /// A column's position as an index array attribute holds it.
 fn column_index(index: usize) -> i64 {
     i64::try_from(index).expect("a row has fewer than 2^63 columns")
-}
-
-/// Resolution removes the first column each name matches, so dropping
-/// one name twice drops two columns, and this has to agree exactly.
-fn kept_columns(columns: &[&str], row: &[Column<'_>]) -> Vec<usize> {
-    let mut dropped: Vec<usize> = Vec::new();
-    for column in columns {
-        let index = (0..row.len())
-            .find(|&index| row[index].0 == *column && !dropped.contains(&index))
-            .unwrap_or_else(|| {
-                panic!("the AST lowering drops `{column}` only when the row holds it")
-            });
-        dropped.push(index);
-    }
-
-    (0..row.len())
-        .filter(|index| !dropped.contains(index))
-        .collect()
 }
 
 #[cfg(test)]

@@ -431,8 +431,7 @@ impl<'c> TypeInferrer<'c, '_> {
                 | YzlOp::Distinct(_)
                 | YzlOp::Limit(_)
                 | YzlOp::Alias(_)
-                | YzlOp::Rename(_)
-                | YzlOp::Drop(_)),
+                | YzlOp::Rename(_)),
             ) => {
                 let row = self.input_row(op);
                 self.infer_regions(op, &row, &[]);
@@ -441,6 +440,17 @@ impl<'c> TypeInferrer<'c, '_> {
                     self.expect_yield(op, boolean, "`where` predicate");
                 }
 
+                self.record_row(op, row);
+            }
+            Some(YzlOp::Drop(stage)) => {
+                let dropped: Vec<usize> = stage.drop_cols().indices().collect();
+                let row = self
+                    .input_row(op)
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(index, _)| !dropped.contains(index))
+                    .map(|(_, column)| column)
+                    .collect();
                 self.record_row(op, row);
             }
             Some(YzlOp::Set(stage)) => {
