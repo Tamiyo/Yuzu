@@ -1118,7 +1118,7 @@ impl<'c> AstToYzl<'c, '_> {
             return ParamType::new(self.context, name).into();
         }
 
-        if name == "List" {
+        if name == types::LIST {
             let mut args = named.args();
             let (Some(inner), None) = (args.next(), args.next()) else {
                 self.report(&named, "`List` takes exactly one type argument");
