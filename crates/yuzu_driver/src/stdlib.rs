@@ -15,11 +15,13 @@ use std::sync::{Arc, OnceLock};
 use melior::Context;
 use rustc_hash::FxHasher;
 
-use yuzu_diagnostics::{DiagnosticsEngine, SourceMap};
+use yuzu_diagnostics::{DiagnosticsEngine, SourceId, SourceMap};
 use yuzu_passes::{BoundLibrary, File};
 use yuzu_syntax::GreenNode;
 
-use crate::modules::{self, Loaded, MapResolver, ModuleSource, Origin, Submodule};
+use crate::modules::{
+    self, Loaded, MapResolver, ModuleResolver, ModuleSource, Origin, Submodule, Unreadable,
+};
 
 /// One library file: its module path, its path under the library's root,
 /// the name a diagnostic shows for it, and its text.
@@ -194,10 +196,27 @@ pub(crate) struct Library {
     pub(crate) sources: SourceMap,
     pub(crate) files: Vec<File>,
     pub(crate) submodules: HashMap<String, Vec<Submodule>>,
+    /// Each file's tree, by its source's id.
+    pub(crate) trees: Vec<(SourceId, GreenNode)>,
 }
 
 thread_local! {
     static LIBRARIES: RefCell<HashMap<Engine, Rc<Library>>> = RefCell::new(HashMap::new());
+    static INSTALLED: RefCell<HashMap<(Engine, PathBuf), Rc<Library>>> = RefCell::new(HashMap::new());
+}
+
+/// Reads each library module from the files [`install`] wrote under a
+/// folder.
+struct Installed<'r>(&'r Path);
+
+impl ModuleResolver for Installed<'_> {
+    fn resolve(&self, _path: &str) -> Result<Option<ModuleSource>, Unreadable> {
+        Ok(None)
+    }
+
+    fn resolve_library(&self, path: &str) -> Result<Option<ModuleSource>, Unreadable> {
+        Ok(resolve_under(self.0, path))
+    }
 }
 
 impl Library {
@@ -209,20 +228,34 @@ impl Library {
                 libraries
                     .borrow_mut()
                     .entry(engine)
-                    .or_insert_with(|| Rc::new(Self::load(engine))),
+                    .or_insert_with(|| Rc::new(Self::load(engine, &MapResolver(HashMap::new())))),
             )
         })
     }
 
-    /// Loads the library's files for an engine.
-    fn load(engine: Engine) -> Self {
+    /// The library for an engine as the files [`install`] wrote under
+    /// `root`, loaded once for the thread. Its sources name those files,
+    /// so a reference into the library has a file to go to.
+    pub(crate) fn for_thread_under(engine: Engine, root: &Path) -> Rc<Self> {
+        INSTALLED.with(|libraries| {
+            Rc::clone(
+                libraries
+                    .borrow_mut()
+                    .entry((engine, root.to_path_buf()))
+                    .or_insert_with(|| Rc::new(Self::load(engine, &Installed(root)))),
+            )
+        })
+    }
+
+    /// Loads the library's files for an engine, as `resolver` gives them.
+    fn load(engine: Engine, resolver: &dyn ModuleResolver) -> Self {
         let mut sources = SourceMap::new();
         let mut diagnostics = DiagnosticsEngine::new();
         let entry = sources.add("<library>".to_string(), String::new());
         let Loaded {
             files,
             mut submodules,
-            ..
+            trees,
         } = modules::load_program(
             modules::EntryFile {
                 source: entry,
@@ -230,7 +263,7 @@ impl Library {
             },
             &mut sources,
             &mut diagnostics,
-            &MapResolver(HashMap::new()),
+            resolver,
             engine,
             None,
             None,
@@ -246,10 +279,16 @@ impl Library {
             .filter(|file| file.module().is_some())
             .collect();
 
+        let trees = trees
+            .into_iter()
+            .filter(|(source, _)| *source != entry)
+            .collect();
+
         Self {
             sources,
             files,
             submodules,
+            trees,
         }
     }
 }
@@ -266,7 +305,7 @@ pub(crate) fn bound_library(engine: Engine) -> &'static BoundLibrary<'static> {
 /// Binds the library's names for an engine. The names live in a context
 /// made for them and never dropped: one for each engine, for the process.
 fn bind_library(engine: Engine) -> BoundLibrary<'static> {
-    let Library { sources, files, .. } = Library::load(engine);
+    let Library { sources, files, .. } = Library::load(engine, &MapResolver(HashMap::new()));
     let mut diagnostics = DiagnosticsEngine::new();
     let context: &'static Context = Box::leak(Box::new(yuzu_mlir::context()));
     let bound = yuzu_passes::bind_library(context, &sources, &files, &mut diagnostics);

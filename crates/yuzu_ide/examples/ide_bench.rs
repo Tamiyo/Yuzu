@@ -43,7 +43,7 @@ fn report(what: &str, (median, p95): (Duration, Duration)) {
     println!("  {what:<34} median {median:>10.1?}   p95 {p95:>10.1?}");
 }
 
-fn host(path: &Path, text: &str) -> AnalysisHost {
+fn new_host(path: &Path, text: &str) -> AnalysisHost {
     let mut host = AnalysisHost::default();
     let mut change = Change::default();
     change.set_file(FILE, Some(text.into()));
@@ -61,12 +61,13 @@ fn main() {
     let dir: PathBuf = std::env::temp_dir().join(format!("yuzu-bench-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("the temp dir is writable");
     let path = dir.join("main.yz");
+    let library = yuzu_ide::install_library(&dir.join("cache")).expect("the library installs");
 
     for functions in [10, 100, 500] {
         let text = program(functions);
         let lines = text.lines().count();
         println!("{functions} functions, {lines} lines, {} bytes", text.len());
-        let mut host = host(&path, &text);
+        let mut host = new_host(&path, &text);
 
         let analysis = host.analysis();
         let start = Instant::now();
@@ -111,6 +112,13 @@ fn main() {
 
         println!(" check (checker thread)");
         report("check, warm", time(20, || drop(analysis.check(FILE))));
+        let mut installed = new_host(&path, &edited);
+        installed.set_library_root(Some(&library));
+        let with_library = installed.analysis();
+        report(
+            "check, warm (library installed)",
+            time(20, || drop(with_library.check(FILE))),
+        );
 
         println!(" requests (on a finished check)");
         let checked: Checked = analysis.check(FILE).expect("the file has a path");

@@ -7,8 +7,8 @@ use yuzu_syntax::GreenNode;
 
 use crate::compile::{in_thread_context, lower_and_check};
 use crate::index::{Index, IndexReader};
-use crate::modules::{self, ModuleResolver, Origin};
-use crate::stdlib::Engine;
+use crate::modules::{self, LibrarySource, ModuleResolver, Origin};
+use crate::stdlib::{self, Engine, Library};
 
 /// The file a check asks about.
 #[derive(Clone, Copy, Debug)]
@@ -39,8 +39,10 @@ pub struct Checked {
 
 /// Checks the program `focus` belongs to, for the `DataFusion` engine.
 ///
-/// The library is read from its files rather than from the cache a compile
-/// uses, so a copy the resolver holds of a library module is the one read.
+/// The library comes from where the resolver's [`LibrarySource`] says: the
+/// cache a compile uses, a cache of the installed files, or, when the
+/// resolver holds a copy of a library module of its own, read afresh so
+/// that copy is the one read.
 pub fn check(focus: Focus<'_>, resolver: &dyn ModuleResolver) -> Checked {
     let made_up = Origin::Named("<check>".to_owned());
     let (origin, source, syntax, module) = match focus {
@@ -50,6 +52,14 @@ pub fn check(focus: Focus<'_>, resolver: &dyn ModuleResolver) -> Checked {
             syntax,
         } => (origin, source, syntax.cloned(), None),
         Focus::Module(path) => (&made_up, "", None, Some(path)),
+    };
+
+    // The library a compile reuses, when the resolver holds no copy of its
+    // own: it is not read, parsed or bound again for each check.
+    let library = match resolver.library_source() {
+        LibrarySource::BuiltIn => Some(Library::for_thread(Engine::DataFusion)),
+        LibrarySource::Installed(root) => Some(Library::for_thread_under(Engine::DataFusion, root)),
+        LibrarySource::Own => None,
     };
 
     let mut sources = SourceMap::new();
@@ -64,18 +74,21 @@ pub fn check(focus: Focus<'_>, resolver: &dyn ModuleResolver) -> Checked {
         &mut diagnostics,
         resolver,
         Engine::DataFusion,
-        None,
+        library.as_deref(),
         module,
     );
 
     let mut reader = IndexReader::new(&sources);
+    let bound = library
+        .is_some()
+        .then(|| stdlib::bound_library(Engine::DataFusion));
     in_thread_context(|context| {
         lower_and_check(
             context,
             &sources,
             &files,
             &mut diagnostics,
-            None,
+            bound,
             None,
             Some(&mut reader),
         );
@@ -97,7 +110,9 @@ mod tests {
     use yuzu_diagnostics::DiagnosticPrinter;
 
     use super::{Checked, Focus, check};
-    use crate::modules::{MapResolver, ModuleResolver, ModuleSource, Origin, Unreadable};
+    use crate::modules::{
+        LibrarySource, MapResolver, ModuleResolver, ModuleSource, Origin, Unreadable,
+    };
 
     struct LibraryCopy {
         path: &'static str,
@@ -115,6 +130,10 @@ mod tests {
                 source: self.source.into(),
                 syntax: None,
             }))
+        }
+
+        fn library_source(&self) -> LibrarySource<'_> {
+            LibrarySource::Own
         }
     }
 

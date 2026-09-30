@@ -77,6 +77,24 @@ pub trait ModuleResolver {
     fn resolve_library(&self, _path: &str) -> Result<Option<ModuleSource>, Unreadable> {
         Ok(None)
     }
+
+    /// Where a check may take the whole library from without reading it
+    /// again. A resolver that holds a copy of a library module of its own
+    /// says [`LibrarySource::Own`], so that copy is read.
+    fn library_source(&self) -> LibrarySource<'_> {
+        LibrarySource::BuiltIn
+    }
+}
+
+/// Where a check takes the library from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LibrarySource<'r> {
+    /// The copy built into the compiler.
+    BuiltIn,
+    /// The files [`crate::stdlib::install`] wrote under this folder.
+    Installed(&'r Path),
+    /// The resolver's own copies, read afresh for each check.
+    Own,
 }
 
 /// A module file that exists but could not be read.
@@ -327,6 +345,7 @@ impl Loader<'_> {
         for (path, declared) in &library.submodules {
             self.submodules.insert(path.clone(), declared.clone());
         }
+        self.trees.extend(library.trees.iter().cloned());
     }
 
     /// A path, one segment at a time. Each module declares the ones it

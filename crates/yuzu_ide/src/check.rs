@@ -10,7 +10,7 @@ use text_size::TextRange;
 use yuzu_diagnostics::{Diagnostic, SourceId, Span};
 use yuzu_driver::index::Index;
 use yuzu_driver::modules::{
-    FsResolver, Location, ModuleResolver, ModuleSource, Origin, Unreadable,
+    FsResolver, LibrarySource, Location, ModuleResolver, ModuleSource, Origin, Unreadable,
 };
 use yuzu_driver::{Focus, stdlib};
 use yuzu_syntax::{GreenNode, SyntaxNode};
@@ -397,6 +397,21 @@ impl<'d> Overlay<'d> {
 impl ModuleResolver for Overlay<'_> {
     fn resolve(&self, path: &str) -> Result<Option<ModuleSource>, Unreadable> {
         self.read(self.files.candidates(path))
+    }
+
+    /// An open library file, or a check of the library's own files, is a
+    /// copy of the library to read afresh; otherwise the cached library is
+    /// the one read, from where it was installed when it was.
+    fn library_source(&self) -> LibrarySource<'_> {
+        match (
+            &self.library_files,
+            self.library.is_empty(),
+            self.library_root,
+        ) {
+            (None, true, Some(root)) => LibrarySource::Installed(root),
+            (None, true, None) => LibrarySource::BuiltIn,
+            (Some(_), _, _) | (None, false, _) => LibrarySource::Own,
+        }
     }
 
     fn resolve_library(&self, path: &str) -> Result<Option<ModuleSource>, Unreadable> {
