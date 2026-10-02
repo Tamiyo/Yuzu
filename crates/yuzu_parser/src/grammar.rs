@@ -149,8 +149,6 @@ const NAME_FOLLOWERS: TokenSet = TokenSet::new(&[
     TokenKind::Comma,
 ]);
 
-/// An `Ident` holds exactly its identifier, so a token that is no name is
-/// reported and left outside it, and the node is not built.
 /// The operator keywords that a function may take as its name, so that the
 /// library can declare the function behind each operator. An expression
 /// reads them as operators, so such a function is called by its qualified
@@ -178,6 +176,8 @@ pub(crate) fn parse_name(p: &mut Parser) -> Option<CompletedMarker> {
     parse_ident(p)
 }
 
+/// An `Ident` holds exactly its identifier, so a token that is no name is
+/// reported and left outside it, and the node is not built.
 pub(crate) fn parse_ident(p: &mut Parser) -> Option<CompletedMarker> {
     if p.at(TokenKind::Identifier) {
         let m = p.start();
