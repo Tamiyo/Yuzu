@@ -645,10 +645,10 @@ impl<'c> SymbolTable<'c> {
     /// The name a declaration's op is built under. MLIR has one namespace
     /// for the whole program, so the module qualifies it. Each call interns
     /// a qualified name again.
-    pub(super) fn symbol(&self, at: Declared<'c>) -> &'c str {
-        match at.module.0 {
-            Some(path) => self.intern_fmt(format_args!("{path}.{}", at.name)),
-            None => at.name,
+    pub(super) fn symbol(&self, declared: Declared<'c>) -> &'c str {
+        match declared.module.0 {
+            Some(path) => self.intern_fmt(format_args!("{path}.{}", declared.name)),
+            None => declared.name,
         }
     }
 
@@ -675,6 +675,7 @@ impl<'c> SymbolTable<'c> {
             self.find_in(at).map(|(_, binding)| &binding.kind),
             Some(BindingKind::Func { overloads, .. }) if overloads.len() > 1
         );
+
         self.overload_symbol(self.symbol(at), arity, is_overloaded)
     }
 
@@ -808,7 +809,7 @@ impl<'c> SymbolTable<'c> {
     /// following an import to the file that wrote it.
     /// A name the file does not declare or import is looked up among the
     /// prelude's public names.
-    pub(super) fn find(&self, name: &str) -> Option<(Declared<'c>, &Binding<'c>)> {
+    pub(super) fn find_in_module(&self, name: &str) -> Option<(Declared<'c>, &Binding<'c>)> {
         self.find_declared(self.module, name)
             .or_else(|| self.find_in_prelude(name))
     }
@@ -853,6 +854,7 @@ impl<'c> SymbolTable<'c> {
         let library = self
             .library
             .and_then(|library| library.modules.get(&self.module));
+
         self.modules
             .get(&self.module)
             .into_iter()
@@ -860,15 +862,15 @@ impl<'c> SymbolTable<'c> {
             .flat_map(|declarations| declarations.keys())
             .any(|declared| {
                 matches!(
-                    self.find(declared).map(|(_, binding)| &binding.kind),
+                    self.find_in_module(declared).map(|(_, binding)| &binding.kind),
                     Some(BindingKind::Trait { methods })
                         if methods.iter().any(|method| method.name == name)
                 )
             })
     }
 
-    pub(super) fn kind(&self, name: &str) -> Option<&BindingKind<'c>> {
-        self.find(name).map(|(_, binding)| &binding.kind)
+    pub(super) fn binding_kind(&self, name: &str) -> Option<&BindingKind<'c>> {
+        self.find_in_module(name).map(|(_, binding)| &binding.kind)
     }
 
     pub(super) fn struct_symbol(&mut self, name: &str) -> Option<(&'c str, Target<'c>)> {
@@ -885,7 +887,7 @@ impl<'c> SymbolTable<'c> {
         name: &str,
         kind: DeclarationKind,
     ) -> Option<(&'c str, Target<'c>)> {
-        let (at, binding) = self.find(name)?;
+        let (at, binding) = self.find_in_module(name)?;
         if binding.kind.declaration_kind() != kind {
             return None;
         }
@@ -895,7 +897,7 @@ impl<'c> SymbolTable<'c> {
     }
 
     pub(super) fn module_of(&self, name: &str) -> Option<&'c str> {
-        match self.kind(name)? {
+        match self.binding_kind(name)? {
             BindingKind::Module { path } => Some(*path),
             BindingKind::Struct { .. }
             | BindingKind::Relation { .. }
@@ -912,7 +914,7 @@ impl<'c> SymbolTable<'c> {
         name: &str,
         alias: Option<&'c str>,
     ) -> Option<(&'c str, Row<'c>, Target<'c>)> {
-        let (at, binding) = self.find(name)?;
+        let (at, binding) = self.find_in_module(name)?;
         let BindingKind::Relation { row } = &binding.kind else {
             return None;
         };
@@ -929,7 +931,7 @@ impl<'c> SymbolTable<'c> {
     /// What a call names with `given` arguments: a `let`, or the overload
     /// of a function that takes that many.
     pub(super) fn callable(&mut self, name: &str, given: usize) -> Option<Callable<'c>> {
-        let (at, binding) = self.find(name)?;
+        let (at, binding) = self.find_in_module(name)?;
         if matches!(binding.kind, BindingKind::Let) {
             let target = Target::of(at, binding);
             return Some(Callable::constant(self.refer(at, None), target));
@@ -1038,7 +1040,7 @@ impl<'c> SymbolTable<'c> {
     /// The declaration a name in this file names, whatever it is: for a
     /// function, its first overload this module can call.
     pub(super) fn target_of(&self, name: &str) -> Option<Target<'c>> {
-        let (at, _) = self.find(name)?;
+        let (at, _) = self.find_in_module(name)?;
         self.target_in(at)
     }
 
@@ -1062,7 +1064,7 @@ impl<'c> SymbolTable<'c> {
     /// The argument counts a function's visible overloads take, least
     /// first, when a name is a function.
     pub(super) fn arities(&self, name: &str) -> Option<Vec<usize>> {
-        let (at, _) = self.find(name)?;
+        let (at, _) = self.find_in_module(name)?;
         self.arities_in(at)
     }
 
@@ -1215,7 +1217,7 @@ impl<'c> SymbolTable<'c> {
             return Lookup::Unknown;
         }
 
-        let Some((at, binding)) = self.find(reference.name) else {
+        let Some((at, binding)) = self.find_in_module(reference.name) else {
             return Lookup::Unknown;
         };
 

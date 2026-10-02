@@ -445,13 +445,13 @@ impl ImplStmt {
 
 ast_node!(FuncStmt);
 impl FuncStmt {
-    /// Whether another file may name this. Private unless `pub` says so, so
-    /// forgetting to export is a complaint from the importer rather than a
-    /// name that quietly became API.
+    /// Whether another file may name this. A function is private unless
+    /// `pub` says so.
     #[must_use]
     pub fn visibility(&self) -> Visibility {
         visibility_of(self.syntax())
     }
+
     #[must_use]
     pub fn is_agg(&self) -> bool {
         self.has_marker(SyntaxKind::AggKw)
@@ -481,6 +481,12 @@ impl FuncStmt {
 
     pub fn params(&self) -> impl Iterator<Item = FuncParam> + use<> {
         support::children(self.syntax())
+    }
+
+    /// How many parameters the function declares.
+    #[must_use]
+    pub fn arity(&self) -> usize {
+        self.params().count()
     }
 
     #[must_use]

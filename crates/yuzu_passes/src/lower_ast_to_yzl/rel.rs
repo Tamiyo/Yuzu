@@ -85,7 +85,7 @@ impl<'c> AstToYzl<'c, '_> {
         from: &ast::FromSource,
     ) -> (Value<'c, 'a>, Row<'c>) {
         let loc = self.location(from);
-        let Some(written) = self.read_name(from.relation()) else {
+        let Some(written) = self.read_ident(from.relation()) else {
             let hole = self.hole_and_assert(
                 block,
                 from,
@@ -117,7 +117,7 @@ impl<'c> AstToYzl<'c, '_> {
                 .into(),
             )
             .first_result();
-        if let Some(alias) = self.read_ident(from.alias()) {
+        if let Some(alias) = self.read_ident_as_string(from.alias()) {
             row.qualify(alias);
             value = self.emit_alias(block, value, alias, loc);
         }
@@ -170,7 +170,7 @@ impl<'c> AstToYzl<'c, '_> {
         let items = select
             .items()
             .map(|item| Item {
-                alias: self.read_ident(item.alias()),
+                alias: self.read_ident_as_string(item.alias()),
                 expr: item.expr(),
                 range: item.syntax().text_range(),
             })
@@ -203,7 +203,7 @@ impl<'c> AstToYzl<'c, '_> {
         let items = extend
             .items()
             .map(|item| Item {
-                alias: self.read_ident(item.alias()),
+                alias: self.read_ident_as_string(item.alias()),
                 expr: item.expr(),
                 range: item.syntax().text_range(),
             })
@@ -236,15 +236,15 @@ impl<'c> AstToYzl<'c, '_> {
         let mut keys: Vec<usize> = Vec::new();
         let mut key_fields: Vec<Field<'c>> = Vec::new();
         for item in agg.group_by().into_iter().flat_map(|group| group.items()) {
-            let Some(column) = self.read_name(item.column()) else {
+            let Some(column) = self.read_ident(item.column()) else {
                 self.assert_syntax_error("group by key is missing its column");
                 continue;
             };
 
-            let qualifier = self.read_ident(item.qualifier());
+            let qualifier = self.read_ident_as_string(item.qualifier());
             if let Some(index) = self.resolve_column(&item, "group key", qualifier, column) {
                 keys.push(index);
-                key_fields.push(match self.read_ident(item.alias()) {
+                key_fields.push(match self.read_ident_as_string(item.alias()) {
                     Some(alias) => self.field_at(alias, item.syntax().text_range()),
                     None => Field {
                         name: column.text,
@@ -257,7 +257,7 @@ impl<'c> AstToYzl<'c, '_> {
         let items = agg
             .items()
             .map(|item| Item {
-                alias: self.read_ident(item.alias()),
+                alias: self.read_ident_as_string(item.alias()),
                 expr: item.expr(),
                 range: item.syntax().text_range(),
             })
@@ -319,14 +319,15 @@ impl<'c> AstToYzl<'c, '_> {
         let mut to: Vec<&'c str> = Vec::new();
         let mut renames = Vec::new();
         for item in rename.items() {
-            let (Some(old), Some(new)) =
-                (self.read_name(item.column()), self.read_ident(item.alias()))
-            else {
+            let (Some(old), Some(new)) = (
+                self.read_ident(item.column()),
+                self.read_ident_as_string(item.alias()),
+            ) else {
                 self.assert_syntax_error("rename item is missing a column name");
                 continue;
             };
 
-            let qualifier = self.read_ident(item.qualifier());
+            let qualifier = self.read_ident_as_string(item.qualifier());
             if let Some(index) = self.resolve_column(&item, "column", qualifier, old) {
                 let field = self.field_at(new, item.syntax().text_range());
                 renames.push((index, field));
@@ -358,7 +359,7 @@ impl<'c> AstToYzl<'c, '_> {
         alias: &ast::AliasStage,
     ) -> Value<'c, 'a> {
         let loc = self.location(alias);
-        let Some(alias) = self.read_ident(alias.alias()) else {
+        let Some(alias) = self.read_ident_as_string(alias.alias()) else {
             self.assert_syntax_error("`as` is missing its alias");
             return input;
         };
@@ -381,7 +382,7 @@ impl<'c> AstToYzl<'c, '_> {
             ast::JoinKind::Right => JoinKind::Right,
             ast::JoinKind::Full => JoinKind::Full,
         };
-        let Some(written) = self.read_name(join.relation()) else {
+        let Some(written) = self.read_ident(join.relation()) else {
             return self.hole_and_assert(
                 block,
                 join,
@@ -390,7 +391,7 @@ impl<'c> AstToYzl<'c, '_> {
             );
         };
 
-        let alias = self.read_ident(join.alias());
+        let alias = self.read_ident_as_string(join.alias());
         let Some((rhs_symbol, rhs, target)) = self.symbols.relation(written.text, alias) else {
             return self.hole_and_report(
                 block,
@@ -494,7 +495,7 @@ impl<'c> AstToYzl<'c, '_> {
         let mut columns: Vec<usize> = Vec::new();
         let mut items = Vec::new();
         for item in set.items() {
-            let Some(name) = self.read_name(item.column()) else {
+            let Some(name) = self.read_ident(item.column()) else {
                 self.assert_syntax_error("set item is missing its column");
                 continue;
             };
@@ -605,15 +606,15 @@ impl<'c> AstToYzl<'c, '_> {
             // An item that reads a column unchanged keeps the column's name
             // and the syntax that named it.
             let read = match expr {
-                Some(ast::Expr::IdentExpr(ident)) => {
-                    self.read_ident(ident.name()).map(Reference::unqualified)
-                }
+                Some(ast::Expr::IdentExpr(ident)) => self
+                    .read_ident_as_string(ident.name())
+                    .map(Reference::unqualified),
                 Some(ast::Expr::FieldAccessExpr(access)) => {
                     let qualifier = match access.base() {
-                        Some(ast::Expr::IdentExpr(base)) => self.read_ident(base.name()),
+                        Some(ast::Expr::IdentExpr(base)) => self.read_ident_as_string(base.name()),
                         _ => None,
                     };
-                    self.read_ident(access.field())
+                    self.read_ident_as_string(access.field())
                         .map(|name| Reference { qualifier, name })
                 }
                 _ => None,

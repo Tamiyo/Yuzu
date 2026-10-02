@@ -82,15 +82,18 @@ impl<'c> AstToYzl<'c, '_> {
         literal: &ast::Literal,
     ) -> Value<'c, 'a> {
         let loc = self.location(literal);
+
         if let ast::Literal::IntLiteral(int) = literal
             && self.read_int64(int).is_none()
         {
+            // TODO(tamiyo) Why only int64? Seems like a weird restriction.
             return self.emit_hole(
                 block,
                 int.syntax().text_range(),
                 UnresolvedType::new(self.context).into(),
             );
         }
+
         let constant = self
             .read_constant(literal)
             .expect("an integer literal was read as an `int64` above");
@@ -112,7 +115,7 @@ impl<'c> AstToYzl<'c, '_> {
         locals: &Locals<'c, 'a>,
         ident: &ast::IdentExpr,
     ) -> Value<'c, 'a> {
-        let Some(name) = self.read_name(ident.name()) else {
+        let Some(name) = self.read_ident(ident.name()) else {
             return self.hole_and_assert(
                 block,
                 ident,
@@ -135,7 +138,7 @@ impl<'c> AstToYzl<'c, '_> {
         let loc = self.location(access);
 
         let base = match access.base() {
-            Some(ast::Expr::IdentExpr(ident)) => self.read_ident(ident.name()),
+            Some(ast::Expr::IdentExpr(ident)) => self.read_ident_as_string(ident.name()),
             Some(_) => {
                 return self.hole_and_report(
                     block,
@@ -156,7 +159,7 @@ impl<'c> AstToYzl<'c, '_> {
             );
         };
 
-        let Some(field) = self.read_name(access.field()) else {
+        let Some(field) = self.read_ident(access.field()) else {
             return self.hole_and_assert(
                 block,
                 access,
@@ -200,6 +203,18 @@ impl<'c> AstToYzl<'c, '_> {
             }
         };
 
+        let Some(op) = binary.op() else {
+            return self.hole_and_assert(
+                block,
+                binary,
+                "binary expression is missing its operator",
+                UnresolvedType::new(self.context).into(),
+            );
+        };
+        for operator in operators_of(op) {
+            self.symbols.refer_operator(operator);
+        }
+
         let var = UnresolvedType::new(self.context).into();
         let cmp = |predicate: CmpPredicate| {
             yz::cmp(
@@ -213,49 +228,29 @@ impl<'c> AstToYzl<'c, '_> {
             .into()
         };
 
-        let operation = match binary.op() {
-            Some(BinOp::Add) => yz::add(self.context, var, lhs, rhs, loc).into(),
-            Some(BinOp::Sub) => yz::sub(self.context, var, lhs, rhs, loc).into(),
-            Some(BinOp::Mul) => yz::mul(self.context, var, lhs, rhs, loc).into(),
-            Some(BinOp::Div) => yz::div(self.context, var, lhs, rhs, loc).into(),
-            Some(BinOp::Rem) => {
-                self.symbols.refer_operator(&operators::REM);
-                yz::rem(self.context, var, lhs, rhs, loc).into()
-            }
-            Some(BinOp::And) => yz::and(self.context, var, lhs, rhs, loc).into(),
-            Some(BinOp::Or) => yz::or(self.context, var, lhs, rhs, loc).into(),
-            Some(BinOp::Eq) => cmp(CmpPredicate::Equal),
-            Some(BinOp::Neq) => cmp(CmpPredicate::NotEqual),
-            Some(BinOp::Lt) => cmp(CmpPredicate::Less),
-            Some(BinOp::Lte) => cmp(CmpPredicate::LessOrEqual),
-            Some(BinOp::Gt) => cmp(CmpPredicate::Greater),
-            Some(BinOp::Gte) => cmp(CmpPredicate::GreaterOrEqual),
-            Some(BinOp::Pow) => {
-                self.symbols.refer_operator(&operators::POW);
-                yz::pow(self.context, var, lhs, rhs, loc).into()
-            }
-            Some(BinOp::ShiftLeft) => {
-                self.symbols.refer_operator(&operators::SHL);
-                yz::shl(self.context, var, lhs, rhs, loc).into()
-            }
-            Some(BinOp::ShiftRight) => {
-                self.symbols.refer_operator(&operators::SHR);
-                yz::shr(self.context, var, lhs, rhs, loc).into()
-            }
-            Some(BinOp::In) => yz::r#in(self.context, var, lhs, rhs, loc).into(),
-            Some(BinOp::NotIn) => {
+        let operation = match op {
+            BinOp::Add => yz::add(self.context, var, lhs, rhs, loc).into(),
+            BinOp::Sub => yz::sub(self.context, var, lhs, rhs, loc).into(),
+            BinOp::Mul => yz::mul(self.context, var, lhs, rhs, loc).into(),
+            BinOp::Div => yz::div(self.context, var, lhs, rhs, loc).into(),
+            BinOp::Rem => yz::rem(self.context, var, lhs, rhs, loc).into(),
+            BinOp::And => yz::and(self.context, var, lhs, rhs, loc).into(),
+            BinOp::Or => yz::or(self.context, var, lhs, rhs, loc).into(),
+            BinOp::Eq => cmp(CmpPredicate::Equal),
+            BinOp::Neq => cmp(CmpPredicate::NotEqual),
+            BinOp::Lt => cmp(CmpPredicate::Less),
+            BinOp::Lte => cmp(CmpPredicate::LessOrEqual),
+            BinOp::Gt => cmp(CmpPredicate::Greater),
+            BinOp::Gte => cmp(CmpPredicate::GreaterOrEqual),
+            BinOp::Pow => yz::pow(self.context, var, lhs, rhs, loc).into(),
+            BinOp::ShiftLeft => yz::shl(self.context, var, lhs, rhs, loc).into(),
+            BinOp::ShiftRight => yz::shr(self.context, var, lhs, rhs, loc).into(),
+            BinOp::In => yz::r#in(self.context, var, lhs, rhs, loc).into(),
+            BinOp::NotIn => {
                 let contains = block
                     .append_operation(yz::r#in(self.context, var, lhs, rhs, loc).into())
                     .first_result();
                 yz::not(self.context, var, contains, loc).into()
-            }
-            None => {
-                return self.hole_and_assert(
-                    block,
-                    binary,
-                    "binary expression is missing its operator",
-                    var,
-                );
             }
         };
 
@@ -298,20 +293,26 @@ impl<'c> AstToYzl<'c, '_> {
         };
 
         let result = match unary.op() {
-            Some(UnaryOp::Neg) => yz::neg(
-                self.context,
-                UnresolvedType::new(self.context).into(),
-                value,
-                loc,
-            )
-            .into(),
-            Some(UnaryOp::Not) => yz::not(
-                self.context,
-                UnresolvedType::new(self.context).into(),
-                value,
-                loc,
-            )
-            .into(),
+            Some(UnaryOp::Neg) => {
+                self.symbols.refer_operator(&operators::NEG);
+                yz::neg(
+                    self.context,
+                    UnresolvedType::new(self.context).into(),
+                    value,
+                    loc,
+                )
+                .into()
+            }
+            Some(UnaryOp::Not) => {
+                self.symbols.refer_operator(&operators::NOT);
+                yz::not(
+                    self.context,
+                    UnresolvedType::new(self.context).into(),
+                    value,
+                    loc,
+                )
+                .into()
+            }
             Some(UnaryOp::Pos) => return value,
             None => {
                 return self.hole_and_assert(
@@ -335,7 +336,7 @@ impl<'c> AstToYzl<'c, '_> {
         let loc = self.location(call);
 
         let callee = match call.callee() {
-            Some(ast::Expr::IdentExpr(ident)) => match self.read_name(ident.name()) {
+            Some(ast::Expr::IdentExpr(ident)) => match self.read_ident(ident.name()) {
                 Some(callee) => callee,
                 None => {
                     return self.hole_and_assert(
@@ -386,7 +387,7 @@ impl<'c> AstToYzl<'c, '_> {
             let message = if let Some(arities) = self.symbols.arities(callee) {
                 arity_mismatch(callee, &arities, given)
             } else {
-                match self.symbols.kind(callee) {
+                match self.symbols.binding_kind(callee) {
                     Some(BindingKind::Pending) => {
                         format!("`{callee}` is bound further down the file")
                     }
@@ -420,7 +421,7 @@ impl<'c> AstToYzl<'c, '_> {
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         let base = match access.base() {
-            Some(ast::Expr::IdentExpr(ident)) => self.read_name(ident.name()),
+            Some(ast::Expr::IdentExpr(ident)) => self.read_ident(ident.name()),
             Some(_) => {
                 return self.hole_and_report(
                     block,
@@ -432,7 +433,7 @@ impl<'c> AstToYzl<'c, '_> {
             None => None,
         };
 
-        let (Some(base), Some(function)) = (base, self.read_name(access.field())) else {
+        let (Some(base), Some(function)) = (base, self.read_ident(access.field())) else {
             return self.hole_and_assert(
                 block,
                 call,
@@ -694,6 +695,30 @@ impl<'c> AstToYzl<'c, '_> {
         block
             .append_operation(builder.build().into())
             .first_result()
+    }
+}
+
+/// The library functions an operator refers. `not in` is two.
+fn operators_of(op: BinOp) -> &'static [&'static operators::Operator] {
+    match op {
+        BinOp::Add => &[&operators::ADD],
+        BinOp::Sub => &[&operators::SUB],
+        BinOp::Mul => &[&operators::MUL],
+        BinOp::Div => &[&operators::DIV],
+        BinOp::Rem => &[&operators::REM],
+        BinOp::Pow => &[&operators::POW],
+        BinOp::ShiftLeft => &[&operators::SHL],
+        BinOp::ShiftRight => &[&operators::SHR],
+        BinOp::And => &[&operators::AND],
+        BinOp::Or => &[&operators::OR],
+        BinOp::Eq => &[&operators::EQ],
+        BinOp::Neq => &[&operators::NE],
+        BinOp::Lt => &[&operators::LT],
+        BinOp::Lte => &[&operators::LE],
+        BinOp::Gt => &[&operators::GT],
+        BinOp::Gte => &[&operators::GE],
+        BinOp::In => &[&operators::IN],
+        BinOp::NotIn => &[&operators::NOT, &operators::IN],
     }
 }
 

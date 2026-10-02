@@ -39,8 +39,8 @@ enum LocalKind {
 
 struct Param<'c> {
     name: &'c str,
-    range: TextRange,
     ty: Type<'c>,
+    range: TextRange,
 }
 
 impl Site<'_, '_> {
@@ -81,7 +81,7 @@ impl<'c> AstToYzl<'c, '_> {
             return;
         }
 
-        let Some(name) = self.read_ident(decl.name()) else {
+        let Some(name) = self.read_ident_as_string(decl.name()) else {
             self.assert_syntax_error("struct is missing its name");
             return;
         };
@@ -92,7 +92,7 @@ impl<'c> AstToYzl<'c, '_> {
 
         let name = self.symbols.symbol_here(name);
         let loc = self.location(decl);
-        let fields = self.read_fields(decl.fields());
+        let fields = self.read_struct_fields(decl.fields());
         self.emit_struct(block, name, fields, decl.visibility(), loc);
     }
 
@@ -101,7 +101,7 @@ impl<'c> AstToYzl<'c, '_> {
             return;
         }
 
-        let Some(name) = self.read_ident(decl.name()) else {
+        let Some(name) = self.read_ident_as_string(decl.name()) else {
             self.assert_syntax_error("table is missing its name");
             return;
         };
@@ -112,7 +112,7 @@ impl<'c> AstToYzl<'c, '_> {
 
         // An imported struct is held under the module that declared it,
         // whatever an `as` renamed it to here.
-        let row = if let Some(written) = self.read_name(decl.struct_name()) {
+        let row = if let Some(written) = self.read_ident(decl.struct_name()) {
             let struct_name = written.text;
             if let Some((symbol, target)) = self.symbols.struct_symbol(struct_name) {
                 self.record(written, target);
@@ -130,7 +130,7 @@ impl<'c> AstToYzl<'c, '_> {
                 .symbol_here(self.symbols.intern_fmt(format_args!("{name}_row")));
 
             let loc = self.location(decl);
-            let fields = self.read_fields(decl.inline_fields());
+            let fields = self.read_struct_fields(decl.inline_fields());
             self.emit_struct(block, symbol, fields, decl.visibility(), loc);
 
             symbol
@@ -159,7 +159,7 @@ impl<'c> AstToYzl<'c, '_> {
             return;
         }
 
-        if let Some(name) = self.read_ident(decl.name())
+        if let Some(name) = self.read_ident_as_string(decl.name())
             && !self.is_hoisted(decl, name)
         {
             return;
@@ -176,7 +176,7 @@ impl<'c> AstToYzl<'c, '_> {
     ) {
         let loc = self.location(decl);
 
-        let Some(name) = self.read_ident(decl.name()) else {
+        let Some(name) = self.read_ident_as_string(decl.name()) else {
             self.assert_syntax_error("function is missing its name");
             return;
         };
@@ -198,7 +198,7 @@ impl<'c> AstToYzl<'c, '_> {
         let mut generics: Vec<&'c str> = site.generics().to_vec();
         generics.extend(
             decl.type_params()
-                .filter_map(|param| self.read_ident(param.name())),
+                .filter_map(|param| self.read_ident_as_string(param.name())),
         );
 
         let op = self.in_type_params(generics.clone(), |this| {
@@ -225,7 +225,7 @@ impl<'c> AstToYzl<'c, '_> {
         let mut params = Vec::new();
         let mut has_error = false;
         for param in decl.params() {
-            let Some(name) = self.read_ident(param.name()) else {
+            let Some(name) = self.read_ident_as_string(param.name()) else {
                 self.assert_syntax_error("parameter is missing its name");
                 has_error = true;
                 continue;
@@ -239,11 +239,8 @@ impl<'c> AstToYzl<'c, '_> {
                 continue;
             };
 
-            params.push(Param {
-                name,
-                range: param.syntax().text_range(),
-                ty,
-            });
+            let range = param.syntax().text_range();
+            params.push(Param { name, ty, range });
         }
 
         if has_error {
@@ -276,13 +273,13 @@ impl<'c> AstToYzl<'c, '_> {
                     let place = this.emit_local(
                         entry,
                         param.name,
-                        LocalKind::Param,
                         param.ty,
                         argument,
+                        LocalKind::Param,
                         loc,
                     );
 
-                    this.bind_local(param.name, &mut locals, param.range, place);
+                    this.bind_local(param.name, param.range, place, &mut locals);
                 }
 
                 this.convert_block(entry, &mut locals, &block);
@@ -336,7 +333,7 @@ impl<'c> AstToYzl<'c, '_> {
             return;
         }
 
-        let Some(name) = self.read_ident(decl.name()) else {
+        let Some(name) = self.read_ident_as_string(decl.name()) else {
             self.assert_syntax_error("trait is missing its name");
             return;
         };
@@ -372,22 +369,20 @@ impl<'c> AstToYzl<'c, '_> {
             return;
         }
 
-        let Some(written_trait) =
-            self.read_name(decl.trait_().and_then(|trait_ref| trait_ref.name()))
-        else {
+        let trait_ref = decl.trait_().and_then(|trait_ref| trait_ref.name());
+        let Some(trait_) = self.read_ident(trait_ref) else {
             self.assert_syntax_error("`impl` is missing its trait");
             return;
         };
 
-        let Some(written_target) = self.read_name(decl.ty()) else {
+        let Some(target) = self.read_ident(decl.ty()) else {
             self.assert_syntax_error("`impl` is missing its type name");
             return;
         };
-        let (trait_name, target) = (written_trait.text, written_target.text);
 
         // A method is overloaded when its trait overloads it, so the two
         // agree on its symbol.
-        let methods = match self.symbols.kind(trait_name) {
+        let methods = match self.symbols.binding_kind(trait_.text) {
             Some(BindingKind::Trait { methods }) => methods.clone(),
             None
             | Some(
@@ -401,25 +396,27 @@ impl<'c> AstToYzl<'c, '_> {
             ) => self.read_methods(decl.methods()),
         };
 
-        let trait_symbol = if let Some((symbol, declared)) = self.symbols.trait_symbol(trait_name) {
-            self.record(written_trait, declared);
+        let trait_symbol = if let Some((symbol, declared)) = self.symbols.trait_symbol(trait_.text)
+        {
+            self.record(trait_, declared);
             Some(symbol)
         } else {
-            self.report(decl, &format!("unknown trait `{trait_name}`"));
+            self.report(decl, &format!("unknown trait `{0}`", trait_.text));
             None
         };
 
-        let target = if let Some((symbol, declared)) = self.symbols.struct_symbol(target) {
-            self.record(written_target, declared);
+        let target = if let Some((symbol, declared)) = self.symbols.struct_symbol(target.text) {
+            self.record(target, declared);
             symbol
         } else {
-            if types::scalar(self.context, target).is_none() {
-                self.report(decl, &format!("unknown type `{target}`"));
+            if types::scalar(self.context, target.text).is_none() {
+                self.report(decl, &format!("unknown type `{0}`", target.text));
             }
 
-            target
+            target.text
         };
 
+        // Lower methods.
         let region = Region::new();
         let body = region.append_block(Block::new(&[]));
         for method in self.check_methods(decl.methods()) {
@@ -451,8 +448,9 @@ impl<'c> AstToYzl<'c, '_> {
         decl: &ast::LetStmt,
     ) {
         let loc = self.location(decl);
+        let text_range = decl.syntax().text_range();
 
-        let Some(name) = self.read_ident(decl.name()) else {
+        let Some(name) = self.read_ident_as_string(decl.name()) else {
             self.assert_syntax_error("let binding is missing its name");
             return;
         };
@@ -463,14 +461,14 @@ impl<'c> AstToYzl<'c, '_> {
         };
 
         if self.symbols.is_in_body() {
-            let element = match decl.type_annotation() {
+            let ty = match decl.type_annotation() {
                 Some(annotation) => self.read_type_annotation(annotation),
                 None => UnresolvedType::new(self.context).into(),
             };
             let kind = LocalKind::Let(decl.mutability());
             let value = self.convert_expr(block, locals, &expr);
-            let place = self.emit_local(block, name, kind, element, value, loc);
-            self.bind_local(name, locals, decl.syntax().text_range(), place);
+            let place = self.emit_local(block, name, ty, value, kind, loc);
+            self.bind_local(name, text_range, place, locals);
             return;
         }
 
@@ -529,7 +527,7 @@ impl<'c> AstToYzl<'c, '_> {
             name,
             Binding {
                 kind,
-                text_range: decl.syntax().text_range(),
+                text_range,
                 visibility: decl.visibility(),
             },
         );
@@ -546,7 +544,7 @@ impl<'c> AstToYzl<'c, '_> {
         }
 
         let target = match assign.target() {
-            Some(ast::Expr::IdentExpr(ident)) => self.read_name(ident.name()),
+            Some(ast::Expr::IdentExpr(ident)) => self.read_ident(ident.name()),
             Some(target) => {
                 self.report(&target, "only a name can be assigned to");
                 return;
@@ -632,9 +630,10 @@ impl<'c> AstToYzl<'c, '_> {
             return;
         };
 
-        // The program's query is the entry file's.
         let is_query = matches!(expr, ast::Expr::Pipeline(_));
-        if is_query && !self.symbols.is_in_body() && !self.symbols.module().is_entry() {
+        let is_not_in_body = !self.symbols.is_in_body();
+        let is_not_module_entry = !self.symbols.module().is_entry();
+        if is_query && is_not_in_body && is_not_module_entry {
             self.report(stmt, "a module cannot hold a query");
             return;
         }
@@ -643,7 +642,7 @@ impl<'c> AstToYzl<'c, '_> {
     }
 
     fn convert_import(&mut self, node: &impl AstNode) {
-        self.check_at_file_level(node, "this belongs at the top of the file");
+        self.check_at_file_level(node, "imports are only allowed at module-level");
     }
 
     pub(super) fn hoist_declarations(&mut self, root: &ast::Root) {
@@ -686,7 +685,7 @@ impl<'c> AstToYzl<'c, '_> {
     }
 
     fn hoist_struct(&mut self, decl: &ast::StructStmt) {
-        let Some(name) = self.read_ident(decl.name()) else {
+        let Some(name) = self.read_ident_as_string(decl.name()) else {
             return;
         };
 
@@ -700,20 +699,20 @@ impl<'c> AstToYzl<'c, '_> {
     }
 
     fn hoist_table(&mut self, decl: &ast::TableStmt) {
-        let Some(name) = self.read_ident(decl.name()) else {
+        let Some(name) = self.read_ident_as_string(decl.name()) else {
             return;
         };
 
         let row = if decl.inline_fields().next().is_some() {
             Row::from(self.read_row_fields(decl.inline_fields()))
         } else {
-            let Some(declared) = self.read_ident(decl.struct_name()) else {
+            let Some(declared) = self.read_ident_as_string(decl.struct_name()) else {
                 return;
             };
 
             // The struct may be imported, and an import names where it was
             // written rather than repeating it.
-            if let Some(BindingKind::Struct { fields, .. }) = self.symbols.kind(declared) {
+            if let Some(BindingKind::Struct { fields, .. }) = self.symbols.binding_kind(declared) {
                 Row::from(fields.clone())
             } else {
                 self.report(decl, &format!("`{declared}` is not a struct"));
@@ -725,7 +724,7 @@ impl<'c> AstToYzl<'c, '_> {
     }
 
     fn hoist_trait(&mut self, decl: &ast::TraitStmt) {
-        let Some(name) = self.read_ident(decl.name()) else {
+        let Some(name) = self.read_ident_as_string(decl.name()) else {
             return;
         };
 
@@ -739,7 +738,7 @@ impl<'c> AstToYzl<'c, '_> {
     }
 
     fn hoist_fn(&mut self, decl: &ast::FuncStmt) {
-        let Some(name) = self.read_ident(decl.name()) else {
+        let Some(name) = self.read_ident_as_string(decl.name()) else {
             return;
         };
 
@@ -781,7 +780,7 @@ impl<'c> AstToYzl<'c, '_> {
     }
 
     fn hoist_let(&mut self, decl: &ast::LetStmt) {
-        let Some(name) = self.read_ident(decl.name()) else {
+        let Some(name) = self.read_ident_as_string(decl.name()) else {
             return;
         };
 
@@ -810,7 +809,7 @@ impl<'c> AstToYzl<'c, '_> {
                     let written = self.read_path(&written);
                     let path = written.text;
                     self.record_module(written, path);
-                    let alias = self.read_name(import.alias());
+                    let alias = self.read_ident(import.alias());
                     if let Some(alias) = alias {
                         self.record_module(alias, path);
                     }
@@ -829,7 +828,7 @@ impl<'c> AstToYzl<'c, '_> {
                     );
                 }
                 ast::Stmt::ModStmt(decl) => {
-                    let Some(name) = self.read_ident(decl.name()) else {
+                    let Some(name) = self.read_ident_as_string(decl.name()) else {
                         self.assert_syntax_error("module declaration is missing its name");
                         continue;
                     };
@@ -859,7 +858,7 @@ impl<'c> AstToYzl<'c, '_> {
     /// `visibility` is the import's own: a module passes on what it imports
     /// only when `pub` says so.
     fn bind_import(&mut self, path: &'c str, item: &ast::ImportItem, visibility: Visibility) {
-        let Some(written) = self.read_name(item.name()) else {
+        let Some(written) = self.read_ident(item.name()) else {
             self.assert_syntax_error("import item is missing its name");
             return;
         };
@@ -869,7 +868,7 @@ impl<'c> AstToYzl<'c, '_> {
             return;
         };
 
-        let alias = self.read_name(item.alias());
+        let alias = self.read_ident(item.alias());
         if let Some(declared) = self.symbols.target_in(from) {
             self.record_through(written, declared, None);
             if let Some(alias) = alias {
@@ -978,12 +977,12 @@ impl<'c> AstToYzl<'c, '_> {
     fn bind_local<'a>(
         &mut self,
         name: &'c str,
-        locals: &mut Locals<'c, 'a>,
-        declared: TextRange,
+        range: TextRange,
         place: Value<'c, 'a>,
+        locals: &mut Locals<'c, 'a>,
     ) {
-        self.declare(name, declared);
-        self.symbols.bind_local(name, locals.len(), declared);
+        self.declare(name, range);
+        self.symbols.bind_local(name, locals.len(), range);
         locals.push(place);
     }
 
@@ -1062,7 +1061,7 @@ impl<'c> AstToYzl<'c, '_> {
         let mut subjects = Vec::new();
         let mut traits = Vec::new();
         for bound in decl.bounds() {
-            let Some(subject) = self.read_ident(bound.subject()) else {
+            let Some(subject) = self.read_ident_as_string(bound.subject()) else {
                 self.assert_syntax_error("type bound is missing its subject");
                 continue;
             };
@@ -1072,7 +1071,7 @@ impl<'c> AstToYzl<'c, '_> {
             }
 
             for trait_ref in bound.traits() {
-                let Some(written) = self.read_name(trait_ref.name()) else {
+                let Some(written) = self.read_ident(trait_ref.name()) else {
                     self.assert_syntax_error("trait reference is missing its name");
                     continue;
                 };
@@ -1098,15 +1097,13 @@ impl<'c> AstToYzl<'c, '_> {
         methods
             .filter_map(|method| {
                 Some(Method {
-                    name: self.read_ident(method.name())?,
+                    name: self.read_ident_as_string(method.name())?,
                     arity: method.params().count(),
                 })
             })
             .collect()
     }
 
-    /// `!yzl.error` for an annotation that names no type, so inference takes
-    /// it as the error it is rather than as a type to infer.
     fn read_type_annotation(&mut self, annotation: ast::TypeAnnotation) -> Type<'c> {
         let named = match annotation {
             ast::TypeAnnotation::NamedTypeAnnotation(named) => named,
@@ -1116,7 +1113,7 @@ impl<'c> AstToYzl<'c, '_> {
             }
         };
 
-        let Some(written) = self.read_name(named.name()) else {
+        let Some(written) = self.read_ident(named.name()) else {
             self.assert_syntax_error("type is missing its name");
             return ErrorType::new(self.context).into();
         };
@@ -1157,26 +1154,29 @@ impl<'c> AstToYzl<'c, '_> {
         }
     }
 
-    /// Each field's name, and the field that declares it.
     fn read_row_fields(
         &mut self,
         fields: impl Iterator<Item = ast::StructField>,
     ) -> Vec<Field<'c>> {
         fields
             .filter_map(|field| {
-                Some(self.field_at(self.read_ident(field.name())?, field.syntax().text_range()))
+                Some(self.field_at(
+                    self.read_ident_as_string(field.name())?,
+                    field.syntax().text_range(),
+                ))
             })
             .collect()
     }
 
-    fn read_fields(
+    fn read_struct_fields(
         &mut self,
-        fields: impl Iterator<Item = ast::StructField>,
+        struct_fields: impl Iterator<Item = ast::StructField>,
     ) -> (Vec<&'c str>, Vec<Type<'c>>) {
         let mut names = Vec::new();
         let mut types = Vec::new();
-        for field in fields {
-            let (Some(name), Some(ty)) = (self.read_ident(field.name()), field.ty()) else {
+        for field in struct_fields {
+            let (Some(name), Some(ty)) = (self.read_ident_as_string(field.name()), field.ty())
+            else {
                 self.assert_syntax_error("struct field is missing its name or type");
                 continue;
             };
@@ -1188,26 +1188,23 @@ impl<'c> AstToYzl<'c, '_> {
         (names, types)
     }
 
-    /// Declares a place for a local variable and stores its first value.
-    /// `element` is the type the place holds: what the program wrote, or
-    /// `!yzl.unresolved` for inference.
     fn emit_local<'a>(
         &self,
         block: BlockRef<'c, 'a>,
         name: &str,
-        kind: LocalKind,
-        element: Type<'c>,
+        ty: Type<'c>,
         value: Value<'c, 'a>,
+        kind: LocalKind,
         loc: Location<'c>,
     ) -> Value<'c, 'a> {
         let builder = yzl::LocalOperationBuilder::new(self.context, loc)
-            .place(RefType::new(self.context, element).into())
+            .place(RefType::new(self.context, ty).into())
             .var_name(StringAttribute::new(self.context, name));
 
         let builder = match kind {
+            LocalKind::Param => builder.is_param(Attribute::unit(self.context)),
             LocalKind::Let(Mutability::Mutable) => builder.is_mut(Attribute::unit(self.context)),
             LocalKind::Let(Mutability::Immutable) => builder,
-            LocalKind::Param => builder.is_param(Attribute::unit(self.context)),
         };
 
         let place = block
@@ -1218,8 +1215,6 @@ impl<'c> AstToYzl<'c, '_> {
         place
     }
 
-    /// Ends a body at `range` that has no final `return`. A unit function
-    /// returns no value, and any other function returns a hole.
     fn emit_final_return<'a>(
         &self,
         entry: BlockRef<'c, 'a>,
@@ -1284,15 +1279,15 @@ impl<'c> AstToYzl<'c, '_> {
         for decl in methods {
             // A method with no name is a syntax error. The parser reports
             // it.
-            if let Some(name) = self.read_ident(decl.name()) {
+            if let Some(name) = self.read_ident_as_string(decl.name()) {
                 let method = Method {
                     name,
-                    arity: decl.params().count(),
+                    arity: decl.arity(),
                 };
 
                 if let Some(&(_, other)) = seen.iter().find(|(earlier, _)| *earlier == method) {
                     let message = format!(
-                        "the method `{name}` with {} parameter(s) is already defined",
+                        "`{name}` with {} parameter(s) is already defined",
                         method.arity
                     );
                     self.report_duplicate(&decl, &message, other);
@@ -1435,7 +1430,7 @@ mod tests {
     #[test]
     fn an_import_in_a_body_is_reported() {
         expect![[r"
-            error: this belongs at the top of the file
+            error: imports are only allowed at module-level
              --> test.yz:5:3
               |
             5 |   import helpers
@@ -1811,7 +1806,7 @@ external def upper(s: str) -> str
     #[test]
     fn a_method_with_the_same_parameter_count_is_reported() {
         expect![[r"
-            error: the method `round` with 1 parameter(s) is already defined
+            error: `round` with 1 parameter(s) is already defined
              --> test.yz:3:5
               |
             3 |     def round(y: Self) -> Self

@@ -17,6 +17,48 @@ pub(crate) struct Operator {
     pub(crate) name: &'static str,
 }
 
+/// `+`.
+pub(crate) const ADD: Operator = Operator {
+    spelling: "+",
+    module: "yuzu.std.ops",
+    name: "add",
+};
+
+/// `-`.
+pub(crate) const SUB: Operator = Operator {
+    spelling: "-",
+    module: "yuzu.std.ops",
+    name: "sub",
+};
+
+/// `*`.
+pub(crate) const MUL: Operator = Operator {
+    spelling: "*",
+    module: "yuzu.std.ops",
+    name: "mul",
+};
+
+/// `/`.
+pub(crate) const DIV: Operator = Operator {
+    spelling: "/",
+    module: "yuzu.std.ops",
+    name: "div",
+};
+
+/// `and`.
+pub(crate) const AND: Operator = Operator {
+    spelling: "and",
+    module: "yuzu.std.ops",
+    name: "and",
+};
+
+/// `or`.
+pub(crate) const OR: Operator = Operator {
+    spelling: "or",
+    module: "yuzu.std.ops",
+    name: "or",
+};
+
 /// `%`.
 pub(crate) const REM: Operator = Operator {
     spelling: "%",
@@ -43,6 +85,69 @@ pub(crate) const SHR: Operator = Operator {
     spelling: ">>",
     module: "yuzu.std.ops",
     name: "shift_right",
+};
+
+/// `not`.
+pub(crate) const NOT: Operator = Operator {
+    spelling: "not",
+    module: "yuzu.std.ops",
+    name: "not",
+};
+
+/// `in`.
+pub(crate) const IN: Operator = Operator {
+    spelling: "in",
+    module: "yuzu.std.ops",
+    name: "in",
+};
+
+/// Unary `-`.
+pub(crate) const NEG: Operator = Operator {
+    spelling: "-",
+    module: "yuzu.std.ops",
+    name: "neg",
+};
+
+/// `==`.
+pub(crate) const EQ: Operator = Operator {
+    spelling: "==",
+    module: "yuzu.std.ops",
+    name: "eq",
+};
+
+/// `!=`.
+pub(crate) const NE: Operator = Operator {
+    spelling: "!=",
+    module: "yuzu.std.ops",
+    name: "ne",
+};
+
+/// `<`.
+pub(crate) const LT: Operator = Operator {
+    spelling: "<",
+    module: "yuzu.std.ops",
+    name: "lt",
+};
+
+/// `<=`.
+pub(crate) const LE: Operator = Operator {
+    spelling: "<=",
+    module: "yuzu.std.ops",
+    name: "le",
+};
+
+/// `>`.
+pub(crate) const GT: Operator = Operator {
+    spelling: ">",
+    module: "yuzu.std.ops",
+    name: "gt",
+};
+
+/// `>=`.
+pub(crate) const GE: Operator = Operator {
+    spelling: ">=",
+    module: "yuzu.std.ops",
+    name: "ge",
 };
 
 pub(crate) static OPERATORS: [Operator; 4] = [REM, POW, SHL, SHR];

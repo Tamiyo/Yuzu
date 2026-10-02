@@ -498,15 +498,15 @@ impl<'c> AstToYzl<'c, '_> {
         (at.line, at.col)
     }
 
-    /// The text of a name the source wrote, interned for the rest of the
-    /// pass.
-    fn read_ident(&self, ident: Option<ast::Ident>) -> Option<&'c str> {
-        Some(self.name_of(&ident?)?.text)
+    /// A name the source wrote, with where it wrote it.
+    fn read_ident(&self, ident: Option<ast::Ident>) -> Option<Name<'c>> {
+        self.name_of(&ident?)
     }
 
-    /// A name the source wrote, with where it wrote it.
-    fn read_name(&self, ident: Option<ast::Ident>) -> Option<Name<'c>> {
-        self.name_of(&ident?)
+    /// The text of a name the source wrote, interned for the rest of the
+    /// pass.
+    fn read_ident_as_string(&self, ident: Option<ast::Ident>) -> Option<&'c str> {
+        self.read_ident(ident).map(|ident| ident.text)
     }
 
     /// A field that the item at `range` declares under `name`.

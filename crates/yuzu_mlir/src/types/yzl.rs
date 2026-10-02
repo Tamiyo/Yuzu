@@ -105,13 +105,13 @@ pub struct RefType<'c>(Type<'c>);
 impl<'c> RefType<'c> {
     /// The type, uniqued in the context, which must have loaded the dialects.
     #[must_use]
-    pub fn new(context: &'c Context, element: Type<'c>) -> Self {
+    pub fn new(context: &'c Context, ty: Type<'c>) -> Self {
         super::debug_assert_loaded(context, "yzl.from");
         // SAFETY: the context is live for `'c` and the type is uniqued in it, so the raw type lives as long as the context.
         unsafe {
             Self(Type::from_raw(yuzu_mlir_sys::yzuRefTypeGet(
                 context.to_raw(),
-                element.to_raw(),
+                ty.to_raw(),
             )))
         }
     }
