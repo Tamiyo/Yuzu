@@ -4,7 +4,9 @@ use yuzu_syntax::SyntaxKind;
 use crate::grammar::expr::parse_expr;
 use crate::grammar::rel::parse_query;
 use crate::grammar::ty::parse_type;
-use crate::grammar::{Trailing, delimited, delimited_non_empty, parse_ident, parse_stmts};
+use crate::grammar::{
+    Trailing, delimited, delimited_non_empty, parse_ident, parse_name, parse_stmts,
+};
 use crate::parser::{Parser, marker::CompletedMarker};
 use crate::token_set::TokenSet;
 
@@ -182,7 +184,7 @@ fn parse_module_path(p: &mut Parser) -> CompletedMarker {
 
 fn parse_import_item(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
-    parse_ident(p);
+    parse_name(p);
     parse_rename(p);
     p.complete(m, SyntaxKind::ImportItem)
 }
@@ -208,7 +210,7 @@ fn parse_block_stmt(p: &mut Parser) -> CompletedMarker {
 fn parse_func_stmt(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
     parse_func_prefix(p);
-    parse_ident(p);
+    parse_name(p);
 
     if p.at(TokenKind::LeftSquare) {
         p.bump();
@@ -310,7 +312,7 @@ fn parse_func_prefix(p: &mut Parser) {
 fn parse_trait_method(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
     parse_func_prefix(p);
-    parse_ident(p);
+    parse_name(p);
     p.expect(TokenKind::LeftParen);
     delimited(p, TokenKind::RightParen, Trailing::Forbidden, |p| {
         parse_param(p);

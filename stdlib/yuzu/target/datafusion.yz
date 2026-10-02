@@ -4,6 +4,20 @@ pub external def bitwise_shift_left(a: int64, b: int64) -> int64
 pub external def bitwise_shift_right(a: int64, b: int64) -> int64
 pub external def power[T](a: T, b: T) -> T where T: Numeric
 pub external def modulus[T](a: T, b: T) -> T where T: Numeric
+pub external def add[T](a: T, b: T) -> T where T: Numeric
+pub external def subtract[T](a: T, b: T) -> T where T: Numeric
+pub external def multiply[T](a: T, b: T) -> T where T: Numeric
+pub external def divide[T](a: T, b: T) -> T where T: Numeric
+pub external def negate[T](a: T) -> T where T: Numeric
+pub external def equal[T](a: T, b: T) -> bool
+pub external def not_equal[T](a: T, b: T) -> bool
+pub external def lt[T](a: T, b: T) -> bool
+pub external def lte[T](a: T, b: T) -> bool
+pub external def gt[T](a: T, b: T) -> bool
+pub external def gte[T](a: T, b: T) -> bool
+pub external def and(a: bool, b: bool) -> bool
+pub external def or(a: bool, b: bool) -> bool
+pub external def not(a: bool) -> bool
 
 pub external agg def sum[T](x: T) -> T where T: Numeric
 pub external agg def min[T](x: T) -> T

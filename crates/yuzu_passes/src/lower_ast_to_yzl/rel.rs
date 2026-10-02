@@ -16,6 +16,7 @@ use yuzu_mlir::types::{QueryType, UnresolvedType};
 
 use crate::lower_ast_to_yzl::symbols::{ColumnLookup, Field, Reference, Row};
 use crate::lower_ast_to_yzl::{AstToYzl, Locals, Name};
+use crate::operators;
 
 /// A stage item as the source wrote it.
 struct Item<'c> {
@@ -444,6 +445,7 @@ impl<'c> AstToYzl<'c, '_> {
 
         let on = Region::new();
         if join.using().is_some() {
+            self.refer_key_operators(using.len());
             self.symbols.join_using(rhs, &left_keys, &right_keys);
         } else {
             // The condition sees both rows, so the row moves first.
@@ -681,6 +683,17 @@ impl<'c> AstToYzl<'c, '_> {
                 .into(),
             )
             .first_result()
+    }
+
+    /// The yzr lowering compares a `using` join's keys with `==` and joins
+    /// the comparisons with `and`, so their functions come into the module.
+    fn refer_key_operators(&mut self, keys: usize) {
+        if keys > 0 {
+            self.symbols.refer_operator(&operators::EQ);
+        }
+        if keys > 1 {
+            self.symbols.refer_operator(&operators::AND);
+        }
     }
 
     /// Leaves out the columns only a qualified name reaches, when the row

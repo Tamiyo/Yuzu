@@ -151,6 +151,33 @@ const NAME_FOLLOWERS: TokenSet = TokenSet::new(&[
 
 /// An `Ident` holds exactly its identifier, so a token that is no name is
 /// reported and left outside it, and the node is not built.
+/// The operator keywords that a function may take as its name, so that the
+/// library can declare the function behind each operator. An expression
+/// reads them as operators, so such a function is called by its qualified
+/// name.
+const OPERATOR_NAMES: TokenSet = TokenSet::new(&[
+    TokenKind::AndKw,
+    TokenKind::OrKw,
+    TokenKind::NotKw,
+    TokenKind::InKw,
+]);
+
+/// A name where an operator keyword is a name too: after `def`, after `.`,
+/// and in an import list.
+pub(crate) fn parse_name(p: &mut Parser) -> Option<CompletedMarker> {
+    // Peeked, not asked: an error at a missing name still expects an
+    // identifier only.
+    if p.peek_kind()
+        .is_some_and(|kind| OPERATOR_NAMES.contains(kind))
+    {
+        let m = p.start();
+        p.bump();
+        return Some(p.complete(m, SyntaxKind::Ident));
+    }
+
+    parse_ident(p)
+}
+
 pub(crate) fn parse_ident(p: &mut Parser) -> Option<CompletedMarker> {
     if p.at(TokenKind::Identifier) {
         let m = p.start();
@@ -379,6 +406,48 @@ mod tests {
                       Ident
                       NamedTypeAnnotation
                         Ident
+            "]],
+        );
+    }
+
+    #[test]
+    fn an_operator_keyword_is_a_name_after_def_after_a_dot_and_in_an_import() {
+        check_outline(
+            "pub external def and(a: bool, b: bool) -> bool\nfrom m import or, in\nlet x = ops.not(a and b)\n",
+            &expect![[r"
+                Root
+                  FuncStmt
+                    Ident
+                    FuncParam
+                      Ident
+                      NamedTypeAnnotation
+                        Ident
+                    FuncParam
+                      Ident
+                      NamedTypeAnnotation
+                        Ident
+                    NamedTypeAnnotation
+                      Ident
+                  FromImportStmt
+                    ModulePath
+                      Ident
+                    ImportItem
+                      Ident
+                    ImportItem
+                      Ident
+                  LetStmt
+                    Ident
+                    CallExpr
+                      FieldAccessExpr
+                        IdentExpr
+                          Ident
+                        Ident
+                      ArgList
+                        BinaryExpr
+                          IdentExpr
+                            Ident
+                          IdentExpr
+                            Ident
             "]],
         );
     }

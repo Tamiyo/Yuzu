@@ -18,9 +18,8 @@ use yuzu_mlir::ir::value::{ValueExt, ValueId};
 use yuzu_mlir::ops::yz::YzOp;
 use yuzu_mlir::ops::yzr::YzrOp;
 
-use crate::extensions::{EXTERNAL_URN, Func, function_target, standard_urn};
+use crate::extensions::{COMPARISON_URN, EXTERNAL_URN, standard_urn};
 use crate::proto::{field_index, literal, selection};
-use crate::translate::functions;
 use crate::translate::types::{emit_type, type_code};
 use crate::translate::{Translator, report};
 
@@ -94,18 +93,8 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
             YzOp::ConstantStr(constant) => Some(literal(LiteralType::String(
                 constant.value().value().to_string(),
             ))),
-            YzOp::Add(_) => self.translate_call(op, Func::Add, values),
-            YzOp::Sub(_) => self.translate_call(op, Func::Subtract, values),
-            YzOp::Mul(_) => self.translate_call(op, Func::Multiply, values),
-            YzOp::Div(_) => self.translate_call(op, Func::Divide, values),
-            YzOp::Neg(_) => self.translate_call(op, Func::Negate, values),
-            YzOp::And(_) => self.translate_call(op, Func::And, values),
-            YzOp::Or(_) => self.translate_call(op, Func::Or, values),
-            YzOp::Not(_) => self.translate_call(op, Func::Not, values),
-            YzOp::Coalesce(_) => self.translate_call(op, Func::Coalesce, values),
-            YzOp::Cmp(compare) => {
-                self.translate_call(op, functions::of_predicate(compare.predicate()), values)
-            }
+            // A full join `using` a column makes this op, not an operator.
+            YzOp::Coalesce(_) => self.translate_function(op, COMPARISON_URN, "coalesce", values),
             YzOp::In(_) => translate_membership(op, values),
             YzOp::Call(call) => {
                 let callee = call.callee().value();
@@ -118,7 +107,19 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
             }
             // `legalize_operators` puts the library's implementation in its
             // place, and reports when there is none.
-            YzOp::Rem(_) | YzOp::Pow(_) | YzOp::Shl(_) | YzOp::Shr(_) => {
+            YzOp::Add(_)
+            | YzOp::Sub(_)
+            | YzOp::Mul(_)
+            | YzOp::Div(_)
+            | YzOp::Neg(_)
+            | YzOp::Rem(_)
+            | YzOp::Pow(_)
+            | YzOp::Shl(_)
+            | YzOp::Shr(_)
+            | YzOp::Cmp(_)
+            | YzOp::And(_)
+            | YzOp::Or(_)
+            | YzOp::Not(_) => {
                 report(
                     op,
                     "an operator reached the translation without an implementation",
@@ -135,16 +136,6 @@ impl<'c, 'a> Translator<'c, 'a, '_> {
                 None
             }
         }
-    }
-
-    fn translate_call(
-        &mut self,
-        op: OperationRef<'c, '_>,
-        func: Func,
-        values: &FxHashMap<ValueId, Expression>,
-    ) -> Option<Expression> {
-        let (urn, base) = function_target(func);
-        self.translate_function(op, urn, base, values)
     }
 
     /// A call of the function named `base` under `urn`.

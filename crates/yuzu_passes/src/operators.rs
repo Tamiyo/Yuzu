@@ -1,9 +1,10 @@
-//! The operators the library implements. An engine takes no `yz.rem`, so
-//! each such primitive op is tied to the library function that says how the
-//! engine computes it: the op folds first, and `legalize_operators` puts
-//! that function's body in place of what is left.
+//! The operators the library implements. Each primitive op an operator
+//! lowers to is tied to a `yuzu.std.ops` function. The op folds first, and
+//! `legalize_operators` puts that function's body in place of what is left.
+//! The body picks the engine's own function.
 
 use melior::ir::operation::OperationRef;
+use yuzu_mlir::attributes::CmpPredicate;
 use yuzu_mlir::ir::operation::OperationCast;
 use yuzu_mlir::ops::yz::YzOp;
 
@@ -150,18 +151,38 @@ pub(crate) const GE: Operator = Operator {
     name: "ge",
 };
 
-pub(crate) static OPERATORS: [Operator; 4] = [REM, POW, SHL, SHR];
+/// Every operator the library implements. `in` is not one: it becomes a
+/// Substrait list expression, not a call.
+pub(crate) static OPERATORS: [Operator; 18] = [
+    ADD, SUB, MUL, DIV, NEG, REM, POW, SHL, SHR, EQ, NE, LT, LE, GT, GE, AND, OR, NOT,
+];
 
 impl Operator {
     /// The operator an op is, when it is one the library implements.
     pub(crate) fn of(op: OperationRef) -> Option<&'static Self> {
-        match op.as_yz()? {
-            YzOp::Rem(_) => Some(&REM),
-            YzOp::Pow(_) => Some(&POW),
-            YzOp::Shl(_) => Some(&SHL),
-            YzOp::Shr(_) => Some(&SHR),
-            _ => None,
-        }
+        Some(match op.as_yz()? {
+            YzOp::Add(_) => &ADD,
+            YzOp::Sub(_) => &SUB,
+            YzOp::Mul(_) => &MUL,
+            YzOp::Div(_) => &DIV,
+            YzOp::Neg(_) => &NEG,
+            YzOp::Rem(_) => &REM,
+            YzOp::Pow(_) => &POW,
+            YzOp::Shl(_) => &SHL,
+            YzOp::Shr(_) => &SHR,
+            YzOp::Cmp(compare) => match compare.predicate() {
+                CmpPredicate::Equal => &EQ,
+                CmpPredicate::NotEqual => &NE,
+                CmpPredicate::Less => &LT,
+                CmpPredicate::LessOrEqual => &LE,
+                CmpPredicate::Greater => &GT,
+                CmpPredicate::GreaterOrEqual => &GE,
+            },
+            YzOp::And(_) => &AND,
+            YzOp::Or(_) => &OR,
+            YzOp::Not(_) => &NOT,
+            _ => return None,
+        })
     }
 
     /// The operator a symbol implements, when it implements one.

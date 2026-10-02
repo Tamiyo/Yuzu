@@ -7,53 +7,9 @@ use substrait::proto::extensions::{
 };
 
 // Substrait standard extensions (the function families DuckDB consumes).
-const ARITHMETIC_URN: &str = "extension:io.substrait:functions_arithmetic";
 pub(crate) const COMPARISON_URN: &str = "extension:io.substrait:functions_comparison";
-pub(crate) const BOOLEAN_URN: &str = "extension:io.substrait:functions_boolean";
 const AGGREGATE_GENERIC_URN: &str = "extension:io.substrait:functions_aggregate_generic";
 pub(crate) const EXTERNAL_URN: &str = "extension:io.yuzu:external";
-
-/// A function a primitive yz op computes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum Func {
-    Add,
-    Subtract,
-    Multiply,
-    Divide,
-    Negate,
-    Equal,
-    NotEqual,
-    Less,
-    LessEqual,
-    Greater,
-    GreaterEqual,
-    And,
-    Or,
-    Not,
-    Coalesce,
-}
-
-/// The Substrait extension function for a primitive op's function.
-/// Membership has none, because it is a `SingularOrList`.
-pub(crate) fn function_target(func: Func) -> (&'static str, &'static str) {
-    match func {
-        Func::Add => (ARITHMETIC_URN, "add"),
-        Func::Subtract => (ARITHMETIC_URN, "subtract"),
-        Func::Multiply => (ARITHMETIC_URN, "multiply"),
-        Func::Divide => (ARITHMETIC_URN, "divide"),
-        Func::Negate => (ARITHMETIC_URN, "negate"),
-        Func::Equal => (COMPARISON_URN, "equal"),
-        Func::NotEqual => (COMPARISON_URN, "not_equal"),
-        Func::Less => (COMPARISON_URN, "lt"),
-        Func::LessEqual => (COMPARISON_URN, "lte"),
-        Func::Greater => (COMPARISON_URN, "gt"),
-        Func::GreaterEqual => (COMPARISON_URN, "gte"),
-        Func::And => (BOOLEAN_URN, "and"),
-        Func::Or => (BOOLEAN_URN, "or"),
-        Func::Not => (BOOLEAN_URN, "not"),
-        Func::Coalesce => (COMPARISON_URN, "coalesce"),
-    }
-}
 
 /// Substrait's generic `count`, which counts every row or every value, or
 /// only distinct ones.
@@ -184,7 +140,7 @@ fn anchor(index: usize) -> u32 {
 mod tests {
     use expect_test::expect;
 
-    use super::{Extensions, Func, function_target, standard_urn};
+    use super::{Extensions, standard_urn};
 
     #[test]
     fn a_standard_function_is_found_by_its_name_and_argument_types() {
@@ -226,10 +182,10 @@ mod tests {
     #[test]
     fn a_function_used_twice_is_declared_once() {
         let mut extensions = Extensions::default();
-        let (urn, base) = function_target(Func::Add);
-        let first = extensions.register(urn, format!("{base}:i64_i64"));
-        let again = extensions.register(urn, format!("{base}:i64_i64"));
-        let other = extensions.register(urn, format!("{base}:fp64_fp64"));
+        let urn = super::COMPARISON_URN;
+        let first = extensions.register(urn, "coalesce:i64_i64".to_owned());
+        let again = extensions.register(urn, "coalesce:i64_i64".to_owned());
+        let other = extensions.register(urn, "coalesce:fp64_fp64".to_owned());
         assert_eq!(first, again);
         assert_ne!(first, other);
         assert_eq!(extensions.declarations().len(), 2);

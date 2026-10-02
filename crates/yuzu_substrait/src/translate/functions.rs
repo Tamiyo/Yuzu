@@ -1,22 +1,10 @@
-//! Which function a yzr operation is. A yz op maps onto a [`Func`], and the
-//! Substrait tables answer from the [`Func`]. Thus no op needs a mapping of
-//! its own.
+//! Which function a measure calls. A scalar function is an external call
+//! by the time it reaches the translation, so only an aggregate needs a
+//! mapping here.
 
 use substrait::proto::aggregate_function::AggregationInvocation;
-use yuzu_mlir::attributes::CmpPredicate;
 
-use crate::extensions::{COUNT, EXTERNAL_URN, Func};
-
-pub(crate) fn of_predicate(predicate: CmpPredicate) -> Func {
-    match predicate {
-        CmpPredicate::Equal => Func::Equal,
-        CmpPredicate::NotEqual => Func::NotEqual,
-        CmpPredicate::Less => Func::Less,
-        CmpPredicate::LessOrEqual => Func::LessEqual,
-        CmpPredicate::Greater => Func::Greater,
-        CmpPredicate::GreaterOrEqual => Func::GreaterEqual,
-    }
-}
+use crate::extensions::{COUNT, EXTERNAL_URN};
 
 /// What a measure calls: where Substrait declares the function, the name it
 /// is declared under, and whether it sees every value or only distinct ones.

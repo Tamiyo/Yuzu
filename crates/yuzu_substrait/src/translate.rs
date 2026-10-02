@@ -164,6 +164,22 @@ pub(crate) mod test_support {
 
     pub(crate) const TABLE: &str = "struct Row { a: int64, b: int64 }\ntable t = Row\n";
 
+    /// The library modules the operators need, in the order they import.
+    const LIBRARY: &[(&str, &str)] = &[
+        (
+            "yuzu.std.math",
+            include_str!("../../../stdlib/yuzu/std/math.yz"),
+        ),
+        (
+            "yuzu.target.datafusion",
+            include_str!("../../../stdlib/yuzu/target/datafusion.yz"),
+        ),
+        (
+            "yuzu.std.ops",
+            include_str!("../../../stdlib/yuzu/std/ops.yz"),
+        ),
+    ];
+
     /// Runs the whole MLIR pipeline over the source and translates what
     /// comes out, so a test reads the plan the compiler would hand an
     /// engine — not one assembled by hand.
@@ -187,16 +203,23 @@ pub(crate) mod test_support {
             prelude_root,
         );
         prelude.set_decl_lowering(yuzu_passes::DeclarationLowering::OnDemand);
+        // The modules behind the operators, as the library has them, so the
+        // plan shows the calls each operator becomes.
+        let mut files = vec![prelude];
+        for (module, text) in LIBRARY {
+            let source_id = sources.add(format!("<{module}>"), (*text).to_owned());
+            let root = ast::Root::cast(yuzu_parser::parse_text(text, &mut diagnostics, source_id))
+                .expect("a source has a root");
+            let mut file = yuzu_passes::File::new(source_id, Some((*module).to_owned()), root);
+            file.set_decl_lowering(yuzu_passes::DeclarationLowering::OnDemand);
+            files.push(file);
+        }
         let source_id = sources.add("test.yz".to_string(), source.to_string());
         let syntax = yuzu_parser::parse_text(source, &mut diagnostics, source_id);
         let root = ast::Root::cast(syntax).expect("a source has a root");
-        let mut module = yuzu_passes::lower_ast_to_yzl(
-            &context,
-            &sources,
-            &[prelude, yuzu_passes::File::entry(source_id, root)],
-            &mut diagnostics,
-            None,
-        );
+        files.push(yuzu_passes::File::entry(source_id, root));
+        let mut module =
+            yuzu_passes::lower_ast_to_yzl(&context, &sources, &files, &mut diagnostics, None);
 
         // As in the driver, a group runs only when the group before it
         // reported no error. A pass may take the work before it as settled.
@@ -516,16 +539,113 @@ mod tests {
     }
 
     #[test]
-    fn reports_an_operator_the_target_does_not_have() {
-        check_error(
+    #[expect(clippy::too_many_lines, reason = "the expected plan is long")]
+    fn an_operator_becomes_the_engine_function_its_library_function_calls() {
+        check(
             &format!("{TABLE}from t |> select a ** 2 as p"),
-            &expect![[r"
-                error: `**` has no implementation for this engine
-                 --> test.yz:3:18
-                  |
-                3 | from t |> select a ** 2 as p
-                  |                  ^^^^^^
-            "]],
+            &expect![[r#"
+                {
+                  "version": {
+                    "minorNumber": 85,
+                    "producer": "yuzu"
+                  },
+                  "extensionUrns": [
+                    {
+                      "extensionUrnAnchor": 1,
+                      "urn": "extension:io.substrait:functions_arithmetic"
+                    }
+                  ],
+                  "extensions": [
+                    {
+                      "extensionFunction": {
+                        "extensionUrnReference": 1,
+                        "functionAnchor": 1,
+                        "name": "power:i64_i64"
+                      }
+                    }
+                  ],
+                  "relations": [
+                    {
+                      "root": {
+                        "input": {
+                          "project": {
+                            "common": {
+                              "emit": {
+                                "outputMapping": [
+                                  2
+                                ]
+                              }
+                            },
+                            "input": {
+                              "read": {
+                                "baseSchema": {
+                                  "names": [
+                                    "a",
+                                    "b"
+                                  ],
+                                  "struct": {
+                                    "types": [
+                                      {
+                                        "i64": {
+                                          "nullability": "NULLABILITY_NULLABLE"
+                                        }
+                                      },
+                                      {
+                                        "i64": {
+                                          "nullability": "NULLABILITY_NULLABLE"
+                                        }
+                                      }
+                                    ],
+                                    "nullability": "NULLABILITY_NULLABLE"
+                                  }
+                                },
+                                "namedTable": {
+                                  "names": [
+                                    "t"
+                                  ]
+                                }
+                              }
+                            },
+                            "expressions": [
+                              {
+                                "scalarFunction": {
+                                  "functionReference": 1,
+                                  "arguments": [
+                                    {
+                                      "value": {
+                                        "selection": {
+                                          "directReference": {
+                                            "structField": {}
+                                          },
+                                          "rootReference": {}
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "value": {
+                                        "literal": {
+                                          "i64": "2"
+                                        }
+                                      }
+                                    }
+                                  ],
+                                  "outputType": {
+                                    "i64": {
+                                      "nullability": "NULLABILITY_NULLABLE"
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        "names": [
+                          "p"
+                        ]
+                      }
+                    }
+                  ]
+                }"#]],
         );
     }
 }

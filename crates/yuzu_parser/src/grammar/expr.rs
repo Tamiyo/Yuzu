@@ -1,7 +1,7 @@
 use yuzu_lexer::token_kind::TokenKind;
 use yuzu_syntax::SyntaxKind;
 
-use crate::grammar::{Trailing, delimited, parse_ident};
+use crate::grammar::{Trailing, delimited, parse_ident, parse_name};
 use crate::parser::{Parser, marker::CompletedMarker};
 use crate::token_set::TokenSet;
 
@@ -95,7 +95,7 @@ fn parse_expr_binding_power(p: &mut Parser, minimum_binding_power: u8) -> Option
         if p.at(TokenKind::Dot) {
             let marker = p.precede(lhs);
             p.bump();
-            parse_ident(p);
+            parse_name(p);
             lhs = p.complete(marker, SyntaxKind::FieldAccessExpr);
             continue;
         }
