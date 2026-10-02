@@ -82,21 +82,18 @@ impl<'c> AstToYzl<'c, '_> {
         literal: &ast::Literal,
     ) -> Value<'c, 'a> {
         let loc = self.location(literal);
-
-        if let ast::Literal::IntLiteral(int) = literal
-            && self.read_int64(int).is_none()
-        {
+        let constant = match self.read_constant(literal) {
+            Ok(constant) => constant,
             // TODO(tamiyo) Why only int64? Seems like a weird restriction.
-            return self.emit_hole(
-                block,
-                int.syntax().text_range(),
-                UnresolvedType::new(self.context).into(),
-            );
-        }
-
-        let constant = self
-            .read_constant(literal)
-            .expect("an integer literal was read as an `int64` above");
+            Err(int) => {
+                self.report_out_of_range(int);
+                return self.emit_hole(
+                    block,
+                    int.syntax().text_range(),
+                    UnresolvedType::new(self.context).into(),
+                );
+            }
+        };
 
         let ty = constant.ty(self.context);
         let operation = match constant {
@@ -619,7 +616,7 @@ impl<'c> AstToYzl<'c, '_> {
                 return None;
             };
 
-            let constant = self.read_constant(&literal)?;
+            let constant = self.read_constant(&literal).ok()?;
             let ty = constant.ty(self.context);
             if element.is_some_and(|element| element != ty) {
                 return None;
@@ -632,12 +629,18 @@ impl<'c> AstToYzl<'c, '_> {
         Some((element?, values))
     }
 
-    /// The value a literal writes. `None` for an integer that `int64` cannot
-    /// hold.
-    fn read_constant(&self, literal: &ast::Literal) -> Option<Constant<'c>> {
-        Some(match literal {
+    /// The value a literal writes. An integer literal that `int64` cannot
+    /// hold is the error.
+    fn read_constant<'l>(
+        &self,
+        literal: &'l ast::Literal,
+    ) -> Result<Constant<'c>, &'l ast::IntLiteral> {
+        Ok(match literal {
             ast::Literal::IntLiteral(int) => {
-                let value = i64::try_from(int.value()?).ok()?;
+                let value = int
+                    .value()
+                    .and_then(|value| i64::try_from(value).ok())
+                    .ok_or(int)?;
                 Constant::Int(IntegerAttribute::from_i64(self.context, value))
             }
             ast::Literal::FloatLiteral(float) => Constant::Float(FloatAttribute::new(

@@ -387,10 +387,14 @@ impl<'c> AstToYzl<'c, '_> {
     fn read_int64(&mut self, int: &ast::IntLiteral) -> Option<i64> {
         let value = int.value().and_then(|value| i64::try_from(value).ok());
         if value.is_none() {
-            self.report(int, "integer literal is out of range for `int64`");
+            self.report_out_of_range(int);
         }
 
         value
+    }
+
+    fn report_out_of_range(&mut self, int: &ast::IntLiteral) {
+        self.report(int, "integer literal is out of range for `int64`");
     }
 
     fn report_unresolved(&mut self, node: &impl AstNode, message: &str) {
