@@ -208,19 +208,38 @@
       ]
     },
     "members": {
-      "captures": {
-        "1": {
-          "patterns": [
-            {
-              "include": "#punctuation"
+      "patterns": [
+        {
+          "captures": {
+            "1": {
+              "patterns": [
+                {
+                  "include": "#punctuation"
+                }
+              ]
+            },
+            "2": {
+              "name": "entity.name.function.yuzu"
             }
-          ]
+          },
+          "match": "(\\.)\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(?=\\()"
         },
-        "2": {
-          "name": "variable.other.member.yuzu"
+        {
+          "captures": {
+            "1": {
+              "patterns": [
+                {
+                  "include": "#punctuation"
+                }
+              ]
+            },
+            "2": {
+              "name": "variable.other.member.yuzu"
+            }
+          },
+          "match": "(\\.)\\s*([A-Za-z_][A-Za-z0-9_]*)\\b(?!\\s*\\()"
         }
-      },
-      "match": "(\\.)\\s*([A-Za-z_][A-Za-z0-9_]*)\\b(?!\\s*\\()"
+      ]
     },
     "numbers": {
       "patterns": [

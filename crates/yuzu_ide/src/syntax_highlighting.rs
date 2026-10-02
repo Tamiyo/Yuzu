@@ -148,6 +148,14 @@ pub(crate) fn highlight_uses(checked: &Checked, source: SourceId) -> Vec<HlRange
 }
 
 fn highlight_token(token: &SyntaxToken) -> Option<Highlight> {
+    // An operator keyword can be a name, and then it is in an `Ident`.
+    if token
+        .parent()
+        .is_some_and(|node| node.kind() == SyntaxKind::Ident)
+    {
+        return highlight_name(token);
+    }
+
     let kind = token.kind();
     if kind.is_keyword() {
         return Some(HlTag::Keyword.into());
@@ -160,7 +168,6 @@ fn highlight_token(token: &SyntaxToken) -> Option<Highlight> {
             HlTag::NumericLiteral
         }
         SyntaxKind::BoolLit => HlTag::BoolLiteral,
-        SyntaxKind::Identifier => return highlight_name(token),
         _ => return None,
     };
     Some(tag.into())
@@ -186,7 +193,9 @@ fn highlight_name(token: &SyntaxToken) -> Option<Highlight> {
         SyntaxKind::LetStmt => highlight_let(&parent),
         SyntaxKind::ModStmt | SyntaxKind::ImportStmt => HlTag::Module | HlMod::Declaration,
         SyntaxKind::ModulePath => HlTag::Module.into(),
-        SyntaxKind::IdentExpr if is_callee(&parent) => HlTag::Function.into(),
+        SyntaxKind::IdentExpr | SyntaxKind::FieldAccessExpr if is_callee(&parent) => {
+            HlTag::Function.into()
+        }
         SyntaxKind::FromSource if is_named_by(&parent, &ident, ast::FromSource::relation) => {
             HlTag::Table.into()
         }
@@ -231,12 +240,11 @@ fn highlight_let(node: &SyntaxNode) -> Highlight {
     }
 }
 
-fn is_callee(ident_expr: &SyntaxNode) -> bool {
-    ident_expr
-        .parent()
+fn is_callee(expr: &SyntaxNode) -> bool {
+    expr.parent()
         .and_then(ast::CallExpr::cast)
         .and_then(|call| call.callee())
-        .is_some_and(|callee| callee.syntax() == ident_expr)
+        .is_some_and(|callee| callee.syntax() == expr)
 }
 
 /// Whether `accessor` names this identifier in the node that holds it.
@@ -369,6 +377,44 @@ from employees e
                 n Field
                 summary Local Declaration"]],
         );
+    }
+
+    #[test]
+    fn an_operator_keyword_as_a_name() {
+        check(
+            "pub external def and(a: bool, b: bool) -> bool\nlet x = ops.not(a and b)\n",
+            &expect![[r"
+                and Function Declaration
+                a Parameter Declaration
+                bool Type
+                b Parameter Declaration
+                bool Type
+                bool Type
+                x Local Declaration
+                not Function"]],
+        );
+    }
+
+    #[test]
+    fn a_resolved_operator_name_is_a_function() {
+        let files = [(
+            "ops.yz",
+            "pub external def not(a: bool) -> bool\npub external def or(a: bool, b: bool) -> bool\n",
+        )];
+        let text = "import ops\nfrom ops import or\nlet x = ops.not(true)\n";
+        let (_tree, checked) = crate::test_support::checked(&files, text);
+        let rendered: Vec<String> = checked
+            .highlight_uses(crate::test_support::FILE)
+            .iter()
+            .map(|range| format!("{} {:?}", &text[range.range], range.highlight.tag))
+            .collect();
+        expect![[r"
+            ops Module
+            ops Module
+            or Function
+            ops Module
+            not Function"]]
+        .assert_eq(&rendered.join("\n"));
     }
 
     #[test]
