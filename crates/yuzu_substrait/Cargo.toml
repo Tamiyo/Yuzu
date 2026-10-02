@@ -14,6 +14,9 @@ substrait = { version = "0.63", features = ["serde"] }
 yuzu_diagnostics = { path = "../yuzu_diagnostics" }
 yuzu_mlir = { path = "../yuzu_mlir" }
 
+[build-dependencies]
+substrait = { version = "0.63", features = ["extensions"] }
+
 [dev-dependencies]
 expect-test = "1"
 yuzu_ast = { path = "../yuzu_ast" }

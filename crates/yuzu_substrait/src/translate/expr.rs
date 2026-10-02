@@ -18,7 +18,7 @@ use yuzu_mlir::ir::value::{ValueExt, ValueId};
 use yuzu_mlir::ops::yz::YzOp;
 use yuzu_mlir::ops::yzr::YzrOp;
 
-use crate::extensions::{EXTERNAL_URN, Func, function_target};
+use crate::extensions::{EXTERNAL_URN, Func, function_target, standard_urn};
 use crate::proto::{field_index, literal, selection};
 use crate::translate::functions;
 use crate::translate::types::{emit_type, type_code};
@@ -210,6 +210,13 @@ impl<'c> Translator<'c, '_, '_> {
             return None;
         };
 
+        // An engine's function that the standard catalogue declares for these
+        // types goes under the catalogue's URN, so any engine can find it.
+        let urn = if urn == EXTERNAL_URN {
+            standard_urn(base, &signature).unwrap_or(EXTERNAL_URN)
+        } else {
+            urn
+        };
         let anchor = self
             .extensions
             .register(urn, format!("{base}:{}", signature.join("_")));

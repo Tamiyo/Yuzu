@@ -285,10 +285,6 @@ mod tests {
                     {
                       "extensionUrnAnchor": 2,
                       "urn": "extension:io.substrait:functions_arithmetic"
-                    },
-                    {
-                      "extensionUrnAnchor": 3,
-                      "urn": "extension:io.yuzu:external"
                     }
                   ],
                   "extensions": [
@@ -308,7 +304,7 @@ mod tests {
                     },
                     {
                       "extensionFunction": {
-                        "extensionUrnReference": 3,
+                        "extensionUrnReference": 2,
                         "functionAnchor": 3,
                         "name": "sum:i64"
                       }
